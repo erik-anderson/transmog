@@ -1,0 +1,1243 @@
+use std::{
+    num::NonZeroUsize,
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+    time::Duration,
+};
+
+use thiserror::Error;
+use tokio::{
+    sync::{OwnedSemaphorePermit, Semaphore},
+    task::JoinHandle,
+    time::timeout,
+};
+
+use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target};
+
+use super::{
+    BodyPipeline, BodyPipelineLimits, BodyPlan, CompletedExchange, ExchangeFailure,
+    ExchangeInterceptor, ExchangeMetadata, HookContext, HookExecutionError, HookInitError,
+    InterceptorFactory, RequestBodyEvent, RequestHeadAction, RequestHeadEvent, ResponseBodyEvent,
+    ResponseHeadAction, ResponseHeadEvent,
+};
+
+const TERMINAL_OPEN: u8 = 0;
+const TERMINAL_COMPLETING: u8 = 1;
+const TERMINAL_FAILED: u8 = 2;
+
+/// Resource limits shared by an interceptor chain.
+#[derive(Clone, Copy, Debug)]
+pub struct HookLimits {
+    /// Maximum duration of one traffic-affecting callback.
+    pub callback_timeout: Duration,
+    /// Maximum duration of one terminal cleanup callback.
+    pub terminal_timeout: Duration,
+    /// Maximum number of hook callbacks concurrently holding pause permits.
+    pub max_paused_exchanges: NonZeroUsize,
+}
+
+impl Default for HookLimits {
+    fn default() -> Self {
+        Self {
+            callback_timeout: Duration::from_secs(30),
+            terminal_timeout: Duration::from_secs(2),
+            max_paused_exchanges: NonZeroUsize::new(256).expect("256 is nonzero"),
+        }
+    }
+}
+
+/// Whether failure to construct an interceptor rejects the exchange.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InterceptorRequirement {
+    /// Reject the exchange when creation fails or panics.
+    Required,
+    /// Skip the interceptor and retain an initialization diagnostic.
+    Optional,
+}
+
+/// One immutable interceptor-chain registration.
+#[derive(Clone)]
+pub struct InterceptorRegistration {
+    factory: Arc<dyn InterceptorFactory>,
+    requirement: InterceptorRequirement,
+    name: Arc<str>,
+}
+
+impl std::fmt::Debug for InterceptorRegistration {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InterceptorRegistration")
+            .field("name", &self.name)
+            .field("requirement", &self.requirement)
+            .finish_non_exhaustive()
+    }
+}
+
+impl InterceptorRegistration {
+    /// Creates one named registration.
+    pub fn new(
+        name: impl Into<Arc<str>>,
+        factory: Arc<dyn InterceptorFactory>,
+        requirement: InterceptorRequirement,
+    ) -> Self {
+        Self {
+            factory,
+            requirement,
+            name: name.into(),
+        }
+    }
+
+    /// Stable operator-facing name for diagnostics.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Initialization policy for this registration.
+    pub fn requirement(&self) -> InterceptorRequirement {
+        self.requirement
+    }
+}
+
+/// Immutable chain configuration shared by all exchanges.
+#[derive(Clone, Debug)]
+pub struct InterceptorChainFactory {
+    registrations: Arc<[InterceptorRegistration]>,
+    runner: CallbackGate,
+}
+
+impl InterceptorChainFactory {
+    /// Freezes registrations and resource limits for listener use.
+    pub fn new(registrations: Vec<InterceptorRegistration>, limits: HookLimits) -> Self {
+        Self {
+            registrations: registrations.into(),
+            runner: CallbackGate::new(limits),
+        }
+    }
+
+    /// Creates isolated interceptor instances for one exchange.
+    ///
+    /// Optional initialization failures are returned as diagnostics. A required
+    /// initialization failure rejects construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChainInitError`] when a required factory fails or panics.
+    pub fn create_exchange(
+        &self,
+        metadata: ExchangeMetadata,
+    ) -> Result<ExchangeChain, ChainInitError> {
+        let context = HookContext::new(metadata, self.runner.callback_timeout());
+        let mut interceptors = Vec::with_capacity(self.registrations.len());
+        let mut diagnostics = Vec::new();
+
+        for registration in self.registrations.iter() {
+            let created = catch_unwind(AssertUnwindSafe(|| {
+                registration.factory.create(context.metadata())
+            }));
+            let result = match created {
+                Ok(result) => result,
+                Err(_) => Err(HookInitError::new("interceptor factory panicked")),
+            };
+            match result {
+                Ok(interceptor) => interceptors.push(ChainEntry {
+                    name: Arc::clone(&registration.name),
+                    interceptor,
+                }),
+                Err(source) if registration.requirement == InterceptorRequirement::Optional => {
+                    diagnostics.push(InitializationDiagnostic {
+                        name: Arc::clone(&registration.name),
+                        message: source.message,
+                    });
+                }
+                Err(source) => {
+                    return Err(ChainInitError {
+                        name: Arc::clone(&registration.name),
+                        source,
+                    });
+                }
+            }
+        }
+
+        Ok(ExchangeChain {
+            context,
+            interceptors,
+            entered: 0,
+            diagnostics,
+            runner: self.runner.clone(),
+            terminal: AtomicU8::new(TERMINAL_OPEN),
+        })
+    }
+
+    /// Stops new callbacks from acquiring pause permits.
+    pub fn shutdown(&self) {
+        self.runner.shutdown();
+    }
+}
+
+/// Failure constructing a required interceptor.
+#[derive(Clone, Debug, Error)]
+#[error("required interceptor {name} failed to initialize: {source}")]
+pub struct ChainInitError {
+    /// Registration name.
+    pub name: Arc<str>,
+    /// Typed initialization failure.
+    #[source]
+    pub source: HookInitError,
+}
+
+/// Non-fatal failure from an optional interceptor factory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitializationDiagnostic {
+    /// Registration name.
+    pub name: Arc<str>,
+    /// Redacted reason.
+    pub message: String,
+}
+
+#[derive(Clone)]
+struct ChainEntry {
+    name: Arc<str>,
+    interceptor: Arc<dyn ExchangeInterceptor>,
+}
+
+impl std::fmt::Debug for ChainEntry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChainEntry")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Result of applying the request-head chain.
+#[derive(Debug)]
+pub enum RequestHeadOutcome {
+    /// Continue to routing with the effective request and optional explicit target.
+    Continue {
+        /// Final effective request head.
+        head: RequestHead,
+        /// Explicit reroute target requiring authorization.
+        reroute: Option<Target>,
+    },
+    /// Complete locally. The response must still unwind through response hooks.
+    Respond {
+        /// Effective request at the short-circuit point.
+        request_head: RequestHead,
+        /// Locally generated response.
+        response: CanonicalResponse,
+    },
+    /// Terminate before contacting an upstream.
+    Abort(super::HookAbort),
+}
+
+/// Result of applying the reverse response-head chain.
+#[derive(Debug)]
+pub enum ResponseHeadOutcome {
+    /// Continue downstream with a final head and an optional bounded body replacement.
+    Continue {
+        /// Final response head.
+        head: ResponseHead,
+        /// Replacement body supplied by a response hook, when any.
+        replacement_body: Option<Vec<BodyFrame>>,
+        /// Whether the current response was generated locally.
+        local_response: bool,
+    },
+    /// Terminate before downstream response commitment.
+    Abort(super::HookAbort),
+}
+
+/// Failure from one named hook callback.
+#[derive(Clone, Debug, Error)]
+#[error("interceptor {name} failed: {source}")]
+pub struct ChainExecutionError {
+    /// Registration name.
+    pub name: Arc<str>,
+    /// Typed execution failure.
+    #[source]
+    pub source: HookExecutionError,
+}
+
+/// Errors collected while continuing reverse-order terminal cleanup.
+#[derive(Clone, Debug, Default)]
+pub struct TerminalReport {
+    errors: Vec<ChainExecutionError>,
+}
+
+impl TerminalReport {
+    /// Cleanup errors in callback order.
+    pub fn errors(&self) -> &[ChainExecutionError] {
+        &self.errors
+    }
+
+    /// Whether every entered interceptor completed cleanup successfully.
+    pub fn is_clean(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
+/// Isolated, stateful interceptor chain for one exchange.
+#[derive(Debug)]
+pub struct ExchangeChain {
+    context: HookContext,
+    interceptors: Vec<ChainEntry>,
+    entered: usize,
+    diagnostics: Vec<InitializationDiagnostic>,
+    runner: CallbackGate,
+    terminal: AtomicU8,
+}
+
+impl ExchangeChain {
+    /// Shared exchange-local hook context.
+    pub fn context(&self) -> &HookContext {
+        &self.context
+    }
+
+    /// Optional initialization failures skipped for this exchange.
+    pub fn initialization_diagnostics(&self) -> &[InitializationDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// Number of interceptors whose request-head callback was entered.
+    pub fn entered_len(&self) -> usize {
+        self.entered
+    }
+
+    /// Applies request-head callbacks in registration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named timeout, cancellation, panic, or shutdown failure.
+    pub async fn request_head(
+        &mut self,
+        mut head: RequestHead,
+    ) -> Result<RequestHeadOutcome, ChainExecutionError> {
+        let mut reroute = None;
+        while self.entered < self.interceptors.len() {
+            let entry = self.interceptors[self.entered].clone();
+            self.entered += 1;
+            let event = RequestHeadEvent {
+                context: self.context.clone(),
+                head: head.clone(),
+            };
+            let action = self
+                .runner
+                .request_head(Arc::clone(&entry.interceptor), event, &self.context)
+                .await
+                .map_err(|source| ChainExecutionError {
+                    name: entry.name,
+                    source,
+                })?;
+            match action {
+                RequestHeadAction::Continue => {}
+                RequestHeadAction::Replace(replacement) => head = replacement,
+                RequestHeadAction::Reroute {
+                    head: mut replacement,
+                    target,
+                } => {
+                    replacement.target = target.clone();
+                    head = replacement;
+                    reroute = Some(target);
+                }
+                RequestHeadAction::Respond(response) => {
+                    return Ok(RequestHeadOutcome::Respond {
+                        request_head: head,
+                        response,
+                    });
+                }
+                RequestHeadAction::Abort(reason) => return Ok(RequestHeadOutcome::Abort(reason)),
+            }
+        }
+        Ok(RequestHeadOutcome::Continue { head, reroute })
+    }
+
+    /// Selects request body plans in request registration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named timeout, cancellation, panic, or shutdown failure.
+    pub async fn request_body_plans(
+        &self,
+        head: &RequestHead,
+    ) -> Result<Vec<BodyPlan>, ChainExecutionError> {
+        let mut plans = Vec::with_capacity(self.entered);
+        for entry in &self.interceptors[..self.entered] {
+            let event = RequestBodyEvent {
+                context: self.context.clone(),
+                head: head.clone(),
+            };
+            let action = self
+                .runner
+                .request_body(Arc::clone(&entry.interceptor), event, &self.context)
+                .await
+                .map_err(|source| ChainExecutionError {
+                    name: Arc::clone(&entry.name),
+                    source,
+                })?;
+            plans.push(action.0);
+        }
+        Ok(plans)
+    }
+
+    /// Selects and composes request body plans in registration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named callback execution failure.
+    pub async fn request_body_pipeline(
+        &self,
+        head: &RequestHead,
+        limits: BodyPipelineLimits,
+    ) -> Result<BodyPipeline, ChainExecutionError> {
+        let plans = self.request_body_plans(head).await?;
+        Ok(BodyPipeline::from_plans(
+            plans,
+            self.context.clone(),
+            self.runner.clone(),
+            limits,
+        ))
+    }
+
+    /// Applies response-head callbacks in reverse entered order.
+    ///
+    /// `replacement_body` carries a bounded local-response body through earlier
+    /// response hooks without forcing network responses to buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named timeout, cancellation, panic, or shutdown failure.
+    pub async fn response_head(
+        &self,
+        request_head: &RequestHead,
+        mut head: ResponseHead,
+        mut replacement_body: Option<Vec<BodyFrame>>,
+        mut local_response: bool,
+    ) -> Result<ResponseHeadOutcome, ChainExecutionError> {
+        for entry in self.interceptors[..self.entered].iter().rev() {
+            let event = ResponseHeadEvent {
+                context: self.context.clone(),
+                request_head: request_head.clone(),
+                head: head.clone(),
+                local_response,
+            };
+            let action = self
+                .runner
+                .response_head(Arc::clone(&entry.interceptor), event, &self.context)
+                .await
+                .map_err(|source| ChainExecutionError {
+                    name: Arc::clone(&entry.name),
+                    source,
+                })?;
+            match action {
+                ResponseHeadAction::Continue => {}
+                ResponseHeadAction::Replace(replacement) => head = replacement,
+                ResponseHeadAction::Respond(response) => {
+                    head = response.head;
+                    replacement_body = Some(response.body);
+                    local_response = true;
+                }
+                ResponseHeadAction::Abort(reason) => {
+                    return Ok(ResponseHeadOutcome::Abort(reason));
+                }
+            }
+        }
+        Ok(ResponseHeadOutcome::Continue {
+            head,
+            replacement_body,
+            local_response,
+        })
+    }
+
+    /// Selects response body plans in reverse entered order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named timeout, cancellation, panic, or shutdown failure.
+    pub async fn response_body_plans(
+        &self,
+        request_head: &RequestHead,
+        response_head: &ResponseHead,
+        local_response: bool,
+    ) -> Result<Vec<BodyPlan>, ChainExecutionError> {
+        let mut plans = Vec::with_capacity(self.entered);
+        for entry in self.interceptors[..self.entered].iter().rev() {
+            let event = ResponseBodyEvent {
+                context: self.context.clone(),
+                request_head: request_head.clone(),
+                response_head: response_head.clone(),
+                local_response,
+            };
+            let action = self
+                .runner
+                .response_body(Arc::clone(&entry.interceptor), event, &self.context)
+                .await
+                .map_err(|source| ChainExecutionError {
+                    name: Arc::clone(&entry.name),
+                    source,
+                })?;
+            plans.push(action.0);
+        }
+        Ok(plans)
+    }
+
+    /// Selects and composes response body plans in reverse registration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a named callback execution failure.
+    pub async fn response_body_pipeline(
+        &self,
+        request_head: &RequestHead,
+        response_head: &ResponseHead,
+        local_response: bool,
+        limits: BodyPipelineLimits,
+    ) -> Result<BodyPipeline, ChainExecutionError> {
+        let plans = self
+            .response_body_plans(request_head, response_head, local_response)
+            .await?;
+        Ok(BodyPipeline::from_plans(
+            plans,
+            self.context.clone(),
+            self.runner.clone(),
+            limits,
+        ))
+    }
+
+    /// Delivers successful terminal cleanup exactly once in reverse order.
+    pub async fn completed(&self, outcome: CompletedExchange) -> TerminalReport {
+        if self
+            .terminal
+            .compare_exchange(
+                TERMINAL_OPEN,
+                TERMINAL_COMPLETING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return TerminalReport::default();
+        }
+        let mut report = TerminalReport::default();
+        for entry in self.interceptors[..self.entered].iter().rev() {
+            if let Err(source) = self
+                .runner
+                .completed(Arc::clone(&entry.interceptor), outcome.clone())
+                .await
+            {
+                report.errors.push(ChainExecutionError {
+                    name: Arc::clone(&entry.name),
+                    source,
+                });
+            }
+        }
+        report
+    }
+
+    /// Delivers failed terminal cleanup exactly once in reverse order.
+    pub async fn failed(&self, failure: ExchangeFailure) -> TerminalReport {
+        if self
+            .terminal
+            .compare_exchange(
+                TERMINAL_OPEN,
+                TERMINAL_FAILED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            return TerminalReport::default();
+        }
+        let mut report = TerminalReport::default();
+        for entry in self.interceptors[..self.entered].iter().rev() {
+            if let Err(source) = self
+                .runner
+                .failed(Arc::clone(&entry.interceptor), failure.clone())
+                .await
+            {
+                report.errors.push(ChainExecutionError {
+                    name: Arc::clone(&entry.name),
+                    source,
+                });
+            }
+        }
+        report
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct CallbackGate {
+    permits: Arc<Semaphore>,
+    callback_timeout: Duration,
+    terminal_timeout: Duration,
+}
+
+impl CallbackGate {
+    pub(super) fn new(limits: HookLimits) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(limits.max_paused_exchanges.get())),
+            callback_timeout: limits.callback_timeout,
+            terminal_timeout: limits.terminal_timeout,
+        }
+    }
+
+    fn callback_timeout(&self) -> Duration {
+        self.callback_timeout
+    }
+
+    fn shutdown(&self) {
+        self.permits.close();
+    }
+
+    pub(super) async fn permit(
+        &self,
+        context: &HookContext,
+    ) -> Result<OwnedSemaphorePermit, HookExecutionError> {
+        tokio::select! {
+            permit = Arc::clone(&self.permits).acquire_owned() => {
+                permit.map_err(|_| HookExecutionError::ShuttingDown)
+            }
+            () = context.cancellation().cancelled() => Err(HookExecutionError::Cancelled),
+        }
+    }
+
+    pub(super) async fn await_task<T: Send + 'static>(
+        &self,
+        context: &HookContext,
+        task: JoinHandle<T>,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<T, HookExecutionError> {
+        let mut task = task;
+        let result = tokio::select! {
+            joined = timeout(self.callback_timeout, &mut task) => match joined {
+                Ok(Ok(value)) => Ok(value),
+                Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
+                Ok(Err(_)) => Err(HookExecutionError::Cancelled),
+                Err(_) => Err(HookExecutionError::TimedOut),
+            },
+            () = context.cancellation().cancelled() => Err(HookExecutionError::Cancelled),
+        };
+        if result.is_err() && !task.is_finished() {
+            task.abort();
+            let _ = task.await;
+        }
+        drop(permit);
+        result
+    }
+
+    async fn terminal_permit(&self) -> Result<OwnedSemaphorePermit, HookExecutionError> {
+        timeout(
+            self.terminal_timeout,
+            Arc::clone(&self.permits).acquire_owned(),
+        )
+        .await
+        .map_err(|_| HookExecutionError::TimedOut)?
+        .map_err(|_| HookExecutionError::ShuttingDown)
+    }
+
+    async fn await_terminal<T: Send + 'static>(
+        &self,
+        task: JoinHandle<T>,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<T, HookExecutionError> {
+        let mut task = task;
+        let result = match timeout(self.terminal_timeout, &mut task).await {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
+            Ok(Err(_)) => Err(HookExecutionError::Cancelled),
+            Err(_) => Err(HookExecutionError::TimedOut),
+        };
+        if result.is_err() && !task.is_finished() {
+            task.abort();
+            let _ = task.await;
+        }
+        drop(permit);
+        result
+    }
+
+    async fn request_head(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        event: RequestHeadEvent,
+        context: &HookContext,
+    ) -> Result<RequestHeadAction, HookExecutionError> {
+        let permit = self.permit(context).await?;
+        let task = tokio::spawn(async move { interceptor.on_request_head(event).await });
+        self.await_task(context, task, permit).await
+    }
+
+    async fn request_body(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        event: RequestBodyEvent,
+        context: &HookContext,
+    ) -> Result<super::RequestBodyAction, HookExecutionError> {
+        let permit = self.permit(context).await?;
+        let task = tokio::spawn(async move { interceptor.on_request_body(event).await });
+        self.await_task(context, task, permit).await
+    }
+
+    async fn response_head(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        event: ResponseHeadEvent,
+        context: &HookContext,
+    ) -> Result<ResponseHeadAction, HookExecutionError> {
+        let permit = self.permit(context).await?;
+        let task = tokio::spawn(async move { interceptor.on_response_head(event).await });
+        self.await_task(context, task, permit).await
+    }
+
+    async fn response_body(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        event: ResponseBodyEvent,
+        context: &HookContext,
+    ) -> Result<super::ResponseBodyAction, HookExecutionError> {
+        let permit = self.permit(context).await?;
+        let task = tokio::spawn(async move { interceptor.on_response_body(event).await });
+        self.await_task(context, task, permit).await
+    }
+
+    async fn completed(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        outcome: CompletedExchange,
+    ) -> Result<(), HookExecutionError> {
+        let permit = self.terminal_permit().await?;
+        let task = tokio::spawn(async move { interceptor.on_completed(outcome).await });
+        self.await_terminal(task, permit).await
+    }
+
+    async fn failed(
+        &self,
+        interceptor: Arc<dyn ExchangeInterceptor>,
+        failure: ExchangeFailure,
+    ) -> Result<(), HookExecutionError> {
+        let permit = self.terminal_permit().await?;
+        let task = tokio::spawn(async move { interceptor.on_failed(failure).await });
+        self.await_terminal(task, permit).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        future::pending,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::{Duration, SystemTime},
+    };
+
+    use bytes::Bytes;
+
+    use crate::{ConnectionId, HeaderBlock, HttpLegVersion, SessionId, SessionMetadata, StreamId};
+
+    use super::*;
+    use crate::intercept::{
+        BoxHookFuture, ExchangeFailureKind, ExchangeStage, HookAbort, RequestBodyAction,
+        ResponseBodyAction,
+    };
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Behavior {
+        Continue,
+        Respond,
+        Abort,
+        Wait,
+        PanicRequest,
+        PanicTerminal,
+        Reroute,
+    }
+
+    struct RecordingFactory {
+        name: &'static str,
+        behavior: Behavior,
+        log: Arc<Mutex<Vec<String>>>,
+        created: Arc<AtomicUsize>,
+    }
+
+    impl InterceptorFactory for RecordingFactory {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            self.created.fetch_add(1, Ordering::SeqCst);
+            Ok(Arc::new(RecordingInterceptor {
+                name: self.name,
+                behavior: self.behavior,
+                log: Arc::clone(&self.log),
+            }))
+        }
+    }
+
+    struct RecordingInterceptor {
+        name: &'static str,
+        behavior: Behavior,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingInterceptor {
+        fn record(&self, phase: &str) {
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("{phase}:{}", self.name));
+        }
+    }
+
+    impl ExchangeInterceptor for RecordingInterceptor {
+        fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
+            self.record("request-head");
+            Box::pin(async move {
+                match self.behavior {
+                    Behavior::Continue | Behavior::PanicTerminal => RequestHeadAction::Continue,
+                    Behavior::Respond => RequestHeadAction::Respond(local_response()),
+                    Behavior::Abort => RequestHeadAction::Abort(HookAbort::Rejected),
+                    Behavior::Wait => pending().await,
+                    Behavior::PanicRequest => panic!("request hook panic"),
+                    Behavior::Reroute => {
+                        let mut target = event.head.target.clone();
+                        target.host = "rerouted.test".to_owned();
+                        target.authority = "rerouted.test:8443".to_owned();
+                        target.port = 8443;
+                        RequestHeadAction::Reroute {
+                            head: event.head,
+                            target,
+                        }
+                    }
+                }
+            })
+        }
+
+        fn on_request_body(
+            &self,
+            _event: RequestBodyEvent,
+        ) -> BoxHookFuture<'_, RequestBodyAction> {
+            self.record("request-body");
+            Box::pin(async { RequestBodyAction(BodyPlan::PassThrough) })
+        }
+
+        fn on_response_head(
+            &self,
+            _event: ResponseHeadEvent,
+        ) -> BoxHookFuture<'_, ResponseHeadAction> {
+            self.record("response-head");
+            Box::pin(async { ResponseHeadAction::Continue })
+        }
+
+        fn on_response_body(
+            &self,
+            _event: ResponseBodyEvent,
+        ) -> BoxHookFuture<'_, ResponseBodyAction> {
+            self.record("response-body");
+            Box::pin(async { ResponseBodyAction(BodyPlan::PassThrough) })
+        }
+
+        fn on_completed(&self, _outcome: CompletedExchange) -> BoxHookFuture<'_, ()> {
+            self.record("completed");
+            Box::pin(async move {
+                assert_ne!(
+                    self.behavior,
+                    Behavior::PanicTerminal,
+                    "terminal hook panic"
+                );
+            })
+        }
+
+        fn on_failed(&self, _failure: ExchangeFailure) -> BoxHookFuture<'_, ()> {
+            self.record("failed");
+            Box::pin(async {})
+        }
+    }
+
+    struct FailFactory {
+        panic: bool,
+    }
+
+    impl InterceptorFactory for FailFactory {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            assert!(!self.panic, "factory panic");
+            Err(HookInitError::new("unavailable"))
+        }
+    }
+
+    fn metadata(id: u128) -> ExchangeMetadata {
+        ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(id),
+                downstream_connection_id: ConnectionId(2),
+                stream_id: StreamId(3),
+                client_addr: "127.0.0.1:1000".parse().unwrap(),
+                proxy_addr: "127.0.0.1:2000".parse().unwrap(),
+                ingress_version: HttpLegVersion::Http2,
+                egress_version: None,
+            },
+            request_head().target,
+        )
+    }
+
+    fn request_head() -> RequestHead {
+        RequestHead {
+            method: "GET".to_owned(),
+            target: Target {
+                scheme: "https".to_owned(),
+                authority: "example.test".to_owned(),
+                host: "example.test".to_owned(),
+                port: 443,
+                path: "/original".to_owned(),
+                query: None,
+            },
+            headers: HeaderBlock::new(),
+            source_version: HttpLegVersion::Http2,
+        }
+    }
+
+    fn response_head() -> ResponseHead {
+        ResponseHead {
+            status: 200,
+            headers: HeaderBlock::new(),
+            source_version: HttpLegVersion::Http2,
+        }
+    }
+
+    fn local_response() -> CanonicalResponse {
+        CanonicalResponse::local(202, HeaderBlock::new(), Bytes::from_static(b"local"))
+    }
+
+    fn registration(
+        name: &'static str,
+        behavior: Behavior,
+        log: &Arc<Mutex<Vec<String>>>,
+        created: &Arc<AtomicUsize>,
+    ) -> InterceptorRegistration {
+        InterceptorRegistration::new(
+            name,
+            Arc::new(RecordingFactory {
+                name,
+                behavior,
+                log: Arc::clone(log),
+                created: Arc::clone(created),
+            }),
+            InterceptorRequirement::Required,
+        )
+    }
+
+    fn limits(timeout: Duration, max_paused: usize) -> HookLimits {
+        HookLimits {
+            callback_timeout: timeout,
+            terminal_timeout: timeout,
+            max_paused_exchanges: NonZeroUsize::new(max_paused).unwrap(),
+        }
+    }
+
+    fn completed(
+        chain: &ExchangeChain,
+        request: RequestHead,
+        response: ResponseHead,
+    ) -> CompletedExchange {
+        CompletedExchange {
+            metadata: Arc::clone(chain.context().metadata()),
+            request_head: request,
+            response_head: response,
+        }
+    }
+
+    fn failed(chain: &ExchangeChain) -> ExchangeFailure {
+        ExchangeFailure {
+            metadata: Arc::clone(chain.context().metadata()),
+            stage: ExchangeStage::Upstream,
+            kind: ExchangeFailureKind::Upstream,
+            request_committed: true,
+            response_committed: false,
+            message: "upstream unavailable".to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn chain_is_forward_on_request_and_reverse_on_response_and_terminal() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            ["A", "B", "C"]
+                .map(|name| registration(name, Behavior::Continue, &log, &created))
+                .into(),
+            limits(Duration::from_secs(1), 4),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let request = match chain.request_head(request_head()).await.unwrap() {
+            RequestHeadOutcome::Continue {
+                head,
+                reroute: None,
+            } => head,
+            outcome => panic!("unexpected request outcome: {outcome:?}"),
+        };
+        assert_eq!(chain.request_body_plans(&request).await.unwrap().len(), 3);
+        let response = match chain
+            .response_head(&request, response_head(), None, false)
+            .await
+            .unwrap()
+        {
+            ResponseHeadOutcome::Continue { head, .. } => head,
+            outcome @ ResponseHeadOutcome::Abort(_) => {
+                panic!("unexpected response outcome: {outcome:?}");
+            }
+        };
+        assert_eq!(
+            chain
+                .response_body_plans(&request, &response, false)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        assert!(
+            chain
+                .completed(completed(&chain, request, response))
+                .await
+                .is_clean()
+        );
+        assert!(chain.failed(failed(&chain)).await.is_clean());
+
+        assert_eq!(created.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "request-head:A",
+                "request-head:B",
+                "request-head:C",
+                "request-body:A",
+                "request-body:B",
+                "request-body:C",
+                "response-head:C",
+                "response-head:B",
+                "response-head:A",
+                "response-body:C",
+                "response-body:B",
+                "response-body:A",
+                "completed:C",
+                "completed:B",
+                "completed:A",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn local_response_unwinds_only_the_entered_stack() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![
+                registration("A", Behavior::Continue, &log, &created),
+                registration("B", Behavior::Respond, &log, &created),
+                registration("C", Behavior::Continue, &log, &created),
+            ],
+            limits(Duration::from_secs(1), 2),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let (request, local) = match chain.request_head(request_head()).await.unwrap() {
+            RequestHeadOutcome::Respond {
+                request_head,
+                response,
+            } => (request_head, response),
+            outcome => panic!("unexpected request outcome: {outcome:?}"),
+        };
+        assert_eq!(chain.entered_len(), 2);
+        let response = chain
+            .response_head(&request, local.head, Some(local.body), true)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response,
+            ResponseHeadOutcome::Continue {
+                local_response: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "request-head:A",
+                "request-head:B",
+                "response-head:B",
+                "response-head:A"
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_initialization_failure_is_diagnostic_and_required_failure_rejects() {
+        let optional = InterceptorRegistration::new(
+            "optional",
+            Arc::new(FailFactory { panic: false }),
+            InterceptorRequirement::Optional,
+        );
+        let required = InterceptorRegistration::new(
+            "required",
+            Arc::new(FailFactory { panic: false }),
+            InterceptorRequirement::Required,
+        );
+        let optional_chain = InterceptorChainFactory::new(vec![optional], HookLimits::default())
+            .create_exchange(metadata(1))
+            .unwrap();
+        assert_eq!(optional_chain.initialization_diagnostics().len(), 1);
+        let error = InterceptorChainFactory::new(vec![required], HookLimits::default())
+            .create_exchange(metadata(2))
+            .unwrap_err();
+        assert_eq!(&*error.name, "required");
+
+        let panicking = InterceptorRegistration::new(
+            "panicking",
+            Arc::new(FailFactory { panic: true }),
+            InterceptorRequirement::Required,
+        );
+        let error = InterceptorChainFactory::new(vec![panicking], HookLimits::default())
+            .create_exchange(metadata(3))
+            .unwrap_err();
+        assert_eq!(error.source.message, "interceptor factory panicked");
+    }
+
+    #[tokio::test]
+    async fn reroute_is_explicit_and_updates_the_effective_target() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![registration("A", Behavior::Reroute, &log, &created)],
+            HookLimits::default(),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let RequestHeadOutcome::Continue {
+            head,
+            reroute: Some(target),
+        } = chain.request_head(request_head()).await.unwrap()
+        else {
+            panic!("expected explicit reroute");
+        };
+        assert_eq!(head.target, target);
+        assert_eq!(target.host, "rerouted.test");
+        assert_eq!(
+            chain.context().metadata().original_target.as_target().host,
+            "example.test"
+        );
+    }
+
+    #[tokio::test]
+    async fn callback_timeout_and_panic_are_contained() {
+        for (behavior, expected) in [
+            (Behavior::Wait, HookExecutionError::TimedOut),
+            (Behavior::PanicRequest, HookExecutionError::Panicked),
+        ] {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let created = Arc::new(AtomicUsize::new(0));
+            let factory = InterceptorChainFactory::new(
+                vec![registration("A", behavior, &log, &created)],
+                limits(Duration::from_millis(10), 1),
+            );
+            let mut chain = factory.create_exchange(metadata(1)).unwrap();
+            let error = chain.request_head(request_head()).await.unwrap_err();
+            assert_eq!(error.source, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_works_inside_a_hook_and_while_waiting_for_a_permit() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![registration("A", Behavior::Wait, &log, &created)],
+            limits(Duration::from_secs(10), 1),
+        );
+        let mut first = factory.create_exchange(metadata(1)).unwrap();
+        let first_cancel = first.context().cancellation().clone();
+        let first_task = tokio::spawn(async move { first.request_head(request_head()).await });
+        while log.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+
+        let mut second = factory.create_exchange(metadata(2)).unwrap();
+        let second_cancel = second.context().cancellation().clone();
+        let second_task = tokio::spawn(async move { second.request_head(request_head()).await });
+        tokio::task::yield_now().await;
+        assert_eq!(
+            log.lock().unwrap().len(),
+            1,
+            "second hook started without a permit"
+        );
+        second_cancel.cancel();
+        assert_eq!(
+            second_task.await.unwrap().unwrap_err().source,
+            HookExecutionError::Cancelled
+        );
+
+        first_cancel.cancel();
+        assert_eq!(
+            first_task.await.unwrap().unwrap_err().source,
+            HookExecutionError::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_panic_does_not_suppress_cleanup_and_terminal_is_exactly_once() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![
+                registration("A", Behavior::Continue, &log, &created),
+                registration("B", Behavior::PanicTerminal, &log, &created),
+                registration("C", Behavior::Continue, &log, &created),
+            ],
+            limits(Duration::from_secs(1), 2),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let request = match chain.request_head(request_head()).await.unwrap() {
+            RequestHeadOutcome::Continue { head, .. } => head,
+            outcome => panic!("unexpected request outcome: {outcome:?}"),
+        };
+        let response = response_head();
+        let report = chain.completed(completed(&chain, request, response)).await;
+        assert_eq!(report.errors().len(), 1);
+        assert_eq!(report.errors()[0].source, HookExecutionError::Panicked);
+        assert!(chain.failed(failed(&chain)).await.is_clean());
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "request-head:A",
+                "request-head:B",
+                "request-head:C",
+                "completed:C",
+                "completed:B",
+                "completed:A"
+            ]
+        );
+    }
+
+    #[test]
+    fn metadata_timestamp_is_populated() {
+        assert!(metadata(1).started_at <= SystemTime::now());
+    }
+
+    #[tokio::test]
+    async fn abort_stops_later_interceptors() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![
+                registration("A", Behavior::Abort, &log, &created),
+                registration("B", Behavior::Continue, &log, &created),
+            ],
+            HookLimits::default(),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        assert!(matches!(
+            chain.request_head(request_head()).await.unwrap(),
+            RequestHeadOutcome::Abort(HookAbort::Rejected)
+        ));
+        assert_eq!(*log.lock().unwrap(), ["request-head:A"]);
+    }
+}

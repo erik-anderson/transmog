@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::HttpLegVersion;
 
 /// Per-route egress selection policy.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum RoutePolicy {
     /// Prefer a validated HTTP/3 alternative and safely fall back as allowed.
     #[default]

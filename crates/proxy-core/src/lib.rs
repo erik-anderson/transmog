@@ -4,12 +4,18 @@
 
 mod body;
 mod breakpoint;
+mod extensions;
 mod header;
+pub mod intercept;
 mod message;
+/// Bounded, immutable, redacted lifecycle observation.
+pub mod observe;
 mod policy;
 mod protocol;
+pub mod route;
 mod session;
 mod translation;
+pub mod upstream;
 
 pub use body::{
     BodyChannelClosed, BodyFrame, BodyLimitError, BodyStream, BodyStreamError, BodyStreamSender,
@@ -20,6 +26,7 @@ pub use breakpoint::{
     BreakpointHandler, BreakpointLimits, BreakpointPhase, BreakpointRunner, BreakpointRunnerError,
     BreakpointState, BreakpointTransitionError, ContinueHandler,
 };
+pub use extensions::ExchangeExtensions;
 pub use header::{HeaderBlock, HeaderError, HeaderField};
 pub use message::{
     CanonicalRequest, CanonicalResponse, RequestHead, ResponseHead, StreamingRequest,
