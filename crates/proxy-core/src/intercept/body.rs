@@ -116,6 +116,7 @@ pub trait BufferedBodyHandler: Send {
 }
 
 /// Body behavior selected before a request or response pump starts.
+#[must_use = "body plans have no effect unless returned to the exchange engine"]
 pub enum BodyPlan {
     /// Forward frames without complete-body buffering.
     PassThrough,
@@ -834,6 +835,46 @@ mod tests {
                 .unwrap_err(),
             BodyPipelineError::InvalidSequence(BodyLimitError::DataAfterTrailers)
         );
+    }
+
+    #[tokio::test]
+    async fn bounded_frame_sequence_model_smoke_is_total_and_matches_http_ordering() {
+        // Exhaust every sequence of up to five data/trailer symbols. This is a
+        // deterministic fuzz-smoke corpus that is also suitable for Miri.
+        for length in 0..=5_u32 {
+            let combinations = 2_u32.pow(length);
+            for bits in 0..combinations {
+                let frames = (0..length)
+                    .map(|index| {
+                        if bits & (1 << index) == 0 {
+                            BodyFrame::Data(Bytes::from_static(b"x"))
+                        } else {
+                            BodyFrame::Trailers(HeaderBlock::new())
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let first_trailer = frames
+                    .iter()
+                    .position(|frame| matches!(frame, BodyFrame::Trailers(_)));
+                let valid = first_trailer.is_none_or(|index| {
+                    index + 1 == frames.len()
+                        && frames
+                            .iter()
+                            .filter(|frame| matches!(frame, BodyFrame::Trailers(_)))
+                            .count()
+                            == 1
+                });
+                let mut pipeline = pipeline(vec![BodyPlan::PassThrough]);
+                let mut accepted = true;
+                for frame in frames {
+                    if pipeline.process(frame).await.is_err() {
+                        accepted = false;
+                        break;
+                    }
+                }
+                assert_eq!(accepted, valid, "sequence bits={bits:b} length={length}");
+            }
+        }
     }
 
     #[tokio::test]

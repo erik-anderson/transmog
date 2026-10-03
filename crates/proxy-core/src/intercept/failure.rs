@@ -40,6 +40,10 @@ pub enum ExchangeFailureKind {
     Cancelled,
     /// A body limit, framing rule, timeout, or transform failed.
     Body,
+    /// Canonical request translation or framing repair failed.
+    RequestTranslation,
+    /// Canonical response translation or framing repair failed.
+    ResponseTranslation,
     /// Routing or destination authorization failed.
     Route,
     /// DNS, transport, TLS, or upstream HTTP failed.

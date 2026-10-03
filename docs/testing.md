@@ -18,6 +18,14 @@ origin. Auto routing is exercised against an unreachable cached H3 alternative:
 a safe GET falls back before response start with ordered attempt evidence, while
 a POST is not replayed onto the TCP origin.
 
+Hooks v2 has deterministic core coverage for factory isolation, forward/reverse
+chain order, short circuits, exactly-once terminal outcomes, callback panic and
+timeout containment, drop cancellation, all bounded body plans, trailer-order
+model enumeration, observer redaction and saturation, route authorization,
+application-owned streaming upstreams, and a 256-exchange concurrency stress
+case. The bounded `DecisionBridge` tests correlation, duplicate and stale
+replies, disconnect, timeout, cancellation, and queue saturation.
+
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright
 route interception. Its durable local test CA is generated and installed once
@@ -31,7 +39,7 @@ response headers and DOM proof, records egress telemetry, and verifies that a
 stopped-proxy navigation fails rather than going DIRECT.
 
 `verification/live-report.json` is the machine-readable record. It includes the
-per-case timestamp, ephemeral proxy address, proof and breakpoint event IDs,
+per-case timestamp, ephemeral proxy address, proof and legacy-named hook event IDs,
 downstream connection and stream IDs, ingress/egress protocols and ALPN,
 adapter, trust generation, route-attempt history, and H3 peer/certificate-chain
 fingerprints. The report also records that Chromium QUIC was disabled, service
@@ -48,3 +56,21 @@ pwsh ./scripts/remove-live-test-ca.ps1
 
 Run `scripts/dev-env.ps1 -Check` before native builds and
 `scripts/check-crypto-graph.ps1` after dependency resolution.
+
+Additional hardening commands are:
+
+```powershell
+# Deterministic model/fuzz smoke and concurrency tests are part of this suite.
+cargo test --locked -p rustymiddle-core --all-features
+
+# Compile every example and benchmark harness.
+cargo test --locked --workspace --all-features --all-targets
+
+# Dependency-free fixed-input microbenchmark; run on an otherwise idle host.
+cargo run --locked --release -p rustymiddle-core --example hooks_benchmark
+```
+
+The transport-neutral core is intended to remain Miri-compatible. On a host
+with the nightly component installed, run `cargo +nightly miri test -p
+rustymiddle-core --lib`. Miri is an additional diagnostic and is not installed
+or silently skipped by `scripts/test.ps1`.

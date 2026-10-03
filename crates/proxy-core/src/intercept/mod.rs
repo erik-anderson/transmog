@@ -2,6 +2,7 @@
 
 mod action;
 mod body;
+mod bridge;
 mod chain;
 mod context;
 mod failure;
@@ -15,6 +16,10 @@ pub use action::{
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,
     BoxBodyFuture, BufferedBody, BufferedBodyHandler, HookAbort,
+};
+pub use bridge::{
+    BridgeCommand, BridgeCorrelationId, BridgeError, BridgeReplyError, DecisionBridge,
+    DecisionController,
 };
 pub use chain::{
     ChainExecutionError, ChainInitError, ExchangeChain, HookLimits, InitializationDiagnostic,

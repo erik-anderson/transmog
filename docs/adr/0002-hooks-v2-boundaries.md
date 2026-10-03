@@ -4,7 +4,7 @@ Date: 2026-10-03
 
 ## Status
 
-Accepted for implementation.
+Implemented.
 
 ## Context
 
@@ -86,9 +86,9 @@ versioned protocol that converts to and from Hooks v2 types.
 
 ### Breaking migration before 1.0
 
-The old breakpoint engine may have a short-lived internal adapter during
-migration. The final workspace contains one Hooks v2 execution path and removes
-the generic event, generic decision, and invalid-decision runtime branches.
+The final workspace contains one Hooks v2 execution path. The generic event,
+generic decision, runner, invalid-decision branches, and temporary adapters are
+removed.
 
 ## Consequences
 

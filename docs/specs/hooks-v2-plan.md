@@ -1,8 +1,9 @@
 # Plan: Production-grade Hooks v2 interception API
 
-Status: implementation handoff  
-Audience: implementation agent and reviewers  
-Baseline: commit `8045959`  
+Status: local implementation and hardening complete; shared upstream contract
+coverage and cross-platform CI are pending
+Audience: implementation agent and reviewers
+Baseline: commit `8045959`
 Primary scope: `rustymiddle-core` and the exchange orchestration in `rustymiddle-runtime`
 
 ## Mission
@@ -892,40 +893,45 @@ route interception.
 
 ## Definition of done
 
-- [ ] Every protocol path uses one shared Hooks v2 exchange engine.
-- [ ] The old generic breakpoint event, decision, runner, and invalid-decision
+- [x] Every protocol path uses one shared Hooks v2 exchange engine.
+- [x] The old generic breakpoint event, decision, runner, and invalid-decision
       runtime branches are removed.
-- [ ] Per-exchange interceptor factories and state isolation are proven.
-- [ ] Phase-specific action types make illegal decisions unrepresentable.
-- [ ] Request-forward and response-reverse chain ordering is documented and
+- [x] Per-exchange interceptor factories and state isolation are proven.
+- [x] Phase-specific action types make illegal decisions unrepresentable.
+- [x] Request-forward and response-reverse chain ordering is documented and
       exhaustively tested.
-- [ ] Local response, abort, timeout, panic, cancellation, and cleanup semantics
+- [x] Local response, abort, timeout, panic, cancellation, and cleanup semantics
       produce exactly one terminal outcome.
-- [ ] Pass-through, transform, buffer, replace, and discard body plans are
+- [x] Pass-through, transform, buffer, replace, and discard body plans are
       bounded and tested on requests and responses.
-- [ ] Pausing or transforming one H2/H3 stream does not block unrelated streams.
-- [ ] Immutable observers have bounded queues, explicit delivery policy,
+- [x] Pausing or transforming one H2/H3 stream does not block unrelated streams.
+- [x] Immutable observers have bounded queues, explicit delivery policy,
       redaction defaults, and visible loss reporting.
-- [ ] Original client target, effective request, explicit reroute, and upstream
+- [x] Original client target, effective request, explicit reroute, and upstream
       plan are separate types with destination-authorization tests.
 - [ ] Network and application-owned upstream services pass shared contract
       tests.
-- [ ] Trust reload, Alt-Svc, safe fallback, and no-DIRECT behavior remain intact.
-- [ ] The CLI proof handler uses only Hooks v2 and no global per-session map.
-- [ ] The embedding example compiles and demonstrates custom components.
-- [ ] Public API rustdoc is complete and contains no transport-private types.
-- [ ] Fuzz smoke, deterministic stress, cancellation, and shutdown-race tests
+- [x] Trust reload, Alt-Svc, safe fallback, and no-DIRECT behavior remain intact.
+- [x] The CLI proof handler uses only Hooks v2 and no global per-session map.
+- [x] The embedding example compiles and demonstrates custom components.
+- [x] Public API rustdoc is complete and contains no transport-private types.
+- [x] Fuzz smoke, deterministic stress, cancellation, and shutdown-race tests
       pass.
-- [ ] Formatting, strict clippy, locked tests, documentation tests, examples,
+- [x] Formatting, strict clippy, locked tests, documentation tests, examples,
       dependency policy, and one-BoringSSL graph checks pass.
-- [ ] Windows release build succeeds with Clang, Ninja, and the Windows SDK.
+- [x] Windows release build succeeds with Clang, Ninja, and the Windows SDK.
 - [ ] Linux and macOS CI build and test gates pass.
-- [ ] All five live Chromium cases still pass without certificate bypass or
+- [x] All five live Chromium cases still pass without certificate bypass or
       Playwright interception.
-- [ ] Architecture, lifecycle, migration, testing, and limitation documentation
+- [x] Architecture, lifecycle, migration, testing, and limitation documentation
       describe the final implementation rather than the proposed design.
-- [ ] The final working tree contains no temporary adapters, ignored failures,
+- [x] The final working tree contains no temporary adapters, ignored failures,
       debug credential/body logging, or undocumented feature flags.
+
+The remaining unchecked items are deliberate gates, not presumed successes:
+the network clients still need to participate in the same reusable contract
+suite as application-owned upstream services, and the checked-in Linux/macOS
+CI jobs have not been observed for this change set from the local Windows run.
 
 ## Expected risks and mitigations
 

@@ -19,6 +19,7 @@ use crate::{
         CompletedExchange, ExchangeCancellation, ExchangeFailure, ExchangeId, ExchangeMetadata,
         InitializationDiagnostic,
     },
+    task::AbortOnDrop,
 };
 
 /// Boxed asynchronous observer callback.
@@ -236,7 +237,8 @@ struct ObserverDispatcher {
     delivered: AtomicU64,
     dropped: AtomicU64,
     disconnected: Arc<AtomicBool>,
-    stop: ExchangeCancellation,
+    force_stop: ExchangeCancellation,
+    drain: ExchangeCancellation,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -256,34 +258,41 @@ impl ObserverDispatcher {
         let (sender, mut receiver) = mpsc::channel(config.queue_capacity.get());
         let disconnected = Arc::new(AtomicBool::new(false));
         let worker_disconnected = Arc::clone(&disconnected);
-        let stop = ExchangeCancellation::new();
-        let worker_stop = stop.clone();
+        let force_stop = ExchangeCancellation::new();
+        let worker_stop = force_stop.clone();
+        let drain = ExchangeCancellation::new();
+        let worker_drain = drain.clone();
         let worker = tokio::spawn(async move {
             loop {
                 let event = tokio::select! {
                     event = receiver.recv() => event,
                     () = worker_stop.cancelled() => break,
+                    () = worker_drain.cancelled() => {
+                        receiver.close();
+                        while let Some(event) = receiver.recv().await {
+                            if !deliver_observer_event(
+                                Arc::clone(&observer),
+                                event,
+                                config.callback_timeout,
+                                &worker_stop,
+                            ).await {
+                                break;
+                            }
+                        }
+                        break;
+                    },
                 };
                 let Some(event) = event else {
                     break;
                 };
-                let observer = Arc::clone(&observer);
-                let mut task = tokio::spawn(async move { observer.on_event(event).await });
-                let outcome = tokio::select! {
-                    outcome = timeout(config.callback_timeout, &mut task) => Some(outcome),
-                    () = worker_stop.cancelled() => None,
-                };
-                let Some(outcome) = outcome else {
-                    task.abort();
-                    let _ = task.await;
-                    break;
-                };
-                if !matches!(outcome, Ok(Ok(Ok(())))) {
-                    if !task.is_finished() {
-                        task.abort();
-                        let _ = task.await;
-                    }
-                    worker_disconnected.store(true, Ordering::Release);
+                if !deliver_observer_event(
+                    Arc::clone(&observer),
+                    event,
+                    config.callback_timeout,
+                    &worker_stop,
+                )
+                .await
+                {
                     break;
                 }
             }
@@ -296,7 +305,8 @@ impl ObserverDispatcher {
             delivered: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
             disconnected,
-            stop,
+            force_stop,
+            drain,
             worker: Mutex::new(Some(worker)),
         })
     }
@@ -325,7 +335,7 @@ impl ObserverDispatcher {
                 Ok(()) => ObserverDelivery::Delivered,
                 Err(mpsc::error::TrySendError::Full(_) | mpsc::error::TrySendError::Closed(_)) => {
                     let first = !self.disconnected.swap(true, Ordering::AcqRel);
-                    self.stop.cancel();
+                    self.force_stop.cancel();
                     if first {
                         ObserverDelivery::Disconnected
                     } else {
@@ -382,12 +392,43 @@ impl ObserverDispatcher {
     }
 
     async fn shutdown(&self) {
-        self.stop.cancel();
+        self.drain.cancel();
         let worker = self.worker.lock().unwrap().take();
         if let Some(worker) = worker {
             let _ = worker.await;
         }
     }
+}
+
+impl Drop for ObserverDispatcher {
+    fn drop(&mut self) {
+        self.force_stop.cancel();
+        if let Ok(worker) = self.worker.get_mut()
+            && let Some(worker) = worker.take()
+        {
+            worker.abort();
+        }
+    }
+}
+
+async fn deliver_observer_event(
+    observer: Arc<dyn Observer>,
+    event: ObserverEvent,
+    callback_timeout: Duration,
+    force_stop: &ExchangeCancellation,
+) -> bool {
+    let mut task = AbortOnDrop::new(tokio::spawn(async move { observer.on_event(event).await }));
+    let outcome = tokio::select! {
+        outcome = timeout(callback_timeout, task.handle()) => Some(outcome),
+        () = force_stop.cancelled() => None,
+    };
+    if matches!(outcome, Some(Ok(Ok(Ok(()))))) {
+        return true;
+    }
+    if !task.is_finished() {
+        task.abort_and_wait().await;
+    }
+    false
 }
 
 /// Immutable set of bounded observer registrations.
@@ -398,6 +439,8 @@ pub struct ObserverHub {
 
 impl ObserverHub {
     /// Starts one bounded worker per registration.
+    ///
+    /// This constructor must be called from within an active Tokio runtime.
     pub fn new(registrations: Vec<(Arc<dyn Observer>, ObserverConfig)>) -> Self {
         Self {
             dispatchers: registrations
@@ -705,7 +748,7 @@ mod tests {
                 ObserverConfig {
                     queue_capacity: NonZeroUsize::new(1).unwrap(),
                     delivery: policy,
-                    callback_timeout: Duration::from_secs(10),
+                    callback_timeout: Duration::from_millis(50),
                     ..ObserverConfig::default()
                 },
             )]);
@@ -725,5 +768,42 @@ mod tests {
             }
             hub.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn graceful_shutdown_drains_an_accepted_terminal_event() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![(
+            Arc::new(RecordingObserver {
+                events: Arc::clone(&events),
+            }),
+            ObserverConfig::default(),
+        )]);
+        let metadata = metadata();
+        let observer = hub.start_exchange(Arc::clone(&metadata));
+        observer
+            .completed(CompletedExchange {
+                metadata: Arc::clone(&metadata),
+                request_head: RequestHead {
+                    method: "GET".to_owned(),
+                    target: metadata.original_target.as_target().clone(),
+                    headers: HeaderBlock::new(),
+                    source_version: HttpLegVersion::Http1,
+                },
+                response_head: ResponseHead {
+                    status: 200,
+                    headers: HeaderBlock::new(),
+                    source_version: HttpLegVersion::Http1,
+                },
+            })
+            .await;
+        hub.shutdown().await;
+        assert!(matches!(
+            events.lock().unwrap().as_slice(),
+            [ObserverEvent {
+                kind: ObserverEventKind::Completed(_),
+                ..
+            }]
+        ));
     }
 }

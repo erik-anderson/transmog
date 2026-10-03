@@ -4,7 +4,7 @@ Date: 2026-10-02
 
 ## Decision
 
-Use the human-facing profile name **Windows Clang (MSVC ABI)**. Use Rust 1.97.1
+Use the human-facing profile name **Windows LLVM/Ninja**. Use Rust 1.97.1
 or newer, LLVM/Clang as the C/C++ compiler, Ninja as the native build executor,
 CMake as BoringSSL's generator, and NASM on Windows. The canonical Rust target
 remains `x86_64-pc-windows-msvc` because `msvc` describes the ABI and Windows

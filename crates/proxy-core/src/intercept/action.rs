@@ -47,6 +47,7 @@ pub struct ResponseBodyEvent {
 }
 
 /// Legal decision at the request-head phase.
+#[must_use = "request-head actions must be returned to the exchange engine"]
 pub enum RequestHeadAction {
     /// Continue with the supplied head.
     Continue,
@@ -82,6 +83,7 @@ impl std::fmt::Debug for RequestHeadAction {
 }
 
 /// Legal decision at the response-head phase.
+#[must_use = "response-head actions must be returned to the exchange engine"]
 pub enum ResponseHeadAction {
     /// Continue with the supplied head.
     Continue,
@@ -106,8 +108,10 @@ impl std::fmt::Debug for ResponseHeadAction {
 
 /// Request-body plan selected before its pump starts.
 #[derive(Debug)]
+#[must_use = "request body plans must be returned to the exchange engine"]
 pub struct RequestBodyAction(pub BodyPlan);
 
 /// Response-body plan selected before its pump starts.
 #[derive(Debug)]
+#[must_use = "response body plans must be returned to the exchange engine"]
 pub struct ResponseBodyAction(pub BodyPlan);

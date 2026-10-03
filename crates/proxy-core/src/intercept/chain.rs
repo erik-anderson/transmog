@@ -15,7 +15,7 @@ use tokio::{
     time::timeout,
 };
 
-use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target};
+use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target, task::AbortOnDrop};
 
 use super::{
     BodyPipeline, BodyPipelineLimits, BodyPlan, CompletedExchange, ExchangeFailure,
@@ -608,9 +608,9 @@ impl CallbackGate {
         task: JoinHandle<T>,
         permit: OwnedSemaphorePermit,
     ) -> Result<T, HookExecutionError> {
-        let mut task = task;
+        let mut task = AbortOnDrop::new(task);
         let result = tokio::select! {
-            joined = timeout(self.callback_timeout, &mut task) => match joined {
+            joined = timeout(self.callback_timeout, task.handle()) => match joined {
                 Ok(Ok(value)) => Ok(value),
                 Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
                 Ok(Err(_)) => Err(HookExecutionError::Cancelled),
@@ -619,8 +619,7 @@ impl CallbackGate {
             () = context.cancellation().cancelled() => Err(HookExecutionError::Cancelled),
         };
         if result.is_err() && !task.is_finished() {
-            task.abort();
-            let _ = task.await;
+            task.abort_and_wait().await;
         }
         drop(permit);
         result
@@ -641,16 +640,15 @@ impl CallbackGate {
         task: JoinHandle<T>,
         permit: OwnedSemaphorePermit,
     ) -> Result<T, HookExecutionError> {
-        let mut task = task;
-        let result = match timeout(self.terminal_timeout, &mut task).await {
+        let mut task = AbortOnDrop::new(task);
+        let result = match timeout(self.terminal_timeout, task.handle()).await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
             Ok(Err(_)) => Err(HookExecutionError::Cancelled),
             Err(_) => Err(HookExecutionError::TimedOut),
         };
         if result.is_err() && !task.is_finished() {
-            task.abort();
-            let _ = task.await;
+            task.abort_and_wait().await;
         }
         drop(permit);
         result
@@ -727,7 +725,7 @@ mod tests {
         future::pending,
         sync::{
             Arc, Mutex,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::{Duration, SystemTime},
     };
@@ -856,6 +854,49 @@ mod tests {
 
     struct FailFactory {
         panic: bool,
+    }
+
+    struct DropTrackingFactory {
+        entered: Arc<tokio::sync::Notify>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    struct DropTrackingInterceptor {
+        entered: Arc<tokio::sync::Notify>,
+        dropped: Arc<AtomicBool>,
+    }
+
+    struct DropMarker(Arc<AtomicBool>);
+
+    impl Drop for DropMarker {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    impl InterceptorFactory for DropTrackingFactory {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(DropTrackingInterceptor {
+                entered: Arc::clone(&self.entered),
+                dropped: Arc::clone(&self.dropped),
+            }))
+        }
+    }
+
+    impl ExchangeInterceptor for DropTrackingInterceptor {
+        fn on_request_head(
+            &self,
+            _event: RequestHeadEvent,
+        ) -> BoxHookFuture<'_, RequestHeadAction> {
+            Box::pin(async move {
+                let _marker = DropMarker(Arc::clone(&self.dropped));
+                self.entered.notify_one();
+                pending().await
+            })
+        }
     }
 
     impl InterceptorFactory for FailFactory {
@@ -1239,5 +1280,87 @@ mod tests {
             RequestHeadOutcome::Abort(HookAbort::Rejected)
         ));
         assert_eq!(*log.lock().unwrap(), ["request-head:A"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_exchange_stress_releases_permits_and_keeps_state_isolated() {
+        const EXCHANGES: usize = 256;
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let factory = InterceptorChainFactory::new(
+            vec![registration("isolated", Behavior::Continue, &log, &created)],
+            limits(Duration::from_secs(2), 8),
+        );
+        let mut tasks = Vec::with_capacity(EXCHANGES);
+        for index in 0..EXCHANGES {
+            let factory = factory.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut chain = factory
+                    .create_exchange(metadata(index as u128 + 1))
+                    .unwrap();
+                let RequestHeadOutcome::Continue { head: request, .. } =
+                    chain.request_head(request_head()).await.unwrap()
+                else {
+                    panic!("continue interceptor changed request outcome");
+                };
+                let ResponseHeadOutcome::Continue { head: response, .. } = chain
+                    .response_head(&request, response_head(), None, false)
+                    .await
+                    .unwrap()
+                else {
+                    panic!("continue interceptor changed response outcome");
+                };
+                assert!(
+                    chain
+                        .completed(completed(&chain, request, response))
+                        .await
+                        .is_clean()
+                );
+                chain.context().metadata().exchange_id
+            }));
+        }
+        let mut ids = std::collections::HashSet::new();
+        for task in tasks {
+            assert!(ids.insert(task.await.unwrap()));
+        }
+        assert_eq!(ids.len(), EXCHANGES);
+        assert_eq!(created.load(Ordering::SeqCst), EXCHANGES);
+        assert_eq!(
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.as_str() == "completed:isolated")
+                .count(),
+            EXCHANGES
+        );
+    }
+
+    #[tokio::test]
+    async fn dropping_boundary_future_aborts_the_spawned_hook_task() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let factory = InterceptorChainFactory::new(
+            vec![InterceptorRegistration::new(
+                "drop-tracking",
+                Arc::new(DropTrackingFactory {
+                    entered: Arc::clone(&entered),
+                    dropped: Arc::clone(&dropped),
+                }),
+                InterceptorRequirement::Required,
+            )],
+            limits(Duration::from_secs(30), 1),
+        );
+        let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let boundary = tokio::spawn(async move { chain.request_head(request_head()).await });
+        entered.notified().await;
+        boundary.abort();
+        let _ = boundary.await;
+        timeout(Duration::from_secs(1), async {
+            while !dropped.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("hook task retained exchange state after boundary future was dropped");
     }
 }

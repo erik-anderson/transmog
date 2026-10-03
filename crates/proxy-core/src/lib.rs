@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+
 //! Protocol-neutral data model, interception engine, and translation policy.
 //!
 //! Stable APIs in this crate deliberately do not expose Hyper or quiche types.
@@ -13,6 +15,7 @@ mod policy;
 mod protocol;
 pub mod route;
 mod session;
+mod task;
 mod translation;
 pub mod upstream;
 

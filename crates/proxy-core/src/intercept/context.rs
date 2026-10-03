@@ -63,6 +63,15 @@ pub struct ExchangeMetadata {
 impl ExchangeMetadata {
     /// Builds Hooks v2 metadata from the current runtime session model.
     pub fn from_session(session: &SessionMetadata, original_target: Target) -> Self {
+        Self::from_session_at(session, original_target, SystemTime::now())
+    }
+
+    /// Builds metadata with an explicit wall-clock time for deterministic runtimes.
+    pub fn from_session_at(
+        session: &SessionMetadata,
+        original_target: Target,
+        started_at: SystemTime,
+    ) -> Self {
         Self {
             exchange_id: session.session_id.into(),
             downstream_connection_id: session.downstream_connection_id,
@@ -71,7 +80,7 @@ impl ExchangeMetadata {
             listener_addr: session.proxy_addr,
             ingress_version: session.ingress_version,
             original_target: OriginalTarget::new(original_target),
-            started_at: SystemTime::now(),
+            started_at,
         }
     }
 }

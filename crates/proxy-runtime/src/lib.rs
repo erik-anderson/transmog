@@ -6,10 +6,14 @@ use rustymiddle_core::intercept::HookLimits;
 
 use thiserror::Error;
 
+mod provider;
 mod proxy;
 
+pub use provider::{
+    AtomicRuntimeIdGenerator, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind, SystemRuntimeClock,
+};
 pub use proxy::{
-    ExchangeEvidence, ProxyConfig, ProxyControl, ProxyRuntimeError, ProxyServer,
+    ExchangeEvidence, ProxyComponents, ProxyConfig, ProxyControl, ProxyRuntimeError, ProxyServer,
     RouteAttemptEvidence,
 };
 
@@ -47,6 +51,10 @@ pub struct RuntimeLimits {
     pub tls_handshake_timeout: std::time::Duration,
     /// Maximum time to drain accepted connection tasks after shutdown begins.
     pub shutdown_timeout: std::time::Duration,
+    /// Maximum duration of one route-selector call.
+    pub route_selection_timeout: std::time::Duration,
+    /// Maximum duration allowed for an application-owned upstream attempt.
+    pub application_upstream_timeout: std::time::Duration,
     /// Maximum generated leaf certificates retained in memory.
     pub leaf_cache_capacity: usize,
     /// Generated leaf validity in days.
@@ -69,6 +77,8 @@ impl Default for RuntimeLimits {
             body_idle_timeout: std::time::Duration::from_secs(30),
             tls_handshake_timeout: std::time::Duration::from_secs(10),
             shutdown_timeout: std::time::Duration::from_secs(10),
+            route_selection_timeout: std::time::Duration::from_secs(5),
+            application_upstream_timeout: std::time::Duration::from_secs(30),
             leaf_cache_capacity: 1_024,
             leaf_validity_days: 2,
             hooks: HookLimits::default(),

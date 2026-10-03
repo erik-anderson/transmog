@@ -5,8 +5,8 @@ is therefore insufficient even for `cargo check --workspace`.
 
 ## Windows
 
-The supported profile is named **Windows Clang (MSVC ABI)**. It uses LLVM for
-all native compilation and Rust's official Windows MSVC ABI target:
+The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all
+native compilation and Rust's official Windows ABI target:
 
 - Rust 1.97.1, target `x86_64-pc-windows-msvc`;
 - LLVM/Clang 22.1.4 or newer (`clang-cl` and `llvm-lib`; `lld-link` is retained
@@ -18,7 +18,7 @@ all native compilation and Rust's official Windows MSVC ABI target:
   - **MSVC x64/x86 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.x86.x64`);
   - **Windows 11 SDK 10.0.26100** (`Microsoft.VisualStudio.Component.Windows11SDK.26100`).
 
-The `msvc` suffix names the ABI and system-library ecosystem; it does not select
+The technical `msvc` suffix names the ABI and system-library ecosystem; it does not select
 the C/C++ compiler. The Visual Studio components are a build dependency even
 though `cl.exe` is not
 the selected compiler. They provide the current Windows SDK, Universal CRT,

@@ -8,6 +8,7 @@ use tokio::time::timeout;
 use crate::{
     Replayability, RequestHead, RoutePolicy, Target,
     intercept::{ExchangeCancellation, ExchangeMetadata, OriginalTarget},
+    task::AbortOnDrop,
 };
 
 /// Boxed asynchronous route-selection result.
@@ -68,6 +69,7 @@ pub struct UpstreamPoolKey {
 
 /// Auditable, immutable plan for one upstream exchange.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[must_use = "an upstream plan must be executed or explicitly rejected"]
 pub struct UpstreamPlan {
     /// Pool segregation and connection settings.
     pub pool_key: UpstreamPoolKey,
@@ -258,9 +260,9 @@ impl RouteSelectionService {
         cancellation: &ExchangeCancellation,
     ) -> Result<UpstreamPlan, RouteError> {
         let selector = Arc::clone(&self.selector);
-        let mut task = tokio::spawn(async move { selector.select(input).await });
+        let mut task = AbortOnDrop::new(tokio::spawn(async move { selector.select(input).await }));
         let result = tokio::select! {
-            joined = timeout(self.timeout, &mut task) => match joined {
+            joined = timeout(self.timeout, task.handle()) => match joined {
                 Ok(Ok(result)) => result,
                 Ok(Err(error)) if error.is_panic() => Err(RouteError::Panicked),
                 Ok(Err(_)) => Err(RouteError::Cancelled),
@@ -269,8 +271,7 @@ impl RouteSelectionService {
             () = cancellation.cancelled() => Err(RouteError::Cancelled),
         };
         if result.is_err() && !task.is_finished() {
-            task.abort();
-            let _ = task.await;
+            task.abort_and_wait().await;
         }
         result
     }

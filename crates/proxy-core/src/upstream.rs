@@ -7,6 +7,7 @@ use tokio::time::timeout;
 
 use crate::{
     StreamingRequest, StreamingResponse, intercept::ExchangeCancellation, route::UpstreamPlan,
+    task::AbortOnDrop,
 };
 
 /// Boxed asynchronous upstream execution result.
@@ -106,10 +107,11 @@ impl UpstreamExecutor {
     ) -> Result<StreamingResponse, UpstreamError> {
         let service = Arc::clone(&self.service);
         let owned_cancellation = cancellation.clone();
-        let mut task =
-            tokio::spawn(async move { service.execute(request, plan, owned_cancellation).await });
+        let mut task = AbortOnDrop::new(tokio::spawn(async move {
+            service.execute(request, plan, owned_cancellation).await
+        }));
         let result = tokio::select! {
-            joined = timeout(self.timeout, &mut task) => match joined {
+            joined = timeout(self.timeout, task.handle()) => match joined {
                 Ok(Ok(result)) => result,
                 Ok(Err(error)) if error.is_panic() => Err(boundary_error(UpstreamErrorKind::Panicked, "upstream service panicked")),
                 Ok(Err(_)) => Err(boundary_error(UpstreamErrorKind::Cancelled, "upstream task was cancelled")),
@@ -118,8 +120,7 @@ impl UpstreamExecutor {
             () = cancellation.cancelled() => Err(boundary_error(UpstreamErrorKind::Cancelled, "exchange was cancelled")),
         };
         if result.is_err() && !task.is_finished() {
-            task.abort();
-            let _ = task.await;
+            task.abort_and_wait().await;
         }
         result
     }

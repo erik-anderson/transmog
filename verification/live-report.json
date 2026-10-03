@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T09:45:15.201Z",
+  "generatedAt": "2026-10-03T17:59:33.101Z",
   "os": "win32-x64",
   "cargoLockSha256": "bb286db7a965f42dec48526657d624431acebfd4103435e6febd9852560d7c05",
   "caSha256": "19C210684556612DFF247CEED7151F9A7D4E61345B53A8CCE0F4602ADACD6494",
@@ -19,10 +19,10 @@
     {
       "name": "Wikipedia forced H1",
       "url": "https://www.wikipedia.org/",
-      "proxyAddress": "127.0.0.1:65175",
+      "proxyAddress": "127.0.0.1:58709",
       "browserVersion": "153.0.8010.12",
-      "completedAt": "2026-10-03T09:45:06.919Z",
-      "proofId": "6cb0a9f1-53a3-4b68-bd91-e9ff8111bc06",
+      "completedAt": "2026-10-03T17:59:26.299Z",
+      "proofId": "b4c106c8-1672-4da0-b39b-e25c20125953",
       "evidence": {
         "session_id": "1",
         "connection_id": "1",
@@ -51,10 +51,10 @@
     {
       "name": "Wikipedia forced H2",
       "url": "https://www.wikipedia.org/",
-      "proxyAddress": "127.0.0.1:60946",
+      "proxyAddress": "127.0.0.1:50541",
       "browserVersion": "153.0.8010.12",
-      "completedAt": "2026-10-03T09:45:07.901Z",
-      "proofId": "73069716-4e38-4ebe-843e-9e75328b2e94",
+      "completedAt": "2026-10-03T17:59:27.166Z",
+      "proofId": "e9e9f89e-8abb-4dd0-b8d8-c33c85c677df",
       "evidence": {
         "session_id": "1",
         "connection_id": "1",
@@ -83,10 +83,10 @@
     {
       "name": "Cloudflare forced H3",
       "url": "https://cloudflare-quic.com/",
-      "proxyAddress": "127.0.0.1:57429",
+      "proxyAddress": "127.0.0.1:59607",
       "browserVersion": "153.0.8010.12",
-      "completedAt": "2026-10-03T09:45:10.621Z",
-      "proofId": "096faec1-7f2c-4089-b257-1090e0c98dae",
+      "completedAt": "2026-10-03T17:59:29.525Z",
+      "proofId": "05d4a311-12ba-4dd1-a9d7-d70d8c35b42c",
       "evidence": {
         "session_id": "1",
         "connection_id": "1",
@@ -106,7 +106,7 @@
         "response_event_id": "1:response",
         "trust_generation": "1",
         "h3_alpn": "h3",
-        "h3_peer": "104.18.26.14:443",
+        "h3_peer": "104.18.27.14:443",
         "peer_chain_sha256": "45aec9948a4738e9326c875de812f7669c9f91c7de8a82a2000cf376dc2314d3,1dfc1605fbad358d8bc844f76d15203fac9ca5c1a79fd4857ffaf2864fbebf96,76b27b80a58027dc3cf1da68dac17010ed93997d0b603e2fadbe85012493b5a7",
         "route_attempts": "Http3:success",
         "fallback_count": "0"
@@ -114,11 +114,11 @@
     },
     {
       "name": "Cloudflare Auto Alt-Svc upgrade",
-      "url": "https://cloudflare-quic.com/?rustymiddle-upgrade=8b5b68be-cdf2-4ab8-a9b4-624f36d06dc8",
-      "proxyAddress": "127.0.0.1:59566",
+      "url": "https://cloudflare-quic.com/?rustymiddle-upgrade=d735a08a-9d4b-4fca-82c3-f89951fca874",
+      "proxyAddress": "127.0.0.1:65160",
       "browserVersion": "153.0.8010.12",
-      "completedAt": "2026-10-03T09:45:13.849Z",
-      "proofId": "7a01716a-9b64-420b-8129-27a465ca5773",
+      "completedAt": "2026-10-03T17:59:31.666Z",
+      "proofId": "e0712ae2-23b6-4720-beab-4ff4d4d2584d",
       "warmupEvidence": {
         "session_id": "1",
         "connection_id": "1",
@@ -143,7 +143,7 @@
         "route_attempts": "Http2:success",
         "fallback_count": "0"
       },
-      "warmupUrl": "https://cloudflare-quic.com/?rustymiddle-warmup=efd5171f-e3c2-4be2-b129-24296870366a",
+      "warmupUrl": "https://cloudflare-quic.com/?rustymiddle-warmup=fd54b322-c521-46a7-aae7-32060ac480de",
       "upgradeEvidence": {
         "session_id": "11",
         "connection_id": "1",
@@ -163,7 +163,7 @@
         "response_event_id": "11:response",
         "trust_generation": "1",
         "h3_alpn": "h3",
-        "h3_peer": "104.18.26.14:443",
+        "h3_peer": "104.18.27.14:443",
         "peer_chain_sha256": "45aec9948a4738e9326c875de812f7669c9f91c7de8a82a2000cf376dc2314d3,1dfc1605fbad358d8bc844f76d15203fac9ca5c1a79fd4857ffaf2864fbebf96,76b27b80a58027dc3cf1da68dac17010ed93997d0b603e2fadbe85012493b5a7",
         "route_attempts": "Http3:success",
         "fallback_count": "0"
@@ -173,9 +173,9 @@
     {
       "name": "Stopped proxy blocks DIRECT fallback",
       "url": "https://www.wikipedia.org/",
-      "proxyAddress": "127.0.0.1:54525",
+      "proxyAddress": "127.0.0.1:56578",
       "browserVersion": "153.0.8010.12",
-      "completedAt": "2026-10-03T09:45:14.591Z",
+      "completedAt": "2026-10-03T17:59:32.520Z",
       "directFallbackBlocked": true
     }
   ]

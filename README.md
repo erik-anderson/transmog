@@ -6,8 +6,10 @@ through an HTTP proxy (including intercepted `CONNECT`); HTTP/3 is an origin
 egress protocol, not browser-to-proxy QUIC.
 
 The project is under active implementation. See [architecture](docs/architecture.md),
-[certificate model](docs/certificate-model.md), [testing](docs/testing.md), and
-[build prerequisites](docs/building.md), and [limitations](docs/limitations.md).
+[Hooks lifecycle](docs/hooks-lifecycle.md), [embedding](docs/embedding.md),
+[certificate model](docs/certificate-model.md), [testing](docs/testing.md),
+[performance](docs/performance.md), [build prerequisites](docs/building.md), and
+[limitations](docs/limitations.md).
 
 ## Local verification
 
@@ -20,10 +22,12 @@ pwsh ./scripts/test.ps1
 clippy, the locked workspace tests, `cargo deny`, the single-TLS graph check,
 and supply-chain artifact generation.
 
-The primary build profile is **Windows Clang (MSVC ABI)**: LLVM/Clang and Ninja
-compile native code while Rust uses its canonical `x86_64-pc-windows-msvc` ABI
-target and the Windows SDK linker. BoringSSL additionally requires CMake and
-NASM. Run `pwsh ./scripts/dev-env.ps1 -Check` to validate the toolchain.
+The primary build profile is **Windows LLVM/Ninja**: Clang compiles native code,
+`llvm-lib` archives it, Ninja executes native builds, and the Windows SDK
+provides the final linker and platform libraries. Rust's technical target triple
+still ends in `-msvc` because that names the Windows ABI, not the selected C/C++
+compiler. BoringSSL additionally requires CMake and NASM. Run
+`pwsh ./scripts/dev-env.ps1 -Check` to validate the complete toolchain.
 
 Release preparation generates the locked third-party notice inventory and a
 CycloneDX 1.5 SBOM:

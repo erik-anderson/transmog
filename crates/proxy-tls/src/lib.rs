@@ -2,6 +2,7 @@
 
 mod ca;
 mod downstream;
+mod resolver;
 mod trust;
 
 pub use ca::{
@@ -9,6 +10,9 @@ pub use ca::{
     normalize_connect_identity,
 };
 pub use downstream::{DownstreamTlsContextFactory, DownstreamTlsError, DownstreamTlsPolicy};
+pub use resolver::{
+    CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
+};
 pub use trust::{
     LoadedTrust, SystemTrustSource, TrustError, TrustSnapshot, TrustSource,
     UpstreamTlsContextFactory, UpstreamTlsPolicy,
