@@ -8,9 +8,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-compression.workspace = true
+bytes.workspace = true
 rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
 thiserror.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
-

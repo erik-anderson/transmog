@@ -34,6 +34,12 @@ The content-processing Phase 1 suite strictly parses ordered and duplicate
 `Content-Encoding` fields, proves reverse decode order, rejects ambiguous or
 unsupported stacks, repairs representation headers/trailers, and exercises
 absolute, expansion-ratio, exact-boundary, and arithmetic-overflow accounting.
+The Phase 2 codec suite decodes independent gzip and Brotli vectors, round-trips
+empty and fragmented representations, proves encoder output is independent of
+input frame boundaries, keeps trailers terminal, rejects malformed, truncated,
+checksum-invalid, and trailing-junk inputs, validates every concatenated gzip
+member, and exercises encoded, decoded, expansion-ratio, and output limits for
+both enabled codecs.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

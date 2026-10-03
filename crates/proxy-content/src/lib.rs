@@ -7,9 +7,11 @@
 #![deny(missing_docs)]
 
 mod budget;
+mod codec;
 mod coding;
 mod plan;
 
 pub use budget::{ContentBudget, ContentLimitError, ContentLimits};
+pub use codec::{ContentCodecError, ContentDecoder, ContentEncoder};
 pub use coding::{ContentCoding, ContentCodingError, ContentCodingStack};
 pub use plan::{ContentLength, ContentOutput, ContentPlan};

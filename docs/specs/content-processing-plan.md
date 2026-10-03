@@ -1,8 +1,8 @@
 # Plan: Production-grade content processing
 
-Status: active; Phase 1 complete, Phase 2 next  
-Audience: implementation agents and reviewers  
-Depends on: Hooks v2 and the layered monorepo roadmap  
+Status: active; Phase 1 plus Phase 2 gzip and Brotli engines complete; deflate next
+Audience: implementation agents and reviewers
+Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
 composition
 
@@ -297,9 +297,9 @@ are regenerated in the same change that accepts a dependency.
 ## Definition of done
 
 - [x] Phase 1 typed plans, budgets, and header repair pass.
-- [ ] gzip decode and encode pass corruption and round-trip tests.
+- [x] gzip decode and encode pass corruption and round-trip tests.
 - [ ] deflate decode and encode pass strict and compatibility-policy tests.
-- [ ] Brotli decode and encode pass bounded streaming tests.
+- [x] Brotli decode and encode pass bounded streaming tests.
 - [ ] zstd decode and encode pass bounded streaming tests.
 - [ ] Multiple codings compose in correct reverse-decode/forward-encode order.
 - [ ] Unsupported or malformed coding never reaches decoded hooks as identity.

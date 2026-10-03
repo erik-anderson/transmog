@@ -48,8 +48,9 @@ signatures. Pass-through streams before producer completion; complete-body
 editing is available only through an explicit nonzero limit.
 
 `rustymiddle-content` is the next layer above canonical body framing. It owns
-content-coding plans, representation header repair, and decompression budgets;
-codec engines will compose around the Hooks v2 body pipeline without moving
+content-coding plans, representation header repair, decompression budgets, and
+bounded streaming gzip/Brotli codec engines. These engines will compose around
+the Hooks v2 body pipeline without moving
 compression policy into Hyper, quiche, or core lifecycle types.
 
 The immutable `OriginalTarget` records client intent. Head edits are logical

@@ -1,6 +1,6 @@
 # Plan: Layered monorepo roadmap
 
-Status: active; Hooks v2 complete locally and content processing is next  
+Status: active; Hooks v2 and content Phase 1 complete; codec engines in progress
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -228,4 +228,3 @@ separately triggers stabilization.
 4. Re-run the deterministic protocol matrix and live Chromium gate.
 5. Design experimental control v0 using actual content/capture needs rather
    than stabilizing speculative messages.
-

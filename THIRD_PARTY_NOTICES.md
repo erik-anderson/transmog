@@ -5,27 +5,37 @@ Distributions must retain the license texts shipped by their dependencies and bu
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | https://github.com/oyvindln/adler2 |
 | aho-corasick | 1.1.5 | Unlicense OR MIT | https://github.com/BurntSushi/aho-corasick |
+| alloc-no-stdlib | 3.0.0 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib |
+| alloc-stdlib | 0.3.0 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib |
 | antidote | 1.1.0 | MIT/Apache-2.0 | https://github.com/sfackler/rust-antidote |
+| async-compression | 0.4.50 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/atomic-waker |
 | bindgen | 0.72.1 | BSD-3-Clause | https://github.com/rust-lang/rust-bindgen |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | https://github.com/bitflags/bitflags |
 | boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring |
 | boring-sys | 5.2.0 | MIT | https://github.com/cloudflare/boring |
+| brotli | 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
+| brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
 | bytes | 1.12.1 | MIT | https://github.com/tokio-rs/bytes |
 | cc | 1.6.0 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
 | cexpr | 0.6.0 | Apache-2.0/MIT | https://github.com/jethrogb/rust-cexpr |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if |
 | clang-sys | 1.9.1 | Apache-2.0 | https://github.com/KyleMayes/clang-sys |
 | cmake | 0.1.58 | MIT OR Apache-2.0 | https://github.com/rust-lang/cmake-rs |
+| compression-codecs | 0.4.45 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
+| compression-core | 0.4.33 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
+| crc32fast | 1.5.2 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
 | debug_panic | 0.2.1 | MIT | https://github.com/kellytk/debug_panic |
 | either | 1.18.0 | MIT OR Apache-2.0 | https://github.com/rayon-rs/either |
 | enum_dispatch | 0.3.13 | MIT OR Apache-2.0 | https://gitlab.com/antonok/enum_dispatch |
 | equivalent | 1.0.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/equivalent |
 | errno | 0.3.14 | MIT OR Apache-2.0 | https://github.com/lambda-fairy/rust-errno |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 | https://github.com/rust-lang/flate2-rs |
 | fnv | 1.0.7 | Apache-2.0 / MIT | https://github.com/servo/rust-fnv |
 | foreign-types | 0.5.0 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types |
@@ -62,6 +72,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | matchers | 0.2.0 | MIT | https://github.com/hawkw/matchers |
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
 | nom | 7.1.3 | MIT | https://github.com/Geal/nom |
 | nu-ansi-term | 0.50.3 | MIT | https://github.com/nushell/nu-ansi-term |
@@ -90,6 +101,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | shlex | 1.3.0 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | https://github.com/vorner/signal-hook |
+| simd-adler32 | 0.3.10 | MIT | https://github.com/mcountryman/simd-adler32 |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/socket2 |
@@ -131,6 +143,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| zlib-rs | 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 
 ## Bundled native code

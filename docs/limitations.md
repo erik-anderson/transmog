@@ -7,17 +7,18 @@
 - BoringSSL verification over OS-enumerated roots does not reproduce every OS or
   Chrome Root Store constraint, revocation mechanism, CT rule, or metadata feed.
 - 0-RTT and QUIC migration are disabled.
-- The content-processing layer currently provides strict coding plans, header
-  repair, and resource budgets. Codec engines and runtime composition are still
-  under implementation, so compressed body rewriting remains unavailable.
+- The content-processing layer provides strict coding plans, header repair,
+  resource budgets, and transport-neutral gzip/Brotli engines. Deflate, zstd,
+  multi-layer composition, and runtime integration remain under implementation,
+  so the proxy executable does not yet rewrite compressed bodies.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over HTTP/2.
   Forced-protocol routes and Auto without a cached HTTP/3 alternative stream.
 - A body-phase hook cannot replace an exchange with a synthetic response
   after the upstream response head has been committed. Synthetic responses are
   supported at the request- and response-head phases.
-- Hooks still operate on raw transfer-decoded body bytes until the planned
-  gzip, Brotli, deflate, and zstd codec pipelines are integrated.
+- Runtime hooks still operate on raw transfer-decoded body bytes until the
+  content-aware pipeline is integrated around them.
 - WebSocket handshake heads can pass through HTTP handling, but WebSocket frame
   inspection and modification are not implemented.
 - The included `DecisionBridge` is an in-process bounded adapter. There is no
