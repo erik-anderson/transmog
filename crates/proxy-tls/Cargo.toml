@@ -1,0 +1,17 @@
+[package]
+name = "rustymiddle-tls"
+description = "Shared BoringSSL trust, verification, and proxy certificate issuance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+boring.workspace = true
+rustls-native-certs.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,157 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            native: windows
+          - os: ubuntu-latest
+            native: unix
+          - os: macos-14
+            native: unix
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install NASM
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+      - name: Configure Ninja
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
+      - name: Configure Windows Clang
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_ENV 'CC=clang-cl'
+          Add-Content $env:GITHUB_ENV 'CXX=clang-cl'
+          Add-Content $env:GITHUB_ENV 'AR=llvm-lib'
+      - name: Configure Unix Clang
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+          echo "AR=llvm-ar" >> "$GITHUB_ENV"
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: cargo test --workspace --all-features --locked
+      - name: Test (Windows Clang/Ninja/SDK)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          . ./scripts/dev-env.ps1
+          cargo test --workspace --all-features --locked
+      - name: Release build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          . ./scripts/dev-env.ps1
+          cargo build --workspace --all-features --release --locked
+      - name: Crypto graph
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/check-crypto-graph.ps1
+
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+      - name: Generate notices and CycloneDX SBOM
+        shell: pwsh
+        run: ./scripts/generate-supply-chain-artifacts.ps1
+      - name: Upload supply-chain artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-artifacts
+          path: |
+            THIRD_PARTY_NOTICES.md
+            artifacts/sbom.cdx.json
+
+  browser-live:
+    runs-on: windows-latest
+    env:
+      RUSTYMIDDLE_LIVE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - uses: ilammy/setup-nasm@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/playwright/package-lock.json
+      - name: Configure Clang and Ninja
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_ENV 'CC=clang-cl'
+          Add-Content $env:GITHUB_ENV 'CXX=clang-cl'
+          Add-Content $env:GITHUB_ENV 'AR=llvm-lib'
+          Add-Content $env:GITHUB_ENV 'CMAKE_GENERATOR=Ninja'
+      - name: Build release proxy
+        shell: pwsh
+        run: |
+          . ./scripts/dev-env.ps1
+          cargo build --release --workspace --all-features --locked
+      - name: Install Playwright
+        working-directory: e2e/playwright
+        run: |
+          npm ci
+          npx playwright install chromium
+      - name: Install job-scoped test CA
+        shell: pwsh
+        run: ./scripts/setup-live-test-ca.ps1 -BinaryPath ./target/release/rustymiddle.exe
+      - name: Run live browser matrix
+        working-directory: e2e/playwright
+        env:
+          RUSTYMIDDLE_BIN: ${{ github.workspace }}\target\release\rustymiddle.exe
+        run: npm test
+      - name: Remove job-scoped test CA
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path ./.local/live-test-ca.pem) {
+            ./scripts/remove-live-test-ca.ps1
+          }
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-browser-verification
+          if-no-files-found: warn
+          path: |
+            verification/live-report.json
+            verification/live-report.md
+            e2e/playwright/test-results
+            e2e/playwright/playwright-report

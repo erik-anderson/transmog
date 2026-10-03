@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/proxy-core",
+    "crates/proxy-tls",
+    "crates/proxy-http",
+    "crates/proxy-h3",
+    "crates/proxy-runtime",
+    "crates/proxy-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/erik-anderson/rustymiddle"
+
+[workspace.dependencies]
+boring = "=5.2.0"
+bytes = { version = "1.11.1", features = ["serde"] }
+http = "1.3.1"
+http-body = "1.0.1"
+http-body-util = "0.1.3"
+hyper = { version = "1.11.1", features = ["client", "http1", "http2", "server"] }
+hyper-boring = "=5.2.0"
+hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
+quiche = { version = "=0.30.0", default-features = false, features = ["boringssl-boring-crate"] }
+rustls-native-certs = "0.8.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-boring = "=5.2.0"
+tower-service = "0.3.3"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

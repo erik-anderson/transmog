@@ -1,0 +1,20 @@
+[package]
+name = "rustymiddle"
+description = "Runnable rustymiddle explicit proxy and CA operator tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytes.workspace = true
+rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
+rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

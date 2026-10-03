@@ -1,0 +1,13 @@
+/target/
+/artifacts/
+/.tools/
+/.local/
+/.idea/
+/.vscode/
+*.pdb
+*.key
+*.pem
+e2e/playwright/node_modules/
+e2e/playwright/test-results/
+e2e/playwright/playwright-report/
+verification/private/
