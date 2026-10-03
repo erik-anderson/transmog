@@ -1,6 +1,7 @@
 # Plan: Layered monorepo roadmap
 
-Status: active; Hooks v2 and content Phase 1 complete; codec engines in progress
+Status: active; Hooks v2 and content codec engines complete on Windows;
+content pipeline composition is next
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve

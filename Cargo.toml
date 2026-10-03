@@ -18,7 +18,7 @@ license = "MIT"
 repository = "https://github.com/erik-anderson/rustymiddle"
 
 [workspace.dependencies]
-async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "gzip", "tokio"] }
+async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 boring = "=5.2.0"
 bytes = { version = "1.11.1", features = ["serde"] }
 http = "1.3.1"

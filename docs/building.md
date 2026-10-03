@@ -1,7 +1,8 @@
 # Build prerequisites
 
-rustymiddle compiles BoringSSL and quiche from source. A Rust-only installation
-is therefore insufficient even for `cargo check --workspace`.
+rustymiddle compiles BoringSSL, quiche, and the bundled zstd C sources from
+source. A Rust-only installation is therefore insufficient even for
+`cargo check --workspace`.
 
 ## Windows
 
@@ -50,7 +51,9 @@ pwsh ./scripts/test.ps1
 `dev-env.ps1` prepends repository-local tools when present, selects `clang-cl`,
 `llvm-lib`, and Ninja, and discovers the Windows SDK linker and libraries from
 either a normal Visual Studio C++ toolchain or the SDK-scoped fallback used by
-managed development hosts.
+managed development hosts. Cargo build scripts compile bundled zstd sources
+directly with `clang-cl`; CMake-based native dependencies use the Ninja
+generator. No separate zstd SDK or binary installation is required.
 
 ### Windows troubleshooting
 

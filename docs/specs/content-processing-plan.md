@@ -1,6 +1,7 @@
 # Plan: Production-grade content processing
 
-Status: active; Phase 1 plus Phase 2 gzip and Brotli engines complete; deflate next
+Status: active; Phase 1 and all Phase 2 codec engines complete on Windows;
+cross-platform codec validation and Phase 3 composition remain
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -147,6 +148,7 @@ Every plan has finite limits for:
 - encoded input bytes;
 - decoded bytes;
 - output bytes;
+- decoder history-window bytes;
 - coding-stack depth;
 - expansion ratio with a finite small-input allowance;
 - frames and bytes emitted per body-filter call;
@@ -298,9 +300,9 @@ are regenerated in the same change that accepts a dependency.
 
 - [x] Phase 1 typed plans, budgets, and header repair pass.
 - [x] gzip decode and encode pass corruption and round-trip tests.
-- [ ] deflate decode and encode pass strict and compatibility-policy tests.
+- [x] deflate decode and encode pass strict and compatibility-policy tests.
 - [x] Brotli decode and encode pass bounded streaming tests.
-- [ ] zstd decode and encode pass bounded streaming tests.
+- [x] zstd decode and encode pass bounded streaming tests.
 - [ ] Multiple codings compose in correct reverse-decode/forward-encode order.
 - [ ] Unsupported or malformed coding never reaches decoded hooks as identity.
 - [ ] Untouched encoded traffic remains byte-preserving.

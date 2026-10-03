@@ -7,15 +7,66 @@ use std::{
 };
 
 use async_compression::tokio::{
-    bufread::{BrotliDecoder as AsyncBrotliDecoder, GzipDecoder as AsyncGzipDecoder},
-    write::{BrotliEncoder as AsyncBrotliEncoder, GzipEncoder as AsyncGzipEncoder},
+    bufread::{
+        BrotliDecoder as AsyncBrotliDecoder, DeflateDecoder as AsyncDeflateDecoder,
+        GzipDecoder as AsyncGzipDecoder, ZlibDecoder as AsyncZlibDecoder,
+        ZstdDecoder as AsyncZstdDecoder,
+    },
+    write::{
+        BrotliEncoder as AsyncBrotliEncoder, GzipEncoder as AsyncGzipEncoder,
+        ZlibEncoder as AsyncZlibEncoder, ZstdEncoder as AsyncZstdEncoder,
+    },
 };
+use async_compression::zstd::DParameter;
 use bytes::Bytes;
 use rustymiddle_core::{BodyFrame, HeaderBlock};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 use crate::{ContentBudget, ContentCoding, ContentLimitError, ContentLimits};
+
+const MINIMUM_ZSTD_WINDOW_BYTES: usize = 1 << 10;
+
+/// Compatibility policy for the historically ambiguous HTTP `deflate` coding.
+///
+/// RFC 9110 defines `deflate` as a zlib-wrapped stream. Some legacy senders
+/// incorrectly emit a raw DEFLATE stream instead.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum DeflateCompatibility {
+    /// Accept only the standards-conformant zlib wrapper.
+    #[default]
+    StrictZlib,
+    /// Accept zlib, or select raw DEFLATE when the first two bytes cannot be a
+    /// valid zlib header.
+    AllowRaw,
+}
+
+/// Optional decoder interoperability policy.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ContentDecoderOptions {
+    deflate_compatibility: DeflateCompatibility,
+}
+
+impl ContentDecoderOptions {
+    /// Creates strict decoder options.
+    pub const fn new() -> Self {
+        Self {
+            deflate_compatibility: DeflateCompatibility::StrictZlib,
+        }
+    }
+
+    /// Selects the HTTP `deflate` compatibility policy.
+    #[must_use]
+    pub const fn with_deflate_compatibility(mut self, compatibility: DeflateCompatibility) -> Self {
+        self.deflate_compatibility = compatibility;
+        self
+    }
+
+    /// Returns the configured HTTP `deflate` compatibility policy.
+    pub const fn deflate_compatibility(self) -> DeflateCompatibility {
+        self.deflate_compatibility
+    }
+}
 
 /// A bounded incremental decoder for one HTTP content-coding layer.
 ///
@@ -29,19 +80,34 @@ pub struct ContentDecoder {
     engine: DecoderEngine,
     budget: ContentBudget,
     pending: Vec<u8>,
+    deflate_probe: Option<Vec<u8>>,
     stream_complete: bool,
     trailers: Option<HeaderBlock>,
     terminal: bool,
 }
 
 impl ContentDecoder {
-    /// Creates a decoder for an enabled coding.
+    /// Creates a decoder for a supported coding.
     ///
     /// # Errors
     ///
-    /// Returns [`ContentCodecError::UnsupportedCoding`] for a recognized
-    /// coding whose engine has not yet been enabled.
+    /// Returns a typed error when the codec cannot honor the configured
+    /// resource limits.
     pub fn new(coding: ContentCoding, limits: ContentLimits) -> Result<Self, ContentCodecError> {
+        Self::with_options(coding, limits, ContentDecoderOptions::default())
+    }
+
+    /// Creates a decoder with explicit interoperability options.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the codec cannot honor the configured
+    /// resource limits or interoperability policy.
+    pub fn with_options(
+        coding: ContentCoding,
+        limits: ContentLimits,
+        options: ContentDecoderOptions,
+    ) -> Result<Self, ContentCodecError> {
         let engine = match coding {
             ContentCoding::Gzip => {
                 let mut decoder = AsyncGzipDecoder::new(ChunkReader::new());
@@ -51,15 +117,35 @@ impl ContentDecoder {
             ContentCoding::Brotli => {
                 DecoderEngine::Brotli(AsyncBrotliDecoder::new(ChunkReader::new()))
             }
-            ContentCoding::Deflate | ContentCoding::Zstd => {
-                return Err(ContentCodecError::UnsupportedCoding { coding });
+            ContentCoding::Deflate => {
+                DecoderEngine::Zlib(AsyncZlibDecoder::new(ChunkReader::new()))
+            }
+            ContentCoding::Zstd => {
+                let configured = limits.max_decoder_window_bytes().get();
+                if configured < MINIMUM_ZSTD_WINDOW_BYTES {
+                    return Err(ContentCodecError::DecoderWindowTooSmall {
+                        coding,
+                        minimum: MINIMUM_ZSTD_WINDOW_BYTES,
+                        configured,
+                    });
+                }
+                let mut decoder = AsyncZstdDecoder::with_params(
+                    ChunkReader::new(),
+                    &[DParameter::window_log_max(configured.ilog2())],
+                );
+                decoder.multiple_members(true);
+                DecoderEngine::Zstd(decoder)
             }
         };
+        let deflate_probe = (coding == ContentCoding::Deflate
+            && options.deflate_compatibility() == DeflateCompatibility::AllowRaw)
+            .then(Vec::new);
         Ok(Self {
             coding,
             engine,
             budget: ContentBudget::new(limits),
             pending: Vec::new(),
+            deflate_probe,
             stream_complete: false,
             trailers: None,
             terminal: false,
@@ -107,6 +193,9 @@ impl ContentDecoder {
         self.ensure_active()?;
         self.terminal = true;
         if !self.stream_complete {
+            if let Some(probe) = self.deflate_probe.take() {
+                self.engine.push(Bytes::from(probe));
+            }
             self.engine.finish_input();
             if !self.pump()? {
                 return Err(ContentCodecError::Codec {
@@ -137,7 +226,9 @@ impl ContentDecoder {
             });
         }
         self.budget.record_encoded(bytes.len())?;
-        self.engine.push(bytes.clone());
+        if !self.queue_encoded(bytes) {
+            return Ok(Vec::new());
+        }
         if self.pump()? {
             self.stream_complete = true;
             if self.engine.has_buffered_input() {
@@ -147,6 +238,29 @@ impl ContentDecoder {
             }
         }
         Ok(self.drain_data())
+    }
+
+    fn queue_encoded(&mut self, bytes: &Bytes) -> bool {
+        let Some(mut probe) = self.deflate_probe.take() else {
+            self.engine.push(bytes.clone());
+            return true;
+        };
+        if probe.len().saturating_add(bytes.len()) < 2 {
+            probe.extend_from_slice(bytes);
+            self.deflate_probe = Some(probe);
+            return false;
+        }
+
+        let first = probe.first().copied().unwrap_or(bytes[0]);
+        let second = if probe.is_empty() { bytes[1] } else { bytes[0] };
+        if !is_zlib_header(first, second) {
+            self.engine.select_raw_deflate();
+        }
+        if !probe.is_empty() {
+            self.engine.push(Bytes::from(probe));
+        }
+        self.engine.push(bytes.clone());
+        true
     }
 
     fn pump(&mut self) -> Result<bool, ContentCodecError> {
@@ -211,12 +325,12 @@ pub struct ContentEncoder {
 }
 
 impl ContentEncoder {
-    /// Creates an encoder for an enabled coding.
+    /// Creates an encoder for a supported coding.
     ///
     /// # Errors
     ///
-    /// Returns [`ContentCodecError::UnsupportedCoding`] for a recognized
-    /// coding whose engine has not yet been enabled.
+    /// Returns a typed error when codec initialization cannot honor the
+    /// configured policy.
     pub fn new(coding: ContentCoding, limits: ContentLimits) -> Result<Self, ContentCodecError> {
         let (writer, capture) = CaptureWriter::new(limits);
         let engine = match coding {
@@ -224,9 +338,8 @@ impl ContentEncoder {
             ContentCoding::Brotli => {
                 EncoderEngine::Brotli(Box::new(AsyncBrotliEncoder::new(writer)))
             }
-            ContentCoding::Deflate | ContentCoding::Zstd => {
-                return Err(ContentCodecError::UnsupportedCoding { coding });
-            }
+            ContentCoding::Deflate => EncoderEngine::Zlib(AsyncZlibEncoder::new(writer)),
+            ContentCoding::Zstd => EncoderEngine::Zstd(AsyncZstdEncoder::new(writer)),
         };
         Ok(Self {
             coding,
@@ -329,11 +442,17 @@ pub enum ContentCodecError {
     /// A finite content resource limit was exceeded.
     #[error(transparent)]
     Limit(#[from] ContentLimitError),
-    /// A recognized coding has no enabled engine in this build.
-    #[error("content coding {coding:?} is not enabled")]
-    UnsupportedCoding {
-        /// Requested coding.
+    /// A codec's configured history-window bound is below its supported minimum.
+    #[error(
+        "{coding:?} decoder window limit {configured} bytes is below the minimum {minimum} bytes"
+    )]
+    DecoderWindowTooSmall {
+        /// Codec requiring the history window.
         coding: ContentCoding,
+        /// Smallest supported bound in bytes.
+        minimum: usize,
+        /// Configured bound in bytes.
+        configured: usize,
     },
     /// Data appeared after terminal trailers.
     #[error("content codec received data after trailers")]
@@ -377,6 +496,9 @@ pub enum ContentCodecError {
 enum DecoderEngine {
     Gzip(AsyncGzipDecoder<ChunkReader>),
     Brotli(AsyncBrotliDecoder<ChunkReader>),
+    Zlib(AsyncZlibDecoder<ChunkReader>),
+    RawDeflate(AsyncDeflateDecoder<ChunkReader>),
+    Zstd(AsyncZstdDecoder<ChunkReader>),
 }
 
 impl DecoderEngine {
@@ -384,6 +506,9 @@ impl DecoderEngine {
         match self {
             Self::Gzip(engine) => engine.get_mut().push(bytes),
             Self::Brotli(engine) => engine.get_mut().push(bytes),
+            Self::Zlib(engine) => engine.get_mut().push(bytes),
+            Self::RawDeflate(engine) => engine.get_mut().push(bytes),
+            Self::Zstd(engine) => engine.get_mut().push(bytes),
         }
     }
 
@@ -391,6 +516,9 @@ impl DecoderEngine {
         match self {
             Self::Gzip(engine) => engine.get_mut().finish(),
             Self::Brotli(engine) => engine.get_mut().finish(),
+            Self::Zlib(engine) => engine.get_mut().finish(),
+            Self::RawDeflate(engine) => engine.get_mut().finish(),
+            Self::Zstd(engine) => engine.get_mut().finish(),
         }
     }
 
@@ -403,6 +531,9 @@ impl DecoderEngine {
         let result = match self {
             Self::Gzip(engine) => Pin::new(engine).poll_read(context, &mut read),
             Self::Brotli(engine) => Pin::new(engine).poll_read(context, &mut read),
+            Self::Zlib(engine) => Pin::new(engine).poll_read(context, &mut read),
+            Self::RawDeflate(engine) => Pin::new(engine).poll_read(context, &mut read),
+            Self::Zstd(engine) => Pin::new(engine).poll_read(context, &mut read),
         };
         match result {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(read.filled().len())),
@@ -415,7 +546,14 @@ impl DecoderEngine {
         match self {
             Self::Gzip(engine) => engine.get_ref().has_remaining(),
             Self::Brotli(engine) => engine.get_ref().has_remaining(),
+            Self::Zlib(engine) => engine.get_ref().has_remaining(),
+            Self::RawDeflate(engine) => engine.get_ref().has_remaining(),
+            Self::Zstd(engine) => engine.get_ref().has_remaining(),
         }
+    }
+
+    fn select_raw_deflate(&mut self) {
+        *self = Self::RawDeflate(AsyncDeflateDecoder::new(ChunkReader::new()));
     }
 }
 
@@ -508,6 +646,8 @@ impl AsyncBufRead for ChunkReader {
 enum EncoderEngine {
     Gzip(AsyncGzipEncoder<CaptureWriter>),
     Brotli(Box<AsyncBrotliEncoder<CaptureWriter>>),
+    Zlib(AsyncZlibEncoder<CaptureWriter>),
+    Zstd(AsyncZstdEncoder<CaptureWriter>),
 }
 
 impl EncoderEngine {
@@ -515,6 +655,8 @@ impl EncoderEngine {
         match self {
             Self::Gzip(engine) => engine.write_all(bytes).await,
             Self::Brotli(engine) => engine.write_all(bytes).await,
+            Self::Zlib(engine) => engine.write_all(bytes).await,
+            Self::Zstd(engine) => engine.write_all(bytes).await,
         }
     }
 
@@ -522,6 +664,8 @@ impl EncoderEngine {
         match self {
             Self::Gzip(engine) => engine.shutdown().await,
             Self::Brotli(engine) => engine.shutdown().await,
+            Self::Zlib(engine) => engine.shutdown().await,
+            Self::Zstd(engine) => engine.shutdown().await,
         }
     }
 }
@@ -644,6 +788,12 @@ fn map_encode_io_error(coding: ContentCoding, capture: &SharedCapture) -> Conten
     }
 }
 
+const fn is_zlib_header(compression_method: u8, flags: u8) -> bool {
+    compression_method & 0x0f == 8
+        && compression_method >> 4 <= 7
+        && u16::from_be_bytes([compression_method, flags]).is_multiple_of(31)
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroUsize;
@@ -659,10 +809,22 @@ mod tests {
         ratio: usize,
         slack: usize,
     ) -> ContentLimits {
+        limits_with_window(encoded, decoded, output, 16 * 1024 * 1024, ratio, slack)
+    }
+
+    fn limits_with_window(
+        encoded: usize,
+        decoded: usize,
+        output: usize,
+        decoder_window: usize,
+        ratio: usize,
+        slack: usize,
+    ) -> ContentLimits {
         ContentLimits::new(
             NonZeroUsize::new(encoded).unwrap(),
             NonZeroUsize::new(decoded).unwrap(),
             NonZeroUsize::new(output).unwrap(),
+            NonZeroUsize::new(decoder_window).unwrap(),
             NonZeroUsize::new(ratio).unwrap(),
             slack,
             NonZeroUsize::new(4).unwrap(),
@@ -671,6 +833,15 @@ mod tests {
 
     fn generous_limits() -> ContentLimits {
         limits(1024 * 1024, 1024 * 1024, 1024 * 1024, 1000, 1024 * 1024)
+    }
+
+    const fn enabled_codings() -> [ContentCoding; 4] {
+        [
+            ContentCoding::Gzip,
+            ContentCoding::Brotli,
+            ContentCoding::Deflate,
+            ContentCoding::Zstd,
+        ]
     }
 
     fn append_frames(data: &mut Vec<u8>, frames: Vec<BodyFrame>) -> Option<HeaderBlock> {
@@ -707,7 +878,23 @@ mod tests {
         chunk_size: usize,
         codec_limits: ContentLimits,
     ) -> Result<Vec<u8>, ContentCodecError> {
-        let mut codec = ContentDecoder::new(coding, codec_limits).unwrap();
+        decode_with_options(
+            coding,
+            data,
+            chunk_size,
+            codec_limits,
+            ContentDecoderOptions::default(),
+        )
+    }
+
+    fn decode_with_options(
+        coding: ContentCoding,
+        data: &[u8],
+        chunk_size: usize,
+        codec_limits: ContentLimits,
+        options: ContentDecoderOptions,
+    ) -> Result<Vec<u8>, ContentCodecError> {
+        let mut codec = ContentDecoder::with_options(coding, codec_limits, options).unwrap();
         let mut output = Vec::new();
         for chunk in data.chunks(chunk_size) {
             let frames = codec.on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk)))?;
@@ -719,9 +906,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gzip_and_brotli_round_trip_across_single_byte_boundaries() {
+    async fn enabled_codings_round_trip_across_single_byte_boundaries() {
         let input = b"streaming content across deliberately tiny frames";
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+        for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, input, 1).await;
             let decoded = decode_with_chunks(coding, &encoded, 1, generous_limits()).unwrap();
             assert_eq!(decoded, input, "{coding:?}");
@@ -735,10 +922,18 @@ mod tests {
             0xc9, 0x07, 0x00, 0x86, 0xa6, 0x10, 0x36, 0x05, 0x00, 0x00, 0x00,
         ];
         const BROTLI_HELLO: &[u8] = &[0x0b, 0x02, 0x80, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x03];
+        const ZLIB_HELLO: &[u8] = &[
+            0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x06, 0x2c, 0x02, 0x15,
+        ];
+        const ZSTD_HELLO: &[u8] = &[
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x58, 0x29, 0x00, 0x00, 0x68, 0x65, 0x6c, 0x6c, 0x6f,
+        ];
 
         for (coding, encoded) in [
             (ContentCoding::Gzip, GZIP_HELLO),
             (ContentCoding::Brotli, BROTLI_HELLO),
+            (ContentCoding::Deflate, ZLIB_HELLO),
+            (ContentCoding::Zstd, ZSTD_HELLO),
         ] {
             assert_eq!(
                 decode_with_chunks(coding, encoded, 1, generous_limits()).unwrap(),
@@ -751,7 +946,7 @@ mod tests {
     #[tokio::test]
     async fn output_is_deterministic_across_input_chunk_boundaries() {
         let input = vec![b'a'; 32 * 1024];
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+        for coding in enabled_codings() {
             let whole = encode_with_chunks(coding, &input, input.len()).await;
             let fragmented = encode_with_chunks(coding, &input, 37).await;
             assert_eq!(fragmented, whole, "{coding:?}");
@@ -759,8 +954,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_representations_are_valid_for_both_codings() {
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+    async fn empty_representations_are_valid_for_enabled_codings() {
+        for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, b"", 1).await;
             assert!(!encoded.is_empty());
             assert_eq!(
@@ -775,7 +970,7 @@ mod tests {
         let trailers = HeaderBlock::from_fields(vec![
             HeaderField::try_new("x-checkpoint", "complete").unwrap(),
         ]);
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+        for coding in enabled_codings() {
             let mut encoder = ContentEncoder::new(coding, generous_limits()).unwrap();
             let initial = encoder
                 .on_frame(BodyFrame::Data(Bytes::from_static(b"body")))
@@ -807,7 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_and_truncated_streams_fail_closed() {
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+        for coding in enabled_codings() {
             let malformed = vec![0xff; 32];
             let malformed_error =
                 decode_with_chunks(coding, &malformed, 3, generous_limits()).unwrap_err();
@@ -897,8 +1092,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn zstd_concatenated_frames_and_decoder_window_bound_are_enforced() {
+        let first = encode_with_chunks(ContentCoding::Zstd, b"first", 5).await;
+        let second = encode_with_chunks(ContentCoding::Zstd, b"second", 6).await;
+        let concatenated = [first, second].concat();
+        assert_eq!(
+            decode_with_chunks(ContentCoding::Zstd, &concatenated, 1, generous_limits()).unwrap(),
+            b"firstsecond"
+        );
+
+        let source = vec![b'z'; 64 * 1024];
+        let encoded = encode_with_chunks(ContentCoding::Zstd, &source, source.len()).await;
+        let small_window = limits_with_window(
+            encoded.len(),
+            source.len(),
+            source.len(),
+            1024,
+            1000,
+            source.len(),
+        );
+        assert!(matches!(
+            decode_with_chunks(ContentCoding::Zstd, &encoded, encoded.len(), small_window),
+            Err(ContentCodecError::InvalidData {
+                coding: ContentCoding::Zstd
+            })
+        ));
+    }
+
+    #[test]
+    fn raw_deflate_compatibility_is_explicit_and_header_driven() {
+        const RAW_DEFLATE_HELLO: &[u8] = &[0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00];
+        const ZLIB_HELLO: &[u8] = &[
+            0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x06, 0x2c, 0x02, 0x15,
+        ];
+
+        assert!(
+            decode_with_chunks(
+                ContentCoding::Deflate,
+                RAW_DEFLATE_HELLO,
+                1,
+                generous_limits()
+            )
+            .is_err()
+        );
+
+        let compatibility =
+            ContentDecoderOptions::new().with_deflate_compatibility(DeflateCompatibility::AllowRaw);
+        assert_eq!(
+            decode_with_options(
+                ContentCoding::Deflate,
+                RAW_DEFLATE_HELLO,
+                1,
+                generous_limits(),
+                compatibility
+            )
+            .unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            decode_with_options(
+                ContentCoding::Deflate,
+                ZLIB_HELLO,
+                1,
+                generous_limits(),
+                compatibility
+            )
+            .unwrap(),
+            b"hello"
+        );
+    }
+
+    #[tokio::test]
     async fn encoded_decoded_ratio_and_output_limits_are_typed() {
-        for coding in [ContentCoding::Gzip, ContentCoding::Brotli] {
+        for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, &vec![b'z'; 8192], 8192).await;
 
             let encoded_error = decode_with_chunks(
@@ -1000,17 +1266,14 @@ mod tests {
     }
 
     #[test]
-    fn disabled_codings_are_typed_not_silently_treated_as_identity() {
+    fn invalid_codec_configuration_is_typed() {
+        let too_small = limits_with_window(1024, 1024, 1024, 1023, 100, 1024);
         assert!(matches!(
-            ContentDecoder::new(ContentCoding::Deflate, generous_limits()),
-            Err(ContentCodecError::UnsupportedCoding {
-                coding: ContentCoding::Deflate
-            })
-        ));
-        assert!(matches!(
-            ContentEncoder::new(ContentCoding::Zstd, generous_limits()),
-            Err(ContentCodecError::UnsupportedCoding {
-                coding: ContentCoding::Zstd
+            ContentDecoder::new(ContentCoding::Zstd, too_small),
+            Err(ContentCodecError::DecoderWindowTooSmall {
+                coding: ContentCoding::Zstd,
+                minimum: 1024,
+                configured: 1023
             })
         ));
     }

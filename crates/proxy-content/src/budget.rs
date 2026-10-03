@@ -8,6 +8,7 @@ pub struct ContentLimits {
     max_encoded_bytes: NonZeroUsize,
     max_decoded_bytes: NonZeroUsize,
     max_output_bytes: NonZeroUsize,
+    max_decoder_window_bytes: NonZeroUsize,
     max_expansion_ratio: NonZeroUsize,
     expansion_slack_bytes: usize,
     max_coding_layers: NonZeroUsize,
@@ -19,6 +20,7 @@ impl ContentLimits {
         max_encoded_bytes: NonZeroUsize,
         max_decoded_bytes: NonZeroUsize,
         max_output_bytes: NonZeroUsize,
+        max_decoder_window_bytes: NonZeroUsize,
         max_expansion_ratio: NonZeroUsize,
         expansion_slack_bytes: usize,
         max_coding_layers: NonZeroUsize,
@@ -27,6 +29,7 @@ impl ContentLimits {
             max_encoded_bytes,
             max_decoded_bytes,
             max_output_bytes,
+            max_decoder_window_bytes,
             max_expansion_ratio,
             expansion_slack_bytes,
             max_coding_layers,
@@ -46,6 +49,11 @@ impl ContentLimits {
     /// Maximum encoded or identity output bytes.
     pub const fn max_output_bytes(self) -> NonZeroUsize {
         self.max_output_bytes
+    }
+
+    /// Maximum history window a decoder may allocate for one coding layer.
+    pub const fn max_decoder_window_bytes(self) -> NonZeroUsize {
+        self.max_decoder_window_bytes
     }
 
     /// Maximum decoded-to-encoded expansion ratio after the slack allowance.
@@ -70,6 +78,7 @@ impl Default for ContentLimits {
             NonZeroUsize::new(16 * 1024 * 1024).expect("16 MiB is nonzero"),
             NonZeroUsize::new(64 * 1024 * 1024).expect("64 MiB is nonzero"),
             NonZeroUsize::new(64 * 1024 * 1024).expect("64 MiB is nonzero"),
+            NonZeroUsize::new(16 * 1024 * 1024).expect("16 MiB is nonzero"),
             NonZeroUsize::new(100).expect("100 is nonzero"),
             64 * 1024,
             NonZeroUsize::new(4).expect("4 is nonzero"),
@@ -246,6 +255,7 @@ mod tests {
             NonZeroUsize::new(10).unwrap(),
             NonZeroUsize::new(30).unwrap(),
             NonZeroUsize::new(20).unwrap(),
+            NonZeroUsize::new(8).unwrap(),
             NonZeroUsize::new(2).unwrap(),
             6,
             NonZeroUsize::new(2).unwrap(),
@@ -304,6 +314,7 @@ mod tests {
     #[test]
     fn arithmetic_overflow_is_a_limit_error_without_mutation() {
         let enormous = ContentLimits::new(
+            NonZeroUsize::new(usize::MAX).unwrap(),
             NonZeroUsize::new(usize::MAX).unwrap(),
             NonZeroUsize::new(usize::MAX).unwrap(),
             NonZeroUsize::new(usize::MAX).unwrap(),

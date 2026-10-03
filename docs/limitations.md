@@ -8,8 +8,8 @@
   Chrome Root Store constraint, revocation mechanism, CT rule, or metadata feed.
 - 0-RTT and QUIC migration are disabled.
 - The content-processing layer provides strict coding plans, header repair,
-  resource budgets, and transport-neutral gzip/Brotli engines. Deflate, zstd,
-  multi-layer composition, and runtime integration remain under implementation,
+  resource budgets, and transport-neutral gzip/Brotli/deflate/zstd engines.
+  Multi-layer composition and runtime integration remain under implementation,
   so the proxy executable does not yet rewrite compressed bodies.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over HTTP/2.
