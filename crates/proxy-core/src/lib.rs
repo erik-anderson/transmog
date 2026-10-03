@@ -1,9 +1,8 @@
-//! Protocol-neutral data model, breakpoint engine, and translation policy.
+//! Protocol-neutral data model, interception engine, and translation policy.
 //!
 //! Stable APIs in this crate deliberately do not expose Hyper or quiche types.
 
 mod body;
-mod breakpoint;
 mod extensions;
 mod header;
 pub mod intercept;
@@ -20,11 +19,6 @@ pub mod upstream;
 pub use body::{
     BodyChannelClosed, BodyFrame, BodyLimitError, BodyStream, BodyStreamError, BodyStreamSender,
     BoundedBodyBuffer,
-};
-pub use breakpoint::{
-    AbortReason, BodyTransform, BoxBreakpointFuture, BreakpointDecision, BreakpointEvent,
-    BreakpointHandler, BreakpointLimits, BreakpointPhase, BreakpointRunner, BreakpointRunnerError,
-    BreakpointState, BreakpointTransitionError, ContinueHandler,
 };
 pub use extensions::ExchangeExtensions;
 pub use header::{HeaderBlock, HeaderError, HeaderField};

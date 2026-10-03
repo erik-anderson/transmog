@@ -1,6 +1,6 @@
 [package]
 name = "rustymiddle-core"
-description = "Protocol-neutral interception model and breakpoint engine"
+description = "Protocol-neutral interception model and Hooks v2 engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

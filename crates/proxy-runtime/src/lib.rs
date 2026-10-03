@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use rustymiddle_core::BreakpointLimits;
+use rustymiddle_core::intercept::HookLimits;
 
 use thiserror::Error;
 
@@ -51,8 +51,8 @@ pub struct RuntimeLimits {
     pub leaf_cache_capacity: usize,
     /// Generated leaf validity in days.
     pub leaf_validity_days: u32,
-    /// Callback concurrency and deadline policy.
-    pub breakpoints: BreakpointLimits,
+    /// Hook callback concurrency and deadline policy.
+    pub hooks: HookLimits,
 }
 
 impl Default for RuntimeLimits {
@@ -71,7 +71,7 @@ impl Default for RuntimeLimits {
             shutdown_timeout: std::time::Duration::from_secs(10),
             leaf_cache_capacity: 1_024,
             leaf_validity_days: 2,
-            breakpoints: BreakpointLimits::default(),
+            hooks: HookLimits::default(),
         }
     }
 }

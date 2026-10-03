@@ -22,12 +22,17 @@ use http_body_util::BodyExt;
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use rustymiddle_core::{
-    AbortReason, BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender,
-    BodyTransform, BoundedBodyBuffer, BreakpointDecision, BreakpointEvent, BreakpointHandler,
-    BreakpointPhase, BreakpointRunner, CanonicalRequest, CanonicalResponse, ConnectionId,
-    FallbackDecision, HeaderBlock, HeaderField, HttpLegVersion, MessageKind, Replayability,
-    RequestHead, ResponseHead, RoutePolicy, SessionId, SessionMetadata, StreamId, StreamingRequest,
-    Target, TranslationOptions, body_semantics, prepare_headers,
+    BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender, BoundedBodyBuffer,
+    CanonicalRequest, CanonicalResponse, ConnectionId, FallbackDecision, HeaderBlock, HeaderField,
+    HttpLegVersion, MessageKind, Replayability, RequestHead, ResponseHead, RoutePolicy, SessionId,
+    SessionMetadata, StreamId, StreamingRequest, Target, TranslationOptions, body_semantics,
+    intercept::{
+        BodyPipeline, BodyPipelineError, BodyPipelineLimits, ChainExecutionError, ChainInitError,
+        CompletedExchange, ExchangeChain, ExchangeFailure, ExchangeFailureKind, ExchangeMetadata,
+        ExchangeStage, HookAbort, InterceptorChainFactory, InterceptorFactory,
+        InterceptorRegistration, InterceptorRequirement, RequestHeadOutcome, ResponseHeadOutcome,
+    },
+    prepare_headers,
 };
 use rustymiddle_h3::{
     AltSvcCache, H3OriginClient, H3OriginError, H3Telemetry, H3TransportLimits, Origin,
@@ -158,6 +163,28 @@ impl ProxyControl {
 }
 
 impl ProxyServer {
+    /// Binds a proxy with one required per-exchange interceptor factory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProxyRuntimeError`] when configuration or listener setup fails.
+    pub async fn bind(
+        config: ProxyConfig,
+        ca: ProxyCa,
+        trust: Arc<TrustSnapshot>,
+        interceptor: Arc<dyn InterceptorFactory>,
+    ) -> Result<Self, ProxyRuntimeError> {
+        let hooks = InterceptorChainFactory::new(
+            vec![InterceptorRegistration::new(
+                "application",
+                interceptor,
+                InterceptorRequirement::Required,
+            )],
+            config.limits.hooks,
+        );
+        Self::bind_with_chain(config, ca, trust, hooks).await
+    }
+
     /// Binds a loopback-by-default explicit proxy.
     ///
     /// # Errors
@@ -165,11 +192,11 @@ impl ProxyServer {
     /// Returns [`ProxyRuntimeError`] for unsafe configuration, listener bind
     /// failure, invalid leaf-cache policy, or upstream connector construction
     /// failure.
-    pub async fn bind(
+    pub async fn bind_with_chain(
         config: ProxyConfig,
         ca: ProxyCa,
         trust: Arc<TrustSnapshot>,
-        handler: Arc<dyn BreakpointHandler>,
+        hooks: InterceptorChainFactory,
     ) -> Result<Self, ProxyRuntimeError> {
         config.listener.validate()?;
         if config.limits.max_connections == 0
@@ -196,7 +223,7 @@ impl ProxyServer {
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
         let state = Arc::new(ProxyState {
-            runner: BreakpointRunner::new(handler, config.limits.breakpoints),
+            hooks,
             downstream_tls: DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default()),
             leaves: Mutex::new(leaves),
             upstream: RwLock::new(upstream),
@@ -289,7 +316,7 @@ impl ProxyServer {
 }
 
 struct ProxyState {
-    runner: BreakpointRunner<dyn BreakpointHandler>,
+    hooks: InterceptorChainFactory,
     downstream_tls: DownstreamTlsContextFactory,
     leaves: Mutex<LeafCache>,
     upstream: RwLock<Arc<UpstreamGeneration>>,
@@ -481,6 +508,7 @@ impl ProxyState {
         }
         let ingress_version = protocol_version(request.version())?;
         let mut request_head = canonical_head(&request, &context, ingress_version)?;
+        let original_target = request_head.target.clone();
         let mut session = SessionMetadata {
             session_id: SessionId(u128::from(
                 self.next_session.fetch_add(1, Ordering::Relaxed),
@@ -493,53 +521,81 @@ impl ProxyState {
             egress_version: None,
         };
 
-        let request_head_decision = self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::BeforeRequestHeaders,
-                request_head: Some(request_head.clone()),
-                response_head: None,
-                body_frame: None,
-            })
-            .await;
-        let request_head_decision = match request_head_decision {
-            Ok(decision) => decision,
+        let metadata = ExchangeMetadata::from_session(&session, original_target.clone());
+        let mut chain = self.hooks.create_exchange(metadata)?;
+        let request_outcome = chain.request_head(request_head).await;
+        let request_outcome = match request_outcome {
+            Ok(outcome) => outcome,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::RequestHead,
+                    ExchangeFailureKind::HookTimedOut,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
-        match request_head_decision {
-            BreakpointDecision::Continue => {}
-            BreakpointDecision::ReplaceRequestHead(head) => request_head = head,
-            BreakpointDecision::RespondLocally(response) => {
+        let reroute = match request_outcome {
+            RequestHeadOutcome::Continue { head, reroute } => {
+                request_head = head;
+                reroute
+            }
+            RequestHeadOutcome::Respond {
+                request_head: effective_request,
+                response,
+            } => {
+                let chain = Arc::new(chain);
                 return self
-                    .finish_local_response(response, &session, &request_head)
+                    .finish_local_response(response, &session, &effective_request, chain)
                     .await;
             }
-            BreakpointDecision::Abort(reason) => {
-                self.failed(&session, &request_head, None).await;
+            RequestHeadOutcome::Abort(reason) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::RequestHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted exchange: {reason:?}"),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(reason.into());
             }
-            _ => {
-                self.failed(&session, &request_head, None).await;
-                return Err(ProxyRuntimeError::InvalidBreakpointDecision);
-            }
-        }
+        };
+        let network_target = reroute.unwrap_or(original_target);
+        apply_route_target(&mut request_head.target, &network_target);
+        let chain = Arc::new(chain);
 
         if let Err(error) = validate_declared_body_limit(
             &request_head.headers,
             self.config.limits.max_request_body_bytes,
         ) {
-            self.failed(&session, &request_head, None).await;
+            self.fail_exchange(
+                &chain,
+                ExchangeStage::RequestBody,
+                error.to_string(),
+                false,
+                false,
+            )
+            .await;
             return Err(error);
         }
 
         if self.config.route_policy == RoutePolicy::Http3Only {
             let upstream = self.upstream.read().await.clone();
             return self
-                .handle_streaming_h3(request, session, request_head, ingress_version, upstream)
+                .handle_streaming_h3(
+                    request,
+                    session,
+                    request_head,
+                    ingress_version,
+                    upstream,
+                    chain,
+                )
                 .await;
         }
 
@@ -553,6 +609,7 @@ impl ProxyState {
                     ingress_version,
                     mode,
                     upstream,
+                    chain,
                 )
                 .await;
         }
@@ -566,35 +623,35 @@ impl ProxyState {
         let raw_body = match raw_body {
             Ok(body) => body,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error);
             }
         };
         let request_body_outcome = self
-            .process_body(
-                &session,
-                BreakpointPhase::RequestBody,
-                Some(&request_head),
-                None,
-                raw_body,
-                self.config.limits.max_request_body_bytes,
-            )
+            .process_request_body(&chain, &request_head, raw_body)
             .await;
         let request_body_outcome = match request_body_outcome {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error);
             }
         };
-        let (request_body, request_body_modified) = match request_body_outcome {
-            BodyOutcome::Body { frames, modified } => (frames, modified),
-            BodyOutcome::Local(response) => {
-                return self
-                    .finish_local_response(response, &session, &request_head)
-                    .await;
-            }
-        };
+        let (request_body, request_body_modified) = request_body_outcome;
 
         let route = self.config.route_policy;
         let intended = match route {
@@ -614,7 +671,14 @@ impl ProxyState {
         request_head.headers = match prepared_request_headers {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
@@ -626,80 +690,89 @@ impl ProxyState {
         let routed = match self.route(request, &upstream).await {
             Ok(routed) => routed,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::Upstream,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error);
             }
         };
         session.egress_version = Some(routed.protocol);
 
-        let mut response = routed.response;
-        let response_head_decision = self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::BeforeResponseHeaders,
-                request_head: Some(request_head.clone()),
-                response_head: Some(response.head.clone()),
-                body_frame: None,
-            })
+        let response = routed.response;
+        let response_outcome = chain
+            .response_head(&request_head, response.head, Some(response.body), false)
             .await;
-        let response_head_decision = match response_head_decision {
-            Ok(decision) => decision,
+        let (mut response, local_response) = match response_outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body,
+                local_response,
+            }) => (
+                CanonicalResponse {
+                    head,
+                    body: replacement_body.unwrap_or_default(),
+                },
+                local_response,
+            ),
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted exchange: {reason:?}"),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(reason.into());
+            }
             Err(error) => {
-                self.failed(&session, &request_head, Some(&response.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
-        match response_head_decision {
-            BreakpointDecision::Continue => {}
-            BreakpointDecision::ReplaceResponseHead(head) => response.head = head,
-            BreakpointDecision::RespondLocally(local) => response = local,
-            BreakpointDecision::Abort(reason) => {
-                self.failed(&session, &request_head, Some(&response.head))
-                    .await;
-                return Err(reason.into());
-            }
-            _ => {
-                self.failed(&session, &request_head, Some(&response.head))
-                    .await;
-                return Err(ProxyRuntimeError::InvalidBreakpointDecision);
-            }
-        }
         let outcome = if body_semantics(&request_head.method, response.head.status)
             == BodySemantics::Forbidden
         {
-            BodyOutcome::Body {
-                modified: true,
-                frames: Vec::new(),
-            }
+            (Vec::new(), true)
         } else {
             match self
-                .process_body(
-                    &session,
-                    BreakpointPhase::ResponseBody,
-                    Some(&request_head),
-                    Some(&response.head),
+                .process_response_body(
+                    &chain,
+                    &request_head,
+                    &response.head,
+                    local_response,
                     response.body,
-                    self.config.limits.max_response_body_bytes,
                 )
                 .await
             {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    self.failed(&session, &request_head, Some(&response.head))
-                        .await;
+                    self.fail_exchange(
+                        &chain,
+                        ExchangeStage::ResponseBody,
+                        error.to_string(),
+                        true,
+                        false,
+                    )
+                    .await;
                     return Err(error);
                 }
             }
         };
-        let (body, body_modified) = match outcome {
-            BodyOutcome::Body { frames, modified } => (frames, modified),
-            BodyOutcome::Local(local) => {
-                response = local;
-                (response.body.clone(), true)
-            }
-        };
+        let (body, body_modified) = outcome;
         response.body = body;
         let prepared_response_headers = prepare_headers(
             &response.head.headers,
@@ -713,20 +786,20 @@ impl ProxyState {
         response.head.headers = match prepared_response_headers {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, Some(&response.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
 
-        if let Err(error) = self
-            .complete(&session, &request_head, Some(&response.head))
-            .await
-        {
-            self.failed(&session, &request_head, Some(&response.head))
-                .await;
-            return Err(error);
-        }
+        self.complete_chain(&chain, &request_head, &response.head)
+            .await;
         let _ = self.evidence.send(ExchangeEvidence {
             session_id: session.session_id,
             downstream_connection_id: session.downstream_connection_id,
@@ -766,7 +839,7 @@ impl ProxyState {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn handle_streaming_hyper(
         &self,
         request: Request<Incoming>,
@@ -775,6 +848,7 @@ impl ProxyState {
         ingress_version: HttpLegVersion,
         mode: HyperEgressMode,
         upstream_generation: Arc<UpstreamGeneration>,
+        chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         let destination = match mode {
             HyperEgressMode::Http1Only => HttpLegVersion::Http1,
@@ -794,25 +868,46 @@ impl ProxyState {
         ) {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
+        let request_pipeline = match chain
+            .request_body_pipeline(&request_head, self.body_pipeline_limits())
+            .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
         let (request_sender, request_body) = BodyStream::channel(capacity);
-        let request_runner = self.runner.clone();
-        let request_session = session.clone();
-        let request_head_for_body = request_head.clone();
+        let request_chain = Arc::clone(&chain);
         let request_limit = self.config.limits.max_request_body_bytes;
         let body_idle_timeout = self.config.limits.body_idle_timeout;
         tokio::spawn(async move {
-            stream_incoming_through_breakpoint(
+            stream_incoming_through_hooks(
                 request.into_body(),
                 request_sender,
-                request_runner,
-                request_session,
-                request_head_for_body,
+                request_pipeline,
+                request_chain,
                 request_limit,
                 body_idle_timeout,
             )
@@ -839,49 +934,68 @@ impl ProxyState {
         let mut upstream = match upstream {
             Ok(response) => response,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::Upstream,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
         session.egress_version = Some(upstream.head.source_version);
         self.learn_alt_svc_head(&origin, &upstream.head).await;
 
-        let response_head_decision = self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::BeforeResponseHeaders,
-                request_head: Some(request_head.clone()),
-                response_head: Some(upstream.head.clone()),
-                body_frame: None,
-            })
+        let response_outcome = chain
+            .response_head(&request_head, upstream.head, None, false)
             .await;
-        let response_head_decision = match response_head_decision {
-            Ok(decision) => decision,
+        let (response_head, replacement_body, local_response) = match response_outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body,
+                local_response,
+            }) => (head, replacement_body, local_response),
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted exchange: {reason:?}"),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(reason.into());
+            }
             Err(error) => {
-                self.failed(&session, &request_head, Some(&upstream.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
-        match response_head_decision {
-            BreakpointDecision::Continue => {}
-            BreakpointDecision::ReplaceResponseHead(head) => upstream.head = head,
-            BreakpointDecision::RespondLocally(response) => {
-                return self
-                    .finish_local_response(response, &session, &request_head)
-                    .await;
-            }
-            BreakpointDecision::Abort(reason) => {
-                self.failed(&session, &request_head, Some(&upstream.head))
-                    .await;
-                return Err(reason.into());
-            }
-            _ => {
-                self.failed(&session, &request_head, Some(&upstream.head))
-                    .await;
-                return Err(ProxyRuntimeError::InvalidBreakpointDecision);
-            }
+        upstream.head = response_head;
+        if let Some(body) = replacement_body {
+            drop(upstream.body);
+            return self
+                .finish_prepared_local_response(
+                    CanonicalResponse {
+                        head: upstream.head,
+                        body,
+                    },
+                    &session,
+                    &request_head,
+                    chain,
+                    local_response,
+                )
+                .await;
         }
         upstream.head.headers = match prepare_headers(
             &upstream.head.headers,
@@ -897,8 +1011,14 @@ impl ProxyState {
         ) {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, Some(&upstream.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
@@ -919,21 +1039,45 @@ impl ProxyState {
                     attempts,
                     None,
                     trust_generation,
+                    chain,
                 )
                 .await;
         }
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
-        let response_runner = self.runner.clone();
+        let response_pipeline = match chain
+            .response_body_pipeline(
+                &request_head,
+                &response_head,
+                local_response,
+                self.body_pipeline_limits(),
+            )
+            .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseBody,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
         let evidence = self.evidence.clone();
         let response_session = session.clone();
         let response_request_head = request_head.clone();
         let response_head_for_body = response_head.clone();
         let response_limit = self.config.limits.max_response_body_bytes;
+        let response_chain = Arc::clone(&chain);
         tokio::spawn(async move {
-            stream_response_through_breakpoint(
+            stream_response_through_hooks(
                 upstream.body,
                 downstream_sender,
-                response_runner,
+                response_pipeline,
+                response_chain,
                 response_session,
                 response_request_head,
                 response_head_for_body,
@@ -958,9 +1102,17 @@ impl ProxyState {
         mut request_head: RequestHead,
         ingress_version: HttpLegVersion,
         upstream_generation: Arc<UpstreamGeneration>,
+        chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         if request_head.target.scheme != "https" {
-            self.failed(&session, &request_head, None).await;
+            self.fail_exchange(
+                &chain,
+                ExchangeStage::Upstream,
+                "HTTP/3 requires HTTPS".to_owned(),
+                false,
+                false,
+            )
+            .await;
             return Err(ProxyRuntimeError::Http3RequiresHttps);
         }
         request_head.headers = match prepare_headers(
@@ -974,25 +1126,46 @@ impl ProxyState {
         ) {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
+        let request_pipeline = match chain
+            .request_body_pipeline(&request_head, self.body_pipeline_limits())
+            .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
         let (request_sender, request_body) = BodyStream::channel(capacity);
-        let request_runner = self.runner.clone();
-        let request_session = session.clone();
-        let request_head_for_body = request_head.clone();
+        let request_chain = Arc::clone(&chain);
         let request_limit = self.config.limits.max_request_body_bytes;
         let body_idle_timeout = self.config.limits.body_idle_timeout;
         tokio::spawn(async move {
-            stream_incoming_through_breakpoint(
+            stream_incoming_through_hooks(
                 request.into_body(),
                 request_sender,
-                request_runner,
-                request_session,
-                request_head_for_body,
+                request_pipeline,
+                request_chain,
                 request_limit,
                 body_idle_timeout,
             )
@@ -1018,7 +1191,14 @@ impl ProxyState {
         let mut upstream = match upstream {
             Ok(response) => response,
             Err(error) => {
-                self.failed(&session, &request_head, None).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::Upstream,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
@@ -1026,42 +1206,54 @@ impl ProxyState {
         self.learn_alt_svc_head(&origin, &upstream.response.head)
             .await;
 
-        let response_head_decision = self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::BeforeResponseHeaders,
-                request_head: Some(request_head.clone()),
-                response_head: Some(upstream.response.head.clone()),
-                body_frame: None,
-            })
+        let response_outcome = chain
+            .response_head(&request_head, upstream.response.head, None, false)
             .await;
-        let response_head_decision = match response_head_decision {
-            Ok(decision) => decision,
+        let (response_head, replacement_body, local_response) = match response_outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body,
+                local_response,
+            }) => (head, replacement_body, local_response),
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted exchange: {reason:?}"),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(reason.into());
+            }
             Err(error) => {
-                self.failed(&session, &request_head, Some(&upstream.response.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
-        match response_head_decision {
-            BreakpointDecision::Continue => {}
-            BreakpointDecision::ReplaceResponseHead(head) => upstream.response.head = head,
-            BreakpointDecision::RespondLocally(response) => {
-                return self
-                    .finish_local_response(response, &session, &request_head)
-                    .await;
-            }
-            BreakpointDecision::Abort(reason) => {
-                self.failed(&session, &request_head, Some(&upstream.response.head))
-                    .await;
-                return Err(reason.into());
-            }
-            _ => {
-                self.failed(&session, &request_head, Some(&upstream.response.head))
-                    .await;
-                return Err(ProxyRuntimeError::InvalidBreakpointDecision);
-            }
+        upstream.response.head = response_head;
+        if let Some(body) = replacement_body {
+            drop(upstream.response.body);
+            return self
+                .finish_prepared_local_response(
+                    CanonicalResponse {
+                        head: upstream.response.head,
+                        body,
+                    },
+                    &session,
+                    &request_head,
+                    chain,
+                    local_response,
+                )
+                .await;
         }
         upstream.response.head.headers = match prepare_headers(
             &upstream.response.head.headers,
@@ -1074,8 +1266,14 @@ impl ProxyState {
         ) {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(&session, &request_head, Some(&upstream.response.head))
-                    .await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
@@ -1097,21 +1295,45 @@ impl ProxyState {
                     attempts,
                     Some(h3),
                     trust_generation,
+                    chain,
                 )
                 .await;
         }
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
-        let response_runner = self.runner.clone();
+        let response_pipeline = match chain
+            .response_body_pipeline(
+                &request_head,
+                &response_head,
+                local_response,
+                self.body_pipeline_limits(),
+            )
+            .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseBody,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
         let evidence = self.evidence.clone();
         let response_session = session.clone();
         let response_request_head = request_head;
         let response_head_for_body = response_head.clone();
         let response_limit = self.config.limits.max_response_body_bytes;
+        let response_chain = Arc::clone(&chain);
         tokio::spawn(async move {
-            stream_response_through_breakpoint(
+            stream_response_through_hooks(
                 upstream.response.body,
                 downstream_sender,
-                response_runner,
+                response_pipeline,
+                response_chain,
                 response_session,
                 response_request_head,
                 response_head_for_body,
@@ -1130,12 +1352,79 @@ impl ProxyState {
 
     async fn finish_local_response(
         &self,
+        response: CanonicalResponse,
+        session: &SessionMetadata,
+        request: &RequestHead,
+        chain: Arc<ExchangeChain>,
+    ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        let outcome = chain
+            .response_head(request, response.head, Some(response.body), true)
+            .await;
+        match outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body,
+                local_response,
+            }) => {
+                self.finish_prepared_local_response(
+                    CanonicalResponse {
+                        head,
+                        body: replacement_body.unwrap_or_default(),
+                    },
+                    session,
+                    request,
+                    chain,
+                    local_response,
+                )
+                .await
+            }
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted local response: {reason:?}"),
+                    false,
+                    false,
+                )
+                .await;
+                Err(reason.into())
+            }
+            Err(error) => {
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
+                Err(error.into())
+            }
+        }
+    }
+
+    async fn finish_prepared_local_response(
+        &self,
         mut response: CanonicalResponse,
         session: &SessionMetadata,
         request: &RequestHead,
+        chain: Arc<ExchangeChain>,
+        local_response: bool,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         if body_semantics(&request.method, response.head.status) == BodySemantics::Forbidden {
             response.body.clear();
+        } else {
+            let (body, _) = self
+                .process_response_body(
+                    &chain,
+                    request,
+                    &response.head,
+                    local_response,
+                    response.body,
+                )
+                .await?;
+            response.body = body;
         }
         let prepared_headers = prepare_headers(
             &response.head.headers,
@@ -1149,14 +1438,18 @@ impl ProxyState {
         response.head.headers = match prepared_headers {
             Ok(headers) => headers,
             Err(error) => {
-                self.failed(session, request, Some(&response.head)).await;
+                self.fail_exchange(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
                 return Err(error.into());
             }
         };
-        if let Err(error) = self.complete(session, request, Some(&response.head)).await {
-            self.failed(session, request, Some(&response.head)).await;
-            return Err(error);
-        }
+        self.complete_chain(&chain, request, &response.head).await;
         response_to_hyper(response)
     }
 
@@ -1169,15 +1462,10 @@ impl ProxyState {
         route_attempts: Vec<RouteAttemptEvidence>,
         h3: Option<H3Telemetry>,
         trust_generation: u64,
+        chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        if let Err(error) = self
-            .complete(session, request_head, Some(&response_head))
-            .await
-        {
-            self.failed(session, request_head, Some(&response_head))
-                .await;
-            return Err(error);
-        }
+        self.complete_chain(&chain, request_head, &response_head)
+            .await;
         let _ = self.evidence.send(ExchangeEvidence {
             session_id: session.session_id,
             downstream_connection_id: session.downstream_connection_id,
@@ -1199,105 +1487,132 @@ impl ProxyState {
         })
     }
 
-    async fn complete(
+    async fn complete_chain(
         &self,
-        session: &SessionMetadata,
+        chain: &ExchangeChain,
         request: &RequestHead,
-        response: Option<&ResponseHead>,
-    ) -> Result<(), ProxyRuntimeError> {
-        match self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::Completed,
-                request_head: Some(request.clone()),
-                response_head: response.cloned(),
-                body_frame: None,
-            })
-            .await?
-        {
-            BreakpointDecision::Continue => Ok(()),
-            _ => Err(ProxyRuntimeError::InvalidBreakpointDecision),
-        }
-    }
-
-    async fn failed(
-        &self,
-        session: &SessionMetadata,
-        request: &RequestHead,
-        response: Option<&ResponseHead>,
+        response: &ResponseHead,
     ) {
-        let _ = self
-            .runner
-            .run(BreakpointEvent {
-                session: session.clone(),
-                phase: BreakpointPhase::Failed,
-                request_head: Some(request.clone()),
-                response_head: response.cloned(),
-                body_frame: None,
+        let report = chain
+            .completed(CompletedExchange {
+                metadata: Arc::clone(chain.context().metadata()),
+                request_head: request.clone(),
+                response_head: response.clone(),
             })
             .await;
+        for error in report.errors() {
+            warn!(%error, "terminal hook cleanup failed");
+        }
     }
 
-    async fn process_body(
+    async fn fail_exchange(
         &self,
-        session: &SessionMetadata,
-        phase: BreakpointPhase,
-        request_head: Option<&RequestHead>,
-        response_head: Option<&ResponseHead>,
+        chain: &ExchangeChain,
+        stage: ExchangeStage,
+        message: String,
+        request_committed: bool,
+        response_committed: bool,
+    ) {
+        let kind = match stage {
+            ExchangeStage::RequestBody | ExchangeStage::ResponseBody => ExchangeFailureKind::Body,
+            ExchangeStage::Upstream => ExchangeFailureKind::Upstream,
+            _ => ExchangeFailureKind::HookAborted(HookAbort::Policy(message.clone())),
+        };
+        self.fail_chain(
+            chain,
+            stage,
+            kind,
+            message,
+            request_committed,
+            response_committed,
+        )
+        .await;
+    }
+
+    async fn fail_chain(
+        &self,
+        chain: &ExchangeChain,
+        stage: ExchangeStage,
+        kind: ExchangeFailureKind,
+        message: String,
+        request_committed: bool,
+        response_committed: bool,
+    ) {
+        let report = chain
+            .failed(ExchangeFailure {
+                metadata: Arc::clone(chain.context().metadata()),
+                stage,
+                kind,
+                request_committed,
+                response_committed,
+                message,
+            })
+            .await;
+        for error in report.errors() {
+            warn!(%error, "terminal hook cleanup failed");
+        }
+    }
+
+    async fn process_request_body(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &RequestHead,
+        frames: Vec<BodyFrame>,
+    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+        let pipeline = chain
+            .request_body_pipeline(request_head, self.body_pipeline_limits())
+            .await?;
+        self.process_body_pipeline(pipeline, frames, self.config.limits.max_request_body_bytes)
+            .await
+    }
+
+    async fn process_response_body(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &RequestHead,
+        response_head: &ResponseHead,
+        local_response: bool,
+        frames: Vec<BodyFrame>,
+    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+        let pipeline = chain
+            .response_body_pipeline(
+                request_head,
+                response_head,
+                local_response,
+                self.body_pipeline_limits(),
+            )
+            .await?;
+        self.process_body_pipeline(pipeline, frames, self.config.limits.max_response_body_bytes)
+            .await
+    }
+
+    async fn process_body_pipeline(
+        &self,
+        mut pipeline: BodyPipeline,
         frames: Vec<BodyFrame>,
         limit: usize,
-    ) -> Result<BodyOutcome, ProxyRuntimeError> {
+    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+        let modified = pipeline.modifies_body();
         let mut output = Vec::new();
-        let mut input = frames.into_iter();
-        while let Some(frame) = input.next() {
-            let decision = self
-                .runner
-                .run(BreakpointEvent {
-                    session: session.clone(),
-                    phase,
-                    request_head: request_head.cloned(),
-                    response_head: response_head.cloned(),
-                    body_frame: Some(frame.clone()),
-                })
-                .await?;
-            match decision {
-                BreakpointDecision::Continue => output.push(frame),
-                BreakpointDecision::ReplaceBody { data, trailers } => {
-                    let mut replacement = vec![BodyFrame::Data(data)];
-                    if let Some(trailers) = trailers {
-                        replacement.push(BodyFrame::Trailers(trailers));
-                    }
-                    validate_frames(&replacement, limit)?;
-                    return Ok(BodyOutcome::Body {
-                        frames: replacement,
-                        modified: true,
-                    });
-                }
-                BreakpointDecision::TransformBodyStream(mut transform) => {
-                    output.extend(transform.transform(frame)?);
-                    for frame in input {
-                        output.extend(transform.transform(frame)?);
-                    }
-                    output.extend(transform.finish()?);
-                    validate_frames(&output, limit)?;
-                    return Ok(BodyOutcome::Body {
-                        frames: output,
-                        modified: true,
-                    });
-                }
-                BreakpointDecision::RespondLocally(response) => {
-                    return Ok(BodyOutcome::Local(response));
-                }
-                BreakpointDecision::Abort(reason) => return Err(reason.into()),
-                _ => return Err(ProxyRuntimeError::InvalidBreakpointDecision),
-            }
+        for frame in frames {
+            output.extend(pipeline.process(frame).await?);
         }
+        output.extend(pipeline.finish().await?);
         validate_frames(&output, limit)?;
-        Ok(BodyOutcome::Body {
-            frames: output,
-            modified: false,
-        })
+        Ok((output, modified))
+    }
+
+    fn body_pipeline_limits(&self) -> BodyPipelineLimits {
+        BodyPipelineLimits {
+            max_output_frames_per_call: NonZeroUsize::new(1_024).expect("1024 is nonzero"),
+            max_output_bytes_per_call: NonZeroUsize::new(
+                self.config
+                    .limits
+                    .max_request_body_bytes
+                    .max(self.config.limits.max_response_body_bytes),
+            )
+            .expect("runtime body limits are validated as nonzero"),
+        }
     }
 
     async fn route(
@@ -1474,20 +1789,19 @@ struct RoutedResponse {
     h3: Option<H3Telemetry>,
 }
 
-enum BodyOutcome {
-    Body {
-        frames: Vec<BodyFrame>,
-        modified: bool,
-    },
-    Local(CanonicalResponse),
-}
-
 fn validate_frames(frames: &[BodyFrame], limit: usize) -> Result<(), ProxyRuntimeError> {
     let mut buffer = BoundedBodyBuffer::new(limit);
     for frame in frames {
         buffer.push(frame.clone())?;
     }
     Ok(())
+}
+
+fn apply_route_target(effective: &mut Target, authorized: &Target) {
+    effective.scheme.clone_from(&authorized.scheme);
+    effective.authority.clone_from(&authorized.authority);
+    effective.host.clone_from(&authorized.host);
+    effective.port = authorized.port;
 }
 
 fn validate_declared_body_limit(
@@ -1538,32 +1852,25 @@ async fn collect_incoming(
     }
 }
 
-#[allow(clippy::too_many_lines)]
-async fn stream_incoming_through_breakpoint(
+async fn stream_incoming_through_hooks(
     mut body: Incoming,
     sender: BodyStreamSender,
-    runner: BreakpointRunner<dyn BreakpointHandler>,
-    session: SessionMetadata,
-    request_head: RequestHead,
+    mut pipeline: BodyPipeline,
+    chain: Arc<ExchangeChain>,
     limit: usize,
     body_idle_timeout: Duration,
 ) {
     let mut input = StreamingBodyTracker::new(limit);
     let mut output = StreamingBodyTracker::new(limit);
-    let mut transform: Option<Box<dyn BodyTransform>> = None;
-    let mut discard_remaining = false;
-
     loop {
         let frame = match timeout(body_idle_timeout, body.frame()).await {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(_) => {
-                fail_streaming_body(
+                fail_hook_stream(
                     &sender,
-                    &runner,
-                    &session,
-                    &request_head,
-                    None,
+                    &chain,
+                    ExchangeStage::RequestBody,
                     BodyStreamError::IdleTimeout,
                 )
                 .await;
@@ -1574,150 +1881,72 @@ async fn stream_incoming_through_breakpoint(
             Ok(Some(frame)) => frame,
             Ok(None) => continue,
             Err(error) => {
-                fail_streaming_body(&sender, &runner, &session, &request_head, None, error).await;
+                fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
                 return;
             }
         };
         if let Err(error) = input.accept(&canonical) {
-            fail_streaming_body(&sender, &runner, &session, &request_head, None, error).await;
+            fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
             return;
         }
-        if discard_remaining {
-            continue;
-        }
-
-        let frames = if let Some(active) = transform.as_mut() {
-            match active.transform(canonical) {
-                Ok(frames) => frames,
-                Err(error) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        None,
-                        BodyStreamError::Failed(format!("body transform aborted: {error:?}")),
-                    )
-                    .await;
-                    return;
-                }
-            }
-        } else {
-            let decision = runner
-                .run(BreakpointEvent {
-                    session: session.clone(),
-                    phase: BreakpointPhase::RequestBody,
-                    request_head: Some(request_head.clone()),
-                    response_head: None,
-                    body_frame: Some(canonical.clone()),
-                })
+        let frames = match pipeline.process(canonical).await {
+            Ok(frames) => frames,
+            Err(error) => {
+                fail_hook_stream(
+                    &sender,
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    BodyStreamError::Failed(error.to_string()),
+                )
                 .await;
-            match decision {
-                Ok(BreakpointDecision::Continue) => vec![canonical],
-                Ok(BreakpointDecision::ReplaceBody { data, trailers }) => {
-                    discard_remaining = true;
-                    replacement_frames(data, trailers)
-                }
-                Ok(BreakpointDecision::TransformBodyStream(mut body_transform)) => {
-                    let frames = match body_transform.transform(canonical) {
-                        Ok(frames) => frames,
-                        Err(error) => {
-                            fail_streaming_body(
-                                &sender,
-                                &runner,
-                                &session,
-                                &request_head,
-                                None,
-                                BodyStreamError::Failed(format!(
-                                    "body transform aborted: {error:?}"
-                                )),
-                            )
-                            .await;
-                            return;
-                        }
-                    };
-                    transform = Some(body_transform);
-                    frames
-                }
-                Ok(BreakpointDecision::Abort(reason)) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        None,
-                        BodyStreamError::Failed(format!("breakpoint aborted: {reason:?}")),
-                    )
-                    .await;
-                    return;
-                }
-                Ok(_) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        None,
-                        BodyStreamError::Failed(
-                            "invalid request-body breakpoint decision".to_owned(),
-                        ),
-                    )
-                    .await;
-                    return;
-                }
-                Err(error) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        None,
-                        BodyStreamError::Failed(error.to_string()),
-                    )
-                    .await;
-                    return;
-                }
+                return;
             }
         };
         if send_streaming_frames(&sender, &mut output, frames)
             .await
             .is_err()
         {
-            emit_failed(&runner, &session, &request_head, None).await;
+            emit_hook_failure(
+                &chain,
+                ExchangeStage::RequestBody,
+                "upstream request-body consumer closed".to_owned(),
+            )
+            .await;
             return;
         }
     }
-
-    if let Some(mut transform) = transform {
-        match transform.finish() {
-            Ok(frames) => {
-                if send_streaming_frames(&sender, &mut output, frames)
-                    .await
-                    .is_err()
-                {
-                    emit_failed(&runner, &session, &request_head, None).await;
-                }
-            }
-            Err(error) => {
-                fail_streaming_body(
-                    &sender,
-                    &runner,
-                    &session,
-                    &request_head,
-                    None,
-                    BodyStreamError::Failed(format!("body transform aborted: {error:?}")),
+    match pipeline.finish().await {
+        Ok(frames) => {
+            if send_streaming_frames(&sender, &mut output, frames)
+                .await
+                .is_err()
+            {
+                emit_hook_failure(
+                    &chain,
+                    ExchangeStage::RequestBody,
+                    "upstream request-body consumer closed".to_owned(),
                 )
                 .await;
             }
         }
+        Err(error) => {
+            fail_hook_stream(
+                &sender,
+                &chain,
+                ExchangeStage::RequestBody,
+                BodyStreamError::Failed(error.to_string()),
+            )
+            .await;
+        }
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-async fn stream_response_through_breakpoint(
+#[allow(clippy::too_many_arguments)]
+async fn stream_response_through_hooks(
     mut body: BodyStream,
     sender: BodyStreamSender,
-    runner: BreakpointRunner<dyn BreakpointHandler>,
+    mut pipeline: BodyPipeline,
+    chain: Arc<ExchangeChain>,
     session: SessionMetadata,
     request_head: RequestHead,
     response_head: ResponseHead,
@@ -1730,19 +1959,15 @@ async fn stream_response_through_breakpoint(
 ) {
     let mut input = StreamingBodyTracker::new(limit);
     let mut output = StreamingBodyTracker::new(limit);
-    let mut transform: Option<Box<dyn BodyTransform>> = None;
-
     loop {
         let frame = match timeout(body_idle_timeout, body.recv()).await {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(_) => {
-                fail_streaming_body(
+                fail_hook_stream(
                     &sender,
-                    &runner,
-                    &session,
-                    &request_head,
-                    Some(&response_head),
+                    &chain,
+                    ExchangeStage::ResponseBody,
                     BodyStreamError::IdleTimeout,
                 )
                 .await;
@@ -1752,179 +1977,67 @@ async fn stream_response_through_breakpoint(
         let canonical = match frame {
             Ok(frame) => frame,
             Err(error) => {
-                fail_streaming_body(
-                    &sender,
-                    &runner,
-                    &session,
-                    &request_head,
-                    Some(&response_head),
-                    error,
-                )
-                .await;
+                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
                 return;
             }
         };
         if let Err(error) = input.accept(&canonical) {
-            fail_streaming_body(
-                &sender,
-                &runner,
-                &session,
-                &request_head,
-                Some(&response_head),
-                error,
-            )
-            .await;
+            fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
             return;
         }
-
-        let frames = if let Some(active) = transform.as_mut() {
-            match active.transform(canonical) {
-                Ok(frames) => frames,
-                Err(error) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        Some(&response_head),
-                        BodyStreamError::Failed(format!("body transform aborted: {error:?}")),
-                    )
-                    .await;
-                    return;
-                }
-            }
-        } else {
-            let decision = runner
-                .run(BreakpointEvent {
-                    session: session.clone(),
-                    phase: BreakpointPhase::ResponseBody,
-                    request_head: Some(request_head.clone()),
-                    response_head: Some(response_head.clone()),
-                    body_frame: Some(canonical.clone()),
-                })
+        let frames = match pipeline.process(canonical).await {
+            Ok(frames) => frames,
+            Err(error) => {
+                fail_hook_stream(
+                    &sender,
+                    &chain,
+                    ExchangeStage::ResponseBody,
+                    BodyStreamError::Failed(error.to_string()),
+                )
                 .await;
-            match decision {
-                Ok(BreakpointDecision::Continue) => vec![canonical],
-                Ok(BreakpointDecision::ReplaceBody { data, trailers }) => {
-                    let frames = replacement_frames(data, trailers);
-                    if send_streaming_frames(&sender, &mut output, frames)
-                        .await
-                        .is_err()
-                    {
-                        emit_failed(&runner, &session, &request_head, Some(&response_head)).await;
-                        return;
-                    }
-                    return complete_streaming_exchange(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        &response_head,
-                        evidence,
-                        attempts,
-                        h3,
-                        trust_generation,
-                    )
-                    .await;
-                }
-                Ok(BreakpointDecision::TransformBodyStream(mut body_transform)) => {
-                    let frames = match body_transform.transform(canonical) {
-                        Ok(frames) => frames,
-                        Err(error) => {
-                            fail_streaming_body(
-                                &sender,
-                                &runner,
-                                &session,
-                                &request_head,
-                                Some(&response_head),
-                                BodyStreamError::Failed(format!(
-                                    "body transform aborted: {error:?}"
-                                )),
-                            )
-                            .await;
-                            return;
-                        }
-                    };
-                    transform = Some(body_transform);
-                    frames
-                }
-                Ok(BreakpointDecision::Abort(reason)) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        Some(&response_head),
-                        BodyStreamError::Failed(format!("breakpoint aborted: {reason:?}")),
-                    )
-                    .await;
-                    return;
-                }
-                Ok(_) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        Some(&response_head),
-                        BodyStreamError::Failed(
-                            "invalid response-body breakpoint decision".to_owned(),
-                        ),
-                    )
-                    .await;
-                    return;
-                }
-                Err(error) => {
-                    fail_streaming_body(
-                        &sender,
-                        &runner,
-                        &session,
-                        &request_head,
-                        Some(&response_head),
-                        BodyStreamError::Failed(error.to_string()),
-                    )
-                    .await;
-                    return;
-                }
+                return;
             }
         };
         if send_streaming_frames(&sender, &mut output, frames)
             .await
             .is_err()
         {
-            emit_failed(&runner, &session, &request_head, Some(&response_head)).await;
+            emit_hook_failure(
+                &chain,
+                ExchangeStage::ResponseBody,
+                "downstream response-body consumer closed".to_owned(),
+            )
+            .await;
             return;
         }
     }
-
-    if let Some(mut transform) = transform {
-        match transform.finish() {
-            Ok(frames) => {
-                if send_streaming_frames(&sender, &mut output, frames)
-                    .await
-                    .is_err()
-                {
-                    emit_failed(&runner, &session, &request_head, Some(&response_head)).await;
-                    return;
-                }
-            }
-            Err(error) => {
-                fail_streaming_body(
-                    &sender,
-                    &runner,
-                    &session,
-                    &request_head,
-                    Some(&response_head),
-                    BodyStreamError::Failed(format!("body transform aborted: {error:?}")),
-                )
-                .await;
-                return;
-            }
+    let frames = match pipeline.finish().await {
+        Ok(frames) => frames,
+        Err(error) => {
+            fail_hook_stream(
+                &sender,
+                &chain,
+                ExchangeStage::ResponseBody,
+                BodyStreamError::Failed(error.to_string()),
+            )
+            .await;
+            return;
         }
+    };
+    if send_streaming_frames(&sender, &mut output, frames)
+        .await
+        .is_err()
+    {
+        emit_hook_failure(
+            &chain,
+            ExchangeStage::ResponseBody,
+            "downstream response-body consumer closed".to_owned(),
+        )
+        .await;
+        return;
     }
-    complete_streaming_exchange(
-        &sender,
-        &runner,
+    complete_hook_streaming_exchange(
+        &chain,
         &session,
         &request_head,
         &response_head,
@@ -1937,9 +2050,8 @@ async fn stream_response_through_breakpoint(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn complete_streaming_exchange(
-    sender: &BodyStreamSender,
-    runner: &BreakpointRunner<dyn BreakpointHandler>,
+async fn complete_hook_streaming_exchange(
+    chain: &ExchangeChain,
     session: &SessionMetadata,
     request_head: &RequestHead,
     response_head: &ResponseHead,
@@ -1948,33 +2060,15 @@ async fn complete_streaming_exchange(
     h3: Option<H3Telemetry>,
     trust_generation: u64,
 ) {
-    let completed = runner
-        .run(BreakpointEvent {
-            session: session.clone(),
-            phase: BreakpointPhase::Completed,
-            request_head: Some(request_head.clone()),
-            response_head: Some(response_head.clone()),
-            body_frame: None,
+    let report = chain
+        .completed(CompletedExchange {
+            metadata: Arc::clone(chain.context().metadata()),
+            request_head: request_head.clone(),
+            response_head: response_head.clone(),
         })
         .await;
-    match completed {
-        Ok(BreakpointDecision::Continue) => {}
-        Ok(_) => {
-            let _ = sender
-                .send(Err(BodyStreamError::Failed(
-                    "invalid completed breakpoint decision".to_owned(),
-                )))
-                .await;
-            emit_failed(runner, session, request_head, Some(response_head)).await;
-            return;
-        }
-        Err(error) => {
-            let _ = sender
-                .send(Err(BodyStreamError::Failed(error.to_string())))
-                .await;
-            emit_failed(runner, session, request_head, Some(response_head)).await;
-            return;
-        }
+    for error in report.errors() {
+        warn!(%error, "terminal hook cleanup failed");
     }
     let _ = evidence.send(ExchangeEvidence {
         session_id: session.session_id,
@@ -1993,33 +2087,31 @@ async fn complete_streaming_exchange(
     });
 }
 
-async fn fail_streaming_body(
+async fn fail_hook_stream(
     sender: &BodyStreamSender,
-    runner: &BreakpointRunner<dyn BreakpointHandler>,
-    session: &SessionMetadata,
-    request_head: &RequestHead,
-    response_head: Option<&ResponseHead>,
+    chain: &ExchangeChain,
+    stage: ExchangeStage,
     error: BodyStreamError,
 ) {
+    let message = error.to_string();
     let _ = sender.send(Err(error)).await;
-    emit_failed(runner, session, request_head, response_head).await;
+    emit_hook_failure(chain, stage, message).await;
 }
 
-async fn emit_failed(
-    runner: &BreakpointRunner<dyn BreakpointHandler>,
-    session: &SessionMetadata,
-    request_head: &RequestHead,
-    response_head: Option<&ResponseHead>,
-) {
-    let _ = runner
-        .run(BreakpointEvent {
-            session: session.clone(),
-            phase: BreakpointPhase::Failed,
-            request_head: Some(request_head.clone()),
-            response_head: response_head.cloned(),
-            body_frame: None,
+async fn emit_hook_failure(chain: &ExchangeChain, stage: ExchangeStage, message: String) {
+    let report = chain
+        .failed(ExchangeFailure {
+            metadata: Arc::clone(chain.context().metadata()),
+            stage,
+            kind: ExchangeFailureKind::Body,
+            request_committed: stage == ExchangeStage::ResponseBody,
+            response_committed: stage == ExchangeStage::ResponseBody,
+            message,
         })
         .await;
+    for error in report.errors() {
+        warn!(%error, "terminal hook cleanup failed");
+    }
 }
 
 async fn send_streaming_frames(
@@ -2038,14 +2130,6 @@ async fn send_streaming_frames(
             .map_err(|error| BodyStreamError::Failed(error.to_string()))?;
     }
     Ok(())
-}
-
-fn replacement_frames(data: Bytes, trailers: Option<HeaderBlock>) -> Vec<BodyFrame> {
-    let mut frames = vec![BodyFrame::Data(data)];
-    if let Some(trailers) = trailers {
-        frames.push(BodyFrame::Trailers(trailers));
-    }
-    frames
 }
 
 fn incoming_frame(
@@ -2245,7 +2329,7 @@ fn response_stream_to_hyper(
 
 fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBody> {
     let status = match error {
-        ProxyRuntimeError::Aborted(AbortReason::Rejected) => StatusCode::FORBIDDEN,
+        ProxyRuntimeError::HookAborted(HookAbort::Rejected) => StatusCode::FORBIDDEN,
         ProxyRuntimeError::BodyLimit(_) => StatusCode::PAYLOAD_TOO_LARGE,
         ProxyRuntimeError::AbsoluteFormRequired
         | ProxyRuntimeError::ConnectRequiredForHttps
@@ -2421,15 +2505,18 @@ pub enum ProxyRuntimeError {
     /// Body exceeded its explicit bound or had illegal trailer ordering.
     #[error(transparent)]
     BodyLimit(#[from] rustymiddle_core::BodyLimitError),
-    /// Breakpoint callback timed out or the runner shut down.
+    /// A required per-exchange interceptor could not be created.
     #[error(transparent)]
-    Breakpoint(#[from] rustymiddle_core::BreakpointRunnerError),
-    /// Breakpoint handler selected an action that is invalid for the phase.
-    #[error("breakpoint decision is invalid for the current phase")]
-    InvalidBreakpointDecision,
-    /// Breakpoint handler intentionally aborted the exchange.
-    #[error("breakpoint aborted exchange: {0:?}")]
-    Aborted(AbortReason),
+    HookInitialization(#[from] ChainInitError),
+    /// A hook timed out, was cancelled, panicked, or shut down.
+    #[error(transparent)]
+    HookExecution(#[from] ChainExecutionError),
+    /// A composed body hook or plan failed.
+    #[error(transparent)]
+    BodyPipeline(#[from] BodyPipelineError),
+    /// Hooks v2 interceptor intentionally aborted the exchange.
+    #[error("hook aborted exchange: {0:?}")]
+    HookAborted(HookAbort),
     /// HTTP/1.1 or HTTP/2 origin adapter failed.
     #[error(transparent)]
     HyperOrigin(#[from] HyperOriginError),
@@ -2477,9 +2564,9 @@ pub enum ProxyRuntimeError {
     UnsupportedIngressVersion(Version),
 }
 
-impl From<AbortReason> for ProxyRuntimeError {
-    fn from(reason: AbortReason) -> Self {
-        Self::Aborted(reason)
+impl From<HookAbort> for ProxyRuntimeError {
+    fn from(reason: HookAbort) -> Self {
+        Self::HookAborted(reason)
     }
 }
 
@@ -2492,7 +2579,11 @@ mod tests {
         ssl::{SslContext, SslMethod},
     };
     use quiche::h3::NameValue;
-    use rustymiddle_core::{BoxBreakpointFuture, BreakpointHandler};
+    use rustymiddle_core::intercept::{
+        BodyPlan, BoxHookFuture, BufferedBody, ExchangeInterceptor, HookInitError,
+        RequestBodyAction, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
+        ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
+    };
     use rustymiddle_tls::{
         DownstreamTlsContextFactory, DownstreamTlsPolicy, LoadedTrust, ProxyCa, SystemTrustSource,
         TrustError, TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
@@ -2506,20 +2597,22 @@ mod tests {
 
     use super::*;
 
+    #[derive(Clone, Copy)]
     struct EditingHandler;
 
+    #[derive(Clone, Copy)]
     struct LocalResponseHandler;
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct RejectingLifecycleHandler {
-        phases: StdMutex<Vec<BreakpointPhase>>,
+        phases: Arc<StdMutex<Vec<&'static str>>>,
     }
 
-    #[derive(Default)]
+    #[derive(Clone, Default)]
     struct PausingHandler {
-        slow_entered: Notify,
-        fast_entered: Notify,
-        release_slow: Notify,
+        slow_entered: Arc<Notify>,
+        fast_entered: Arc<Notify>,
+        release_slow: Arc<Notify>,
     }
 
     struct StaticTrust(Vec<Vec<u8>>);
@@ -2535,89 +2628,132 @@ mod tests {
         }
     }
 
-    impl BreakpointHandler for EditingHandler {
-        fn on_breakpoint(&self, event: BreakpointEvent) -> BoxBreakpointFuture<'_> {
+    impl InterceptorFactory for EditingHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(*self))
+        }
+    }
+
+    impl ExchangeInterceptor for EditingHandler {
+        fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
             Box::pin(async move {
-                match event.phase {
-                    BreakpointPhase::BeforeRequestHeaders => {
-                        let mut head = event.request_head.unwrap();
-                        head.headers
-                            .push(HeaderField::try_new("x-from-breakpoint", "yes").unwrap());
-                        BreakpointDecision::ReplaceRequestHead(head)
-                    }
-                    BreakpointPhase::BeforeResponseHeaders => {
-                        let mut head = event.response_head.unwrap();
-                        head.headers
-                            .push(HeaderField::try_new("x-intercepted", "yes").unwrap());
-                        BreakpointDecision::ReplaceResponseHead(head)
-                    }
-                    BreakpointPhase::RequestBody => BreakpointDecision::ReplaceBody {
-                        data: Bytes::from_static(b"request-edited"),
-                        trailers: None,
-                    },
-                    BreakpointPhase::ResponseBody => BreakpointDecision::ReplaceBody {
-                        data: Bytes::from_static(b"edited"),
-                        trailers: None,
-                    },
-                    _ => BreakpointDecision::Continue,
-                }
+                let mut head = event.head;
+                head.headers
+                    .push(HeaderField::try_new("x-from-breakpoint", "yes").unwrap());
+                RequestHeadAction::Replace(head)
+            })
+        }
+
+        fn on_response_head(
+            &self,
+            event: ResponseHeadEvent,
+        ) -> BoxHookFuture<'_, ResponseHeadAction> {
+            Box::pin(async move {
+                let mut head = event.head;
+                head.headers
+                    .push(HeaderField::try_new("x-intercepted", "yes").unwrap());
+                ResponseHeadAction::Replace(head)
+            })
+        }
+
+        fn on_request_body(
+            &self,
+            _event: RequestBodyEvent,
+        ) -> BoxHookFuture<'_, RequestBodyAction> {
+            Box::pin(async {
+                RequestBodyAction(BodyPlan::Replace(
+                    BufferedBody::try_new(64, Bytes::from_static(b"request-edited"), None).unwrap(),
+                ))
+            })
+        }
+
+        fn on_response_body(
+            &self,
+            _event: ResponseBodyEvent,
+        ) -> BoxHookFuture<'_, ResponseBodyAction> {
+            Box::pin(async {
+                ResponseBodyAction(BodyPlan::Replace(
+                    BufferedBody::try_new(64, Bytes::from_static(b"edited"), None).unwrap(),
+                ))
             })
         }
     }
 
-    impl BreakpointHandler for RejectingLifecycleHandler {
-        fn on_breakpoint(&self, event: BreakpointEvent) -> BoxBreakpointFuture<'_> {
-            Box::pin(async move {
-                self.phases
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(event.phase);
-                if event.phase == BreakpointPhase::BeforeRequestHeaders {
-                    BreakpointDecision::Abort(AbortReason::Rejected)
-                } else {
-                    BreakpointDecision::Continue
-                }
+    impl InterceptorFactory for RejectingLifecycleHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(self.clone()))
+        }
+    }
+
+    impl ExchangeInterceptor for RejectingLifecycleHandler {
+        fn on_request_head(
+            &self,
+            _event: RequestHeadEvent,
+        ) -> BoxHookFuture<'_, RequestHeadAction> {
+            self.phases.lock().unwrap().push("request");
+            Box::pin(async { RequestHeadAction::Abort(HookAbort::Rejected) })
+        }
+
+        fn on_failed(&self, _failure: ExchangeFailure) -> BoxHookFuture<'_, ()> {
+            self.phases.lock().unwrap().push("failed");
+            Box::pin(async {})
+        }
+    }
+
+    impl InterceptorFactory for LocalResponseHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(*self))
+        }
+    }
+
+    impl ExchangeInterceptor for LocalResponseHandler {
+        fn on_request_head(
+            &self,
+            _event: RequestHeadEvent,
+        ) -> BoxHookFuture<'_, RequestHeadAction> {
+            Box::pin(async {
+                RequestHeadAction::Respond(CanonicalResponse::local(
+                    202,
+                    HeaderBlock::from_fields(vec![
+                        HeaderField::try_new("x-local-response", "yes")
+                            .expect("static test header is valid"),
+                    ]),
+                    Bytes::from_static(b"synthetic"),
+                ))
             })
         }
     }
 
-    impl BreakpointHandler for LocalResponseHandler {
-        fn on_breakpoint(&self, event: BreakpointEvent) -> BoxBreakpointFuture<'_> {
-            Box::pin(async move {
-                if event.phase == BreakpointPhase::BeforeRequestHeaders {
-                    BreakpointDecision::RespondLocally(CanonicalResponse::local(
-                        202,
-                        HeaderBlock::from_fields(vec![
-                            HeaderField::try_new("x-local-response", "yes")
-                                .expect("static test header is valid"),
-                        ]),
-                        Bytes::from_static(b"synthetic"),
-                    ))
-                } else {
-                    BreakpointDecision::Continue
-                }
-            })
+    impl InterceptorFactory for PausingHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(self.clone()))
         }
     }
 
-    impl BreakpointHandler for PausingHandler {
-        fn on_breakpoint(&self, event: BreakpointEvent) -> BoxBreakpointFuture<'_> {
+    impl ExchangeInterceptor for PausingHandler {
+        fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
             Box::pin(async move {
-                if event.phase == BreakpointPhase::BeforeRequestHeaders {
-                    match event
-                        .request_head
-                        .as_ref()
-                        .map(|head| head.target.path.as_str())
-                    {
-                        Some("/slow") => {
-                            self.slow_entered.notify_one();
-                            self.release_slow.notified().await;
-                        }
-                        Some("/fast") => self.fast_entered.notify_one(),
-                        _ => {}
+                match event.head.target.path.as_str() {
+                    "/slow" => {
+                        self.slow_entered.notify_one();
+                        self.release_slow.notified().await;
                     }
+                    "/fast" => self.fast_entered.notify_one(),
+                    _ => {}
                 }
-                BreakpointDecision::Continue
+                RequestHeadAction::Continue
             })
         }
     }
@@ -2629,7 +2765,7 @@ mod tests {
             ProxyConfig::default(),
             ProxyCa::generate("rustymiddle trust reload test", 2).unwrap(),
             initial,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -2668,7 +2804,7 @@ mod tests {
             },
             ProxyCa::generate("rustymiddle slow header test", 2).unwrap(),
             trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -2795,7 +2931,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -2893,7 +3029,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -2952,7 +3088,7 @@ mod tests {
             },
             ProxyCa::generate("rustymiddle stalled body test", 2).unwrap(),
             trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -3085,10 +3221,7 @@ mod tests {
                 .phases
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
-            vec![
-                BreakpointPhase::BeforeRequestHeaders,
-                BreakpointPhase::Failed
-            ]
+            vec!["request", "failed"]
         );
 
         shutdown_tx.send(()).unwrap();
@@ -3110,7 +3243,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -3359,7 +3492,7 @@ mod tests {
                 },
                 proxy_ca,
                 upstream_trust,
-                Arc::new(rustymiddle_core::ContinueHandler),
+                Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
             )
             .await
             .unwrap();
@@ -3991,7 +4124,7 @@ mod tests {
             },
             proxy_ca,
             upstream_trust,
-            Arc::new(rustymiddle_core::ContinueHandler),
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();

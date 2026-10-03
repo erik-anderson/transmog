@@ -282,6 +282,7 @@ pub struct BodyPipeline {
     context: HookContext,
     gate: CallbackGate,
     limits: BodyPipelineLimits,
+    modifies_body: bool,
     finished: bool,
 }
 
@@ -292,6 +293,9 @@ impl BodyPipeline {
         gate: CallbackGate,
         limits: BodyPipelineLimits,
     ) -> Self {
+        let modifies_body = plans
+            .iter()
+            .any(|plan| !matches!(plan, BodyPlan::PassThrough));
         let stages = plans
             .into_iter()
             .filter_map(|plan| {
@@ -317,8 +321,14 @@ impl BodyPipeline {
             context,
             gate,
             limits,
+            modifies_body,
             finished: false,
         }
+    }
+
+    /// Whether any selected plan can change body frames.
+    pub fn modifies_body(&self) -> bool {
+        self.modifies_body
     }
 
     /// Applies one canonical input frame and returns bounded output frames.

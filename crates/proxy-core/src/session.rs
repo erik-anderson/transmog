@@ -27,7 +27,7 @@ id_type!(
     "Protocol stream identifier normalized to an unsigned value."
 );
 
-/// Transport metadata shared with breakpoint handlers.
+/// Transport metadata used to construct exchange hook context.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     /// Exchange identifier.

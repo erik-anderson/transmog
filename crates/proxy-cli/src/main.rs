@@ -1,21 +1,28 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
 use std::{
-    collections::HashSet,
     env,
     error::Error,
     fs::{self, OpenOptions},
     io::{self, Write},
     net::SocketAddr,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use bytes::Bytes;
 use rustymiddle_core::{
-    AbortReason, BodyFrame, BodyTransform, BoxBreakpointFuture, BreakpointDecision,
-    BreakpointEvent, BreakpointHandler, BreakpointPhase, ContinueHandler, HeaderField, RoutePolicy,
-    SessionId,
+    HeaderField, RoutePolicy,
+    intercept::{
+        BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody, BufferedBodyHandler,
+        ExchangeInterceptor, ExchangeMetadata, HookInitError, InterceptorFactory,
+        NoopInterceptorFactory, RequestHeadAction, RequestHeadEvent, ResponseBodyAction,
+        ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
+    },
 };
 use rustymiddle_runtime::{ExchangeEvidence, ListenerConfig, ProxyConfig, ProxyServer};
 use rustymiddle_tls::{ProxyCa, SystemTrustSource, TrustSnapshot};
@@ -66,9 +73,9 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let ca = ProxyCa::from_pem(&certificate_pem, &private_key_pem)?;
     let thumbprint = ca.sha256_thumbprint()?;
     let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1)?);
-    let handler: Arc<dyn BreakpointHandler> = proof_id.map_or_else(
-        || Arc::new(ContinueHandler) as Arc<dyn BreakpointHandler>,
-        |id| Arc::new(ProofHandler::new(id.to_owned(), 16 * 1024 * 1024)),
+    let interceptor: Arc<dyn InterceptorFactory> = proof_id.map_or_else(
+        || Arc::new(NoopInterceptorFactory) as Arc<dyn InterceptorFactory>,
+        |id| Arc::new(ProofFactory::new(id.to_owned(), 16 * 1024 * 1024)),
     );
     let proxy = ProxyServer::bind(
         ProxyConfig {
@@ -81,7 +88,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         },
         ca,
         trust,
-        handler,
+        interceptor,
     )
     .await?;
     let actual_addr = proxy.local_addr()?;
@@ -246,134 +253,114 @@ fn print_usage() {
     );
 }
 
-struct ProofHandler {
-    id: String,
+struct ProofFactory {
+    id: Arc<str>,
     max_body_bytes: usize,
-    html_sessions: Mutex<HashSet<SessionId>>,
 }
 
-impl ProofHandler {
+impl ProofFactory {
     fn new(id: String, max_body_bytes: usize) -> Self {
         Self {
-            id,
+            id: id.into(),
             max_body_bytes,
-            html_sessions: Mutex::new(HashSet::new()),
         }
-    }
-
-    fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashSet<SessionId>> {
-        self.html_sessions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
-impl BreakpointHandler for ProofHandler {
-    fn on_breakpoint(&self, event: BreakpointEvent) -> BoxBreakpointFuture<'_> {
+impl InterceptorFactory for ProofFactory {
+    fn create(
+        &self,
+        _metadata: &ExchangeMetadata,
+    ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+        Ok(Arc::new(ProofInterceptor {
+            id: Arc::clone(&self.id),
+            max_body_bytes: self.max_body_bytes,
+            html: AtomicBool::new(false),
+        }))
+    }
+}
+
+struct ProofInterceptor {
+    id: Arc<str>,
+    max_body_bytes: usize,
+    html: AtomicBool,
+}
+
+impl ExchangeInterceptor for ProofInterceptor {
+    fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         Box::pin(async move {
-            match event.phase {
-                BreakpointPhase::BeforeRequestHeaders => {
-                    let Some(mut head) = event.request_head else {
-                        return BreakpointDecision::Continue;
-                    };
-                    let proof = HeaderField::try_new("x-intercept-test", self.id.as_bytes())
-                        .expect("proof identifiers are valid header values");
-                    head.headers.replace_all(proof);
-                    head.headers.replace_all(
-                        HeaderField::try_new("accept-encoding", "identity")
-                            .expect("static identity header is valid"),
-                    );
-                    BreakpointDecision::ReplaceRequestHead(head)
-                }
-                BreakpointPhase::BeforeResponseHeaders => {
-                    let Some(mut head) = event.response_head else {
-                        return BreakpointDecision::Continue;
-                    };
-                    let is_html = head.headers.values("content-type").any(|value| {
-                        std::str::from_utf8(value)
-                            .is_ok_and(|value| value.to_ascii_lowercase().contains("text/html"))
-                    });
-                    if !is_html {
-                        return BreakpointDecision::Continue;
-                    }
-                    self.lock_sessions().insert(event.session.session_id);
-                    head.headers.replace_all(
-                        HeaderField::try_new("x-intercepted-by", self.id.as_bytes())
-                            .expect("proof identifiers are valid header values"),
-                    );
-                    BreakpointDecision::ReplaceResponseHead(head)
-                }
-                BreakpointPhase::ResponseBody
-                    if self.lock_sessions().remove(&event.session.session_id) =>
-                {
-                    BreakpointDecision::TransformBodyStream(Box::new(HtmlProofTransform::new(
-                        &self.id,
-                        self.max_body_bytes,
-                    )))
-                }
-                BreakpointPhase::Completed | BreakpointPhase::Failed => {
-                    self.lock_sessions().remove(&event.session.session_id);
-                    BreakpointDecision::Continue
-                }
-                _ => BreakpointDecision::Continue,
-            }
+            let mut head = event.head;
+            let proof = HeaderField::try_new("x-intercept-test", self.id.as_bytes())
+                .expect("proof identifiers are valid header values");
+            head.headers.replace_all(proof);
+            head.headers.replace_all(
+                HeaderField::try_new("accept-encoding", "identity")
+                    .expect("static identity header is valid"),
+            );
+            RequestHeadAction::Replace(head)
         })
     }
+
+    fn on_response_head(&self, event: ResponseHeadEvent) -> BoxHookFuture<'_, ResponseHeadAction> {
+        Box::pin(async move {
+            let mut head = event.head;
+            let is_html = head.headers.values("content-type").any(|value| {
+                std::str::from_utf8(value)
+                    .is_ok_and(|value| value.to_ascii_lowercase().contains("text/html"))
+            });
+            self.html.store(is_html, Ordering::Release);
+            if !is_html {
+                return ResponseHeadAction::Continue;
+            }
+            head.headers.replace_all(
+                HeaderField::try_new("x-intercepted-by", self.id.as_bytes())
+                    .expect("proof identifiers are valid header values"),
+            );
+            ResponseHeadAction::Replace(head)
+        })
+    }
+
+    fn on_response_body(&self, _event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
+        let plan = if self.html.load(Ordering::Acquire) {
+            let marker = format!(
+                "<meta name=\"intercept-proxy-proof\" content=\"{}\">",
+                self.id
+            )
+            .into_bytes();
+            BodyPlan::Buffer {
+                limit: NonZeroUsize::new(self.max_body_bytes).expect("proof body bound is nonzero"),
+                handler: Box::new(HtmlProofEditor {
+                    max_output_body_bytes: self.max_body_bytes.saturating_add(marker.len()),
+                    marker,
+                }),
+            }
+        } else {
+            BodyPlan::PassThrough
+        };
+        Box::pin(async move { ResponseBodyAction(plan) })
+    }
 }
 
-struct HtmlProofTransform {
+struct HtmlProofEditor {
     marker: Vec<u8>,
-    max_body_bytes: usize,
-    body: Vec<u8>,
-    trailers: Option<rustymiddle_core::HeaderBlock>,
+    max_output_body_bytes: usize,
 }
 
-impl HtmlProofTransform {
-    fn new(id: &str, max_body_bytes: usize) -> Self {
-        Self {
-            marker: format!("<meta name=\"intercept-proxy-proof\" content=\"{id}\">").into_bytes(),
-            max_body_bytes,
-            body: Vec::new(),
-            trailers: None,
-        }
-    }
-}
-
-impl BodyTransform for HtmlProofTransform {
-    fn transform(&mut self, frame: BodyFrame) -> Result<Vec<BodyFrame>, AbortReason> {
-        match frame {
-            BodyFrame::Data(data) => {
-                let attempted = self.body.len().saturating_add(data.len());
-                if attempted > self.max_body_bytes || self.trailers.is_some() {
-                    return Err(AbortReason::Policy(format!(
-                        "HTML proof buffer exceeded {} bytes or received data after trailers",
-                        self.max_body_bytes
-                    )));
-                }
-                self.body.extend_from_slice(&data);
-            }
-            BodyFrame::Trailers(trailers) => {
-                if self.trailers.replace(trailers).is_some() {
-                    return Err(AbortReason::Policy(
-                        "duplicate HTML response trailers".to_owned(),
-                    ));
-                }
-            }
-        }
-        Ok(Vec::new())
-    }
-
-    fn finish(&mut self) -> Result<Vec<BodyFrame>, AbortReason> {
-        let position = find_ascii_case_insensitive(&self.body, b"</head>")
-            .or_else(|| find_ascii_case_insensitive(&self.body, b"<body"))
-            .unwrap_or(0);
-        self.body
-            .splice(position..position, self.marker.iter().copied());
-        let mut frames = vec![BodyFrame::Data(Bytes::from(std::mem::take(&mut self.body)))];
-        if let Some(trailers) = self.trailers.take() {
-            frames.push(BodyFrame::Trailers(trailers));
-        }
-        Ok(frames)
+impl BufferedBodyHandler for HtmlProofEditor {
+    fn on_body(
+        &mut self,
+        body: BufferedBody,
+    ) -> BoxBodyFuture<'_, Result<BufferedBody, BodyHookError>> {
+        Box::pin(async move {
+            let trailers = body.trailers().cloned();
+            let mut bytes = body.data().to_vec();
+            let position = find_ascii_case_insensitive(&bytes, b"</head>")
+                .or_else(|| find_ascii_case_insensitive(&bytes, b"<body"))
+                .unwrap_or(0);
+            bytes.splice(position..position, self.marker.iter().copied());
+            BufferedBody::try_new(self.max_output_body_bytes, Bytes::from(bytes), trailers)
+                .map_err(BodyHookError::from)
+        })
     }
 }
 
