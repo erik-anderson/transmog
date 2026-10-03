@@ -47,6 +47,11 @@ Hyper, quiche, Tokio channels, and TLS connection objects do not appear in hook
 signatures. Pass-through streams before producer completion; complete-body
 editing is available only through an explicit nonzero limit.
 
+`rustymiddle-content` is the next layer above canonical body framing. It owns
+content-coding plans, representation header repair, and decompression budgets;
+codec engines will compose around the Hooks v2 body pipeline without moving
+compression policy into Hyper, quiche, or core lifecycle types.
+
 The immutable `OriginalTarget` records client intent. Head edits are logical
 message edits and cannot silently redirect a socket. A `Reroute` action is fed
 to a `RouteSelector`, which applies a `DestinationAuthorizer` and returns an

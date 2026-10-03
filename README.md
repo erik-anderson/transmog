@@ -9,7 +9,9 @@ The project is under active implementation. See [architecture](docs/architecture
 [Hooks lifecycle](docs/hooks-lifecycle.md), [embedding](docs/embedding.md),
 [certificate model](docs/certificate-model.md), [testing](docs/testing.md),
 [performance](docs/performance.md), [build prerequisites](docs/building.md), and
-[limitations](docs/limitations.md).
+[limitations](docs/limitations.md). Forward work is organized by the
+[layered monorepo roadmap](docs/specs/monorepo-roadmap.md), with a dedicated
+[content-processing plan](docs/specs/content-processing-plan.md).
 
 ## Local verification
 

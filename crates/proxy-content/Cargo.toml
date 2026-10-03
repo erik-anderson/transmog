@@ -1,0 +1,16 @@
+[package]
+name = "rustymiddle-content"
+description = "Bounded HTTP content processing for rustymiddle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
+thiserror.workspace = true
+
+[lints]
+workspace = true
+

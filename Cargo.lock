@@ -689,6 +689,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustymiddle-content"
+version = "0.1.0"
+dependencies = [
+ "rustymiddle-core",
+ "thiserror",
+]
+
+[[package]]
 name = "rustymiddle-core"
 version = "0.1.0"
 dependencies = [

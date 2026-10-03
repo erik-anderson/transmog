@@ -30,6 +30,11 @@ the Hyper H1 adapter, and the quiche H3 adapter. It verifies canonical bounded
 request/response streaming and typed plan propagation; adapter unit tests also
 reject destination/authority mismatches before network I/O.
 
+The content-processing Phase 1 suite strictly parses ordered and duplicate
+`Content-Encoding` fields, proves reverse decode order, rejects ambiguous or
+unsupported stacks, repairs representation headers/trailers, and exercises
+absolute, expansion-ratio, exact-boundary, and arithmetic-overflow accounting.
+
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright
 route interception. Its durable local test CA is generated and installed once
