@@ -25,6 +25,10 @@ model enumeration, observer redaction and saturation, route authorization,
 application-owned streaming upstreams, and a 256-exchange concurrency stress
 case. The bounded `DecisionBridge` tests correlation, duplicate and stale
 replies, disconnect, timeout, cancellation, and queue saturation.
+One shared upstream contract suite runs against an application-owned service,
+the Hyper H1 adapter, and the quiche H3 adapter. It verifies canonical bounded
+request/response streaming and typed plan propagation; adapter unit tests also
+reject destination/authority mismatches before network I/O.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

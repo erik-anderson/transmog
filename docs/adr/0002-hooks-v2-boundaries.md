@@ -67,9 +67,11 @@ the socket destination.
 
 ### Upstream execution is protocol-neutral
 
-The default upstream service adapts the existing Hyper and quiche clients. An
-embedding application may supply a canonical streaming upstream service. Retry
-and fallback orchestration remains centralized in the exchange engine.
+The default network path uses the existing Hyper and quiche clients, and
+`HyperUpstreamService` plus `H3UpstreamService` expose those clients through the
+same canonical contract used by an embedding application's streaming upstream
+service. Retry and fallback orchestration remains centralized above an
+individual attempt.
 
 ### Tower is not the canonical API
 

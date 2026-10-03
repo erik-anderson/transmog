@@ -70,6 +70,11 @@ so a future reverse listener can use supplied certificate material without
 weakening CONNECT/SNI identity validation. The default network upstream keeps
 trust snapshots generation-scoped. Reload builds complete replacement Hyper and
 quiche clients; in-flight exchanges retain their previous generation.
+`HyperUpstreamService` and `H3UpstreamService` also expose those pooled network
+clients through the same canonical boundary used by application services. They
+validate the authorized destination against the complete normalized request
+target before any network I/O; fallback policy stays above the individual
+adapter.
 
 The core owns protocol correctness state: exchange IDs, framing and flow
 control, route attempts, retry eligibility, connection pools, deadlines,

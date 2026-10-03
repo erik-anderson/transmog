@@ -2,8 +2,10 @@
 
 mod authority;
 mod client;
+mod service;
 mod upstream;
 
 pub use authority::{AuthorityError, ConnectAuthority};
 pub use client::{HyperOriginClient, HyperOriginError};
+pub use service::HyperUpstreamService;
 pub use upstream::{HyperEgressMode, build_https_connector};

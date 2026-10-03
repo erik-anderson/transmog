@@ -21,6 +21,13 @@ return another bounded stream. It must not create an unbounded queue or retry a
 request independently; route attempts and replay safety belong to the exchange
 engine.
 
+`rustymiddle-http::HyperUpstreamService` and
+`rustymiddle-h3::H3UpstreamService` adapt the built-in pooled clients to this
+same contract. Both reject a plan whose authorized destination differs from
+the canonical scheme, authority, host, or port before network I/O. The HTTP/3
+adapter performs one H3 attempt; an embedding host that selects `Auto` remains
+responsible for applying the central replay/fallback policy around attempts.
+
 Observers are asynchronous and use finite queues. Metadata and redacted heads
 are enabled by default; body bytes require an explicit bounded prefix interest.
 Call `ProxyServer::serve` through shutdown so accepted connections and observer

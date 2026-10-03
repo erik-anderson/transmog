@@ -3332,6 +3332,8 @@ mod tests {
         RequestBodyAction, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
         ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
     };
+    use rustymiddle_h3::H3UpstreamService;
+    use rustymiddle_http::HyperUpstreamService;
     use rustymiddle_tls::{
         DownstreamTlsContextFactory, DownstreamTlsPolicy, LoadedTrust, ProxyCa, SystemTrustSource,
         TrustError, TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
@@ -3371,6 +3373,8 @@ mod tests {
     struct EmbeddedUpstream {
         observed: Arc<StdMutex<Vec<(String, String)>>>,
     }
+
+    struct ContractApplicationUpstream;
 
     struct LifecycleObserver {
         phases: Arc<StdMutex<Vec<&'static str>>>,
@@ -3590,6 +3594,107 @@ mod tests {
         }
     }
 
+    impl UpstreamService for ContractApplicationUpstream {
+        fn execute(
+            &self,
+            mut request: StreamingRequest,
+            plan: UpstreamPlan,
+            _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        ) -> rustymiddle_core::upstream::BoxUpstreamFuture<'_> {
+            Box::pin(async move {
+                assert_eq!(request.head.target.scheme, plan.pool_key.destination.scheme);
+                assert_eq!(request.head.target.host, plan.pool_key.destination.host);
+                assert_eq!(request.head.target.port, plan.pool_key.destination.port);
+                let mut request_data = Vec::new();
+                while let Some(frame) = request.body.recv().await {
+                    match frame.map_err(|error| UpstreamError::application(error.to_string()))? {
+                        BodyFrame::Data(data) => request_data.extend_from_slice(&data),
+                        BodyFrame::Trailers(_) => {}
+                    }
+                }
+                assert_eq!(request_data, b"contract-request");
+                let (sender, body) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+                tokio::spawn(async move {
+                    sender
+                        .send(Ok(BodyFrame::Data(Bytes::from_static(b"contract-origin"))))
+                        .await
+                        .unwrap();
+                });
+                Ok(rustymiddle_core::StreamingResponse {
+                    head: ResponseHead {
+                        status: 200,
+                        headers: HeaderBlock::new(),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                    body,
+                })
+            })
+        }
+    }
+
+    async fn assert_upstream_service_contract(
+        service: Arc<dyn UpstreamService>,
+        target: Target,
+        policy: RoutePolicy,
+        trust_generation: u64,
+        expected_version: HttpLegVersion,
+        expected_body: &'static [u8],
+    ) {
+        let plan = UpstreamPlan {
+            pool_key: rustymiddle_core::route::UpstreamPoolKey {
+                destination: rustymiddle_core::route::UpstreamDestination {
+                    scheme: target.scheme.clone(),
+                    host: target.host.clone(),
+                    port: target.port,
+                },
+                version_policy: policy,
+                trust_generation,
+                tls_policy_id: "contract".into(),
+                connector_policy_id: "direct".into(),
+            },
+            route_id: "shared-upstream-contract".into(),
+            reason: "shared upstream contract test".into(),
+            replayability: Replayability::NotReplayable,
+        };
+        let (sender, body) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+        let producer = tokio::spawn(async move {
+            sender
+                .send(Ok(BodyFrame::Data(Bytes::from_static(b"contract-request"))))
+                .await
+                .unwrap();
+        });
+        let executor = UpstreamExecutor::new(service, Duration::from_secs(2));
+        let mut response = executor
+            .execute(
+                StreamingRequest {
+                    head: RequestHead {
+                        method: "POST".to_owned(),
+                        target,
+                        headers: HeaderBlock::from_fields(vec![
+                            HeaderField::try_new("x-from-breakpoint", "yes").unwrap(),
+                        ]),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                    body,
+                },
+                plan,
+                &rustymiddle_core::intercept::ExchangeCancellation::new(),
+            )
+            .await
+            .unwrap();
+        producer.await.unwrap();
+        assert_eq!(response.head.status, 200);
+        assert_eq!(response.head.source_version, expected_version);
+        let mut response_data = Vec::new();
+        while let Some(frame) = response.body.recv().await {
+            match frame.unwrap() {
+                BodyFrame::Data(data) => response_data.extend_from_slice(&data),
+                BodyFrame::Trailers(_) => {}
+            }
+        }
+        assert_eq!(response_data, expected_body);
+    }
+
     impl rustymiddle_core::observe::Observer for LifecycleObserver {
         fn on_event(
             &self,
@@ -3709,6 +3814,133 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
+    }
+
+    async fn assert_application_upstream_contract() {
+        let application_target = Target {
+            scheme: "http".to_owned(),
+            authority: "application.internal:8080".to_owned(),
+            host: "application.internal".to_owned(),
+            port: 8080,
+            path: "/contract".to_owned(),
+            query: None,
+        };
+        assert_upstream_service_contract(
+            Arc::new(ContractApplicationUpstream),
+            application_target,
+            RoutePolicy::Http1Only,
+            1,
+            HttpLegVersion::Http1,
+            b"contract-origin",
+        )
+        .await;
+    }
+
+    async fn assert_hyper_upstream_contract() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            loop {
+                let read = stream.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0, "contract request ended before its body");
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(5).any(|window| window == b"0\r\n\r\n") {
+                    break;
+                }
+            }
+            let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+            assert!(text.contains("x-from-breakpoint: yes"));
+            assert!(
+                request
+                    .windows(b"contract-request".len())
+                    .any(|window| window == b"contract-request")
+            );
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\ncontract-origin",
+                )
+                .await
+                .unwrap();
+        });
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 61).unwrap());
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        let hyper_service = HyperUpstreamService::new(
+            HyperOriginClient::new(&tls).unwrap(),
+            1024,
+            NonZeroUsize::new(1).unwrap(),
+            Duration::from_secs(1),
+        );
+        assert_upstream_service_contract(
+            Arc::new(hyper_service),
+            Target {
+                scheme: "http".to_owned(),
+                authority: origin_addr.to_string(),
+                host: origin_addr.ip().to_string(),
+                port: origin_addr.port(),
+                path: "/contract".to_owned(),
+                query: None,
+            },
+            RoutePolicy::Http1Only,
+            61,
+            HttpLegVersion::Http1,
+            b"contract-origin",
+        )
+        .await;
+        origin_task.await.unwrap();
+    }
+
+    async fn assert_h3_upstream_contract() {
+        let origin_ca = ProxyCa::generate("rustymiddle h3 contract origin", 2).unwrap();
+        let origin_leaf = origin_ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let bind_ip = tokio::net::lookup_host(("localhost", 0))
+            .await
+            .unwrap()
+            .next()
+            .unwrap()
+            .ip();
+        let (origin_addr, origin_task) = spawn_h3_origin(origin_leaf, bind_ip).await;
+        let trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![origin_ca.certificate().to_der().unwrap()]),
+                62,
+            )
+            .unwrap(),
+        );
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        let h3_service = H3UpstreamService::new(
+            H3OriginClient::new(tls, H3TransportLimits::default()),
+            1024,
+            NonZeroUsize::new(1).unwrap(),
+        );
+        assert_upstream_service_contract(
+            Arc::new(h3_service),
+            Target {
+                scheme: "https".to_owned(),
+                authority: format!("localhost:{}", origin_addr.port()),
+                host: "localhost".to_owned(),
+                port: origin_addr.port(),
+                path: "/contract".to_owned(),
+                query: None,
+            },
+            RoutePolicy::Http3Only,
+            62,
+            HttpLegVersion::Http3,
+            b"h3-origin",
+        )
+        .await;
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn network_and_application_upstreams_pass_the_shared_contract() {
+        assert_application_upstream_contract().await;
+        assert_hyper_upstream_contract().await;
+        assert_h3_upstream_contract().await;
     }
 
     #[tokio::test]

@@ -50,6 +50,37 @@ impl UpstreamDestination {
             port: target.port,
         }
     }
+
+    /// Whether a normalized request target selects exactly this destination.
+    ///
+    /// Path and query are deliberately ignored. Scheme, host, port, and the
+    /// normalized authority must all agree so a transport cannot connect using
+    /// a different authority than the one authorized by route selection.
+    pub fn matches_target(&self, target: &Target) -> bool {
+        target.scheme.eq_ignore_ascii_case(&self.scheme)
+            && target.host.eq_ignore_ascii_case(&self.host)
+            && target.port == self.port
+            && target.authority.eq_ignore_ascii_case(&normalized_authority(
+                &self.scheme,
+                &self.host,
+                self.port,
+            ))
+    }
+}
+
+fn normalized_authority(scheme: &str, host: &str, port: u16) -> String {
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    let default_port = (scheme.eq_ignore_ascii_case("http") && port == 80)
+        || (scheme.eq_ignore_ascii_case("https") && port == 443);
+    if default_port {
+        host
+    } else {
+        format!("{host}:{port}")
+    }
 }
 
 /// Identities needed to segregate upstream connection pools safely.
@@ -413,6 +444,36 @@ mod tests {
         changed.connector_policy_id = "proxy-a".into();
         keys.insert(changed);
         assert_eq!(keys.len(), 5);
+    }
+
+    #[test]
+    fn destination_match_validates_normalized_authority() {
+        let destination = UpstreamDestination {
+            scheme: "https".to_owned(),
+            host: "example.test".to_owned(),
+            port: 443,
+        };
+        let mut exact = target("example.test", 443);
+        exact.authority = "example.test".to_owned();
+        assert!(destination.matches_target(&exact));
+
+        exact.authority = "other.test".to_owned();
+        assert!(!destination.matches_target(&exact));
+
+        let ipv6 = UpstreamDestination {
+            scheme: "https".to_owned(),
+            host: "::1".to_owned(),
+            port: 8443,
+        };
+        let ipv6_target = Target {
+            scheme: "https".to_owned(),
+            authority: "[::1]:8443".to_owned(),
+            host: "::1".to_owned(),
+            port: 8443,
+            path: "/".to_owned(),
+            query: None,
+        };
+        assert!(ipv6.matches_target(&ipv6_target));
     }
 
     #[tokio::test]

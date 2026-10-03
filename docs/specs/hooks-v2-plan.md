@@ -1,7 +1,6 @@
 # Plan: Production-grade Hooks v2 interception API
 
-Status: local implementation and hardening complete; shared upstream contract
-coverage and cross-platform CI are pending
+Status: local implementation and hardening complete; cross-platform CI pending
 Audience: implementation agent and reviewers
 Baseline: commit `8045959`
 Primary scope: `rustymiddle-core` and the exchange orchestration in `rustymiddle-runtime`
@@ -909,7 +908,7 @@ route interception.
       redaction defaults, and visible loss reporting.
 - [x] Original client target, effective request, explicit reroute, and upstream
       plan are separate types with destination-authorization tests.
-- [ ] Network and application-owned upstream services pass shared contract
+- [x] Network and application-owned upstream services pass shared contract
       tests.
 - [x] Trust reload, Alt-Svc, safe fallback, and no-DIRECT behavior remain intact.
 - [x] The CLI proof handler uses only Hooks v2 and no global per-session map.
@@ -928,10 +927,9 @@ route interception.
 - [x] The final working tree contains no temporary adapters, ignored failures,
       debug credential/body logging, or undocumented feature flags.
 
-The remaining unchecked items are deliberate gates, not presumed successes:
-the network clients still need to participate in the same reusable contract
-suite as application-owned upstream services, and the checked-in Linux/macOS
-CI jobs have not been observed for this change set from the local Windows run.
+The remaining unchecked item is a deliberate gate, not a presumed success: the
+checked-in Linux/macOS CI jobs have not been observed for this change set from
+the local Windows run.
 
 ## Expected risks and mitigations
 
