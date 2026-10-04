@@ -1,7 +1,7 @@
 # Plan: Production-grade content processing
 
-Status: active; Phases 1-4 are implemented and validated on Windows; Phase 5
-protocol-matrix expansion and cross-platform codec validation remain
+Status: active; Phases 1-5 are implemented and deterministically validated on
+Windows; Phase 6 hardening and cross-platform codec validation remain
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -309,19 +309,20 @@ are regenerated in the same change that accepts a dependency.
 - [x] Modified traffic has correct coding, framing, and validator headers.
 - [x] Requests and responses preserve trailers and bodyless semantics.
 - [ ] All byte, ratio, depth, frame, time, and cancellation bounds are tested.
-- [ ] One paused codec stream does not block unrelated H2/H3 streams.
-- [ ] All ingress/egress protocol matrix rows pass local coding fixtures.
+- [x] One paused codec stream does not block unrelated H2/H3 streams.
+- [x] All ingress/egress protocol matrix rows pass local coding fixtures.
 - [x] Public embedding example and rustdoc are complete.
 - [x] Formatting, strict Clippy, locked tests, dependency policy, notices, SBOM,
       and the one-BoringSSL check pass.
-- [ ] Windows LLVM/Ninja release build and Linux/macOS CI pass.
-- [ ] Live Chromium verification passes without certificate bypass or route
+- [x] Windows LLVM/Ninja/Windows SDK release build passes.
+- [ ] Linux and macOS CI pass.
+- [x] Live Chromium verification passes without certificate bypass or route
       interception.
 
-## First implementation slice
+## Next implementation slice
 
-Begin with Phase 1. It creates the crate boundary and semantic types without
-prematurely selecting compression libraries. This makes codec evaluation
-replaceable, lets runtime integration target a stable conceptual API, and gives
-security-sensitive parsing and resource accounting complete tests before any
-decoder handles attacker-controlled bytes.
+Continue with Phase 6. Preserve the now-complete deterministic protocol matrix
+as the behavioral baseline while adding fuzzing, adversarial stress, codec
+benchmarks, dependency review, and cross-platform observation. Do not weaken
+finite limits or move content policy into transport adapters to improve a
+benchmark.

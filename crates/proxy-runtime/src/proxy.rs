@@ -3303,6 +3303,10 @@ impl From<HookAbort> for ProxyRuntimeError {
 }
 
 #[cfg(test)]
+#[path = "content_matrix_tests.rs"]
+mod content_matrix_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{
         sync::{Arc, Mutex as StdMutex},

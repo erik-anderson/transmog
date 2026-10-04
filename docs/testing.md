@@ -59,6 +59,15 @@ repairs stale length and validator fields before head commitment, and exposes
 only canonical frames to the application boundary. Policy tests also prove
 disabled-mode required failure, optional exact bypass, and identity-body
 compatibility.
+The Phase 5 runtime suite composes gzip, Brotli, deflate, and zstd into one
+ordered coding stack on both requests and responses across H1/H1, H1/H2,
+H2/H1, H2/H2, H1/H3, and H2/H3. It proves decoded hook modification,
+forward-order re-encoding, and stale length/validator repair in every row.
+Separate fixtures prove output is streamed after the first complete gzip member,
+a paused decoder does not block another stream on the same H2 or H3 connection,
+an actual decoded-size overflow terminates the upstream body, and Auto fallback
+replays the already processed coded request exactly once before response start.
+The existing declared-size rejection test complements the in-stream limit test.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright
