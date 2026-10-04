@@ -1,6 +1,9 @@
 /target/
 /fuzz/target/
 /fuzz/artifacts/
+/fuzz/coverage/
+/fuzz/coverage-summary.txt
+/fuzz/.corpus-work.*
 /artifacts/
 /.tools/
 /.local/

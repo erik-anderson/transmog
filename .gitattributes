@@ -1,1 +1,3 @@
 fuzz/*.sh text eol=lf
+fuzz/corpus/** binary
+fuzz/seeds/** -text

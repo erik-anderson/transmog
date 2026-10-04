@@ -1,0 +1,50 @@
+name: content-fuzz
+
+on:
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sustained-content-fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CC: clang
+      CXX: clang++
+      CFLAGS: >-
+        -fsanitize=address -fno-omit-frame-pointer
+        -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp
+      CMAKE_GENERATOR: Ninja
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-10-01
+          components: llvm-tools-preview
+      - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Evolve and minimize coverage corpora
+        env:
+          FUZZ_MAX_TOTAL_TIME: '300'
+        run: bash fuzz/update-corpus.sh
+      - name: Verify native zstd sanitizer instrumentation
+        run: bash fuzz/verify-native-sanitizers.sh
+      - name: Generate first-party LLVM coverage reports
+        run: bash fuzz/report-coverage.sh
+      - name: Upload fuzzing evidence and evolved corpora
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-fuzz-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            fuzz/artifacts
+            fuzz/corpus
+            fuzz/coverage-summary.txt
+            fuzz/coverage/**/coverage.profdata

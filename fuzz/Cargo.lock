@@ -280,6 +280,7 @@ dependencies = [
  "libfuzzer-sys",
  "rustymiddle-content",
  "rustymiddle-core",
+ "tokio",
 ]
 
 [[package]]

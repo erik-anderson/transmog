@@ -103,22 +103,28 @@ jobs:
   content-fuzz-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CC: clang
+      CXX: clang++
+      CFLAGS: >-
+        -fsanitize=address -fno-omit-frame-pointer
+        -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp
+      CMAKE_GENERATOR: Ninja
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-10-01
       - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
-      - name: Fuzz Content-Encoding parsing
-        run: >-
-          cargo fuzz run content_encoding fuzz/corpus/content_encoding --
-          -dict=fuzz/dictionaries/content_encoding.dict -max_len=16384 -runs=1000
-      - name: Fuzz bounded codec streams
-        run: >-
-          cargo fuzz run decode_stream fuzz/corpus/decode_stream --
-          -max_len=8192 -runs=1000
+      - name: Run bounded content fuzz smoke campaigns
+        env:
+          FUZZ_RUNS: '1000'
+        run: bash fuzz/run-container.sh
+      - name: Verify native zstd sanitizer instrumentation
+        run: bash fuzz/verify-native-sanitizers.sh
 
   browser-live:
     runs-on: windows-latest
