@@ -24,7 +24,7 @@ resource semantics are documented in
 ```powershell
 pwsh ./scripts/dev-env.ps1 -Check
 pwsh ./scripts/test.ps1
-# Real curl and Chromium through the proxy to digest-pinned Nginx and Apache:
+# Real curl and Chromium through the proxy to pinned third-party servers:
 pwsh ./scripts/test-interop.ps1
 ```
 
@@ -33,11 +33,14 @@ clippy, the locked workspace tests, `cargo deny`, the single-TLS graph check,
 and supply-chain artifact generation.
 
 `test-interop.ps1` is the opt-in, local external-process compatibility gate.
-It publishes Nginx and Apache only on ephemeral loopback ports, drives both
-standalone curl and Playwright-managed Chromium through the release proxy, and
-requires proxy modification plus exchange evidence so client bypass cannot
-produce a false pass. It does not install a certificate or modify an OS trust
-store.
+It publishes digest-pinned Nginx, Apache, and Caddy only on ephemeral loopback
+ports. Standalone curl proves HTTP/1.1 plus verified HTTP/2 and HTTP/3 origin
+egress; Playwright-managed Chromium proves normal navigation, every supported
+HTTP content coding (including a four-layer stack), and a WebSocket echo through
+the browser's `CONNECT` behavior. Every case requires proxy modification or
+terminal exchange evidence so client bypass cannot produce a false pass. The
+runner uses an ephemeral CA in process and does not install a certificate or
+modify an OS trust store.
 
 The primary build profile is **Windows LLVM/Ninja**: Clang compiles native code,
 `llvm-lib` archives it, Ninja executes native builds, and the Windows SDK

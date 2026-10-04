@@ -875,6 +875,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "rustymiddle-capture",
+ "rustymiddle-content",
  "rustymiddle-core",
  "rustymiddle-runtime",
  "rustymiddle-saz",

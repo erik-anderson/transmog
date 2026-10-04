@@ -51,6 +51,28 @@ function Get-PublishedUrl(
     return "http://127.0.0.1:$($Matches.port)/"
 }
 
+function Get-FreeTcpUdpPort {
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $tcp = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $udp = $null
+        try {
+            $tcp.Start()
+            $port = ([Net.IPEndPoint]$tcp.LocalEndpoint).Port
+            $udp = [Net.Sockets.UdpClient]::new()
+            $udp.Client.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $port))
+            return $port
+        } catch {
+            continue
+        } finally {
+            if ($null -ne $udp) {
+                $udp.Dispose()
+            }
+            $tcp.Stop()
+        }
+    }
+    throw 'Could not reserve a matching loopback TCP/UDP port for the HTTP/3 fixture.'
+}
+
 $dockerCli = Resolve-DockerCli
 $curlCli = Resolve-CurlCli
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -64,6 +86,9 @@ $binaryName = if ($IsWindows) { 'rustymiddle.exe' } else { 'rustymiddle' }
 $binary = Join-Path $repoRoot "target\release\$binaryName"
 $caCertificate = Join-Path $runRoot 'ca.pem'
 $caPrivateKey = Join-Path $runRoot 'ca.key'
+$originCertificate = Join-Path $runRoot 'origin.pem'
+$originPrivateKey = Join-Path $runRoot 'origin.key'
+$assetsDirectory = Join-Path $runRoot 'encoded'
 $composeAttempted = $false
 $composeStarted = $false
 
@@ -78,6 +103,19 @@ try {
         --cert $caCertificate `
         --key $caPrivateKey `
         --name "rustymiddle interop $($runId.Substring(0, 12))"
+    & $binary ca issue `
+        --ca-cert $caCertificate `
+        --ca-key $caPrivateKey `
+        --identity '127.0.0.1' `
+        --cert $originCertificate `
+        --key $originPrivateKey `
+        --days 7
+
+    node (Join-Path $repoRoot 'e2e\interop\generate-encoded-fixtures.mjs') $assetsDirectory
+
+    $env:RUSTYMIDDLE_INTEROP_ASSETS_DIR = $assetsDirectory
+    $env:RUSTYMIDDLE_INTEROP_TLS_DIR = $runRoot
+    $env:RUSTYMIDDLE_INTEROP_TLS_PORT = [string](Get-FreeTcpUdpPort)
 
     $composeAttempted = $true
     & $dockerCli compose `
@@ -92,10 +130,12 @@ try {
     $env:RUSTYMIDDLE_CURL = $curlCli
     $env:RUSTYMIDDLE_NGINX_URL = Get-PublishedUrl $dockerCli $composeFile $project 'nginx'
     $env:RUSTYMIDDLE_APACHE_URL = Get-PublishedUrl $dockerCli $composeFile $project 'apache'
+    $env:RUSTYMIDDLE_CADDY_URL = "https://127.0.0.1:$($env:RUSTYMIDDLE_INTEROP_TLS_PORT)/"
     $env:RUSTYMIDDLE_INTEROP = '1'
 
     Write-Output "NGINX_ORIGIN=$($env:RUSTYMIDDLE_NGINX_URL)"
     Write-Output "APACHE_ORIGIN=$($env:RUSTYMIDDLE_APACHE_URL)"
+    Write-Output "CADDY_ORIGIN=$($env:RUSTYMIDDLE_CADDY_URL)"
     Write-Output "CURL=$curlCli"
     Write-Output "CURL_VERSION=$((& $curlCli --version | Select-Object -First 1).Trim())"
 
@@ -122,12 +162,16 @@ try {
         $oldNativePreference = $PSNativeCommandUseErrorActionPreference
         try {
             $PSNativeCommandUseErrorActionPreference = $false
-            & $dockerCli compose `
-                --project-name $project `
-                --file $composeFile `
-                down --volumes --remove-orphans
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "Docker Compose cleanup failed with exit code $LASTEXITCODE."
+            try {
+                & $dockerCli compose `
+                    --project-name $project `
+                    --file $composeFile `
+                    down --volumes --remove-orphans
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Docker Compose cleanup failed with exit code $LASTEXITCODE."
+                }
+            } catch {
+                Write-Warning "Docker Compose cleanup could not run: $($_.Exception.Message)"
             }
         } finally {
             $PSNativeCommandUseErrorActionPreference = $oldNativePreference

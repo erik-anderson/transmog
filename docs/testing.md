@@ -112,19 +112,27 @@ distributed clients and servers:
 | curl | Apache HTTP Server 2.4.65 | HTTP status, pinned server identity, proxy-added header and HTML marker, terminal exchange evidence |
 | Chromium | Nginx 1.28.0 | navigation, response headers, DOM marker, terminal exchange evidence |
 | Chromium | Apache HTTP Server 2.4.65 | navigation, response headers, DOM marker, terminal exchange evidence |
+| curl | Caddy 2.10.2 over TLS | forced H2 and H3 origin egress, exact-IP SAN and chain verification, adapter/ALPN evidence |
+| Chromium | Nginx 1.28.0 encoded fixtures | gzip, Brotli, zlib-deflate, zstd, and `gzip, br, deflate, zstd` decode/modify/re-encode with coding preservation |
+| Chromium WebSocket | standalone Node echo server | browser-style plaintext HTTP/1.1 inside `CONNECT`, echo bytes, upgrade evidence, terminal relay byte counts |
 
-Nginx and Apache use exact multi-platform image-manifest digests. Compose
+Nginx, Apache, and Caddy use exact multi-platform image-manifest digests. Compose
 publishes each origin on a random loopback-only port and waits for its health
-check. Every client request carries a unique proof value that only the running
-proxy can add to both the response headers and HTML. The suite also requires
-the corresponding H1/Hyper evidence record, so an implicit localhost proxy
-bypass cannot look successful.
+check. Caddy binds the same loopback port for TCP and UDP and advertises H1, H2,
+and H3; the proxy is forced to use H2 or H3 and reports the selected adapter and
+ALPN. Every HTTP client request carries a unique proof value that only the
+running proxy can add to both the response headers and HTML. The suite also
+requires the corresponding exchange evidence record, so an implicit localhost
+proxy bypass cannot look successful.
 
-The runner creates an ephemeral, untrusted proxy CA because the CLI requires
-signing material even for plaintext HTTP; it neither installs that CA nor
-changes the operating-system trust store. Containers, the per-run Compose
-network, and private material are removed in a `finally` block. Run it from
-PowerShell with Docker Desktop running:
+The runner creates an ephemeral CA for downstream proxy signing, then issues a
+short-lived Caddy leaf containing the exact `127.0.0.1` IP SAN. Curl receives
+the CA as its downstream trust anchor and the proxy augments its BoringSSL
+upstream trust snapshot with the same public certificate. Verification remains
+strict in both directions; no certificate-error bypass is used. Nothing is
+installed into an operating-system trust store. Containers, the per-run Compose
+network, generated encoded bodies, and private material are removed in a
+`finally` block. Run it from PowerShell with Docker Desktop running:
 
 ```powershell
 pwsh ./scripts/test-interop.ps1
@@ -135,7 +143,11 @@ is already cached. This local, deterministic matrix complements rather than
 replaces the HTTPS live-browser gate below: the latter proves verified CONNECT
 interception and H1/H2/H3 Internet egress, while the standalone matrix proves
 compatibility with exact third-party client and server distributions without
-depending on public-site behavior.
+depending on public-site behavior. The standalone cases deliberately use H1
+ingress. The deterministic in-process matrix remains responsible for H2
+ingress and for every H1/H2/H3 ingress/egress combination; together the two
+layers cover the protocol and coding matrix without making Docker fixtures the
+sole correctness oracle.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

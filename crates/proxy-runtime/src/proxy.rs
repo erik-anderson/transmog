@@ -64,6 +64,7 @@ use rustymiddle_websocket::{
 };
 use thiserror::Error;
 use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf},
     net::{TcpListener, TcpStream},
     sync::{Mutex, RwLock, Semaphore, broadcast},
     task::JoinSet,
@@ -551,7 +552,85 @@ struct ConnectionContext {
     client_addr: SocketAddr,
     proxy_addr: SocketAddr,
     connection_id: ConnectionId,
-    tunnel: Option<ConnectAuthority>,
+    tunnel: Option<TunnelContext>,
+}
+
+#[derive(Clone)]
+struct TunnelContext {
+    authority: ConnectAuthority,
+    protocol: TunnelProtocol,
+}
+
+#[derive(Clone, Copy)]
+enum TunnelProtocol {
+    InterceptedTls,
+    PlainWebSocket,
+}
+
+impl TunnelProtocol {
+    fn target_scheme(self) -> &'static str {
+        match self {
+            Self::InterceptedTls => "https",
+            Self::PlainWebSocket => "http",
+        }
+    }
+
+    fn requires_websocket(self) -> bool {
+        matches!(self, Self::PlainWebSocket)
+    }
+}
+
+struct PrefixedIo<T> {
+    prefix: Option<u8>,
+    inner: T,
+}
+
+impl<T> PrefixedIo<T> {
+    fn new(prefix: u8, inner: T) -> Self {
+        Self {
+            prefix: Some(prefix),
+            inner,
+        }
+    }
+}
+
+impl<T> AsyncRead for PrefixedIo<T>
+where
+    T: AsyncRead + Unpin,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if let Some(prefix) = this.prefix.take() {
+            buffer.put_slice(&[prefix]);
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut this.inner).poll_read(cx, buffer)
+    }
+}
+
+impl<T> AsyncWrite for PrefixedIo<T>
+where
+    T: AsyncWrite + Unpin,
+{
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, bytes)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
 }
 
 async fn serve_explicit_connection(
@@ -604,15 +683,11 @@ impl ProxyState {
         let authority = ConnectAuthority::from_str(authority_text)?;
         let upgraded = hyper::upgrade::on(&mut request);
         let state = Arc::clone(&self);
-        let tunnel_context = ConnectionContext {
-            tunnel: Some(authority.clone()),
-            ..context
-        };
         tokio::spawn(async move {
             match upgraded.await {
                 Ok(upgraded) => {
                     if let Err(error) = state
-                        .serve_intercepted_tunnel(upgraded, tunnel_context, authority)
+                        .serve_intercepted_tunnel(upgraded, context, authority)
                         .await
                     {
                         debug!(%error, "intercepted CONNECT tunnel ended");
@@ -632,6 +707,37 @@ impl ProxyState {
         context: ConnectionContext,
         authority: ConnectAuthority,
     ) -> Result<(), ProxyRuntimeError> {
+        const TLS_HANDSHAKE_CONTENT_TYPE: u8 = 0x16;
+
+        let mut transport = TokioIo::new(upgraded);
+        let mut first_byte = [0_u8; 1];
+        timeout(
+            self.config.limits.header_read_timeout,
+            transport.read_exact(&mut first_byte),
+        )
+        .await
+        .map_err(|_| ProxyRuntimeError::TunnelPrefaceTimeout)??;
+        let transport = PrefixedIo::new(first_byte[0], transport);
+
+        if first_byte[0] == b'G' {
+            return self
+                .serve_intercepted_http(
+                    transport,
+                    ConnectionContext {
+                        tunnel: Some(TunnelContext {
+                            authority,
+                            protocol: TunnelProtocol::PlainWebSocket,
+                        }),
+                        ..context
+                    },
+                    false,
+                )
+                .await;
+        }
+        if first_byte[0] != TLS_HANDSHAKE_CONTENT_TYPE {
+            return Err(ProxyRuntimeError::UnsupportedTunnelPreface(first_byte[0]));
+        }
+
         let identity = EndpointIdentity::parse(authority.host())?;
         let leaf = self
             .certificates
@@ -640,13 +746,36 @@ impl ProxyState {
         let acceptor = self.downstream_tls.acceptor(&leaf)?;
         let tls = timeout(
             self.config.limits.tls_handshake_timeout,
-            tokio_boring::accept(&acceptor, TokioIo::new(upgraded)),
+            tokio_boring::accept(&acceptor, transport),
         )
         .await
         .map_err(|_| ProxyRuntimeError::DownstreamTlsTimeout)?
         .map_err(|error| ProxyRuntimeError::DownstreamTlsHandshake(error.to_string()))?;
         normalize_connect_identity(authority.host(), tls.ssl().servername(NameType::HOST_NAME))?;
         let negotiated_h2 = tls.ssl().selected_alpn_protocol() == Some(b"h2");
+        self.serve_intercepted_http(
+            tls,
+            ConnectionContext {
+                tunnel: Some(TunnelContext {
+                    authority,
+                    protocol: TunnelProtocol::InterceptedTls,
+                }),
+                ..context
+            },
+            negotiated_h2,
+        )
+        .await
+    }
+
+    async fn serve_intercepted_http<S>(
+        self: Arc<Self>,
+        stream: S,
+        context: ConnectionContext,
+        negotiated_h2: bool,
+    ) -> Result<(), ProxyRuntimeError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
         let max_h2_streams = self.config.limits.max_h2_streams;
         let max_header_bytes = self.config.limits.max_header_bytes;
         let max_header_list_size =
@@ -675,7 +804,9 @@ impl ProxyState {
                 .max_header_list_size(max_header_list_size)
                 .keep_alive_interval(Some(body_idle_timeout))
                 .keep_alive_timeout(body_idle_timeout);
-            builder.serve_connection(TokioIo::new(tls), service).await?;
+            builder
+                .serve_connection(TokioIo::new(stream), service)
+                .await?;
         } else {
             let mut builder = hyper::server::conn::http1::Builder::new();
             builder
@@ -684,7 +815,7 @@ impl ProxyState {
                 .max_headers(max_header_count)
                 .max_buf_size(max_header_bytes);
             builder
-                .serve_connection(TokioIo::new(tls), service)
+                .serve_connection(TokioIo::new(stream), service)
                 .with_upgrades()
                 .await?;
         }
@@ -702,6 +833,15 @@ impl ProxyState {
         }
         let ingress_version = protocol_version(request.version())?;
         let mut request_head = canonical_head(&request, &context, ingress_version)?;
+        if context
+            .tunnel
+            .as_ref()
+            .is_some_and(|tunnel| tunnel.protocol.requires_websocket())
+            && (request_head.method != "GET"
+                || !is_websocket_upgrade_candidate(&request_head.headers))
+        {
+            return Err(ProxyRuntimeError::PlaintextConnectRequiresWebSocket);
+        }
         let original_target = request_head.target.clone();
         let mut session = SessionMetadata {
             session_id: SessionId(self.ids.next_id(RuntimeIdKind::Exchange)),
@@ -3486,8 +3626,8 @@ fn canonical_head(
     source_version: HttpLegVersion,
 ) -> Result<RequestHead, ProxyRuntimeError> {
     let target = if let Some(tunnel) = &context.tunnel {
-        validate_tunnel_target(request, tunnel)?;
-        target_from_tunnel(request, tunnel)
+        validate_tunnel_target(request, &tunnel.authority)?;
+        target_from_tunnel(request, &tunnel.authority, tunnel.protocol.target_scheme())
     } else {
         target_from_absolute_uri(request)?
     };
@@ -3603,10 +3743,14 @@ fn websocket_request_has_body(headers: &HeaderBlock) -> Result<bool, ProxyRuntim
     Ok(false)
 }
 
-fn target_from_tunnel(request: &Request<Incoming>, tunnel: &ConnectAuthority) -> Target {
+fn target_from_tunnel(
+    request: &Request<Incoming>,
+    tunnel: &ConnectAuthority,
+    scheme: &str,
+) -> Target {
     let path_and_query = request.uri().path_and_query();
     Target {
-        scheme: "https".to_owned(),
+        scheme: scheme.to_owned(),
         authority: tunnel.to_string(),
         host: tunnel.host().to_owned(),
         port: tunnel.port(),
@@ -3727,6 +3871,7 @@ fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBod
         | ProxyRuntimeError::ConnectRequiredForHttps
         | ProxyRuntimeError::TunnelAuthorityMismatch
         | ProxyRuntimeError::NestedConnectUnsupported
+        | ProxyRuntimeError::PlaintextConnectRequiresWebSocket
         | ProxyRuntimeError::WebSocketHandshake(_)
         | ProxyRuntimeError::InvalidWebSocketHandshake(_)
         | ProxyRuntimeError::WebSocketRequiresHttp1
@@ -3970,6 +4115,15 @@ pub enum ProxyRuntimeError {
     /// Browser did not finish TLS within the configured deadline.
     #[error("downstream TLS handshake timed out")]
     DownstreamTlsTimeout,
+    /// Browser did not send a TLS or HTTP preface within the configured deadline.
+    #[error("CONNECT tunnel preface timed out")]
+    TunnelPrefaceTimeout,
+    /// CONNECT carried neither intercepted TLS nor an HTTP/1 WebSocket request.
+    #[error("unsupported CONNECT tunnel preface byte 0x{0:02x}")]
+    UnsupportedTunnelPreface(u8),
+    /// Plaintext CONNECT is supported only for browser-style WebSocket upgrades.
+    #[error("plaintext CONNECT payload must be an HTTP/1 WebSocket upgrade")]
+    PlaintextConnectRequiresWebSocket,
     /// Browser-facing TLS handshake failed.
     #[error("downstream TLS handshake failed: {0}")]
     DownstreamTlsHandshake(String),
@@ -5151,6 +5305,102 @@ mod tests {
             .write_all(
                 format!(
                     "GET ws://{origin_addr}/socket HTTP/1.1\r\nHost: {origin_addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let response = String::from_utf8(read_http_head(&mut client).await).unwrap();
+        assert!(response.starts_with("HTTP/1.1 101"));
+        client.write_all(b"not websocket framing!").await.unwrap();
+        let mut echoed = [0_u8; 22];
+        client.read_exact(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"not websocket framing!");
+
+        shutdown_tx.send(()).unwrap();
+        proxy_task.await.unwrap().unwrap();
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_inside_plain_connect_tunnel_is_a_byte_transparent_upgrade() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let request = String::from_utf8(read_http_head(&mut stream).await).unwrap();
+            let request = request.to_ascii_lowercase();
+            assert!(request.starts_with("get /socket http/1.1\r\n"));
+            assert!(request.contains("upgrade: websocket"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut bytes = [0_u8; 22];
+            stream.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"not websocket framing!");
+            stream.write_all(&bytes).await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        let proxy_ca = ProxyCa::generate("rustymiddle CONNECT websocket test", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
+                63,
+            )
+            .unwrap(),
+        );
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                route_policy: RoutePolicy::Http1Only,
+                ..ProxyConfig::default()
+            },
+            proxy_ca,
+            trust,
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut rejected = TcpStream::connect(proxy_addr).await.unwrap();
+        rejected
+            .write_all(
+                format!("CONNECT {origin_addr} HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let connect_response = String::from_utf8(read_http_head(&mut rejected).await).unwrap();
+        assert!(connect_response.starts_with("HTTP/1.1 200"));
+        rejected
+            .write_all(format!("GET /plain HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let rejected_response = String::from_utf8(read_http_head(&mut rejected).await).unwrap();
+        assert!(rejected_response.starts_with("HTTP/1.1 400"));
+        drop(rejected);
+
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client
+            .write_all(
+                format!("CONNECT {origin_addr} HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let connect_response = String::from_utf8(read_http_head(&mut client).await).unwrap();
+        assert!(connect_response.starts_with("HTTP/1.1 200"));
+
+        client
+            .write_all(
+                format!(
+                    "GET /socket HTTP/1.1\r\nHost: {origin_addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
                 )
                 .as_bytes(),
             )

@@ -14,6 +14,6 @@ pub use resolver::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
 };
 pub use trust::{
-    LoadedTrust, SystemTrustSource, TrustError, TrustSnapshot, TrustSource,
-    UpstreamTlsContextFactory, UpstreamTlsPolicy,
+    CompositeTrustSource, LoadedTrust, PemTrustSource, SystemTrustSource, TrustError,
+    TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
 };

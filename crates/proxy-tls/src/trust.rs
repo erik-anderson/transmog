@@ -32,6 +32,95 @@ pub trait TrustSource: Send + Sync {
     fn load(&self) -> Result<LoadedTrust, TrustError>;
 }
 
+/// Immutable trust roots parsed from one operator-supplied PEM bundle.
+#[derive(Clone, Debug)]
+pub struct PemTrustSource {
+    certificates_der: Arc<[Vec<u8>]>,
+    source_description: Arc<str>,
+}
+
+impl PemTrustSource {
+    /// Parses every certificate in a PEM bundle without changing system trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustError`] when the PEM is malformed or contains no
+    /// certificates.
+    pub fn from_pem(pem: &[u8], source_description: impl Into<String>) -> Result<Self, TrustError> {
+        if pem.iter().all(u8::is_ascii_whitespace) {
+            return Err(TrustError::EmptyPemBundle);
+        }
+        let certificates = X509::stack_from_pem(pem)?;
+        if certificates.is_empty() {
+            return Err(TrustError::EmptyPemBundle);
+        }
+        let certificates_der = certificates
+            .into_iter()
+            .map(|certificate| certificate.to_der())
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            certificates_der: certificates_der.into(),
+            source_description: source_description.into().into(),
+        })
+    }
+}
+
+impl TrustSource for PemTrustSource {
+    fn load(&self) -> Result<LoadedTrust, TrustError> {
+        Ok(LoadedTrust {
+            certificates_der: self.certificates_der.to_vec(),
+            source_description: self.source_description.to_string(),
+            source_version: None,
+            diagnostics: Vec::new(),
+        })
+    }
+}
+
+/// Joins explicit trust sources into one immutable snapshot input.
+#[derive(Clone)]
+pub struct CompositeTrustSource {
+    sources: Arc<[Arc<dyn TrustSource>]>,
+    source_description: Arc<str>,
+}
+
+impl CompositeTrustSource {
+    /// Creates a composite. An empty source list is allowed and will fail
+    /// closed when loaded into a [`TrustSnapshot`].
+    pub fn new(source_description: impl Into<String>, sources: Vec<Arc<dyn TrustSource>>) -> Self {
+        Self {
+            sources: sources.into(),
+            source_description: source_description.into().into(),
+        }
+    }
+}
+
+impl TrustSource for CompositeTrustSource {
+    fn load(&self) -> Result<LoadedTrust, TrustError> {
+        let mut certificates_der = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut versions = Vec::new();
+        for source in self.sources.iter() {
+            let loaded = source.load()?;
+            certificates_der.extend(loaded.certificates_der);
+            diagnostics.extend(
+                loaded
+                    .diagnostics
+                    .into_iter()
+                    .map(|diagnostic| format!("{}: {diagnostic}", loaded.source_description)),
+            );
+            if let Some(version) = loaded.source_version {
+                versions.push(format!("{}={version}", loaded.source_description));
+            }
+        }
+        Ok(LoadedTrust {
+            certificates_der,
+            source_description: self.source_description.to_string(),
+            source_version: (!versions.is_empty()).then(|| versions.join(",")),
+            diagnostics,
+        })
+    }
+}
+
 /// Enumerates the operating system's current root-certificate bytes.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemTrustSource;
@@ -280,6 +369,9 @@ pub enum TrustError {
     /// `BoringSSL` rejected certificate material or policy.
     #[error("BoringSSL trust operation failed: {0}")]
     Boring(#[from] boring::error::ErrorStack),
+    /// A syntactically valid PEM input contained no certificate blocks.
+    #[error("PEM trust bundle contains no certificates")]
+    EmptyPemBundle,
     /// No valid roots were available, which is always a startup failure.
     #[error(
         "trust source {source_description:?} yielded no valid roots; diagnostics: {diagnostics:?}"
@@ -314,6 +406,37 @@ mod tests {
         assert!(matches!(
             TrustSnapshot::load(&Empty, 1),
             Err(TrustError::EmptyStore { .. })
+        ));
+    }
+
+    #[test]
+    fn pem_and_composite_sources_preserve_all_roots() {
+        let first = crate::ProxyCa::generate("first trust root", 1).unwrap();
+        let second = crate::ProxyCa::generate("second trust root", 1).unwrap();
+        let first =
+            Arc::new(PemTrustSource::from_pem(&first.certificate_pem().unwrap(), "first").unwrap())
+                as Arc<dyn TrustSource>;
+        let second = Arc::new(
+            PemTrustSource::from_pem(&second.certificate_pem().unwrap(), "second").unwrap(),
+        ) as Arc<dyn TrustSource>;
+        let composite = CompositeTrustSource::new("test composite", vec![first, second]);
+
+        let loaded = composite.load().unwrap();
+        assert_eq!(loaded.certificates_der.len(), 2);
+        assert_eq!(loaded.source_description, "test composite");
+        assert!(loaded.diagnostics.is_empty());
+        assert_eq!(TrustSnapshot::load(&composite, 7).unwrap().root_count(), 2);
+    }
+
+    #[test]
+    fn pem_source_rejects_an_empty_bundle() {
+        assert!(matches!(
+            PemTrustSource::from_pem(b"", "empty"),
+            Err(TrustError::EmptyPemBundle)
+        ));
+        assert!(matches!(
+            PemTrustSource::from_pem(b" \r\n\t", "whitespace"),
+            Err(TrustError::EmptyPemBundle)
         ));
     }
 }

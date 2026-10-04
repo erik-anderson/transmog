@@ -100,16 +100,20 @@ the checkout read-only, and keeps Cargo downloads and build output in named
 Docker volumes.
 
 The standalone interoperability matrix additionally requires Docker Compose,
-a standalone `curl` executable, Node.js/npm, and Playwright Chromium. The
-runner builds with the same Windows LLVM/Ninja environment and starts
-digest-pinned Nginx and Apache containers on ephemeral loopback ports:
+a standalone `curl` executable, Node.js 24 or newer with npm, and Playwright
+Chromium. Node.js 24 is required because the fixture generator uses its built-in
+zstd support in addition to gzip, Brotli, and deflate. The runner builds with
+the same Windows LLVM/Ninja environment and starts digest-pinned Nginx, Apache,
+and Caddy containers on ephemeral loopback ports:
 
 ```powershell
 pwsh ./scripts/test-interop.ps1
 ```
 
 The first run can download the container images, npm packages, and the pinned
-browser. No CA installation or administrator access is required.
+browser. Docker Desktop must be running. No CA installation or administrator
+access is required; the suite creates an ephemeral CA and exact-IP origin leaf
+inside its per-run directory and deletes them during cleanup.
 
 Content fuzzing is an optional maintainer workflow, not a build prerequisite.
 It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because

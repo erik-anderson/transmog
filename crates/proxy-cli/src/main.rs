@@ -20,6 +20,7 @@ use rustymiddle_capture::{
     CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter, JsonLinesExporter,
     RecoveredCapture, loss_record, record_from_observer, recover,
 };
+use rustymiddle_content::{ContentLimits, ContentPolicy};
 use rustymiddle_core::{
     HeaderField, RoutePolicy,
     intercept::{
@@ -36,9 +37,13 @@ use rustymiddle_core::{
 };
 use rustymiddle_runtime::{
     ExchangeEvidence, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
+    WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
 use rustymiddle_saz::{SazExporter, SazLimits, SazMode};
-use rustymiddle_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
+use rustymiddle_tls::{
+    CachedMitmCertificateResolver, CompositeTrustSource, EndpointIdentity, PemTrustSource, ProxyCa,
+    SystemTrustSource, TrustSnapshot, TrustSource,
+};
 
 #[tokio::main]
 async fn main() {
@@ -62,6 +67,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         Some("serve") => serve(&arguments[1..]).await,
         Some("ca") if arguments.get(1).map(String::as_str) == Some("generate") => {
             generate_ca(&arguments[2..])
+        }
+        Some("ca") if arguments.get(1).map(String::as_str) == Some("issue") => {
+            issue_certificate(&arguments[2..])
         }
         Some("capture") => capture_command(&arguments[1..]),
         Some("help" | "--help" | "-h") | None => {
@@ -91,7 +99,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let private_key_pem = fs::read(key_path)?;
     let ca = ProxyCa::from_pem(&certificate_pem, &private_key_pem)?;
     let thumbprint = ca.sha256_thumbprint()?;
-    let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1)?);
+    let trust = load_upstream_trust(arguments)?;
     let interceptor: Arc<dyn InterceptorFactory> = proof_id.map_or_else(
         || Arc::new(NoopInterceptorFactory) as Arc<dyn InterceptorFactory>,
         |id| Arc::new(ProofFactory::new(id.to_owned(), 16 * 1024 * 1024)),
@@ -108,12 +116,14 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         &config,
         ca,
         interceptor,
+        proof_id.is_some(),
         capture_path.as_deref(),
         capture_bodies,
     )?;
     let proxy = ProxyServer::bind_with_components(config, trust, components).await?;
     let actual_addr = proxy.local_addr()?;
     let mut evidence = proxy.subscribe_evidence();
+    let mut websocket_evidence = proxy.subscribe_websocket_evidence();
     tokio::spawn(async move {
         while let Ok(event) = evidence.recv().await {
             print_evidence(&event);
@@ -124,6 +134,11 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
                 trust_generation = event.trust_generation,
                 "intercepted exchange completed"
             );
+        }
+    });
+    tokio::spawn(async move {
+        while let Ok(event) = websocket_evidence.recv().await {
+            print_websocket_evidence(&event);
         }
     });
 
@@ -146,10 +161,27 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn load_upstream_trust(arguments: &[String]) -> Result<Arc<TrustSnapshot>, Box<dyn Error>> {
+    let Some(path) = option(arguments, "--upstream-ca-cert") else {
+        return Ok(Arc::new(TrustSnapshot::load(&SystemTrustSource, 1)?));
+    };
+    let additional = Arc::new(PemTrustSource::from_pem(
+        &fs::read(path)?,
+        format!("operator PEM bundle {path}"),
+    )?) as Arc<dyn TrustSource>;
+    let sources = vec![
+        Arc::new(SystemTrustSource) as Arc<dyn TrustSource>,
+        additional,
+    ];
+    let composite = CompositeTrustSource::new("operating system plus operator PEM bundle", sources);
+    Ok(Arc::new(TrustSnapshot::load(&composite, 1)?))
+}
+
 fn build_components(
     config: &ProxyConfig,
     ca: ProxyCa,
     interceptor: Arc<dyn InterceptorFactory>,
+    enable_content_processing: bool,
     capture_path: Option<&Path>,
     capture_bodies: bool,
 ) -> Result<(ProxyComponents, Option<LiveCapture>), Box<dyn Error>> {
@@ -167,6 +199,11 @@ fn build_components(
         config.limits.leaf_validity_days,
     )?);
     let mut components = ProxyComponents::new(hooks, certificates);
+    if enable_content_processing {
+        components = components.with_content_policy(ContentPolicy::preserve_original_output(
+            ContentLimits::default(),
+        ));
+    }
     let capture = if let Some(path) = capture_path {
         let state = open_live_capture(path)?;
         let mut policy = CapturePolicy::default();
@@ -466,6 +503,26 @@ fn print_evidence(event: &ExchangeEvidence) {
     );
 }
 
+fn print_websocket_evidence(event: &WebSocketSessionEvidence) {
+    match &event.outcome {
+        WebSocketSessionOutcome::Completed(report) => println!(
+            "WS_EVIDENCE session_id={} target={} outcome=completed client_bytes={} server_bytes={} clean_close={} messages={} controls={} effects={}",
+            event.session_id.0,
+            event.target,
+            report.client_to_server_wire_bytes,
+            report.server_to_client_wire_bytes,
+            report.clean_close,
+            report.messages,
+            report.control_frames,
+            report.effects.len(),
+        ),
+        WebSocketSessionOutcome::Failed(_) => println!(
+            "WS_EVIDENCE session_id={} target={} outcome=failed",
+            event.session_id.0, event.target,
+        ),
+    }
+}
+
 fn protocol_alpn(version: rustymiddle_core::HttpLegVersion) -> &'static str {
     match version {
         rustymiddle_core::HttpLegVersion::Http1 => "http/1.1",
@@ -493,6 +550,26 @@ fn generate_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     eprintln!(
         "Protect the private key with a user-only ACL and install only the public certificate."
     );
+    Ok(())
+}
+
+fn issue_certificate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let ca_certificate_path = required_option(arguments, "--ca-cert")?;
+    let ca_key_path = required_option(arguments, "--ca-key")?;
+    let identity = EndpointIdentity::parse(required_option(arguments, "--identity")?)?;
+    let certificate_path = PathBuf::from(required_option(arguments, "--cert")?);
+    let key_path = PathBuf::from(required_option(arguments, "--key")?);
+    let validity_days = option(arguments, "--days").unwrap_or("7").parse::<u32>()?;
+    let ca = ProxyCa::from_pem(&fs::read(ca_certificate_path)?, &fs::read(ca_key_path)?)?;
+    let leaf = ca.issue(identity, validity_days)?;
+    write_new(&key_path, &leaf.private_key.private_key_to_pem_pkcs8()?)?;
+    if let Err(error) = write_new(&certificate_path, &leaf.certificate.to_pem()?) {
+        let _ = fs::remove_file(&key_path);
+        return Err(error.into());
+    }
+    println!("LEAF_CERT={}", certificate_path.display());
+    println!("LEAF_KEY={}", key_path.display());
+    println!("LEAF_IDENTITY={}", leaf.identity.as_text());
     Ok(())
 }
 
@@ -532,8 +609,10 @@ fn print_usage() {
         "rustymiddle\n\n\
          Generate a CA (files must not already exist):\n  \
          rustymiddle ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
+         Issue a short-lived server leaf from an existing CA:\n  \
+         rustymiddle ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
          Run the explicit proxy:\n  \
-         rustymiddle serve --ca-cert ca.pem --ca-key ca.key [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
+         rustymiddle serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
          Inspect, validate, recover/seal, or export a native capture:\n  \
          rustymiddle capture inspect --input FILE\n  \
          rustymiddle capture validate --input FILE\n  \

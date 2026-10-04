@@ -9,6 +9,7 @@ export type ProxyOptions = {
   repo: string;
   caCertificate: string;
   caPrivateKey: string;
+  upstreamCaCertificate?: string;
   route: Route;
   proofId: string;
 };
@@ -18,28 +19,38 @@ export type ProxyHandle = {
   lines: string[];
   readonly listenAddress: string;
   waitForEvidence(predicate: (item: Evidence) => boolean): Promise<Evidence>;
+  waitForWebSocketEvidence(predicate: (item: Evidence) => boolean): Promise<Evidence>;
   stop(): Promise<void>;
 };
 
 /** Starts the real CLI proxy and exposes its machine-readable evidence stream. */
 export async function startProxy(options: ProxyOptions): Promise<ProxyHandle> {
-  const child = spawn(options.binary, [
+  const arguments_ = [
     'serve',
     '--ca-cert', options.caCertificate,
     '--ca-key', options.caPrivateKey,
     '--listen', '127.0.0.1:0',
     '--route', options.route,
     '--proof-id', options.proofId,
-  ], {
+  ];
+  if (options.upstreamCaCertificate) {
+    arguments_.push('--upstream-ca-cert', options.upstreamCaCertificate);
+  }
+  const child = spawn(options.binary, arguments_, {
     cwd: options.repo,
     env: { ...process.env, RUST_LOG: 'rustymiddle=debug' },
     stdio: ['ignore', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
   const lines: string[] = [];
   const evidence: Evidence[] = [];
+  const websocketEvidence: Evidence[] = [];
   let listenAddress = '';
   let spawnError: Error | undefined;
   const waiters: Array<{
+    predicate: (item: Evidence) => boolean;
+    resolve: (item: Evidence) => void;
+  }> = [];
+  const websocketWaiters: Array<{
     predicate: (item: Evidence) => boolean;
     resolve: (item: Evidence) => void;
   }> = [];
@@ -47,13 +58,19 @@ export async function startProxy(options: ProxyOptions): Promise<ProxyHandle> {
     lines.push(line);
     if (line.startsWith('LISTEN_ADDR=')) listenAddress = line.slice('LISTEN_ADDR='.length);
     if (line.startsWith('EVIDENCE ')) {
-      const item = Object.fromEntries(
-        line.slice('EVIDENCE '.length).split(' ').map(part => part.split('=', 2)),
-      );
+      const item = parseAssignments(line.slice('EVIDENCE '.length));
       evidence.push(item);
       for (const waiter of waiters.splice(0)) {
         if (waiter.predicate(item)) waiter.resolve(item);
         else waiters.push(waiter);
+      }
+    }
+    if (line.startsWith('WS_EVIDENCE ')) {
+      const item = parseAssignments(line.slice('WS_EVIDENCE '.length));
+      websocketEvidence.push(item);
+      for (const waiter of websocketWaiters.splice(0)) {
+        if (waiter.predicate(item)) waiter.resolve(item);
+        else websocketWaiters.push(waiter);
       }
     }
   };
@@ -79,28 +96,59 @@ export async function startProxy(options: ProxyOptions): Promise<ProxyHandle> {
     lines,
     get listenAddress() { return listenAddress; },
     waitForEvidence(predicate: (item: Evidence) => boolean): Promise<Evidence> {
-      const current = evidence.find(predicate);
-      if (current) return Promise.resolve(current);
-      return new Promise<Evidence>((resolve, reject) => {
-        const waiter = {
-          predicate,
-          resolve: (item: Evidence) => {
-            clearTimeout(timer);
-            resolve(item);
-          },
-        };
-        const timer = setTimeout(() => {
-          const index = waiters.indexOf(waiter);
-          if (index >= 0) waiters.splice(index, 1);
-          reject(new Error(`missing proxy evidence:\n${lines.join('\n')}`));
-        }, 30_000);
-        waiters.push(waiter);
-      });
+      return waitForItem(evidence, waiters, predicate, lines, 'proxy');
+    },
+    waitForWebSocketEvidence(predicate: (item: Evidence) => boolean): Promise<Evidence> {
+      return waitForItem(
+        websocketEvidence,
+        websocketWaiters,
+        predicate,
+        lines,
+        'WebSocket',
+      );
     },
     async stop() {
       await stopChild(child);
     },
   };
+}
+
+function waitForItem(
+  existing: Evidence[],
+  waiters: Array<{
+    predicate: (item: Evidence) => boolean;
+    resolve: (item: Evidence) => void;
+  }>,
+  predicate: (item: Evidence) => boolean,
+  lines: string[],
+  label: string,
+): Promise<Evidence> {
+  const current = existing.find(predicate);
+  if (current) return Promise.resolve(current);
+  return new Promise<Evidence>((resolve, reject) => {
+    const waiter = {
+      predicate,
+      resolve: (item: Evidence) => {
+        clearTimeout(timer);
+        resolve(item);
+      },
+    };
+    const timer = setTimeout(() => {
+      const index = waiters.indexOf(waiter);
+      if (index >= 0) waiters.splice(index, 1);
+      reject(new Error(`missing ${label} evidence:\n${lines.join('\n')}`));
+    }, 30_000);
+    waiters.push(waiter);
+  });
+}
+
+function parseAssignments(value: string): Evidence {
+  return Object.fromEntries(value.split(' ').map(part => {
+    const separator = part.indexOf('=');
+    return separator < 0
+      ? [part, '']
+      : [part.slice(0, separator), part.slice(separator + 1)];
+  }));
 }
 
 async function stopChild(child: ChildProcessWithoutNullStreams) {

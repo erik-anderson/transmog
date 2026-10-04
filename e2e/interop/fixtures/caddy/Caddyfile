@@ -1,0 +1,10 @@
+{
+	admin off
+	auto_https off
+}
+
+:443 {
+	tls /certs/origin.pem /certs/origin.key
+	root * /srv
+	file_server
+}

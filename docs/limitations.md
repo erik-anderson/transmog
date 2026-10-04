@@ -2,7 +2,9 @@
 
 - HTTP/3 is proxy-to-origin egress, not transparent browser QUIC interception.
 - No general blind CONNECT, arbitrary TCP tunnel, CONNECT-UDP, MASQUE, or
-  WebTransport support.
+  WebTransport support. CONNECT payloads are limited to intercepted TLS and
+  browser-style HTTP/1.1 WebSocket handshakes whose authority remains fixed to
+  the CONNECT target.
 - Certificate-pinned clients will fail; pinning is never bypassed.
 - BoringSSL verification over OS-enumerated roots does not reproduce every OS or
   Chrome Root Store constraint, revocation mechanism, CT rule, or metadata feed.

@@ -64,8 +64,12 @@ compatible because it never recompresses the stream.
 
 ## Current transport scope
 
-The runtime handles RFC 6455 HTTP/1.1 upgrades for plain explicit-proxy `ws://`
-requests and `wss://` requests inside intercepted CONNECT TLS. HTTP/2 extended
-CONNECT, HTTP/3 WebSockets, and application-owned `UpstreamService` byte-stream
-upgrades are separate future adapters. An origin that declines the upgrade is
-returned through the ordinary bounded HTTP response pipeline.
+The runtime handles RFC 6455 HTTP/1.1 upgrades for direct absolute-form `ws://`
+proxy requests, browser-style plaintext HTTP/1.1 carried inside a `CONNECT` to
+the WebSocket origin, and `wss://` requests inside intercepted CONNECT TLS. The
+CONNECT preface detector preserves the first byte, accepts only TLS or a
+WebSocket `GET` preface, and retains the usual inner-authority validation; this
+is not a general blind TCP tunnel. HTTP/2 extended CONNECT, HTTP/3 WebSockets, and
+application-owned `UpstreamService` byte-stream upgrades are separate future
+adapters. An origin that declines the upgrade is returned through the ordinary
+bounded HTTP response pipeline.
