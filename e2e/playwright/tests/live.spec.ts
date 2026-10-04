@@ -317,7 +317,6 @@ function renderMarkdownReport(generatedAt: string, lockHash: string): string {
       );
     }
   }
-  lines.push('');
   return `${lines.join('\n')}\n`;
 }
 

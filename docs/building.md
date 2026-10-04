@@ -82,9 +82,22 @@ Install Rust 1.97.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard
 library development package, and normal libc development headers. Then run:
 
 ```sh
-export CC=clang CXX=clang++ CMAKE_GENERATOR=Ninja
+export CC=clang CXX=clang++ AR=llvm-ar CMAKE_GENERATOR=Ninja
 cargo test --workspace --all-features --locked
 ```
+
+On Windows with Docker Desktop's WSL2 backend, the complete Linux format,
+strict-Clippy, all-target test, and release-build gate is reproducible without
+installing a separate WSL distribution:
+
+```powershell
+./scripts/test-linux-docker.ps1
+```
+
+The runner uses the same digest-pinned tool image as content fuzzing, clears
+the fuzz-only sanitizer flags, selects Clang plus `llvm-ar` and Ninja, mounts
+the checkout read-only, and keeps Cargo downloads and build output in named
+Docker volumes.
 
 Content fuzzing is an optional maintainer workflow, not a build prerequisite.
 It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because

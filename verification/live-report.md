@@ -1,8 +1,8 @@
 # Live browser verification
 
-- Generated: 2026-10-03T18:16:31.798Z
+- Generated: 2026-10-04T06:15:45.112Z
 - OS: win32-x64
-- Cargo.lock SHA-256: `bb286db7a965f42dec48526657d624431acebfd4103435e6febd9852560d7c05`
+- Cargo.lock SHA-256: `1135cbcc48f91930717f347d34d6ccee7250e3e49e78c071c24014a3687714ad`
 - Test CA SHA-256: `19C210684556612DFF247CEED7151F9A7D4E61345B53A8CCE0F4602ADACD6494`
 - Chromium trust: durable current-user test CA; no certificate bypass
 - CA trust verified before run: true
@@ -13,9 +13,9 @@
 
 | Case | Completed | Browser | Proxy | Target | Ingress/ALPN | Egress/ALPN | Adapter | Trust generation | Breakpoint events | Proof |
 |---|---|---|---|---|---|---|---|---:|---|---|
-| Wikipedia forced H1 | 2026-10-03T18:16:23.829Z | 153.0.8010.12 | 127.0.0.1:50396 | https://www.wikipedia.org/ | Http2/h2 | Http1/http/1.1 | hyper | 1 | 1:request, 1:response | header + DOM |
-| Wikipedia forced H2 | 2026-10-03T18:16:24.742Z | 153.0.8010.12 | 127.0.0.1:50834 | https://www.wikipedia.org/ | Http2/h2 | Http2/h2 | hyper | 1 | 1:request, 1:response | header + DOM |
-| Cloudflare forced H3 | 2026-10-03T18:16:27.295Z | 153.0.8010.12 | 127.0.0.1:62506 | https://cloudflare-quic.com/ | Http2/h2 | Http3/h3 | quiche | 1 | 1:request, 1:response | header + DOM |
-| Cloudflare Auto Alt-Svc upgrade | 2026-10-03T18:16:30.315Z | 153.0.8010.12 | 127.0.0.1:57839 | https://cloudflare-quic.com/?rustymiddle-upgrade=c7a460b8-fe2a-4623-826c-0e08db989c3b | Http2/h2 | Http3/h3 | quiche | 1 | 12:request, 12:response | header + DOM |
-| Cloudflare Auto Alt-Svc upgrade warmup | 2026-10-03T18:16:30.315Z | 153.0.8010.12 | 127.0.0.1:57839 | https://cloudflare-quic.com/?rustymiddle-warmup=e65ab0e1-e36e-40f4-a69b-2b10c451f3ff | Http2/h2 | Http2/h2 | hyper | 1 | 1:request, 1:response | Alt-Svc stripped |
-| Stopped proxy blocks DIRECT fallback | 2026-10-03T18:16:30.952Z | 153.0.8010.12 | 127.0.0.1:52449 | https://www.wikipedia.org/ | - | - | - | - | - | DIRECT blocked |
+| Wikipedia forced H1 | 2026-10-04T06:15:36.879Z | 153.0.8010.12 | 127.0.0.1:64338 | https://www.wikipedia.org/ | Http2/h2 | Http1/http/1.1 | hyper | 1 | 1:request, 1:response | header + DOM |
+| Wikipedia forced H2 | 2026-10-04T06:15:37.863Z | 153.0.8010.12 | 127.0.0.1:59169 | https://www.wikipedia.org/ | Http2/h2 | Http2/h2 | hyper | 1 | 1:request, 1:response | header + DOM |
+| Cloudflare forced H3 | 2026-10-04T06:15:40.653Z | 153.0.8010.12 | 127.0.0.1:59246 | https://cloudflare-quic.com/ | Http2/h2 | Http3/h3 | quiche | 1 | 1:request, 1:response | header + DOM |
+| Cloudflare Auto Alt-Svc upgrade | 2026-10-04T06:15:43.130Z | 153.0.8010.12 | 127.0.0.1:62663 | https://cloudflare-quic.com/?rustymiddle-upgrade=24c17c87-aeda-4fc6-a7ed-cab7886b805b | Http2/h2 | Http3/h3 | quiche | 1 | 11:request, 11:response | header + DOM |
+| Cloudflare Auto Alt-Svc upgrade warmup | 2026-10-04T06:15:43.130Z | 153.0.8010.12 | 127.0.0.1:62663 | https://cloudflare-quic.com/?rustymiddle-warmup=66bf0e08-f517-42a3-802f-701bffcbcf50 | Http2/h2 | Http2/h2 | hyper | 1 | 1:request, 1:response | Alt-Svc stripped |
+| Stopped proxy blocks DIRECT fallback | 2026-10-04T06:15:44.155Z | 153.0.8010.12 | 127.0.0.1:52955 | https://www.wikipedia.org/ | - | - | - | - | - | DIRECT blocked |

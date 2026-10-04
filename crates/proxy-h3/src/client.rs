@@ -1299,7 +1299,7 @@ mod tests {
             result.response.body,
             vec![BodyFrame::Data(Bytes::from_static(b"h3-ok"))]
         );
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1437,7 +1437,7 @@ mod tests {
         let result = client.execute(request, origin.port(), 1024).await.unwrap();
         assert_eq!(result.response.head.status, 200);
         assert_eq!(result.telemetry.trust_generation, 44);
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1491,7 +1491,7 @@ mod tests {
             terminal.is_none(),
             "unexpected terminal frame: {terminal:?}"
         );
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1558,7 +1558,7 @@ mod tests {
             BodyFrame::Data(Bytes::from_static(b"second"))
         );
         assert!(result.response.body.recv().await.is_none());
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1626,7 +1626,7 @@ mod tests {
             BodyFrame::Data(Bytes::from_static(b"request-ok"))
         );
         assert!(result.response.body.recv().await.is_none());
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1683,7 +1683,7 @@ mod tests {
             vec![BodyFrame::Data(Bytes::from_static(b"slow"))]
         );
         assert_eq!(slow.telemetry.peer_addr, fast.telemetry.peer_addr);
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1768,7 +1768,7 @@ mod tests {
         );
         assert!(slow.response.body.recv().await.is_none());
         assert_eq!(slow.telemetry.peer_addr, fast.telemetry.peer_addr);
-        server.await.unwrap();
+        server.finish().await;
     }
 
     #[tokio::test]
@@ -1846,7 +1846,7 @@ mod tests {
             BodyFrame::Data(Bytes::from_static(b"fast"))
         );
         assert!(fast.response.body.recv().await.is_none());
-        server.await.unwrap();
+        server.finish().await;
     }
 
     fn h3_request(origin: SocketAddr, path: &str) -> CanonicalRequest {
@@ -1870,10 +1870,35 @@ mod tests {
         }
     }
 
+    struct TestOrigin {
+        // Retain the bound socket after the fixture task returns so Linux does
+        // not deliver an ICMP port-unreachable error before the client has
+        // consumed the final QUIC packets.
+        socket: Arc<UdpSocket>,
+        task: JoinHandle<()>,
+    }
+
+    impl TestOrigin {
+        fn is_finished(&self) -> bool {
+            self.task.is_finished()
+        }
+
+        async fn finish(self) {
+            let Self { socket, task } = self;
+            let result = task.await;
+            drop(socket);
+            result.unwrap();
+        }
+
+        fn abort(self) {
+            self.task.abort();
+        }
+    }
+
     async fn spawn_origin(
         leaf: rustymiddle_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
-    ) -> (SocketAddr, JoinHandle<()>) {
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -1894,18 +1919,19 @@ mod tests {
         config.set_initial_max_streams_uni(16);
         config.set_disable_active_migration(true);
 
-        let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+        let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
+        let task_socket = Arc::clone(&socket);
         let task = tokio::spawn(async move {
-            run_origin(socket, local, config).await;
+            run_origin(task_socket, local, config).await;
         });
-        (local, task)
+        (local, TestOrigin { socket, task })
     }
 
     async fn spawn_multiplex_origin(
         leaf: rustymiddle_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
-    ) -> (SocketAddr, JoinHandle<()>) {
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -1926,10 +1952,10 @@ mod tests {
         config.set_initial_max_streams_uni(16);
         config.set_disable_active_migration(true);
 
-        let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+        let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
-        let task = tokio::spawn(run_multiplex_origin(socket, local, config));
-        (local, task)
+        let task = tokio::spawn(run_multiplex_origin(Arc::clone(&socket), local, config));
+        (local, TestOrigin { socket, task })
     }
 
     async fn spawn_slow_streaming_origin(
@@ -1937,7 +1963,7 @@ mod tests {
         bind_ip: std::net::IpAddr,
         first_sent: Arc<tokio::sync::Notify>,
         release: Arc<tokio::sync::Notify>,
-    ) -> (SocketAddr, JoinHandle<()>) {
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -1958,19 +1984,23 @@ mod tests {
         config.set_initial_max_streams_uni(16);
         config.set_disable_active_migration(true);
 
-        let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+        let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
         let task = tokio::spawn(run_slow_streaming_origin(
-            socket, local, config, first_sent, release,
+            Arc::clone(&socket),
+            local,
+            config,
+            first_sent,
+            release,
         ));
-        (local, task)
+        (local, TestOrigin { socket, task })
     }
 
     async fn spawn_request_streaming_origin(
         leaf: rustymiddle_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
         first_seen: Arc<tokio::sync::Notify>,
-    ) -> (SocketAddr, JoinHandle<()>) {
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -1991,17 +2021,20 @@ mod tests {
         config.set_initial_max_streams_uni(16);
         config.set_disable_active_migration(true);
 
-        let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+        let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
         let task = tokio::spawn(run_request_streaming_origin(
-            socket, local, config, first_seen,
+            Arc::clone(&socket),
+            local,
+            config,
+            first_seen,
         ));
-        (local, task)
+        (local, TestOrigin { socket, task })
     }
 
     #[allow(clippy::too_many_lines)]
     async fn run_request_streaming_origin(
-        socket: UdpSocket,
+        socket: Arc<UdpSocket>,
         local: SocketAddr,
         mut config: quiche::Config,
         first_seen: Arc<tokio::sync::Notify>,
@@ -2110,7 +2143,7 @@ mod tests {
 
     #[allow(clippy::too_many_lines)]
     async fn run_slow_streaming_origin(
-        socket: UdpSocket,
+        socket: Arc<UdpSocket>,
         local: SocketAddr,
         mut config: quiche::Config,
         first_sent: Arc<tokio::sync::Notify>,
@@ -2224,7 +2257,7 @@ mod tests {
 
     #[allow(clippy::too_many_lines)]
     async fn run_multiplex_origin(
-        socket: UdpSocket,
+        socket: Arc<UdpSocket>,
         local: SocketAddr,
         mut config: quiche::Config,
     ) {
@@ -2338,7 +2371,7 @@ mod tests {
         http3.send_body(connection, stream_id, body, true).unwrap();
     }
 
-    async fn run_origin(socket: UdpSocket, local: SocketAddr, mut config: quiche::Config) {
+    async fn run_origin(socket: Arc<UdpSocket>, local: SocketAddr, mut config: quiche::Config) {
         let mut connection = None;
         let h3_config = quiche::h3::Config::new().unwrap();
         let mut h3_connection = None;

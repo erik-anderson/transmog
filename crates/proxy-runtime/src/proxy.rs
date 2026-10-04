@@ -4208,7 +4208,7 @@ mod tests {
             b"h3-origin",
         )
         .await;
-        origin_task.await.unwrap();
+        origin_task.finish().await;
     }
 
     #[tokio::test]
@@ -5764,7 +5764,7 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
-        origin_task.await.unwrap();
+        origin_task.finish().await;
     }
 
     #[tokio::test]
@@ -5876,7 +5876,7 @@ mod tests {
         connection_task.abort();
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
-        origin_task.await.unwrap();
+        origin_task.finish().await;
     }
 
     async fn read_http_head<S>(stream: &mut S) -> Vec<u8>
@@ -5893,10 +5893,26 @@ mod tests {
         result
     }
 
+    struct TestH3Origin {
+        // Keep the UDP port bound after the fixture task sends its final
+        // packets; otherwise Linux can surface an early ICMP connection error.
+        socket: Arc<UdpSocket>,
+        task: JoinHandle<()>,
+    }
+
+    impl TestH3Origin {
+        async fn finish(self) {
+            let Self { socket, task } = self;
+            let result = task.await;
+            drop(socket);
+            result.unwrap();
+        }
+    }
+
     async fn spawn_h3_origin(
         leaf: rustymiddle_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
-    ) -> (SocketAddr, JoinHandle<()>) {
+    ) -> (SocketAddr, TestH3Origin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -5916,13 +5932,13 @@ mod tests {
         config.set_initial_max_streams_bidi(16);
         config.set_initial_max_streams_uni(16);
         config.set_disable_active_migration(true);
-        let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+        let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
-        let task = tokio::spawn(run_h3_origin(socket, local, config));
-        (local, task)
+        let task = tokio::spawn(run_h3_origin(Arc::clone(&socket), local, config));
+        (local, TestH3Origin { socket, task })
     }
 
-    async fn run_h3_origin(socket: UdpSocket, local: SocketAddr, mut config: quiche::Config) {
+    async fn run_h3_origin(socket: Arc<UdpSocket>, local: SocketAddr, mut config: quiche::Config) {
         let mut connection = None;
         let h3_config = quiche::h3::Config::new().unwrap();
         let mut http3 = None;

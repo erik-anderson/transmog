@@ -2,7 +2,8 @@
 
 Status: active; Hooks v2, the deterministic content protocol matrix, local
 content hardening, cooperative codec work/deadline bounds, and end-to-end
-content benchmarks are complete on Windows; cross-platform observation remains
+content benchmarks are complete on Windows and the local Linux Docker/WSL2
+matrix; hosted Linux/macOS observation remains
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -223,8 +224,8 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Observe and close the Hooks v2/content and fuzz-smoke cross-platform CI
-   gates.
+1. Publish and observe the Hooks v2/content and fuzz-smoke hosted Linux/macOS
+   gates; close any platform-specific findings.
 2. Keep the live Chromium gate passing with content processing disabled by
    default.
 3. Design experimental control v0 using actual content/capture needs rather

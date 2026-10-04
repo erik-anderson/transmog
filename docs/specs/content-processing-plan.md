@@ -2,7 +2,8 @@
 
 Status: active; Phases 1-5, local Phase 6 hardening, cooperative codec work
 bounds, fuzz-target, end-to-end performance, and dependency gates are
-implemented on Windows; cross-platform fuzz/codec observation remains
+implemented on Windows and the local Linux Docker/WSL2 matrix; hosted
+Linux/macOS observation remains
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -330,7 +331,9 @@ are regenerated in the same change that accepts a dependency.
 - [x] Formatting, strict Clippy, locked tests, dependency policy, notices, SBOM,
       and the one-BoringSSL check pass.
 - [x] Windows LLVM/Ninja/Windows SDK release build passes.
-- [ ] Linux and macOS CI pass.
+- [x] The read-only Linux Docker/WSL2 Clang/LLVM/Ninja workspace matrix and
+      sanitizer-backed fuzz smoke pass.
+- [ ] Hosted Linux and macOS CI pass on a published commit.
 - [x] Live Chromium verification passes without certificate bypass or route
       interception.
 - [x] Header and codec fuzz targets, deterministic decompression-bomb and
@@ -342,9 +345,9 @@ are regenerated in the same change that accepts a dependency.
 
 ## Next implementation slice
 
-Observe and close the Linux fuzz-smoke and Linux/macOS codec-matrix gates while
-keeping the live Chromium gate passing. The next broader roadmap phase is the
-experimental control-v0 boundary, based on the content and capture needs now
-demonstrated. Preserve the deterministic protocol matrix and finite limits as
-behavioral baselines; do not move content policy into transport adapters to
-improve a benchmark.
+Publish and observe the hosted Linux fuzz-smoke plus Linux/macOS codec matrix,
+then close any platform-specific findings while keeping the live Chromium gate
+passing. After those hosted results exist, begin the experimental control-v0
+boundary based on the content and capture needs now demonstrated. Preserve the
+deterministic protocol matrix and finite limits as behavioral baselines; do not
+move content policy into transport adapters to improve a benchmark.

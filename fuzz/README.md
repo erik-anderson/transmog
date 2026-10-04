@@ -34,10 +34,13 @@ The reproducible local smoke path is:
 ```
 
 The runner builds a digest-pinned Debian image with Clang, Ninja, LLVM coverage
-tools, the pinned nightly, and the pinned `cargo-fuzz`. It mounts the checkout
-read-only, caches downloaded crates and compiled fuzz targets in named Docker
-volumes, and copies both semantic seeds and the minimized coverage corpus to
-ephemeral storage. Ordinary campaigns therefore do not dirty the checkout.
+tools, the pinned stable and nightly toolchains, and the pinned `cargo-fuzz`.
+It mounts the checkout read-only, caches downloaded crates and compiled fuzz
+targets in named Docker volumes, and copies both semantic seeds and the
+minimized coverage corpus to ephemeral storage. Ordinary campaigns therefore
+do not dirty the checkout. The same image backs `test-linux-docker.ps1`; that
+runner clears fuzz-only sanitizer flags before executing the normal workspace
+matrix with Clang, `llvm-ar`, and Ninja.
 
 To deliberately evolve, minimize, and replace the checked-in coverage corpus:
 

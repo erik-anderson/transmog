@@ -10,6 +10,11 @@ transfer codings and suppresses bodies for HEAD and bodyless response statuses.
 The shared upstream verifier is exercised with valid DNS identities, unknown
 roots, and wrong DNS names on H1/H2 and H3; H3 additionally proves an exact IP
 SAN succeeds while all other certificate errors remain fail-closed.
+Test H3 origins retain ownership of their bound UDP sockets until the client
+has consumed the response. This prevents Linux connected-UDP `ECONNREFUSED`
+delivery after a fixture task exits, without sleeps, retries, or weaker client
+error handling; it also prevents negative certificate cases from passing for
+the wrong transport reason.
 The protocol matrix is expanded alongside
 new failure handling rather than relying on public sites for correctness.
 Slow partial HTTP/1 headers and stalled request bodies have deterministic
@@ -129,6 +134,9 @@ Run `scripts/dev-env.ps1 -Check` before native builds and
 Additional hardening commands are:
 
 ```powershell
+# Full Linux Clang/LLVM/Ninja matrix through Docker Desktop's WSL2 backend.
+./scripts/test-linux-docker.ps1
+
 # Deterministic model/fuzz smoke and concurrency tests are part of this suite.
 cargo test --locked -p rustymiddle-core --all-features
 

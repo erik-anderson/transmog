@@ -56,6 +56,22 @@ const CODINGS: [ContentCoding; 4] = [
     ContentCoding::Zstd,
 ];
 
+struct TestOrigin {
+    // H3 fixtures must retain the UDP binding until the client has consumed
+    // their final packets. TCP fixtures do not need an extra socket owner.
+    socket: Option<Arc<UdpSocket>>,
+    task: JoinHandle<()>,
+}
+
+impl TestOrigin {
+    async fn finish(self) {
+        let Self { socket, task } = self;
+        let result = task.await;
+        drop(socket);
+        result.unwrap();
+    }
+}
+
 struct StaticTrust(Vec<Vec<u8>>);
 
 impl TrustSource for StaticTrust {
@@ -355,7 +371,7 @@ async fn auto_fallback_replays_the_processed_coded_body_before_response_start() 
 
     shutdown_tx.send(()).unwrap();
     proxy_task.await.unwrap().unwrap();
-    origin_task.await.unwrap();
+    origin_task.finish().await;
 }
 
 #[tokio::test]
@@ -561,7 +577,7 @@ async fn paused_h3_codec_stream_does_not_block_an_unrelated_stream() {
     connection_task.abort();
     shutdown_tx.send(()).unwrap();
     proxy_task.await.unwrap().unwrap();
-    origin_task.await.unwrap();
+    origin_task.finish().await;
 }
 
 #[tokio::test]
@@ -844,7 +860,7 @@ async fn run_matrix_case(
 
     shutdown_tx.send(()).unwrap();
     proxy_task.await.unwrap().unwrap();
-    origin_task.await.unwrap();
+    origin_task.finish().await;
 }
 
 async fn spawn_content_origin(
@@ -852,7 +868,7 @@ async fn spawn_content_origin(
     leaf: rustymiddle_tls::IssuedLeaf,
     bind_ip: IpAddr,
     response: Bytes,
-) -> (SocketAddr, JoinHandle<()>) {
+) -> (SocketAddr, TestOrigin) {
     match version {
         HttpLegVersion::Http1 | HttpLegVersion::Http2 => {
             spawn_content_tls_origin(version, leaf, response).await
@@ -865,7 +881,7 @@ async fn spawn_content_tls_origin(
     version: HttpLegVersion,
     leaf: rustymiddle_tls::IssuedLeaf,
     response_body: Bytes,
-) -> (SocketAddr, JoinHandle<()>) {
+) -> (SocketAddr, TestOrigin) {
     let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default())
         .acceptor(&leaf)
         .unwrap();
@@ -904,7 +920,7 @@ async fn spawn_content_tls_origin(
             HttpLegVersion::Http3 => unreachable!("HTTP/3 uses the QUIC fixture"),
         }
     });
-    (address, task)
+    (address, TestOrigin { socket: None, task })
 }
 
 fn http_version(version: HttpLegVersion) -> Version {
@@ -1129,7 +1145,7 @@ async fn spawn_content_h3_origin(
     leaf: rustymiddle_tls::IssuedLeaf,
     bind_ip: IpAddr,
     response: Bytes,
-) -> (SocketAddr, JoinHandle<()>) {
+) -> (SocketAddr, TestOrigin) {
     let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
     tls.set_certificate(&leaf.certificate).unwrap();
     tls.set_private_key(&leaf.private_key).unwrap();
@@ -1149,10 +1165,21 @@ async fn spawn_content_h3_origin(
     config.set_initial_max_streams_bidi(16);
     config.set_initial_max_streams_uni(16);
     config.set_disable_active_migration(true);
-    let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+    let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
     let local = socket.local_addr().unwrap();
-    let task = tokio::spawn(run_content_h3_origin(socket, local, config, response));
-    (local, task)
+    let task = tokio::spawn(run_content_h3_origin(
+        Arc::clone(&socket),
+        local,
+        config,
+        response,
+    ));
+    (
+        local,
+        TestOrigin {
+            socket: Some(socket),
+            task,
+        },
+    )
 }
 
 async fn spawn_multiplexed_content_h3_origin(
@@ -1161,7 +1188,7 @@ async fn spawn_multiplexed_content_h3_origin(
     slow_body: Bytes,
     fast_body: Bytes,
     release_slow: Arc<AtomicBool>,
-) -> (SocketAddr, JoinHandle<()>) {
+) -> (SocketAddr, TestOrigin) {
     let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
     tls.set_certificate(&leaf.certificate).unwrap();
     tls.set_private_key(&leaf.private_key).unwrap();
@@ -1181,21 +1208,27 @@ async fn spawn_multiplexed_content_h3_origin(
     config.set_initial_max_streams_bidi(16);
     config.set_initial_max_streams_uni(16);
     config.set_disable_active_migration(true);
-    let socket = UdpSocket::bind((bind_ip, 0)).await.unwrap();
+    let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
     let local = socket.local_addr().unwrap();
     let task = tokio::spawn(run_multiplexed_content_h3_origin(
-        socket,
+        Arc::clone(&socket),
         local,
         config,
         slow_body,
         fast_body,
         release_slow,
     ));
-    (local, task)
+    (
+        local,
+        TestOrigin {
+            socket: Some(socket),
+            task,
+        },
+    )
 }
 
 async fn run_multiplexed_content_h3_origin(
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
     local: SocketAddr,
     mut config: quiche::Config,
     slow_body: Bytes,
@@ -1330,7 +1363,7 @@ fn poll_multiplexed_content_h3(
 }
 
 async fn run_content_h3_origin(
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
     local: SocketAddr,
     mut config: quiche::Config,
     response: Bytes,
