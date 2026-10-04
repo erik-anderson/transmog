@@ -99,6 +99,18 @@ the fuzz-only sanitizer flags, selects Clang plus `llvm-ar` and Ninja, mounts
 the checkout read-only, and keeps Cargo downloads and build output in named
 Docker volumes.
 
+The standalone interoperability matrix additionally requires Docker Compose,
+a standalone `curl` executable, Node.js/npm, and Playwright Chromium. The
+runner builds with the same Windows LLVM/Ninja environment and starts
+digest-pinned Nginx and Apache containers on ephemeral loopback ports:
+
+```powershell
+pwsh ./scripts/test-interop.ps1
+```
+
+The first run can download the container images, npm packages, and the pinned
+browser. No CA installation or administrator access is required.
+
 Content fuzzing is an optional maintainer workflow, not a build prerequisite.
 It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
 LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal

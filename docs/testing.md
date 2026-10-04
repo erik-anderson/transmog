@@ -101,6 +101,42 @@ and corpus handling are documented in `fuzz/README.md`. Prepared hosted
 automation is parked under `ci/github-actions/` and is intentionally inactive;
 see `ci/README.md`.
 
+## Standalone interoperability
+
+The local interoperability gate runs the release proxy between independently
+distributed clients and servers:
+
+| Client | Origin | Assertions |
+|---|---|---|
+| curl | Nginx 1.28.0 | HTTP status, pinned server identity, proxy-added header and HTML marker, terminal exchange evidence |
+| curl | Apache HTTP Server 2.4.65 | HTTP status, pinned server identity, proxy-added header and HTML marker, terminal exchange evidence |
+| Chromium | Nginx 1.28.0 | navigation, response headers, DOM marker, terminal exchange evidence |
+| Chromium | Apache HTTP Server 2.4.65 | navigation, response headers, DOM marker, terminal exchange evidence |
+
+Nginx and Apache use exact multi-platform image-manifest digests. Compose
+publishes each origin on a random loopback-only port and waits for its health
+check. Every client request carries a unique proof value that only the running
+proxy can add to both the response headers and HTML. The suite also requires
+the corresponding H1/Hyper evidence record, so an implicit localhost proxy
+bypass cannot look successful.
+
+The runner creates an ephemeral, untrusted proxy CA because the CLI requires
+signing material even for plaintext HTTP; it neither installs that CA nor
+changes the operating-system trust store. Containers, the per-run Compose
+network, and private material are removed in a `finally` block. Run it from
+PowerShell with Docker Desktop running:
+
+```powershell
+pwsh ./scripts/test-interop.ps1
+```
+
+Pass `-SkipBrowserInstall` only when the package's pinned Playwright Chromium
+is already cached. This local, deterministic matrix complements rather than
+replaces the HTTPS live-browser gate below: the latter proves verified CONNECT
+interception and H1/H2/H3 Internet egress, while the standalone matrix proves
+compatibility with exact third-party client and server distributions without
+depending on public-site behavior.
+
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright
 route interception. Its durable local test CA is generated and installed once

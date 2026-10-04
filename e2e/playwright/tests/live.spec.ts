@@ -1,12 +1,14 @@
 import { test, expect, chromium, type Browser } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
+import {
+  startProxy as launchProxy,
+  type Evidence,
+  type Route,
+} from '../support/proxy';
 
-type Route = 'h1' | 'h2' | 'h3' | 'auto';
-type Evidence = Record<string, string>;
 type LiveResult = {
   name: string;
   url: string;
@@ -321,69 +323,12 @@ function renderMarkdownReport(generatedAt: string, lockHash: string): string {
 }
 
 async function startProxy(route: Route, proofId: string) {
-  const child = spawn(binary, [
-    'serve',
-    '--ca-cert', caCertificate,
-    '--ca-key', caPrivateKey,
-    '--listen', '127.0.0.1:0',
-    '--route', route,
-    '--proof-id', proofId,
-  ], {
-    cwd: repo,
-    env: { ...process.env, RUST_LOG: 'rustymiddle=debug' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }) as ChildProcessWithoutNullStreams;
-  const lines: string[] = [];
-  const evidence: Evidence[] = [];
-  let listenAddress = '';
-  const waiters: Array<{ predicate: (item: Evidence) => boolean; resolve: (item: Evidence) => void }> = [];
-  const consume = (line: string) => {
-    lines.push(line);
-    if (line.startsWith('LISTEN_ADDR=')) listenAddress = line.slice('LISTEN_ADDR='.length);
-    if (line.startsWith('EVIDENCE ')) {
-      const item = Object.fromEntries(
-        line.slice('EVIDENCE '.length).split(' ').map(part => part.split('=', 2)),
-      );
-      evidence.push(item);
-      for (const waiter of waiters.splice(0)) {
-        if (waiter.predicate(item)) waiter.resolve(item);
-        else waiters.push(waiter);
-      }
-    }
-  };
-  readline.createInterface({ input: child.stdout }).on('line', consume);
-  readline.createInterface({ input: child.stderr }).on('line', line => lines.push(line));
-  await waitUntil(() => Boolean(listenAddress), 30_000, () => {
-    if (child.exitCode !== null) throw new Error(`proxy exited ${child.exitCode}:\n${lines.join('\n')}`);
+  return launchProxy({
+    binary,
+    repo,
+    caCertificate,
+    caPrivateKey,
+    route,
+    proofId,
   });
-  return {
-    child,
-    lines,
-    get listenAddress() { return listenAddress; },
-    waitForEvidence(predicate: (item: Evidence) => boolean): Promise<Evidence> {
-      const current = evidence.find(predicate);
-      if (current) return Promise.resolve(current);
-      return Promise.race([
-        new Promise<Evidence>(resolve => waiters.push({ predicate, resolve })),
-        new Promise<Evidence>((_, reject) => setTimeout(
-          () => reject(new Error(`missing proxy evidence:\n${lines.join('\n')}`)),
-          30_000,
-        )),
-      ]);
-    },
-    async stop() {
-      if (child.exitCode !== null) return;
-      child.kill();
-      await new Promise<void>(resolve => child.once('exit', () => resolve()));
-    },
-  };
-}
-
-async function waitUntil(predicate: () => boolean, timeoutMs: number, tick: () => void) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    tick();
-    if (Date.now() >= deadline) throw new Error('timed out waiting for proxy startup');
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
 }

@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "license": "MIT",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:interop": "playwright test tests/interop.spec.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
