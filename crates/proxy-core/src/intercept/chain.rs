@@ -18,10 +18,10 @@ use tokio::{
 use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target, task::AbortOnDrop};
 
 use super::{
-    BodyPipeline, BodyPipelineLimits, BodyPlan, CompletedExchange, ExchangeFailure,
-    ExchangeInterceptor, ExchangeMetadata, HookContext, HookExecutionError, HookInitError,
-    InterceptorFactory, RequestBodyEvent, RequestHeadAction, RequestHeadEvent, ResponseBodyEvent,
-    ResponseHeadAction, ResponseHeadEvent,
+    BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlanSelection, CompletedExchange,
+    ExchangeFailure, ExchangeInterceptor, ExchangeMetadata, HookContext, HookExecutionError,
+    HookInitError, InterceptorFactory, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
+    ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
 };
 
 const TERMINAL_OPEN: u8 = 0;
@@ -250,7 +250,7 @@ pub enum ResponseHeadOutcome {
 }
 
 /// Failure from one named hook callback.
-#[derive(Clone, Debug, Error)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error("interceptor {name} failed: {source}")]
 pub struct ChainExecutionError {
     /// Registration name.
@@ -361,7 +361,7 @@ impl ExchangeChain {
     pub async fn request_body_plans(
         &self,
         head: &RequestHead,
-    ) -> Result<Vec<BodyPlan>, ChainExecutionError> {
+    ) -> Result<Vec<BodyPlanSelection>, ChainExecutionError> {
         let mut plans = Vec::with_capacity(self.entered);
         for entry in &self.interceptors[..self.entered] {
             let event = RequestBodyEvent {
@@ -385,19 +385,20 @@ impl ExchangeChain {
     ///
     /// # Errors
     ///
-    /// Returns a named callback execution failure.
+    /// Returns a named callback execution failure or a typed representation
+    /// conflict between selected plans.
     pub async fn request_body_pipeline(
         &self,
         head: &RequestHead,
         limits: BodyPipelineLimits,
-    ) -> Result<BodyPipeline, ChainExecutionError> {
+    ) -> Result<BodyPipeline, BodyPipelineError> {
         let plans = self.request_body_plans(head).await?;
         Ok(BodyPipeline::from_plans(
             plans,
             self.context.clone(),
             self.runner.clone(),
             limits,
-        ))
+        )?)
     }
 
     /// Applies response-head callbacks in reverse entered order.
@@ -460,7 +461,7 @@ impl ExchangeChain {
         request_head: &RequestHead,
         response_head: &ResponseHead,
         local_response: bool,
-    ) -> Result<Vec<BodyPlan>, ChainExecutionError> {
+    ) -> Result<Vec<BodyPlanSelection>, ChainExecutionError> {
         let mut plans = Vec::with_capacity(self.entered);
         for entry in self.interceptors[..self.entered].iter().rev() {
             let event = ResponseBodyEvent {
@@ -486,14 +487,15 @@ impl ExchangeChain {
     ///
     /// # Errors
     ///
-    /// Returns a named callback execution failure.
+    /// Returns a named callback execution failure or a typed representation
+    /// conflict between selected plans.
     pub async fn response_body_pipeline(
         &self,
         request_head: &RequestHead,
         response_head: &ResponseHead,
         local_response: bool,
         limits: BodyPipelineLimits,
-    ) -> Result<BodyPipeline, ChainExecutionError> {
+    ) -> Result<BodyPipeline, BodyPipelineError> {
         let plans = self
             .response_body_plans(request_head, response_head, local_response)
             .await?;
@@ -502,7 +504,7 @@ impl ExchangeChain {
             self.context.clone(),
             self.runner.clone(),
             limits,
-        ))
+        )?)
     }
 
     /// Delivers successful terminal cleanup exactly once in reverse order.
@@ -816,7 +818,7 @@ mod tests {
             _event: RequestBodyEvent,
         ) -> BoxHookFuture<'_, RequestBodyAction> {
             self.record("request-body");
-            Box::pin(async { RequestBodyAction(BodyPlan::PassThrough) })
+            Box::pin(async { RequestBodyAction::pass_through() })
         }
 
         fn on_response_head(
@@ -832,7 +834,7 @@ mod tests {
             _event: ResponseBodyEvent,
         ) -> BoxHookFuture<'_, ResponseBodyAction> {
             self.record("response-body");
-            Box::pin(async { ResponseBodyAction(BodyPlan::PassThrough) })
+            Box::pin(async { ResponseBodyAction::pass_through() })
         }
 
         fn on_completed(&self, _outcome: CompletedExchange) -> BoxHookFuture<'_, ()> {

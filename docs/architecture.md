@@ -49,9 +49,11 @@ editing is available only through an explicit nonzero limit.
 
 `rustymiddle-content` is the next layer above canonical body framing. It owns
 content-coding plans, representation header repair, decompression budgets, and
-bounded streaming gzip/Brotli/deflate/zstd codec engines. These engines will compose
-around the Hooks v2 body pipeline without moving
-compression policy into Hyper, quiche, or core lifecycle types.
+bounded streaming gzip/Brotli/deflate/zstd codec engines. Its content-aware
+pipeline composes those engines around the Hooks v2 body pipeline without
+moving compression policy into Hyper, quiche, or core lifecycle types. Hooks
+declare neutral, raw, required-decoded, or optional-decoded representation
+requirements; raw/decoded conflicts fail before body processing begins.
 
 The immutable `OriginalTarget` records client intent. Head edits are logical
 message edits and cannot silently redirect a socket. A `Reroute` action is fed

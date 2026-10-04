@@ -15,7 +15,8 @@ pub use action::{
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,
-    BoxBodyFuture, BufferedBody, BufferedBodyHandler, HookAbort,
+    BodyPlanSelection, BodyRepresentation, BodyRepresentationError, BoxBodyFuture, BufferedBody,
+    BufferedBodyHandler, HookAbort,
 };
 pub use bridge::{
     BridgeCommand, BridgeCorrelationId, BridgeError, BridgeReplyError, DecisionBridge,
@@ -62,7 +63,7 @@ pub trait ExchangeInterceptor: Send + Sync {
 
     /// Selects request body behavior before its pump starts.
     fn on_request_body(&self, _event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
-        Box::pin(async { RequestBodyAction(BodyPlan::PassThrough) })
+        Box::pin(async { RequestBodyAction::pass_through() })
     }
 
     /// Inspects or changes an uncommitted response head.
@@ -72,7 +73,7 @@ pub trait ExchangeInterceptor: Send + Sync {
 
     /// Selects response body behavior before its pump starts.
     fn on_response_body(&self, _event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
-        Box::pin(async { ResponseBodyAction(BodyPlan::PassThrough) })
+        Box::pin(async { ResponseBodyAction::pass_through() })
     }
 
     /// Receives successful terminal cleanup notification.

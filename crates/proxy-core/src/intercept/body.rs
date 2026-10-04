@@ -10,6 +10,59 @@ use crate::{
 
 use super::{HookContext, HookExecutionError, chain::CallbackGate};
 
+/// Representation of body bytes required by one hook plan.
+///
+/// Transfer framing has already been removed in every case. This requirement
+/// concerns only HTTP content codings such as gzip or Brotli.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BodyRepresentation {
+    /// The plan does not inspect, replace, discard, or transform body bytes.
+    #[default]
+    Neutral,
+    /// The plan deliberately operates on the content-coded byte stream.
+    Raw,
+    /// The plan requires decoded identity representation bytes.
+    DecodedRequired,
+    /// The plan uses decoded bytes when every coding is supported, otherwise
+    /// it is omitted without changing the body.
+    DecodedIfSupported,
+}
+
+impl BodyRepresentation {
+    fn combine(self, next: Self) -> Result<Self, BodyRepresentationError> {
+        use BodyRepresentation::{DecodedIfSupported, DecodedRequired, Neutral, Raw};
+        match (self, next) {
+            (Neutral, value) | (value, Neutral) => Ok(value),
+            (Raw, Raw) => Ok(Raw),
+            (DecodedIfSupported, DecodedIfSupported) => Ok(DecodedIfSupported),
+            (DecodedRequired, DecodedRequired | DecodedIfSupported)
+            | (DecodedIfSupported, DecodedRequired) => Ok(DecodedRequired),
+            (Raw, DecodedRequired | DecodedIfSupported)
+            | (DecodedRequired | DecodedIfSupported, Raw) => {
+                Err(BodyRepresentationError::RawDecodedConflict)
+            }
+        }
+    }
+}
+
+/// Invalid representation requirements selected for one body pipeline.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum BodyRepresentationError {
+    /// A pass-through plan claimed a representation it never observes.
+    #[error("pass-through body plans must use the neutral representation")]
+    NonNeutralPassThrough,
+    /// A body-changing plan omitted the representation of its output.
+    #[error("body-changing plans must declare raw or decoded representation bytes")]
+    NeutralBodyChange,
+    /// Raw and decoded stages cannot be composed without an explicit conversion.
+    #[error("raw and decoded body plans cannot be composed in one pipeline")]
+    RawDecodedConflict,
+    /// Optional decoded stages can only be declined when no required decoded
+    /// stage is present.
+    #[error("the body pipeline does not contain only optional decoded stages")]
+    OptionalDecodedNotDeclinable,
+}
+
 /// Boxed asynchronous body-filter result.
 pub type BoxBodyFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -135,6 +188,70 @@ pub enum BodyPlan {
     Discard,
 }
 
+impl BodyPlan {
+    fn validates_representation(
+        &self,
+        representation: BodyRepresentation,
+    ) -> Result<(), BodyRepresentationError> {
+        match (self, representation) {
+            (Self::PassThrough, BodyRepresentation::Neutral) => Ok(()),
+            (Self::PassThrough, _) => Err(BodyRepresentationError::NonNeutralPassThrough),
+            (_, BodyRepresentation::Neutral) => Err(BodyRepresentationError::NeutralBodyChange),
+            _ => Ok(()),
+        }
+    }
+
+    fn inspects_input_bytes(&self) -> bool {
+        matches!(self, Self::Transform(_) | Self::Buffer { .. })
+    }
+}
+
+/// One body plan paired with the representation it consumes and produces.
+#[must_use = "selected body plans must be composed into a body pipeline"]
+pub struct BodyPlanSelection {
+    plan: BodyPlan,
+    representation: BodyRepresentation,
+}
+
+impl BodyPlanSelection {
+    /// Creates an explicitly represented plan.
+    pub const fn new(plan: BodyPlan, representation: BodyRepresentation) -> Self {
+        Self {
+            plan,
+            representation,
+        }
+    }
+
+    /// Creates a neutral pass-through selection.
+    pub const fn pass_through() -> Self {
+        Self::new(BodyPlan::PassThrough, BodyRepresentation::Neutral)
+    }
+
+    /// Required representation for this plan.
+    pub const fn representation(&self) -> BodyRepresentation {
+        self.representation
+    }
+
+    /// Borrows the selected plan.
+    pub const fn plan(&self) -> &BodyPlan {
+        &self.plan
+    }
+
+    pub(crate) fn into_parts(self) -> (BodyPlan, BodyRepresentation) {
+        (self.plan, self.representation)
+    }
+}
+
+impl std::fmt::Debug for BodyPlanSelection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BodyPlanSelection")
+            .field("plan", &self.plan)
+            .field("representation", &self.representation)
+            .finish()
+    }
+}
+
 impl std::fmt::Debug for BodyPlan {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -186,6 +303,12 @@ impl Default for BodyPipelineLimits {
 /// Failure processing one body through a composed plan pipeline.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum BodyPipelineError {
+    /// A body-planning callback failed before the pipeline was constructed.
+    #[error(transparent)]
+    Planning(#[from] super::ChainExecutionError),
+    /// Selected body plans had invalid or incompatible representations.
+    #[error(transparent)]
+    Representation(#[from] BodyRepresentationError),
     /// Hook execution timed out, was cancelled, panicked, or is shutting down.
     #[error(transparent)]
     Execution(#[from] HookExecutionError),
@@ -268,6 +391,7 @@ impl std::fmt::Debug for BodyStageKind {
 #[derive(Debug)]
 struct BodyStage {
     kind: BodyStageKind,
+    representation: BodyRepresentation,
     output_sequence: FrameSequence,
 }
 
@@ -283,25 +407,38 @@ pub struct BodyPipeline {
     context: HookContext,
     gate: CallbackGate,
     limits: BodyPipelineLimits,
+    representation: BodyRepresentation,
+    inspects_source_body: bool,
     modifies_body: bool,
     finished: bool,
 }
 
 impl BodyPipeline {
     pub(super) fn from_plans(
-        plans: Vec<BodyPlan>,
+        plans: Vec<BodyPlanSelection>,
         context: HookContext,
         gate: CallbackGate,
         limits: BodyPipelineLimits,
-    ) -> Self {
-        let modifies_body = plans
-            .iter()
-            .any(|plan| !matches!(plan, BodyPlan::PassThrough));
-        let stages = plans
-            .into_iter()
-            .filter_map(|plan| {
+    ) -> Result<Self, BodyRepresentationError> {
+        let mut representation = BodyRepresentation::Neutral;
+        let mut modifies_body = false;
+        let mut inspects_source_body = false;
+        let mut source_body_visible = true;
+        let mut stages = Vec::new();
+        for selection in plans {
+            let (plan, selected_representation) = selection.into_parts();
+            plan.validates_representation(selected_representation)?;
+            representation = representation.combine(selected_representation)?;
+            modifies_body |= !matches!(plan, BodyPlan::PassThrough);
+            if source_body_visible && plan.inspects_input_bytes() {
+                inspects_source_body = true;
+            }
+            if matches!(plan, BodyPlan::Replace(_) | BodyPlan::Discard) {
+                source_body_visible = false;
+            }
+            let stage = {
                 let kind = match plan {
-                    BodyPlan::PassThrough => return None,
+                    BodyPlan::PassThrough => continue,
                     BodyPlan::Transform(filter) => BodyStageKind::Transform(Some(filter)),
                     BodyPlan::Buffer { limit, handler } => BodyStageKind::Buffer {
                         buffer: Some(BoundedBodyBuffer::new(limit.get())),
@@ -310,21 +447,54 @@ impl BodyPipeline {
                     BodyPlan::Replace(body) => BodyStageKind::Replace(Some(body)),
                     BodyPlan::Discard => BodyStageKind::Discard,
                 };
-                Some(BodyStage {
+                BodyStage {
                     kind,
+                    representation: selected_representation,
                     output_sequence: FrameSequence::default(),
-                })
-            })
-            .collect();
-        Self {
+                }
+            };
+            stages.push(stage);
+        }
+        Ok(Self {
             stages,
             input_sequence: FrameSequence::default(),
             context,
             gate,
             limits,
+            representation,
+            inspects_source_body,
             modifies_body,
             finished: false,
+        })
+    }
+
+    /// Aggregated representation required by all active stages.
+    pub const fn representation(&self) -> BodyRepresentation {
+        self.representation
+    }
+
+    /// Whether a stage before the first replacement/discard observes source bytes.
+    pub const fn inspects_source_body(&self) -> bool {
+        self.inspects_source_body
+    }
+
+    /// Omits every optional decoded stage after unsupported content coding was
+    /// detected, retaining neutral stages and exact pass-through behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BodyRepresentationError::OptionalDecodedNotDeclinable`] when
+    /// the aggregate requirement is not [`BodyRepresentation::DecodedIfSupported`].
+    pub fn decline_optional_decoded(&mut self) -> Result<(), BodyRepresentationError> {
+        if self.representation != BodyRepresentation::DecodedIfSupported {
+            return Err(BodyRepresentationError::OptionalDecodedNotDeclinable);
         }
+        self.stages
+            .retain(|stage| stage.representation != BodyRepresentation::DecodedIfSupported);
+        self.representation = BodyRepresentation::Neutral;
+        self.inspects_source_body = false;
+        self.modifies_body = !self.stages.is_empty();
+        Ok(())
     }
 
     /// Whether any selected plan can change body frames.
@@ -674,7 +844,9 @@ mod tests {
         )
     }
 
-    fn pipeline(plans: Vec<BodyPlan>) -> BodyPipeline {
+    fn selected_pipeline(
+        plans: Vec<BodyPlanSelection>,
+    ) -> Result<BodyPipeline, BodyRepresentationError> {
         let timeout = Duration::from_secs(1);
         BodyPipeline::from_plans(
             plans,
@@ -686,6 +858,95 @@ mod tests {
             }),
             BodyPipelineLimits::default(),
         )
+    }
+
+    fn pipeline(plans: Vec<BodyPlan>) -> BodyPipeline {
+        selected_pipeline(
+            plans
+                .into_iter()
+                .map(|plan| {
+                    let representation = if matches!(plan, BodyPlan::PassThrough) {
+                        BodyRepresentation::Neutral
+                    } else {
+                        BodyRepresentation::Raw
+                    };
+                    BodyPlanSelection::new(plan, representation)
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn representation_requirements_are_validated_and_aggregated() {
+        let conflict = selected_pipeline(vec![
+            BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"raw"))),
+                BodyRepresentation::Raw,
+            ),
+            BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"decoded"))),
+                BodyRepresentation::DecodedRequired,
+            ),
+        ])
+        .unwrap_err();
+        assert_eq!(conflict, BodyRepresentationError::RawDecodedConflict);
+
+        let invalid = selected_pipeline(vec![BodyPlanSelection::new(
+            BodyPlan::Discard,
+            BodyRepresentation::Neutral,
+        )])
+        .unwrap_err();
+        assert_eq!(invalid, BodyRepresentationError::NeutralBodyChange);
+
+        let pipeline = selected_pipeline(vec![
+            BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"optional"))),
+                BodyRepresentation::DecodedIfSupported,
+            ),
+            BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"required"))),
+                BodyRepresentation::DecodedRequired,
+            ),
+        ])
+        .unwrap();
+        assert_eq!(
+            pipeline.representation(),
+            BodyRepresentation::DecodedRequired
+        );
+    }
+
+    #[test]
+    fn replacement_before_decoded_filters_does_not_inspect_source_bytes() {
+        let replacement = BufferedBody::try_new(8, Bytes::from_static(b"new"), None).unwrap();
+        let pipeline = selected_pipeline(vec![
+            BodyPlanSelection::new(
+                BodyPlan::Replace(replacement),
+                BodyRepresentation::DecodedRequired,
+            ),
+            BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"after"))),
+                BodyRepresentation::DecodedRequired,
+            ),
+        ])
+        .unwrap();
+        assert!(!pipeline.inspects_source_body());
+    }
+
+    #[test]
+    fn optional_decoded_stages_can_be_declined_before_processing() {
+        let mut pipeline = selected_pipeline(vec![BodyPlanSelection::new(
+            BodyPlan::Transform(Box::new(Prefix(b"optional"))),
+            BodyRepresentation::DecodedIfSupported,
+        )])
+        .unwrap();
+        pipeline.decline_optional_decoded().unwrap();
+        assert_eq!(pipeline.representation(), BodyRepresentation::Neutral);
+        assert!(!pipeline.modifies_body());
+        assert!(matches!(
+            pipeline.decline_optional_decoded(),
+            Err(BodyRepresentationError::OptionalDecodedNotDeclinable)
+        ));
     }
 
     #[test]
@@ -890,11 +1151,15 @@ mod tests {
             max_paused_exchanges: NonZeroUsize::new(1).unwrap(),
         });
         let mut pipeline = BodyPipeline::from_plans(
-            vec![BodyPlan::Transform(Box::new(Expand(3)))],
+            vec![BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Expand(3))),
+                BodyRepresentation::Raw,
+            )],
             context(timeout),
             gate.clone(),
             limits,
-        );
+        )
+        .unwrap();
         assert!(matches!(
             pipeline.process(BodyFrame::Data(Bytes::new())).await,
             Err(BodyPipelineError::OutputFrameLimit {
@@ -904,11 +1169,15 @@ mod tests {
         ));
 
         let mut pipeline = BodyPipeline::from_plans(
-            vec![BodyPlan::Transform(Box::new(Prefix(b"abc")))],
+            vec![BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(Prefix(b"abc"))),
+                BodyRepresentation::Raw,
+            )],
             context(timeout),
             gate,
             limits,
-        );
+        )
+        .unwrap();
         assert!(matches!(
             pipeline.process(BodyFrame::Data(Bytes::new())).await,
             Err(BodyPipelineError::OutputByteLimit {
@@ -939,7 +1208,10 @@ mod tests {
 
         let timeout = Duration::from_millis(5);
         let mut waiting = BodyPipeline::from_plans(
-            vec![BodyPlan::Transform(Box::new(FailureFilter::Wait))],
+            vec![BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(FailureFilter::Wait)),
+                BodyRepresentation::Raw,
+            )],
             context(timeout),
             CallbackGate::new(HookLimits {
                 callback_timeout: timeout,
@@ -947,7 +1219,8 @@ mod tests {
                 max_paused_exchanges: NonZeroUsize::new(1).unwrap(),
             }),
             BodyPipelineLimits::default(),
-        );
+        )
+        .unwrap();
         assert_eq!(
             waiting
                 .process(BodyFrame::Data(Bytes::new()))
@@ -958,7 +1231,10 @@ mod tests {
 
         let timeout = Duration::from_secs(1);
         let mut cancelled = BodyPipeline::from_plans(
-            vec![BodyPlan::Transform(Box::new(FailureFilter::Wait))],
+            vec![BodyPlanSelection::new(
+                BodyPlan::Transform(Box::new(FailureFilter::Wait)),
+                BodyRepresentation::Raw,
+            )],
             context(timeout),
             CallbackGate::new(HookLimits {
                 callback_timeout: timeout,
@@ -966,7 +1242,8 @@ mod tests {
                 max_paused_exchanges: NonZeroUsize::new(1).unwrap(),
             }),
             BodyPipelineLimits::default(),
-        );
+        )
+        .unwrap();
         let cancellation = cancelled.context.cancellation().clone();
         let task =
             tokio::spawn(async move { cancelled.process(BodyFrame::Data(Bytes::new())).await });

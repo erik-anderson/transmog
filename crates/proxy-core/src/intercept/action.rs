@@ -1,6 +1,6 @@
 use crate::{CanonicalResponse, RequestHead, ResponseHead, Target};
 
-use super::{BodyPlan, HookAbort, HookContext};
+use super::{BodyPlan, BodyPlanSelection, BodyRepresentation, HookAbort, HookContext};
 
 /// Typed request-head callback input.
 #[derive(Clone, Debug)]
@@ -109,9 +109,63 @@ impl std::fmt::Debug for ResponseHeadAction {
 /// Request-body plan selected before its pump starts.
 #[derive(Debug)]
 #[must_use = "request body plans must be returned to the exchange engine"]
-pub struct RequestBodyAction(pub BodyPlan);
+pub struct RequestBodyAction(pub(crate) BodyPlanSelection);
+
+impl RequestBodyAction {
+    /// Selects a plan with an explicit byte representation.
+    pub const fn new(plan: BodyPlan, representation: BodyRepresentation) -> Self {
+        Self(BodyPlanSelection::new(plan, representation))
+    }
+
+    /// Selects exact pass-through without requesting content processing.
+    pub const fn pass_through() -> Self {
+        Self(BodyPlanSelection::pass_through())
+    }
+
+    /// Selects a plan that deliberately consumes and produces coded bytes.
+    pub const fn raw(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::Raw)
+    }
+
+    /// Selects a plan that requires decoded identity bytes.
+    pub const fn decoded(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::DecodedRequired)
+    }
+
+    /// Selects an optional decoded plan that is omitted for unsupported coding.
+    pub const fn decoded_if_supported(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::DecodedIfSupported)
+    }
+}
 
 /// Response-body plan selected before its pump starts.
 #[derive(Debug)]
 #[must_use = "response body plans must be returned to the exchange engine"]
-pub struct ResponseBodyAction(pub BodyPlan);
+pub struct ResponseBodyAction(pub(crate) BodyPlanSelection);
+
+impl ResponseBodyAction {
+    /// Selects a plan with an explicit byte representation.
+    pub const fn new(plan: BodyPlan, representation: BodyRepresentation) -> Self {
+        Self(BodyPlanSelection::new(plan, representation))
+    }
+
+    /// Selects exact pass-through without requesting content processing.
+    pub const fn pass_through() -> Self {
+        Self(BodyPlanSelection::pass_through())
+    }
+
+    /// Selects a plan that deliberately consumes and produces coded bytes.
+    pub const fn raw(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::Raw)
+    }
+
+    /// Selects a plan that requires decoded identity bytes.
+    pub const fn decoded(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::DecodedRequired)
+    }
+
+    /// Selects an optional decoded plan that is omitted for unsupported coding.
+    pub const fn decoded_if_supported(plan: BodyPlan) -> Self {
+        Self::new(plan, BodyRepresentation::DecodedIfSupported)
+    }
+}

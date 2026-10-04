@@ -45,6 +45,13 @@ strict zlib framing is the default and the raw compatibility policy is both
 explicit and stable when its two-byte probe crosses frame boundaries.
 Zstd tests validate concatenated frames and prove an encoded window larger than
 the configured decoder-history bound is rejected before decoded bytes escape.
+The Phase 3 suite proves deterministic raw/decoded requirement aggregation,
+rejects mixed raw and decoded chains before pumping, and exercises reverse
+multi-layer decoding plus forward re-encoding. It also proves exact neutral
+pass-through, optional unsupported-coding bypass without invoking the hook,
+required unsupported-coding failure, header and trailer repair, whole-stack
+limits, and replacement of corrupt encoded input without decoding discarded
+source bytes.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

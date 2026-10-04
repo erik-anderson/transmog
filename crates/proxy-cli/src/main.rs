@@ -321,23 +321,23 @@ impl ExchangeInterceptor for ProofInterceptor {
     }
 
     fn on_response_body(&self, _event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
-        let plan = if self.html.load(Ordering::Acquire) {
+        let action = if self.html.load(Ordering::Acquire) {
             let marker = format!(
                 "<meta name=\"intercept-proxy-proof\" content=\"{}\">",
                 self.id
             )
             .into_bytes();
-            BodyPlan::Buffer {
+            ResponseBodyAction::decoded(BodyPlan::Buffer {
                 limit: NonZeroUsize::new(self.max_body_bytes).expect("proof body bound is nonzero"),
                 handler: Box::new(HtmlProofEditor {
                     max_output_body_bytes: self.max_body_bytes.saturating_add(marker.len()),
                     marker,
                 }),
-            }
+            })
         } else {
-            BodyPlan::PassThrough
+            ResponseBodyAction::pass_through()
         };
-        Box::pin(async move { ResponseBodyAction(plan) })
+        Box::pin(async move { action })
     }
 }
 

@@ -18,7 +18,10 @@ Implement `InterceptorFactory::create` and return a fresh `Arc<dyn
 ExchangeInterceptor>`. Put exchange-local flags on that interceptor. Keep only
 deliberately shared, synchronized configuration on the factory. Return
 `BodyPlan::Buffer` with an explicit nonzero limit for complete-body editing, or
-`BodyPlan::Transform` for streaming changes.
+`BodyPlan::Transform` for streaming changes. Wrap each changing plan with the
+appropriate request/response action constructor: `raw`, `decoded`, or
+`decoded_if_supported`. Use `pass_through` for a neutral byte-exact path. Mixed
+raw and decoded plans now fail deterministically before the body pump starts.
 
 `ProxyServer::bind` remains a convenience for one required interceptor and a
 MITM CA. Use `InterceptorChainFactory` plus `ProxyServer::bind_with_chain` for

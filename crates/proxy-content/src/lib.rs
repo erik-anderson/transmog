@@ -9,6 +9,7 @@
 mod budget;
 mod codec;
 mod coding;
+mod pipeline;
 mod plan;
 
 pub use budget::{ContentBudget, ContentLimitError, ContentLimits};
@@ -16,4 +17,5 @@ pub use codec::{
     ContentCodecError, ContentDecoder, ContentDecoderOptions, ContentEncoder, DeflateCompatibility,
 };
 pub use coding::{ContentCoding, ContentCodingError, ContentCodingStack};
+pub use pipeline::{ContentBodyPipeline, ContentPipelineError};
 pub use plan::{ContentLength, ContentOutput, ContentPlan};

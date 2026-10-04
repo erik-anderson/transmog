@@ -1158,7 +1158,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::RequestBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     false,
                     false,
@@ -1320,7 +1320,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::ResponseBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     true,
                     false,
@@ -1407,7 +1407,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::RequestBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     false,
                     false,
@@ -1578,7 +1578,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::ResponseBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     true,
                     false,
@@ -1669,7 +1669,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::RequestBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     false,
                     false,
@@ -1838,7 +1838,7 @@ impl ProxyState {
                 self.fail_chain(
                     &chain,
                     ExchangeStage::ResponseBody,
-                    hook_failure_kind(&error),
+                    body_pipeline_failure_kind(&error),
                     error.to_string(),
                     true,
                     false,
@@ -2389,6 +2389,9 @@ fn hook_failure_kind(error: &ChainExecutionError) -> ExchangeFailureKind {
 fn runtime_failure_kind(error: &ProxyRuntimeError, stage: ExchangeStage) -> ExchangeFailureKind {
     match error {
         ProxyRuntimeError::HookExecution(error) => hook_failure_kind(error),
+        ProxyRuntimeError::BodyPipeline(BodyPipelineError::Planning(source)) => {
+            hook_failure_kind(source)
+        }
         ProxyRuntimeError::BodyPipeline(BodyPipelineError::Execution(source)) => match source {
             HookExecutionError::TimedOut => ExchangeFailureKind::HookTimedOut,
             HookExecutionError::Panicked => ExchangeFailureKind::HookPanicked,
@@ -2433,6 +2436,7 @@ fn runtime_failure_kind(error: &ProxyRuntimeError, stage: ExchangeStage) -> Exch
 
 fn body_pipeline_failure_kind(error: &BodyPipelineError) -> ExchangeFailureKind {
     match error {
+        BodyPipelineError::Planning(source) => hook_failure_kind(source),
         BodyPipelineError::Execution(source) => match source {
             HookExecutionError::TimedOut => ExchangeFailureKind::HookTimedOut,
             HookExecutionError::Panicked => ExchangeFailureKind::HookPanicked,
@@ -2443,6 +2447,7 @@ fn body_pipeline_failure_kind(error: &BodyPipelineError) -> ExchangeFailureKind 
             ExchangeFailureKind::HookAborted(reason.clone())
         }
         BodyPipelineError::Hook(_)
+        | BodyPipelineError::Representation(_)
         | BodyPipelineError::InvalidSequence(_)
         | BodyPipelineError::OutputFrameLimit { .. }
         | BodyPipelineError::OutputByteLimit { .. }
@@ -3429,7 +3434,7 @@ mod tests {
             _event: RequestBodyEvent,
         ) -> BoxHookFuture<'_, RequestBodyAction> {
             Box::pin(async {
-                RequestBodyAction(BodyPlan::Replace(
+                RequestBodyAction::decoded(BodyPlan::Replace(
                     BufferedBody::try_new(64, Bytes::from_static(b"request-edited"), None).unwrap(),
                 ))
             })
@@ -3440,7 +3445,7 @@ mod tests {
             _event: ResponseBodyEvent,
         ) -> BoxHookFuture<'_, ResponseBodyAction> {
             Box::pin(async {
-                ResponseBodyAction(BodyPlan::Replace(
+                ResponseBodyAction::decoded(BodyPlan::Replace(
                     BufferedBody::try_new(64, Bytes::from_static(b"edited"), None).unwrap(),
                 ))
             })

@@ -37,6 +37,7 @@ pub enum ContentLength {
 pub struct ContentPlan {
     original: ContentCodingStack,
     output: ContentOutput,
+    transforms_representation: bool,
 }
 
 impl ContentPlan {
@@ -54,9 +55,32 @@ impl ContentPlan {
         output: ContentOutput,
         limits: ContentLimits,
     ) -> Result<Self, ContentCodingError> {
+        Self::for_body_pipeline(headers, output, limits, false)
+    }
+
+    /// Builds a plan for a body pipeline that may change identity bytes.
+    ///
+    /// `body_modified` must be true whenever a selected body stage can emit
+    /// bytes different from its input, including replacement and discard.
+    /// This invalidates representation metadata even when the source was
+    /// already identity encoded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContentCodingError`] when the coding stack is malformed,
+    /// unsupported, ambiguous, or too deep.
+    pub fn for_body_pipeline(
+        headers: &HeaderBlock,
+        output: ContentOutput,
+        limits: ContentLimits,
+        body_modified: bool,
+    ) -> Result<Self, ContentCodingError> {
+        let original = ContentCodingStack::from_headers(headers, limits.max_coding_layers())?;
+        let transforms_representation = body_modified || !original.is_empty();
         Ok(Self {
-            original: ContentCodingStack::from_headers(headers, limits.max_coding_layers())?,
+            original,
             output,
+            transforms_representation,
         })
     }
 
@@ -72,7 +96,7 @@ impl ContentPlan {
 
     /// Whether applying this plan changes representation bytes.
     pub fn transforms_representation(&self) -> bool {
-        !self.original.is_empty()
+        self.transforms_representation
     }
 
     /// Produces the identity-coded head shown to decoded-content hooks.
@@ -136,6 +160,14 @@ fn repaired_headers(
             HeaderField::try_new("content-length", length.to_string())
                 .expect("a decimal u64 forms a valid header"),
         );
+    }
+    output
+}
+
+pub(crate) fn repaired_raw_output_headers(source: &HeaderBlock) -> HeaderBlock {
+    let mut output = source.clone();
+    for field in INVALIDATED_FIELDS {
+        output.remove_all(field);
     }
     output
 }
@@ -224,6 +256,33 @@ mod tests {
         assert_eq!(
             plan.headers_for_output(&source, ContentLength::Streaming),
             source
+        );
+    }
+
+    #[test]
+    fn identity_body_modification_still_invalidates_representation_metadata() {
+        let source = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("content-length", "3").unwrap(),
+            HeaderField::try_new("etag", "\"identity\"").unwrap(),
+            HeaderField::try_new("x-preserved", "yes").unwrap(),
+        ]);
+        let plan = ContentPlan::for_body_pipeline(
+            &source,
+            ContentOutput::Identity,
+            ContentLimits::default(),
+            true,
+        )
+        .unwrap();
+        assert!(plan.transforms_representation());
+        let repaired = plan.headers_for_output(
+            &plan.headers_for_decoded_hooks(&source),
+            ContentLength::Streaming,
+        );
+        assert!(repaired.values("content-length").next().is_none());
+        assert!(repaired.values("etag").next().is_none());
+        assert_eq!(
+            repaired.values("x-preserved").collect::<Vec<_>>(),
+            [b"yes".as_slice()]
         );
     }
 

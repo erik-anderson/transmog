@@ -124,7 +124,7 @@ struct TransformInterceptor;
 
 impl ExchangeInterceptor for TransformInterceptor {
     fn on_request_body(&self, _event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
-        Box::pin(async { RequestBodyAction(BodyPlan::Transform(Box::new(PrefixFilter))) })
+        Box::pin(async { RequestBodyAction::raw(BodyPlan::Transform(Box::new(PrefixFilter))) })
     }
 }
 

@@ -1,7 +1,7 @@
 # Plan: Production-grade content processing
 
-Status: active; Phase 1 and all Phase 2 codec engines complete on Windows;
-cross-platform codec validation and Phase 3 composition remain
+Status: active; Phases 1-3 are implemented and validated on Windows; Phase 4
+runtime policy/integration and cross-platform codec validation remain
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -303,10 +303,10 @@ are regenerated in the same change that accepts a dependency.
 - [x] deflate decode and encode pass strict and compatibility-policy tests.
 - [x] Brotli decode and encode pass bounded streaming tests.
 - [x] zstd decode and encode pass bounded streaming tests.
-- [ ] Multiple codings compose in correct reverse-decode/forward-encode order.
-- [ ] Unsupported or malformed coding never reaches decoded hooks as identity.
-- [ ] Untouched encoded traffic remains byte-preserving.
-- [ ] Modified traffic has correct coding, framing, and validator headers.
+- [x] Multiple codings compose in correct reverse-decode/forward-encode order.
+- [x] Unsupported or malformed coding never reaches decoded hooks as identity.
+- [x] Untouched encoded traffic remains byte-preserving.
+- [x] Modified traffic has correct coding, framing, and validator headers.
 - [ ] Requests and responses preserve trailers and bodyless semantics.
 - [ ] All byte, ratio, depth, frame, time, and cancellation bounds are tested.
 - [ ] One paused codec stream does not block unrelated H2/H3 streams.
