@@ -1,9 +1,8 @@
 # Plan: Layered monorepo roadmap
 
-Status: active; Hooks v2, the deterministic content protocol matrix, local
-content hardening, cooperative codec work/deadline bounds, and end-to-end
-content benchmarks are complete on Windows and the local Linux Docker/WSL2
-matrix; hosted Linux/macOS automation is intentionally deferred
+Status: active; milestones 0-8 and the standalone interoperability expansion
+are locally complete; the headless application/session service is next and
+hosted Linux/macOS automation remains intentionally deferred
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -110,6 +109,8 @@ explicitly enabled.
 
 ### 1. Content processing
 
+Status: locally complete; hosted automation observation is deferred.
+
 Implement strict content-coding parsing, bounded streaming decode/re-encode,
 representation header repair, and composition around body hooks. Support gzip,
 Brotli, deflate, and zstd under explicit policy. Preserve a raw pass-through
@@ -120,6 +121,8 @@ is complete across H1/H2/H3 requests and responses.
 
 ### 2. Attributable capture substrate
 
+Status: complete.
+
 Expose stable hook identity, attributed traffic effects, explicit observation
 boundaries, opt-in full body streams, trailers, route attempts, and visible
 loss. This is the core-owned vocabulary that enables storage and control
@@ -129,6 +132,8 @@ Exit gate: higher layers can reconstruct observable exchange evolution and
 attribute represented changes to hooks.
 
 ### 3. Experimental control model and transport
+
+Status: complete as breakable same-build v0; stabilization is not requested.
 
 Define product-facing v0 commands and events for exchange discovery,
 breakpoint pause/resume, bounded body access, modification, cancellation, and
@@ -146,6 +151,8 @@ into core.
 
 ### 4. Native streaming capture
 
+Status: complete.
+
 Add append-oriented capture interfaces, metadata indexing, opt-in body
 retention, memory-to-disk spooling thresholds, retention/deletion policy, and
 redaction. The first store may live in the monorepo, but storage records own a
@@ -156,6 +163,8 @@ corrupt traffic or create unbounded storage growth.
 
 ### 5. Headless capture and export boundary
 
+Status: complete.
+
 Expose recording, inspection, validation, sealing, and format adapters through
 library services and a CLI. Native output streams directly; formats requiring
 finalization may use bounded temporary storage.
@@ -165,6 +174,8 @@ API and exporters do not leak into the proxy core.
 
 ### 6. SAZ compatibility
 
+Status: complete.
+
 Convert native captures into a conventional Session Archive Zip. Keep strict
 compatibility distinct from optional namespaced metadata, and never make SAZ
 the live persistence format.
@@ -173,6 +184,8 @@ Exit gate: golden archives open in an independent compatible consumer and
 unsupported fidelity is reported explicitly.
 
 ### 7. Optional rules and replayable automation
+
+Status: complete.
 
 Build a deterministic rule layer over Hooks v2 and content processing. Rules
 match immutable/effective metadata explicitly, declare whether they need body
@@ -184,6 +197,8 @@ safety pass deterministic suites, with no hidden global session map.
 
 ### 8. WebSocket inspection
 
+Status: complete for HTTP/1.1 Upgrade; advanced transports remain optional.
+
 Add an upgrade/tunnel lifecycle and bounded frame model distinct from HTTP body
 frames. Preserve fragmentation, control-frame constraints, masking semantics,
 close handshakes, compression negotiation, and per-direction flow control.
@@ -191,7 +206,21 @@ close handshakes, compression negotiation, and per-direction flow control.
 Exit gate: HTTP upgrade handling and WebSocket frame processing are separately
 testable and a paused connection cannot block unrelated traffic.
 
-### 9. Product shell
+### 9. Headless application/session service
+
+Compose runtime, control, capture, automation, and WebSocket evidence into a
+bounded application-owned service. It owns proxy run state, a finite searchable
+live-session catalog, visible event loss, controller attachment, capture
+lifecycle, and validated replay/composer requests. Host certificate and system
+proxy changes remain explicit adapters so library consumers do not acquire
+desktop side effects.
+
+Exit gate: the dedicated
+[application/session service plan](application-session-service-plan.md) is
+complete, can be exercised without a UI, and an idle or disconnected consumer
+cannot stall or silently weaken proxy traffic.
+
+### 10. Product shell
 
 Add session browsing, breakpoint controls, inspectors/editors, search, export,
 and diagnostics against the control and capture layers. UI state never becomes
@@ -200,7 +229,7 @@ proxy correctness state.
 Exit gate: closing or restarting the UI cannot silently disable proxy safety,
 and headless embedding remains fully supported.
 
-### 10. Optional advanced transports
+### 11. Optional advanced transports
 
 Evaluate native downstream HTTP/3, CONNECT-UDP, MASQUE, WebTransport, blind TCP
 tunneling, and reverse-listener products as separate milestones. None is
@@ -254,12 +283,13 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Keep the live Chromium and local Linux gates passing with content processing
-   disabled by default.
-2. Follow the phase gates in
-   [control-capture-websocket-plan.md](control-capture-websocket-plan.md),
-   beginning with the attributable capture substrate and experimental control
-   v0 rather than stabilizing speculative messages.
-3. When a human explicitly enables hosted automation, activate and observe the
-   parked Hooks v2/content and fuzz-smoke Linux/macOS templates and close any
-   platform-specific findings.
+1. Implement the
+   [headless application/session service](application-session-service-plan.md)
+   above the completed proxy, control, capture, automation, and WebSocket
+   layers.
+2. Build product shells against that service rather than introducing UI-owned
+   proxy correctness state or a second session model.
+3. Keep the standalone interoperability, live Chromium, and local Linux gates
+   passing. When a human explicitly enables hosted automation, activate and
+   observe the parked Linux/macOS templates and close platform-specific
+   findings.
