@@ -830,6 +830,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustymiddle-automation"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "rustymiddle-core",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rustymiddle-capture"
 version = "0.1.0"
 dependencies = [

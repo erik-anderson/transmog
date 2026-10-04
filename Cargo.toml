@@ -11,6 +11,7 @@ members = [
     "crates/proxy-control-transport",
     "crates/proxy-capture",
     "crates/proxy-saz",
+    "crates/proxy-automation",
     "crates/proxy-cli",
 ]
 

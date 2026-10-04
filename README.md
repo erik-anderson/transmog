@@ -13,7 +13,9 @@ The project is under active implementation. See [architecture](docs/architecture
 [layered monorepo roadmap](docs/specs/monorepo-roadmap.md), with a dedicated
 [content-processing plan](docs/specs/content-processing-plan.md).
 SAZ conversion behavior and its fidelity limits are documented in
-[SAZ compatibility](docs/saz-compatibility.md).
+[SAZ compatibility](docs/saz-compatibility.md). The optional declarative layer
+is described in [automation](docs/automation.md); embedders may instead install
+their own Hooks v2 interceptors directly.
 
 ## Local verification
 
