@@ -819,6 +819,7 @@ name = "rustymiddle"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "rustymiddle-capture",
  "rustymiddle-core",
  "rustymiddle-runtime",
  "rustymiddle-tls",

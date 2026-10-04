@@ -63,6 +63,17 @@ Run the loopback proxy with a forced egress protocol or `auto`:
 cargo run --locked -p rustymiddle -- serve --ca-cert ./rustymiddle-ca.pem --ca-key ./rustymiddle-ca.key --listen 127.0.0.1:8080 --route h2
 ```
 
+Add `--capture ./session.rmcap` to stream redacted metadata to the native,
+checksummed capture format. Body bytes remain excluded unless
+`--capture-bodies` is also supplied. Existing output files are never
+overwritten. Headless inspection and conversion use the same capture library:
+
+```powershell
+cargo run --locked -p rustymiddle -- capture inspect --input ./session.rmcap
+cargo run --locked -p rustymiddle -- capture validate --input ./session.rmcap
+cargo run --locked -p rustymiddle -- capture export --input ./session.rmcap --format jsonl --output ./session.jsonl
+```
+
 Configure the browser's HTTP proxy to the printed `LISTEN_ADDR`. HTTPS is
 intercepted through `CONNECT`; HTTP/3 is origin egress only. When finished,
 remove exactly the installed current-user root using the SHA-256 value printed

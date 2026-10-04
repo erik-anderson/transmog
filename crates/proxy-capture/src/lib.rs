@@ -449,6 +449,119 @@ pub struct RecoveredCapture {
     pub sealed: bool,
 }
 
+/// Deterministic high-level artifact summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CaptureSummary {
+    /// All decoded records, including a seal.
+    pub records: usize,
+    /// Distinct nonzero exchange identifiers.
+    pub exchanges: usize,
+    /// Explicit loss markers.
+    pub loss_markers: usize,
+    /// Retained body bytes.
+    pub retained_body_bytes: u64,
+    /// Whether the artifact ended in a valid seal.
+    pub sealed: bool,
+    /// Whether recovery found a partial tail.
+    pub truncated_tail: bool,
+}
+
+impl RecoveredCapture {
+    /// Computes a deterministic, bounded summary.
+    pub fn summary(&self) -> CaptureSummary {
+        let exchanges = self
+            .records
+            .iter()
+            .filter_map(|record| (record.exchange_id != 0).then_some(record.exchange_id))
+            .collect::<BTreeSet<_>>()
+            .len();
+        let loss_markers = self
+            .records
+            .iter()
+            .filter(|record| matches!(record.kind, CaptureRecordKind::Loss { .. }))
+            .count();
+        let retained_body_bytes = self
+            .records
+            .iter()
+            .filter_map(|record| match &record.kind {
+                CaptureRecordKind::BodySegment {
+                    bytes: Some(bytes), ..
+                } => Some(bytes.len() as u64),
+                _ => None,
+            })
+            .fold(0_u64, u64::saturating_add);
+        CaptureSummary {
+            records: self.records.len(),
+            exchanges,
+            loss_markers,
+            retained_body_bytes,
+            sealed: self.sealed,
+            truncated_tail: self.truncated_tail,
+        }
+    }
+}
+
+/// Report returned by a capture exporter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportReport {
+    /// Records written.
+    pub records: usize,
+    /// Bytes written when known by the exporter.
+    pub bytes: u64,
+}
+
+/// Adapter boundary for derived capture formats.
+pub trait CaptureExporter {
+    /// Writes a recovered native capture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CaptureError`] for serialization, format, or destination
+    /// failures.
+    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, CaptureError>;
+}
+
+/// Streaming newline-delimited JSON exporter for scripting and diagnostics.
+pub struct JsonLinesExporter<W> {
+    output: W,
+    bytes_written: u64,
+}
+
+impl<W: Write> JsonLinesExporter<W> {
+    /// Wraps an output without writing a preamble.
+    pub fn new(output: W) -> Self {
+        Self {
+            output,
+            bytes_written: 0,
+        }
+    }
+
+    /// Returns the wrapped output.
+    pub fn into_inner(self) -> W {
+        self.output
+    }
+}
+
+impl<W: Write> CaptureExporter for JsonLinesExporter<W> {
+    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, CaptureError> {
+        let starting_bytes = self.bytes_written;
+        for record in &capture.records {
+            let payload = serde_json::to_vec(&store(record)?)?;
+            self.output.write_all(&payload)?;
+            self.output.write_all(b"\n")?;
+            self.bytes_written = self
+                .bytes_written
+                .saturating_add(payload.len() as u64)
+                .saturating_add(1);
+        }
+        self.output.flush()?;
+        Ok(ExportReport {
+            records: capture.records.len(),
+            bytes: self.bytes_written.saturating_sub(starting_bytes),
+        })
+    }
+}
+
 /// Reads the valid prefix of an artifact.
 ///
 /// A partial final header or payload is reported as a recoverable truncated
@@ -1207,5 +1320,40 @@ mod tests {
             kind: ObserverEventKind::RequestHeadFinalized(head),
         };
         assert!(record_from_observer(&legacy, &CapturePolicy::default()).is_none());
+    }
+
+    #[test]
+    fn json_lines_export_is_streaming_and_summary_is_deterministic() {
+        let capture = recover(
+            &artifact(&[completed(1), loss_record(7, 2, 1, "gap")], true)[..],
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            capture.summary(),
+            CaptureSummary {
+                records: 3,
+                exchanges: 1,
+                loss_markers: 1,
+                retained_body_bytes: 0,
+                sealed: true,
+                truncated_tail: false,
+            }
+        );
+        let mut exporter = JsonLinesExporter::new(Vec::new());
+        let report = exporter.export(&capture).unwrap();
+        let output = exporter.into_inner();
+        assert_eq!(report.records, 3);
+        assert_eq!(report.bytes, output.len() as u64);
+        assert_eq!(
+            String::from_utf8(output.clone()).unwrap().lines().count(),
+            3
+        );
+        for line in output
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let _: serde_json::Value = serde_json::from_slice(line).unwrap();
+        }
     }
 }

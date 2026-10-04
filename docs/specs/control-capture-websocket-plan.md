@@ -1,6 +1,6 @@
 # Plan: Control, capture, export, automation, and WebSockets
 
-Status: active; Phases 1-3 complete; hosted automation is intentionally disabled
+Status: active; Phases 1-4 complete; hosted automation is intentionally disabled
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the content-processing plan
 

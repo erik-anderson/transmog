@@ -1,31 +1,43 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
 use std::{
+    collections::HashMap,
     env,
     error::Error,
-    fs::{self, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     net::SocketAddr,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
 
 use bytes::Bytes;
+use rustymiddle_capture::{
+    CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter, JsonLinesExporter,
+    RecoveredCapture, loss_record, record_from_observer, recover,
+};
 use rustymiddle_core::{
     HeaderField, RoutePolicy,
     intercept::{
         BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody, BufferedBodyHandler,
-        ExchangeInterceptor, ExchangeMetadata, HookInitError, InterceptorFactory,
+        ExchangeInterceptor, ExchangeMetadata, HookInitError, InterceptorChainFactory,
+        InterceptorFactory, InterceptorRegistration, InterceptorRequirement,
         NoopInterceptorFactory, RequestHeadAction, RequestHeadEvent, ResponseBodyAction,
         ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
     },
+    observe::{
+        BodyObservation, BoxObserverFuture, ObservationInterest, Observer, ObserverConfig,
+        ObserverError, ObserverEvent, ObserverHub,
+    },
 };
-use rustymiddle_runtime::{ExchangeEvidence, ListenerConfig, ProxyConfig, ProxyServer};
-use rustymiddle_tls::{ProxyCa, SystemTrustSource, TrustSnapshot};
+use rustymiddle_runtime::{
+    ExchangeEvidence, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
+};
+use rustymiddle_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
 #[tokio::main]
 async fn main() {
@@ -50,6 +62,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         Some("ca") if arguments.get(1).map(String::as_str) == Some("generate") => {
             generate_ca(&arguments[2..])
         }
+        Some("capture") => capture_command(&arguments[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
             Ok(())
@@ -66,6 +79,11 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         .parse::<SocketAddr>()?;
     let route_policy = parse_route(option(arguments, "--route").unwrap_or("auto"))?;
     let proof_id = option(arguments, "--proof-id");
+    let capture_path = option(arguments, "--capture").map(PathBuf::from);
+    let capture_bodies = arguments.iter().any(|value| value == "--capture-bodies");
+    if capture_bodies && capture_path.is_none() {
+        return Err(invalid_input("--capture-bodies requires --capture PATH").into());
+    }
     let allow_remote_clients = arguments.iter().any(|value| value == "--allow-remote");
 
     let certificate_pem = fs::read(certificate_path)?;
@@ -77,20 +95,22 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         || Arc::new(NoopInterceptorFactory) as Arc<dyn InterceptorFactory>,
         |id| Arc::new(ProofFactory::new(id.to_owned(), 16 * 1024 * 1024)),
     );
-    let proxy = ProxyServer::bind(
-        ProxyConfig {
-            listener: ListenerConfig {
-                listen_addr,
-                allow_remote_clients,
-            },
-            route_policy,
-            ..ProxyConfig::default()
+    let config = ProxyConfig {
+        listener: ListenerConfig {
+            listen_addr,
+            allow_remote_clients,
         },
+        route_policy,
+        ..ProxyConfig::default()
+    };
+    let (components, capture) = build_components(
+        &config,
         ca,
-        trust,
         interceptor,
-    )
-    .await?;
+        capture_path.as_deref(),
+        capture_bodies,
+    )?;
+    let proxy = ProxyServer::bind_with_components(config, trust, components).await?;
     let actual_addr = proxy.local_addr()?;
     let mut evidence = proxy.subscribe_evidence();
     tokio::spawn(async move {
@@ -109,13 +129,259 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("LISTEN_ADDR={actual_addr}");
     println!("CA_SHA256={thumbprint}");
     println!("ROUTE_POLICY={route_policy:?}");
-    proxy
+    let result = proxy
         .serve(async {
             if let Err(error) = tokio::signal::ctrl_c().await {
                 tracing::error!(%error, "failed to install Ctrl-C handler");
             }
         })
-        .await?;
+        .await;
+    if result.is_ok()
+        && let Some(capture) = capture
+    {
+        seal_live_capture(&capture).await?;
+    }
+    result?;
+    Ok(())
+}
+
+fn build_components(
+    config: &ProxyConfig,
+    ca: ProxyCa,
+    interceptor: Arc<dyn InterceptorFactory>,
+    capture_path: Option<&Path>,
+    capture_bodies: bool,
+) -> Result<(ProxyComponents, Option<LiveCapture>), Box<dyn Error>> {
+    let hooks = InterceptorChainFactory::new(
+        vec![InterceptorRegistration::new(
+            "application",
+            interceptor,
+            InterceptorRequirement::Required,
+        )],
+        config.limits.hooks,
+    );
+    let certificates = Arc::new(CachedMitmCertificateResolver::new(
+        ca,
+        config.limits.leaf_cache_capacity,
+        config.limits.leaf_validity_days,
+    )?);
+    let mut components = ProxyComponents::new(hooks, certificates);
+    let capture = if let Some(path) = capture_path {
+        let state = open_live_capture(path)?;
+        let mut policy = CapturePolicy::default();
+        policy.retain_body_samples = capture_bodies;
+        let observer = Arc::new(FileCaptureObserver {
+            state: Arc::clone(&state),
+            policy,
+        });
+        components = components.with_observers(ObserverHub::new(vec![(
+            observer,
+            ObserverConfig {
+                interest: ObservationInterest {
+                    lifecycle: true,
+                    request_body: if capture_bodies {
+                        BodyObservation::Full
+                    } else {
+                        BodyObservation::MetadataOnly
+                    },
+                    response_body: if capture_bodies {
+                        BodyObservation::Full
+                    } else {
+                        BodyObservation::MetadataOnly
+                    },
+                },
+                ..ObserverConfig::default()
+            },
+        )]));
+        Some(state)
+    } else {
+        None
+    };
+    Ok((components, capture))
+}
+
+struct LiveCaptureState {
+    writer: CaptureWriter<File>,
+    last_sequences: HashMap<u128, u64>,
+}
+
+type LiveCapture = Arc<Mutex<LiveCaptureState>>;
+
+struct FileCaptureObserver {
+    state: LiveCapture,
+    policy: CapturePolicy,
+}
+
+impl Observer for FileCaptureObserver {
+    fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+        let state = Arc::clone(&self.state);
+        let policy = self.policy.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || append_observer_event(&state, &policy, &event))
+                .await
+                .map_err(|_| ObserverError::new("capture writer task failed"))?
+                .map_err(|error| ObserverError::new(error.to_string()))
+        })
+    }
+}
+
+fn open_live_capture(path: &Path) -> Result<LiveCapture, Box<dyn Error>> {
+    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let writer = CaptureWriter::new(file, CaptureLimits::default())?;
+    Ok(Arc::new(Mutex::new(LiveCaptureState {
+        writer,
+        last_sequences: HashMap::new(),
+    })))
+}
+
+fn append_observer_event(
+    state: &Mutex<LiveCaptureState>,
+    policy: &CapturePolicy,
+    event: &ObserverEvent,
+) -> Result<(), rustymiddle_capture::CaptureError> {
+    let mut state = state
+        .lock()
+        .map_err(|_| io::Error::other("capture state is unavailable"))?;
+    let exchange_id = event.exchange_id.0;
+    let previous = state.last_sequences.get(&exchange_id).copied().unwrap_or(0);
+    if event.sequence > previous.saturating_add(1) {
+        let first_missing = previous.saturating_add(1);
+        let missing = event.sequence.saturating_sub(first_missing);
+        state.writer.append(&loss_record(
+            exchange_id,
+            first_missing,
+            missing,
+            "observer-delivery-gap",
+        ))?;
+    } else if event.sequence <= previous {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capture observer sequence moved backward",
+        )
+        .into());
+    }
+    if let Some(record) = record_from_observer(event, policy) {
+        state.writer.append(&record)?;
+    }
+    state.last_sequences.insert(exchange_id, event.sequence);
+    Ok(())
+}
+
+async fn seal_live_capture(state: &LiveCapture) -> Result<(), Box<dyn Error>> {
+    let state = Arc::clone(state);
+    tokio::task::spawn_blocking(move || {
+        state
+            .lock()
+            .map_err(|_| io::Error::other("capture state is unavailable"))?
+            .writer
+            .seal()
+            .map_err(io::Error::other)
+    })
+    .await
+    .map_err(|_| io::Error::other("capture sealing task failed"))??;
+    Ok(())
+}
+
+fn capture_command(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    match arguments.first().map(String::as_str) {
+        Some("inspect") => capture_inspect(&arguments[1..]),
+        Some("validate") => capture_validate(&arguments[1..]),
+        Some("seal") => capture_seal(&arguments[1..]),
+        Some("export") => capture_export(&arguments[1..]),
+        _ => {
+            Err(invalid_input("capture command must be inspect, validate, seal, or export").into())
+        }
+    }
+}
+
+fn recover_file(arguments: &[String]) -> Result<RecoveredCapture, Box<dyn Error>> {
+    let path = required_option(arguments, "--input")?;
+    Ok(recover(File::open(path)?, CaptureLimits::default())?)
+}
+
+fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let capture = recover_file(arguments)?;
+    let summary = capture.summary();
+    println!("FORMAT_REVISION=1");
+    println!("RECORDS={}", summary.records);
+    println!("EXCHANGES={}", summary.exchanges);
+    println!("LOSS_MARKERS={}", summary.loss_markers);
+    println!("RETAINED_BODY_BYTES={}", summary.retained_body_bytes);
+    println!("SEALED={}", summary.sealed);
+    println!("TRUNCATED_TAIL={}", summary.truncated_tail);
+    println!("VALID_BYTES={}", capture.valid_bytes);
+    Ok(())
+}
+
+fn capture_validate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let capture = recover_file(arguments)?;
+    if capture.truncated_tail {
+        return Err(
+            invalid_input("capture has a truncated tail; seal a recovered copy first").into(),
+        );
+    }
+    if !capture.sealed {
+        return Err(invalid_input("capture is not sealed").into());
+    }
+    println!("VALID=true");
+    println!("RECORDS={}", capture.records.len());
+    Ok(())
+}
+
+fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let capture = recover_file(arguments)?;
+    if capture.sealed {
+        return Err(invalid_input("capture is already sealed").into());
+    }
+    let output = PathBuf::from(required_option(arguments, "--output")?);
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)?;
+    write_sealed_capture(file, &capture)?;
+    println!("CAPTURE={}", output.display());
+    println!("RECOVERED_TAIL={}", capture.truncated_tail);
+    Ok(())
+}
+
+fn write_sealed_capture<W: Write>(
+    output: W,
+    capture: &RecoveredCapture,
+) -> Result<(), rustymiddle_capture::CaptureError> {
+    let mut writer = CaptureWriter::new(output, CaptureLimits::default())?;
+    for record in &capture.records {
+        if !matches!(
+            record.kind,
+            rustymiddle_capture::CaptureRecordKind::Seal { .. }
+        ) {
+            writer.append(record)?;
+        }
+    }
+    writer.seal()
+}
+
+fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let capture = recover_file(arguments)?;
+    let format = option(arguments, "--format").unwrap_or("jsonl");
+    if format != "jsonl" {
+        return Err(invalid_input("--format must currently be jsonl").into());
+    }
+    let output = option(arguments, "--output").unwrap_or("-");
+    let report = if output == "-" {
+        let stdout = io::stdout();
+        let mut lock = stdout.lock();
+        JsonLinesExporter::new(&mut lock).export(&capture)?
+    } else {
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?;
+        JsonLinesExporter::new(file).export(&capture)?
+    };
+    eprintln!("EXPORTED_RECORDS={}", report.records);
+    eprintln!("EXPORTED_BYTES={}", report.bytes);
+    eprintln!("SOURCE_SEALED={}", capture.sealed);
+    eprintln!("SOURCE_TRUNCATED_TAIL={}", capture.truncated_tail);
     Ok(())
 }
 
@@ -248,7 +514,12 @@ fn print_usage() {
          Generate a CA (files must not already exist):\n  \
          rustymiddle ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
          Run the explicit proxy:\n  \
-         rustymiddle serve --ca-cert ca.pem --ca-key ca.key [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID]\n\n\
+         rustymiddle serve --ca-cert ca.pem --ca-key ca.key [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
+         Inspect, validate, recover/seal, or export a native capture:\n  \
+         rustymiddle capture inspect --input FILE\n  \
+         rustymiddle capture validate --input FILE\n  \
+         rustymiddle capture seal --input FILE --output RECOVERED_FILE\n  \
+         rustymiddle capture export --input FILE [--format jsonl] [--output FILE|-]\n\n\
          Non-loopback listening additionally requires --allow-remote."
     );
 }
@@ -390,5 +661,20 @@ mod tests {
             assert_eq!(&output[position..position + marker.len()], marker);
             assert_eq!(position, expected);
         }
+    }
+
+    #[test]
+    fn recovered_native_capture_can_be_resealed_without_mutating_records() {
+        let source_record = rustymiddle_capture::loss_record(7, 2, 1, "test-gap");
+        let mut source = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+        source.append(&source_record).unwrap();
+        let recovered = recover(&source.into_inner()[..], CaptureLimits::default()).unwrap();
+        assert!(!recovered.sealed);
+
+        let mut output = Vec::new();
+        write_sealed_capture(&mut output, &recovered).unwrap();
+        let sealed = recover(&output[..], CaptureLimits::default()).unwrap();
+        assert!(sealed.sealed);
+        assert_eq!(sealed.records.first(), Some(&source_record));
     }
 }

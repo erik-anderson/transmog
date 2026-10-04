@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 bytes.workspace = true
+rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
 rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
 rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
 rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
