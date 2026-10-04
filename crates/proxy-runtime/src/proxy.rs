@@ -32,8 +32,8 @@ use rustymiddle_core::{
         ResponseHeadOutcome,
     },
     observe::{
-        BodyDirection, ExchangeObserver, ObservedBodyChunk, ObserverEventKind, ObserverHub,
-        ObserverStats,
+        ExchangeBoundary, ExchangeObserver, ObservedBodyChunk, ObservedBodyTrailers,
+        ObservedRouteAttempt, ObserverEventKind, ObserverHub, ObserverStats,
     },
     prepare_headers,
     route::{
@@ -696,7 +696,9 @@ impl ProxyState {
                 ))
                 .await;
         }
+        observe_request_head(&chain, ExchangeBoundary::ClientRequest, &request_head).await;
         let request_outcome = chain.request_head(request_head).await;
+        observe_hook_effects(&chain).await;
         let request_outcome = match request_outcome {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -939,6 +941,7 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        observe_request_head(&chain, ExchangeBoundary::UpstreamRequest, &request_head).await;
         let request = CanonicalRequest {
             head: request_head.clone(),
             body: request_body,
@@ -954,9 +957,13 @@ impl ProxyState {
         session.egress_version = Some(routed.protocol);
 
         let response = routed.response;
+        observe_route_attempts(&chain, &routed.attempts).await;
+        observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &response.head).await;
+        observe_body_frames(&chain, ExchangeBoundary::UpstreamResponse, &response.body).await;
         let response_outcome = chain
             .response_head(&request_head, response.head, Some(response.body), false)
             .await;
+        observe_hook_effects(&chain).await;
         let (mut response, local_response) = match response_outcome {
             Ok(ResponseHeadOutcome::Continue {
                 head,
@@ -994,7 +1001,6 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
-        observe_response_head(&chain, &response.head).await;
         let outcome = if body_semantics(&request_head.method, response.head.status)
             == BodySemantics::Forbidden
         {
@@ -1058,6 +1064,8 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+
+        observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response.head).await;
 
         self.complete_chain(&chain, &request_head, &response.head)
             .await;
@@ -1202,9 +1210,11 @@ impl ProxyState {
         };
         session.egress_version = Some(upstream.head.source_version);
 
+        observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream.head).await;
         let response_outcome = chain
             .response_head(&request_head, upstream.head, None, false)
             .await;
+        observe_hook_effects(&chain).await;
         let (response_head, replacement_body, local_response) = match response_outcome {
             Ok(ResponseHeadOutcome::Continue {
                 head,
@@ -1237,7 +1247,6 @@ impl ProxyState {
             }
         };
         upstream.head = response_head;
-        observe_response_head(&chain, &upstream.head).await;
         if let Some(body) = replacement_body {
             drop(upstream.body);
             return self
@@ -1378,9 +1387,11 @@ impl ProxyState {
         session.egress_version = Some(upstream.head.source_version);
         self.learn_alt_svc_head(&origin, &upstream.head).await;
 
+        observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream.head).await;
         let response_outcome = chain
             .response_head(&request_head, upstream.head, None, false)
             .await;
+        observe_hook_effects(&chain).await;
         let (response_head, replacement_body, local_response) = match response_outcome {
             Ok(ResponseHeadOutcome::Continue {
                 head,
@@ -1413,7 +1424,6 @@ impl ProxyState {
             }
         };
         upstream.head = response_head;
-        observe_response_head(&chain, &upstream.head).await;
         if let Some(body) = replacement_body {
             drop(upstream.body);
             return self
@@ -1563,9 +1573,16 @@ impl ProxyState {
         self.learn_alt_svc_head(&origin, &upstream.response.head)
             .await;
 
+        observe_response_head(
+            &chain,
+            ExchangeBoundary::UpstreamResponse,
+            &upstream.response.head,
+        )
+        .await;
         let response_outcome = chain
             .response_head(&request_head, upstream.response.head, None, false)
             .await;
+        observe_hook_effects(&chain).await;
         let (response_head, replacement_body, local_response) = match response_outcome {
             Ok(ResponseHeadOutcome::Continue {
                 head,
@@ -1598,7 +1615,6 @@ impl ProxyState {
             }
         };
         upstream.response.head = response_head;
-        observe_response_head(&chain, &upstream.response.head).await;
         if let Some(body) = replacement_body {
             drop(upstream.response.body);
             return self
@@ -1683,13 +1699,13 @@ impl ProxyState {
         let outcome = chain
             .response_head(request, response.head, Some(response.body), true)
             .await;
+        observe_hook_effects(&chain).await;
         match outcome {
             Ok(ResponseHeadOutcome::Continue {
                 head,
                 replacement_body,
                 local_response,
             }) => {
-                observe_response_head(&chain, &head).await;
                 self.finish_prepared_local_response(
                     CanonicalResponse {
                         head,
@@ -1792,6 +1808,7 @@ impl ProxyState {
                     return Err(error.into());
                 }
             };
+            observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response.head).await;
             self.complete_chain(&chain, request, &response.head).await;
             return response_to_hyper(response);
         }
@@ -1818,6 +1835,7 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response.head).await;
         self.complete_chain(&chain, request, &response.head).await;
         response_to_hyper(response)
     }
@@ -1833,6 +1851,8 @@ impl ProxyState {
         trust_generation: u64,
         chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
+        observe_route_attempts(&chain, &route_attempts).await;
         self.complete_chain(&chain, request_head, &response_head)
             .await;
         let _ = self.evidence.send(ExchangeEvidence {
@@ -1862,6 +1882,7 @@ impl ProxyState {
         request: &RequestHead,
         response: &ResponseHead,
     ) {
+        observe_hook_effects(chain).await;
         let outcome = CompletedExchange {
             metadata: Arc::clone(chain.context().metadata()),
             request_head: request.clone(),
@@ -1931,6 +1952,7 @@ impl ProxyState {
         request_committed: bool,
         response_committed: bool,
     ) {
+        observe_hook_effects(chain).await;
         let failure = ExchangeFailure {
             metadata: Arc::clone(chain.context().metadata()),
             stage,
@@ -1957,9 +1979,11 @@ impl ProxyState {
         let pipeline = chain
             .request_body_pipeline(request_head, self.body_pipeline_limits())
             .await?;
+        observe_hook_effects(chain).await;
         self.process_body_pipeline(
             chain,
-            BodyDirection::Request,
+            Some(ExchangeBoundary::ClientRequest),
+            ExchangeBoundary::UpstreamRequest,
             pipeline,
             &request_head.headers,
             frames,
@@ -1976,6 +2000,7 @@ impl ProxyState {
         let pipeline = chain
             .request_body_pipeline(request_head, self.body_pipeline_limits())
             .await?;
+        observe_hook_effects(chain).await;
         Ok(ContentBodyPipeline::from_policy(
             pipeline,
             &request_head.headers,
@@ -2020,6 +2045,7 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        observe_request_head(chain, ExchangeBoundary::UpstreamRequest, request_head).await;
         Ok(pipeline)
     }
 
@@ -2038,6 +2064,7 @@ impl ProxyState {
                 self.body_pipeline_limits(),
             )
             .await?;
+        observe_hook_effects(chain).await;
         Ok(ContentBodyPipeline::from_policy(
             pipeline,
             &response_head.headers,
@@ -2087,6 +2114,7 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        observe_response_head(chain, ExchangeBoundary::ClientResponse, response_head).await;
         Ok(pipeline)
     }
 
@@ -2106,9 +2134,11 @@ impl ProxyState {
                 self.body_pipeline_limits(),
             )
             .await?;
+        observe_hook_effects(chain).await;
         self.process_body_pipeline(
             chain,
-            BodyDirection::Response,
+            None,
+            ExchangeBoundary::ClientResponse,
             pipeline,
             &response_head.headers,
             frames,
@@ -2117,15 +2147,20 @@ impl ProxyState {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn process_body_pipeline(
         &self,
         chain: &ExchangeChain,
-        direction: BodyDirection,
+        input_boundary: Option<ExchangeBoundary>,
+        output_boundary: ExchangeBoundary,
         pipeline: BodyPipeline,
         source_headers: &HeaderBlock,
         frames: Vec<BodyFrame>,
         limit: usize,
     ) -> Result<ProcessedBody, ProxyRuntimeError> {
+        if let Some(boundary) = input_boundary {
+            observe_body_frames(chain, boundary, &frames).await;
+        }
         let mut pipeline =
             ContentBodyPipeline::from_policy(pipeline, source_headers, self.content)?;
         let modified = pipeline.modifies_body();
@@ -2136,7 +2171,7 @@ impl ProxyState {
         }
         output.extend(pipeline.finish().await?);
         validate_frames(&output, limit)?;
-        observe_body_frames(chain, direction, &output).await;
+        observe_body_frames(chain, output_boundary, &output).await;
         Ok(ProcessedBody {
             frames: output,
             headers,
@@ -2446,32 +2481,92 @@ fn validate_resolved_leaf(
     }
 }
 
-async fn observe_response_head(chain: &ExchangeChain, head: &ResponseHead) {
+async fn observe_request_head(
+    chain: &ExchangeChain,
+    boundary: ExchangeBoundary,
+    head: &RequestHead,
+) {
     if let Some(observer) = runtime_observer(chain) {
         observer
-            .emit(ObserverEventKind::ResponseHeadFinalized(head.clone()))
+            .emit(ObserverEventKind::RequestHeadObserved {
+                boundary,
+                head: head.clone(),
+            })
+            .await;
+    }
+}
+
+async fn observe_response_head(
+    chain: &ExchangeChain,
+    boundary: ExchangeBoundary,
+    head: &ResponseHead,
+) {
+    if let Some(observer) = runtime_observer(chain) {
+        observer
+            .emit(ObserverEventKind::ResponseHeadObserved {
+                boundary,
+                head: head.clone(),
+            })
+            .await;
+        if boundary == ExchangeBoundary::ClientResponse {
+            observer
+                .emit(ObserverEventKind::ResponseHeadFinalized(head.clone()))
+                .await;
+        }
+    }
+}
+
+async fn observe_hook_effects(chain: &ExchangeChain) {
+    let Some(observer) = runtime_observer(chain) else {
+        return;
+    };
+    for effect in chain.take_unpublished_hook_effects() {
+        observer.emit(ObserverEventKind::HookEffect(effect)).await;
+    }
+}
+
+async fn observe_route_attempts(chain: &ExchangeChain, attempts: &[RouteAttemptEvidence]) {
+    let Some(observer) = runtime_observer(chain) else {
+        return;
+    };
+    for attempt in attempts {
+        observer
+            .emit(ObserverEventKind::RouteAttempt(ObservedRouteAttempt {
+                protocol: attempt.protocol,
+                outcome: Arc::from(attempt.outcome.as_str()),
+            }))
             .await;
     }
 }
 
 async fn observe_body_frames(
     chain: &ExchangeChain,
-    direction: BodyDirection,
+    boundary: ExchangeBoundary,
     frames: &[BodyFrame],
 ) {
     let Some(observer) = runtime_observer(chain) else {
         return;
     };
     for frame in frames {
-        if let BodyFrame::Data(data) = frame {
-            observer
-                .emit(ObserverEventKind::BodyChunk(ObservedBodyChunk {
-                    direction,
-                    byte_count: data.len(),
-                    sample: Some(data.clone()),
-                    truncated: false,
-                }))
-                .await;
+        match frame {
+            BodyFrame::Data(data) => {
+                observer
+                    .emit(ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                        boundary,
+                        byte_count: data.len(),
+                        sample: Some(data.clone()),
+                        truncated: false,
+                    }))
+                    .await;
+            }
+            BodyFrame::Trailers(trailers) => {
+                observer
+                    .emit(ObserverEventKind::BodyTrailers(ObservedBodyTrailers {
+                        boundary,
+                        trailers: trailers.clone(),
+                    }))
+                    .await;
+            }
         }
     }
 }
@@ -2599,6 +2694,12 @@ async fn stream_incoming_through_hooks(
             fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
             return;
         }
+        observe_body_frames(
+            &chain,
+            ExchangeBoundary::ClientRequest,
+            std::slice::from_ref(&canonical),
+        )
+        .await;
         let frames = match pipeline.process(canonical).await {
             Ok(frames) => frames,
             Err(error) => {
@@ -2606,7 +2707,7 @@ async fn stream_incoming_through_hooks(
                 return;
             }
         };
-        observe_body_frames(&chain, BodyDirection::Request, &frames).await;
+        observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
         if send_streaming_frames(&sender, &mut output, frames)
             .await
             .is_err()
@@ -2623,7 +2724,7 @@ async fn stream_incoming_through_hooks(
     }
     match pipeline.finish().await {
         Ok(frames) => {
-            observe_body_frames(&chain, BodyDirection::Request, &frames).await;
+            observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
             if send_streaming_frames(&sender, &mut output, frames)
                 .await
                 .is_err()
@@ -2687,6 +2788,12 @@ async fn stream_response_through_hooks(
             fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
             return;
         }
+        observe_body_frames(
+            &chain,
+            ExchangeBoundary::UpstreamResponse,
+            std::slice::from_ref(&canonical),
+        )
+        .await;
         let frames = match pipeline.process(canonical).await {
             Ok(frames) => frames,
             Err(error) => {
@@ -2694,7 +2801,7 @@ async fn stream_response_through_hooks(
                 return;
             }
         };
-        observe_body_frames(&chain, BodyDirection::Response, &frames).await;
+        observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
         if send_streaming_frames(&sender, &mut output, frames)
             .await
             .is_err()
@@ -2716,7 +2823,7 @@ async fn stream_response_through_hooks(
             return;
         }
     };
-    observe_body_frames(&chain, BodyDirection::Response, &frames).await;
+    observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
     if send_streaming_frames(&sender, &mut output, frames)
         .await
         .is_err()
@@ -2754,6 +2861,8 @@ async fn complete_hook_streaming_exchange(
     h3: Option<H3Telemetry>,
     trust_generation: u64,
 ) {
+    observe_hook_effects(chain).await;
+    observe_route_attempts(chain, &attempts).await;
     let outcome = CompletedExchange {
         metadata: Arc::clone(chain.context().metadata()),
         request_head: request_head.clone(),
@@ -3808,10 +3917,15 @@ mod tests {
         ) -> rustymiddle_core::observe::BoxObserverFuture<'_> {
             let phase = match event.kind {
                 ObserverEventKind::ExchangeStarted { .. } => "started",
+                ObserverEventKind::RequestHeadObserved { .. } => "request-head-boundary",
                 ObserverEventKind::RequestHeadFinalized(_) => "request-head",
                 ObserverEventKind::RouteSelected { .. } => "route",
+                ObserverEventKind::RouteAttempt(_) => "route-attempt",
+                ObserverEventKind::ResponseHeadObserved { .. } => "response-head-boundary",
                 ObserverEventKind::ResponseHeadFinalized(_) => "response-head",
                 ObserverEventKind::BodyChunk(_) => "body",
+                ObserverEventKind::BodyTrailers(_) => "trailers",
+                ObserverEventKind::HookEffect(_) => "hook-effect",
                 ObserverEventKind::Completed(_) => "completed",
                 ObserverEventKind::Failed(_) => "failed",
                 ObserverEventKind::HookInitializationSkipped(_) => "hook-skipped",
@@ -3822,6 +3936,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn custom_components_route_to_streaming_application_upstream_and_observers() {
         let trust_generation = 53;
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, trust_generation).unwrap());
@@ -3910,10 +4025,17 @@ mod tests {
             phases.lock().unwrap().as_slice(),
             &[
                 "started",
+                "request-head-boundary",
+                "hook-effect",
                 "request-head",
                 "route",
+                "request-head-boundary",
+                "response-head-boundary",
+                "response-head-boundary",
                 "response-head",
                 "body",
+                "body",
+                "route-attempt",
                 "completed"
             ]
         );

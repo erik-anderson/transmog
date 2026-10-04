@@ -13,6 +13,8 @@ use crate::{
     ConnectionId, ExchangeExtensions, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
 };
 
+use super::audit::HookAuditTrail;
+
 /// Stable identifier for one Hooks v2 exchange.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ExchangeId(pub u128);
@@ -134,6 +136,7 @@ pub struct HookContext {
     metadata: Arc<ExchangeMetadata>,
     extensions: ExchangeExtensions,
     cancellation: ExchangeCancellation,
+    audit: HookAuditTrail,
     timeout: Duration,
 }
 
@@ -144,6 +147,7 @@ impl HookContext {
             metadata: Arc::new(metadata),
             extensions: ExchangeExtensions::new(),
             cancellation: ExchangeCancellation::new(),
+            audit: HookAuditTrail::default(),
             timeout,
         }
     }
@@ -161,6 +165,11 @@ impl HookContext {
     /// Cloneable cancellation signal.
     pub fn cancellation(&self) -> &ExchangeCancellation {
         &self.cancellation
+    }
+
+    /// Authoritative exchange-local hook-effect audit trail.
+    pub fn audit(&self) -> &HookAuditTrail {
+        &self.audit
     }
 
     /// Maximum duration of one hook callback.

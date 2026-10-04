@@ -118,7 +118,17 @@ path that does not recompress untouched bodies.
 Exit gate: the dedicated [content-processing plan](content-processing-plan.md)
 is complete across H1/H2/H3 requests and responses.
 
-### 2. Experimental control model and transport
+### 2. Attributable capture substrate
+
+Expose stable hook identity, attributed traffic effects, explicit observation
+boundaries, opt-in full body streams, trailers, route attempts, and visible
+loss. This is the core-owned vocabulary that enables storage and control
+without making either a core responsibility.
+
+Exit gate: higher layers can reconstruct observable exchange evolution and
+attribute represented changes to hooks.
+
+### 3. Experimental control model and transport
 
 Define product-facing v0 commands and events for exchange discovery,
 breakpoint pause/resume, bounded body access, modification, cancellation, and
@@ -134,7 +144,7 @@ Exit gate: malformed, duplicate, stale, late, saturated, disconnected, and
 cancelled commands have deterministic behavior, and no transport DTO leaks
 into core.
 
-### 3. Capture and bounded body spooling
+### 4. Native streaming capture
 
 Add append-oriented capture interfaces, metadata indexing, opt-in body
 retention, memory-to-disk spooling thresholds, retention/deletion policy, and
@@ -144,7 +154,25 @@ schema independent from control messages.
 Exit gate: crashes, quota exhaustion, cancellation, and observer loss cannot
 corrupt traffic or create unbounded storage growth.
 
-### 4. Rules and replayable automation
+### 5. Headless capture and export boundary
+
+Expose recording, inspection, validation, sealing, and format adapters through
+library services and a CLI. Native output streams directly; formats requiring
+finalization may use bounded temporary storage.
+
+Exit gate: the headless and future graphical products share the same capture
+API and exporters do not leak into the proxy core.
+
+### 6. SAZ compatibility
+
+Convert native captures into a conventional Session Archive Zip. Keep strict
+compatibility distinct from optional namespaced metadata, and never make SAZ
+the live persistence format.
+
+Exit gate: golden archives open in an independent compatible consumer and
+unsupported fidelity is reported explicitly.
+
+### 7. Optional rules and replayable automation
 
 Build a deterministic rule layer over Hooks v2 and content processing. Rules
 match immutable/effective metadata explicitly, declare whether they need body
@@ -154,7 +182,7 @@ in core.
 Exit gate: rule ordering, conflicts, resource budgets, redaction, and replay
 safety pass deterministic suites, with no hidden global session map.
 
-### 5. WebSocket inspection
+### 8. WebSocket inspection
 
 Add an upgrade/tunnel lifecycle and bounded frame model distinct from HTTP body
 frames. Preserve fragmentation, control-frame constraints, masking semantics,
@@ -163,7 +191,7 @@ close handshakes, compression negotiation, and per-direction flow control.
 Exit gate: HTTP upgrade handling and WebSocket frame processing are separately
 testable and a paused connection cannot block unrelated traffic.
 
-### 6. Product shell
+### 9. Product shell
 
 Add session browsing, breakpoint controls, inspectors/editors, search, export,
 and diagnostics against the control and capture layers. UI state never becomes
@@ -172,7 +200,7 @@ proxy correctness state.
 Exit gate: closing or restarting the UI cannot silently disable proxy safety,
 and headless embedding remains fully supported.
 
-### 7. Optional advanced transports
+### 10. Optional advanced transports
 
 Evaluate native downstream HTTP/3, CONNECT-UDP, MASQUE, WebTransport, blind TCP
 tunneling, and reverse-listener products as separate milestones. None is
@@ -228,8 +256,10 @@ separately triggers stabilization.
 
 1. Keep the live Chromium and local Linux gates passing with content processing
    disabled by default.
-2. Design experimental control v0 using actual content/capture needs rather
-   than stabilizing speculative messages.
+2. Follow the phase gates in
+   [control-capture-websocket-plan.md](control-capture-websocket-plan.md),
+   beginning with the attributable capture substrate and experimental control
+   v0 rather than stabilizing speculative messages.
 3. When a human explicitly enables hosted automation, activate and observe the
    parked Hooks v2/content and fuzz-smoke Linux/macOS templates and close any
    platform-specific findings.

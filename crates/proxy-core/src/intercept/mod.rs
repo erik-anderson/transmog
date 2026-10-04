@@ -1,6 +1,7 @@
 //! Typed, protocol-neutral Hooks v2 interception surface.
 
 mod action;
+mod audit;
 mod body;
 mod bridge;
 mod chain;
@@ -12,6 +13,10 @@ use std::{future::Future, pin::Pin, sync::Arc};
 pub use action::{
     RequestBodyAction, RequestBodyEvent, RequestHeadAction, RequestHeadEvent, ResponseBodyAction,
     ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
+};
+pub use audit::{
+    BodyPlanKind, HeaderChanges, HookAuditTrail, HookEffect, HookEffectAction, HookPhase,
+    InterceptorId, InterceptorIdentity, RequestHeadChanges, ResponseHeadChanges,
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,

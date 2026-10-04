@@ -19,9 +19,11 @@ use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target, tas
 
 use super::{
     BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlanSelection, CompletedExchange,
-    ExchangeFailure, ExchangeInterceptor, ExchangeMetadata, HookContext, HookExecutionError,
-    HookInitError, InterceptorFactory, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
+    ExchangeFailure, ExchangeInterceptor, ExchangeMetadata, HookContext, HookEffect,
+    HookEffectAction, HookExecutionError, HookInitError, HookPhase, InterceptorFactory,
+    InterceptorId, InterceptorIdentity, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
     ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
+    audit::{body_plan_effect, request_changes, response_changes, response_summary},
 };
 
 const TERMINAL_OPEN: u8 = 0;
@@ -63,6 +65,7 @@ pub enum InterceptorRequirement {
 pub struct InterceptorRegistration {
     factory: Arc<dyn InterceptorFactory>,
     requirement: InterceptorRequirement,
+    id: InterceptorId,
     name: Arc<str>,
 }
 
@@ -70,6 +73,7 @@ impl std::fmt::Debug for InterceptorRegistration {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("InterceptorRegistration")
+            .field("id", &self.id)
             .field("name", &self.name)
             .field("requirement", &self.requirement)
             .finish_non_exhaustive()
@@ -79,6 +83,22 @@ impl std::fmt::Debug for InterceptorRegistration {
 impl InterceptorRegistration {
     /// Creates one named registration.
     pub fn new(
+        id: impl Into<Arc<str>>,
+        factory: Arc<dyn InterceptorFactory>,
+        requirement: InterceptorRequirement,
+    ) -> Self {
+        let id = id.into();
+        Self {
+            factory,
+            requirement,
+            id: InterceptorId::new(Arc::clone(&id)),
+            name: id,
+        }
+    }
+
+    /// Creates one registration with distinct stable and display identities.
+    pub fn named(
+        id: impl Into<Arc<str>>,
         name: impl Into<Arc<str>>,
         factory: Arc<dyn InterceptorFactory>,
         requirement: InterceptorRequirement,
@@ -86,8 +106,14 @@ impl InterceptorRegistration {
         Self {
             factory,
             requirement,
+            id: InterceptorId::new(id),
             name: name.into(),
         }
+    }
+
+    /// Stable identity used by audit and capture consumers.
+    pub fn id(&self) -> &InterceptorId {
+        &self.id
     }
 
     /// Stable operator-facing name for diagnostics.
@@ -133,7 +159,7 @@ impl InterceptorChainFactory {
         let mut interceptors = Vec::with_capacity(self.registrations.len());
         let mut diagnostics = Vec::new();
 
-        for registration in self.registrations.iter() {
+        for (chain_position, registration) in self.registrations.iter().enumerate() {
             let created = catch_unwind(AssertUnwindSafe(|| {
                 registration.factory.create(context.metadata())
             }));
@@ -143,7 +169,11 @@ impl InterceptorChainFactory {
             };
             match result {
                 Ok(interceptor) => interceptors.push(ChainEntry {
-                    name: Arc::clone(&registration.name),
+                    identity: InterceptorIdentity {
+                        id: registration.id.clone(),
+                        name: Arc::clone(&registration.name),
+                        chain_position,
+                    },
                     interceptor,
                 }),
                 Err(source) if registration.requirement == InterceptorRequirement::Optional => {
@@ -199,7 +229,7 @@ pub struct InitializationDiagnostic {
 
 #[derive(Clone)]
 struct ChainEntry {
-    name: Arc<str>,
+    identity: InterceptorIdentity,
     interceptor: Arc<dyn ExchangeInterceptor>,
 }
 
@@ -207,7 +237,7 @@ impl std::fmt::Debug for ChainEntry {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ChainEntry")
-            .field("name", &self.name)
+            .field("identity", &self.identity)
             .finish_non_exhaustive()
     }
 }
@@ -300,6 +330,16 @@ impl ExchangeChain {
         &self.diagnostics
     }
 
+    /// Returns every hook effect recorded for this exchange so far.
+    pub fn hook_effects(&self) -> Vec<HookEffect> {
+        self.context.audit().snapshot()
+    }
+
+    /// Returns hook effects not previously published by the runtime.
+    pub fn take_unpublished_hook_effects(&self) -> Vec<HookEffect> {
+        self.context.audit().take_unpublished()
+    }
+
     /// Number of interceptors whose request-head callback was entered.
     pub fn entered_len(&self) -> usize {
         self.entered
@@ -327,27 +367,62 @@ impl ExchangeChain {
                 .request_head(Arc::clone(&entry.interceptor), event, &self.context)
                 .await
                 .map_err(|source| ChainExecutionError {
-                    name: entry.name,
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
             match action {
                 RequestHeadAction::Continue => {}
-                RequestHeadAction::Replace(replacement) => head = replacement,
+                RequestHeadAction::Replace(replacement) => {
+                    let changes = request_changes(&head, &replacement);
+                    let did_change = !changes.is_empty();
+                    self.context.audit().record(
+                        entry.identity,
+                        HookPhase::RequestHead,
+                        HookEffectAction::ReplaceRequestHead(changes),
+                        did_change,
+                    );
+                    head = replacement;
+                }
                 RequestHeadAction::Reroute {
                     head: mut replacement,
                     target,
                 } => {
                     replacement.target = target.clone();
+                    let changes = request_changes(&head, &replacement);
+                    let did_change = !changes.is_empty() || reroute.as_ref() != Some(&target);
+                    self.context.audit().record(
+                        entry.identity,
+                        HookPhase::RequestHead,
+                        HookEffectAction::Reroute {
+                            changes,
+                            target: target.clone(),
+                        },
+                        did_change,
+                    );
                     head = replacement;
                     reroute = Some(target);
                 }
                 RequestHeadAction::Respond(response) => {
+                    self.context.audit().record(
+                        entry.identity,
+                        HookPhase::RequestHead,
+                        response_summary(&response),
+                        true,
+                    );
                     return Ok(RequestHeadOutcome::Respond {
                         request_head: head,
                         response,
                     });
                 }
-                RequestHeadAction::Abort(reason) => return Ok(RequestHeadOutcome::Abort(reason)),
+                RequestHeadAction::Abort(reason) => {
+                    self.context.audit().record(
+                        entry.identity,
+                        HookPhase::RequestHead,
+                        HookEffectAction::Abort(reason.clone()),
+                        true,
+                    );
+                    return Ok(RequestHeadOutcome::Abort(reason));
+                }
             }
         }
         Ok(RequestHeadOutcome::Continue { head, reroute })
@@ -373,9 +448,17 @@ impl ExchangeChain {
                 .request_body(Arc::clone(&entry.interceptor), event, &self.context)
                 .await
                 .map_err(|source| ChainExecutionError {
-                    name: Arc::clone(&entry.name),
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            if let Some(effect) = body_plan_effect(action.0.plan(), action.0.representation()) {
+                self.context.audit().record(
+                    entry.identity.clone(),
+                    HookPhase::RequestBody,
+                    effect,
+                    true,
+                );
+            }
             plans.push(action.0);
         }
         Ok(plans)
@@ -428,18 +511,40 @@ impl ExchangeChain {
                 .response_head(Arc::clone(&entry.interceptor), event, &self.context)
                 .await
                 .map_err(|source| ChainExecutionError {
-                    name: Arc::clone(&entry.name),
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
             match action {
                 ResponseHeadAction::Continue => {}
-                ResponseHeadAction::Replace(replacement) => head = replacement,
+                ResponseHeadAction::Replace(replacement) => {
+                    let changes = response_changes(&head, &replacement);
+                    let did_change = !changes.is_empty();
+                    self.context.audit().record(
+                        entry.identity.clone(),
+                        HookPhase::ResponseHead,
+                        HookEffectAction::ReplaceResponseHead(changes),
+                        did_change,
+                    );
+                    head = replacement;
+                }
                 ResponseHeadAction::Respond(response) => {
+                    self.context.audit().record(
+                        entry.identity.clone(),
+                        HookPhase::ResponseHead,
+                        response_summary(&response),
+                        true,
+                    );
                     head = response.head;
                     replacement_body = Some(response.body);
                     local_response = true;
                 }
                 ResponseHeadAction::Abort(reason) => {
+                    self.context.audit().record(
+                        entry.identity.clone(),
+                        HookPhase::ResponseHead,
+                        HookEffectAction::Abort(reason.clone()),
+                        true,
+                    );
                     return Ok(ResponseHeadOutcome::Abort(reason));
                 }
             }
@@ -475,9 +580,17 @@ impl ExchangeChain {
                 .response_body(Arc::clone(&entry.interceptor), event, &self.context)
                 .await
                 .map_err(|source| ChainExecutionError {
-                    name: Arc::clone(&entry.name),
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            if let Some(effect) = body_plan_effect(action.0.plan(), action.0.representation()) {
+                self.context.audit().record(
+                    entry.identity.clone(),
+                    HookPhase::ResponseBody,
+                    effect,
+                    true,
+                );
+            }
             plans.push(action.0);
         }
         Ok(plans)
@@ -529,7 +642,7 @@ impl ExchangeChain {
                 .await
             {
                 report.errors.push(ChainExecutionError {
-                    name: Arc::clone(&entry.name),
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 });
             }
@@ -559,7 +672,7 @@ impl ExchangeChain {
                 .await
             {
                 report.errors.push(ChainExecutionError {
-                    name: Arc::clone(&entry.name),
+                    name: Arc::clone(&entry.identity.name),
                     source,
                 });
             }
@@ -1168,6 +1281,41 @@ mod tests {
             chain.context().metadata().original_target.as_target().host,
             "example.test"
         );
+        let effects = chain.hook_effects();
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].sequence, 1);
+        assert_eq!(effects[0].interceptor.id.as_str(), "A");
+        assert_eq!(&*effects[0].interceptor.name, "A");
+        assert_eq!(effects[0].interceptor.chain_position, 0);
+        assert_eq!(effects[0].phase, HookPhase::RequestHead);
+        assert!(effects[0].changed);
+        assert!(matches!(
+            &effects[0].action,
+            HookEffectAction::Reroute { target: recorded, changes }
+                if recorded == &target && changes.target_changed
+        ));
+        assert_eq!(chain.take_unpublished_hook_effects(), effects);
+        assert!(chain.take_unpublished_hook_effects().is_empty());
+        assert_eq!(chain.hook_effects(), effects);
+    }
+
+    #[test]
+    fn registration_can_separate_stable_id_from_display_name() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let registration = InterceptorRegistration::named(
+            "org.example.audit-id",
+            "Friendly editor",
+            Arc::new(RecordingFactory {
+                name: "friendly",
+                behavior: Behavior::Continue,
+                log,
+                created,
+            }),
+            InterceptorRequirement::Required,
+        );
+        assert_eq!(registration.id().as_str(), "org.example.audit-id");
+        assert_eq!(registration.name(), "Friendly editor");
     }
 
     #[tokio::test]

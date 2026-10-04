@@ -17,7 +17,7 @@ use crate::{
     ExchangeExtensions, HeaderBlock, RequestHead, ResponseHead,
     intercept::{
         CompletedExchange, ExchangeCancellation, ExchangeFailure, ExchangeId, ExchangeMetadata,
-        InitializationDiagnostic,
+        HookEffect, InitializationDiagnostic,
     },
     task::AbortOnDrop,
 };
@@ -56,6 +56,8 @@ pub enum BodyObservation {
     MetadataOnly,
     /// Include at most this many leading bytes from each emitted chunk.
     Prefix(NonZeroUsize),
+    /// Include every byte in each frame while retaining finite in-flight queue bounds.
+    Full,
 }
 
 /// Explicit event-interest declaration for one observer.
@@ -126,17 +128,58 @@ pub enum BodyDirection {
     Response,
 }
 
+/// Logical exchange boundary at which a head or body frame was observed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExchangeBoundary {
+    /// Request as received from the client, before request hooks.
+    ClientRequest,
+    /// Effective request committed toward the selected upstream.
+    UpstreamRequest,
+    /// Response received from the upstream, before response hooks.
+    UpstreamResponse,
+    /// Effective response committed toward the client.
+    ClientResponse,
+}
+
+impl ExchangeBoundary {
+    /// Body direction associated with this boundary.
+    pub const fn direction(self) -> BodyDirection {
+        match self {
+            Self::ClientRequest | Self::UpstreamRequest => BodyDirection::Request,
+            Self::UpstreamResponse | Self::ClientResponse => BodyDirection::Response,
+        }
+    }
+}
+
 /// Bounded body observation payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedBodyChunk {
-    /// Body direction.
-    pub direction: BodyDirection,
+    /// Logical boundary where these bytes were visible.
+    pub boundary: ExchangeBoundary,
     /// Original chunk length even when the sample is truncated.
     pub byte_count: usize,
     /// Explicitly requested bounded prefix; absent by default.
     pub sample: Option<Bytes>,
     /// Whether bytes were omitted from the sample.
     pub truncated: bool,
+}
+
+/// Redacted terminal body trailers observed at one exchange boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedBodyTrailers {
+    /// Logical boundary where the trailers were visible.
+    pub boundary: ExchangeBoundary,
+    /// Ordered, duplicate-preserving trailer fields.
+    pub trailers: HeaderBlock,
+}
+
+/// Redacted outcome of one concrete upstream transport attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservedRouteAttempt {
+    /// HTTP version attempted on the upstream leg.
+    pub protocol: crate::HttpLegVersion,
+    /// Stable, operator-safe outcome category.
+    pub outcome: Arc<str>,
 }
 
 /// Immutable observer lifecycle payload.
@@ -149,10 +192,28 @@ pub enum ObserverEventKind {
     },
     /// An optional interceptor could not initialize and was skipped.
     HookInitializationSkipped(InitializationDiagnostic),
+    /// Request head at an explicit client or upstream boundary.
+    RequestHeadObserved {
+        /// Boundary where the head was visible.
+        boundary: ExchangeBoundary,
+        /// Protocol-neutral request head.
+        head: RequestHead,
+    },
+    /// Response head at an explicit upstream or client boundary.
+    ResponseHeadObserved {
+        /// Boundary where the head was visible.
+        boundary: ExchangeBoundary,
+        /// Protocol-neutral response head.
+        head: ResponseHead,
+    },
+    /// One centrally attributed hook effect.
+    HookEffect(HookEffect),
     /// The final request head after all request hooks.
     RequestHeadFinalized(RequestHead),
     /// One request or response body chunk.
     BodyChunk(ObservedBodyChunk),
+    /// Terminal body trailers.
+    BodyTrailers(ObservedBodyTrailers),
     /// Redacted, auditable route-selection evidence.
     RouteSelected {
         /// Stable route policy identity.
@@ -160,6 +221,8 @@ pub enum ObserverEventKind {
         /// Operator-safe selection reason.
         reason: Arc<str>,
     },
+    /// One concrete upstream connection or protocol attempt.
+    RouteAttempt(ObservedRouteAttempt),
     /// The final response head before downstream commitment.
     ResponseHeadFinalized(ResponseHead),
     /// Successful terminal outcome.
@@ -170,7 +233,7 @@ pub enum ObserverEventKind {
 
 impl ObserverEventKind {
     fn is_lifecycle(&self) -> bool {
-        !matches!(self, Self::BodyChunk(_))
+        !matches!(self, Self::BodyChunk(_) | Self::BodyTrailers(_))
     }
 }
 
@@ -360,12 +423,17 @@ impl ObserverDispatcher {
         if event.kind.is_lifecycle() {
             return self.interest.lifecycle.then_some(event);
         }
-        let ObserverEventKind::BodyChunk(chunk) = &mut event.kind else {
-            return Some(event);
+        let boundary = match &event.kind {
+            ObserverEventKind::BodyChunk(chunk) => chunk.boundary,
+            ObserverEventKind::BodyTrailers(trailers) => trailers.boundary,
+            _ => return Some(event),
         };
-        let policy = match chunk.direction {
+        let policy = match boundary.direction() {
             BodyDirection::Request => self.interest.request_body,
             BodyDirection::Response => self.interest.response_body,
+        };
+        let ObserverEventKind::BodyChunk(chunk) = &mut event.kind else {
+            return Some(event);
         };
         match policy {
             BodyObservation::MetadataOnly => {
@@ -379,6 +447,7 @@ impl ObserverDispatcher {
                     chunk.truncated = chunk.byte_count > length;
                 }
             }
+            BodyObservation::Full => {}
         }
         Some(event)
     }
@@ -559,6 +628,24 @@ fn redact(kind: ObserverEventKind) -> ObserverEventKind {
             redact_headers(&mut head.headers, false);
             ObserverEventKind::ResponseHeadFinalized(head)
         }
+        ObserverEventKind::RequestHeadObserved { boundary, mut head } => {
+            redact_headers(&mut head.headers, true);
+            ObserverEventKind::RequestHeadObserved { boundary, head }
+        }
+        ObserverEventKind::ResponseHeadObserved { boundary, mut head } => {
+            redact_headers(&mut head.headers, false);
+            ObserverEventKind::ResponseHeadObserved { boundary, head }
+        }
+        ObserverEventKind::BodyTrailers(mut trailers) => {
+            redact_headers(
+                &mut trailers.trailers,
+                matches!(
+                    trailers.boundary,
+                    ExchangeBoundary::ClientRequest | ExchangeBoundary::UpstreamRequest
+                ),
+            );
+            ObserverEventKind::BodyTrailers(trailers)
+        }
         other => other,
     }
 }
@@ -674,6 +761,7 @@ mod tests {
     async fn body_bytes_are_absent_by_default_and_bounded_when_requested() {
         let default_events = Arc::new(StdMutex::new(Vec::new()));
         let prefix_events = Arc::new(StdMutex::new(Vec::new()));
+        let full_events = Arc::new(StdMutex::new(Vec::new()));
         let hub = ObserverHub::new(vec![
             (
                 Arc::new(RecordingObserver {
@@ -693,17 +781,31 @@ mod tests {
                     ..ObserverConfig::default()
                 },
             ),
+            (
+                Arc::new(RecordingObserver {
+                    events: Arc::clone(&full_events),
+                }),
+                ObserverConfig {
+                    interest: ObservationInterest {
+                        request_body: BodyObservation::Full,
+                        ..ObservationInterest::default()
+                    },
+                    ..ObserverConfig::default()
+                },
+            ),
         ]);
         let observer = hub.start_exchange(metadata());
         observer
             .emit(ObserverEventKind::BodyChunk(ObservedBodyChunk {
-                direction: BodyDirection::Request,
+                boundary: ExchangeBoundary::ClientRequest,
                 byte_count: 4,
                 sample: Some(Bytes::from_static(b"data")),
                 truncated: false,
             }))
             .await;
-        while default_events.lock().unwrap().is_empty() || prefix_events.lock().unwrap().is_empty()
+        while default_events.lock().unwrap().is_empty()
+            || prefix_events.lock().unwrap().is_empty()
+            || full_events.lock().unwrap().is_empty()
         {
             tokio::task::yield_now().await;
         }
@@ -721,6 +823,56 @@ mod tests {
             };
             assert_eq!(chunk.sample.as_deref(), Some(&b"da"[..]));
             assert!(chunk.truncated);
+        }
+        {
+            let full = full_events.lock().unwrap();
+            let ObserverEventKind::BodyChunk(chunk) = &full[0].kind else {
+                panic!("expected body chunk");
+            };
+            assert_eq!(chunk.sample.as_deref(), Some(&b"data"[..]));
+            assert!(!chunk.truncated);
+        }
+        hub.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn trailers_are_opt_in_by_direction_and_redacted() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![(
+            Arc::new(RecordingObserver {
+                events: Arc::clone(&events),
+            }),
+            ObserverConfig {
+                interest: ObservationInterest {
+                    request_body: BodyObservation::Full,
+                    ..ObservationInterest::default()
+                },
+                ..ObserverConfig::default()
+            },
+        )]);
+        let observer = hub.start_exchange(metadata());
+        let mut trailers = HeaderBlock::new();
+        trailers.push(HeaderField::try_new("authorization", b"secret".to_vec()).unwrap());
+        trailers.push(HeaderField::try_new("x-checksum", b"visible".to_vec()).unwrap());
+        observer
+            .emit(ObserverEventKind::BodyTrailers(ObservedBodyTrailers {
+                boundary: ExchangeBoundary::ClientRequest,
+                trailers,
+            }))
+            .await;
+        while events.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        {
+            let recorded = events.lock().unwrap();
+            let ObserverEventKind::BodyTrailers(event) = &recorded[0].kind else {
+                panic!("expected trailers");
+            };
+            assert!(event.trailers.values("authorization").next().is_none());
+            assert_eq!(
+                event.trailers.values("x-checksum").next(),
+                Some(&b"visible"[..])
+            );
         }
         hub.shutdown().await;
     }
