@@ -64,3 +64,20 @@ For an interactive controller, use the generic `DecisionBridge` inside an
 interceptor. Its finite queue and deadline make saturation, disconnect,
 cancellation, stale replies, and duplicate replies explicit. It is an in-process
 contract adapter, not a stable IPC schema.
+
+Applications that want a composed headless lifecycle can instead use
+`rustymiddle-session`. Create `ApplicationSessionService`, pass existing
+`ProxyComponents` through `prepare_components` exactly once, bind the returned
+components, and give the bound `ProxyServer` to `start`. Caller hooks and
+observers are preserved. The service adds a finite authoritative catalog,
+bounded delta hints, dynamic native capture, one experimental controller lease,
+and explicit run status. Call `stop` to wait for runtime/observer drain before
+capture sealing.
+
+Replay remains caller-routed: implement `ReplayExecutor` over the application's
+normal routing/upstream path and pass it to `replay`. Host proxy or certificate
+setup remains caller-owned through `HostIntegration`; the service applies it
+before runtime publication and retains the opaque prior-state token for exact,
+retryable restoration. See
+[application/session service](application-session-service.md) for lifecycle,
+loss, privacy, and failure contracts.

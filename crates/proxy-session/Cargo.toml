@@ -10,11 +10,11 @@ description = "Headless application and live-session service for rustymiddle"
 [dependencies]
 bytes.workspace = true
 http.workspace = true
-rustymiddle-capture = { path = "../proxy-capture" }
-rustymiddle-control-model = { path = "../proxy-control-model" }
-rustymiddle-control-transport = { path = "../proxy-control-transport" }
-rustymiddle-core = { path = "../proxy-core" }
-rustymiddle-runtime = { path = "../proxy-runtime" }
+rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
+rustymiddle-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
+rustymiddle-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
+rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
+rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
 thiserror.workspace = true
 tokio.workspace = true
 

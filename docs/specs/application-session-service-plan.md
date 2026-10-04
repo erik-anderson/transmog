@@ -1,6 +1,7 @@
 # Plan: Headless application/session service
 
-Status: active
+Status: complete; all local release, interoperability, and Linux gates passed
+on 2026-10-04. Hosted automation remains intentionally disabled.
 Audience: maintainers, embedders, CLI authors, and future product-shell authors
 Depends on: Hooks v2, content processing, experimental control v0, native
 capture, automation, and WebSocket inspection
@@ -115,14 +116,14 @@ disabled.
 
 ## Definition of done
 
-- [ ] Catalog bounds, deterministic eviction, queries, and loss counters pass.
-- [ ] Bounded delta subscriptions recover through authoritative queries.
-- [ ] Dynamic native capture is create-new, sealable, and failure-isolated.
-- [ ] Proxy lifecycle is explicit, idempotent, and drains on stop.
-- [ ] Control v0 drives identified Hooks v2 head/body decisions safely.
-- [ ] Replay/composer validation and executor isolation pass.
-- [ ] Host integration apply/restore is transactional and retryable.
-- [ ] Public APIs contain no UI, transport-private, or OS-specific types.
-- [ ] Rustdoc and embedding documentation are complete.
-- [ ] Windows LLVM/Ninja and local interoperability gates pass.
-- [ ] Hosted CI remains inactive until a human explicitly enables it.
+- [x] Catalog bounds, deterministic eviction, queries, and loss counters pass.
+- [x] Bounded delta subscriptions recover through authoritative queries.
+- [x] Dynamic native capture is create-new, sealable, and failure-isolated.
+- [x] Proxy lifecycle is explicit, idempotent, and drains on stop.
+- [x] Control v0 drives identified Hooks v2 head/body decisions safely.
+- [x] Replay/composer validation and executor isolation pass.
+- [x] Host integration apply/restore is transactional and retryable.
+- [x] Public APIs contain no UI, transport-private, or OS-specific types.
+- [x] Rustdoc and embedding documentation are complete.
+- [x] Windows LLVM/Ninja and local interoperability gates pass.
+- [x] Hosted CI remains inactive until a human explicitly enables it.

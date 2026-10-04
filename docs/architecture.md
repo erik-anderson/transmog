@@ -38,6 +38,12 @@ HTTP/1.1 101 upgrade
 Observers receive redacted immutable events beside the HTTP path through finite
 queues; they cannot mutate traffic.
 
+`rustymiddle-session` sits above this complete path. It turns observer evidence
+into a finite live catalog, owns one runtime task and dynamic capture worker,
+adapts experimental control decisions into an identified hook, and exposes
+injected replay and transactional host-integration seams. The layer is
+UI-independent and no lower crate depends on it.
+
 ## Hooks v2
 
 `rustymiddle-core` exposes transport-neutral, typed lifecycle callbacks. An
@@ -101,6 +107,12 @@ cancellation, body bounds, pause permits, trust generation, certificate and
 Alt-Svc caches, and exactly-once terminal state. Capture databases, saved rules,
 UI state, IPC schemas, projects, replay collections, and scripting runtimes
 belong above the core.
+
+The headless application/session service owns only live application lifecycle:
+bounded searchable snapshots, lossy delta hints, capture start/seal state,
+same-build controller attachment, and proxy run status. Durable databases,
+saved projects, command-line policy, and UI selection/editor state remain above
+that service. See [the service guide](application-session-service.md).
 
 ## Resource and failure model
 

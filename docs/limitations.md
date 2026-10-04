@@ -36,8 +36,18 @@
   inspected recompression for explicitly negotiated windows below 15 remain
   future adapter work. The no-hook path is byte-transparent for frame semantics
   it does not need to understand.
-- The included `DecisionBridge` is an in-process bounded adapter. There is no
-  stable external control protocol, capture database, saved-rule engine, or UI.
+- Experimental control v0 and the headless session controller are same-build,
+  in-process bounded adapters. There is no stable external control protocol;
+  stabilization remains deferred until a human explicitly requests it. There
+  is no capture database, saved-rule engine, credential vault, or UI.
+- The live session catalog is deliberately finite and in-memory. Delta
+  subscriptions are lossy hints; consumers recover by paging authoritative
+  state. Native capture is the streaming durable format, while SAZ is a
+  finalized compatibility export.
+- Host integration is an injected transaction seam. The crate ships no system
+  proxy or certificate-store mutation implementation. Normal callers must use
+  explicit service stop to observe restoration errors; the last-owner drop path
+  can only make a best-effort restore attempt.
 - Reverse-proxy listener configuration, ACME, load balancing, and health checks
   remain above/beyond the current explicit-proxy runtime. The provider seams do
   not imply those features are implemented.

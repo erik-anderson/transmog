@@ -135,13 +135,9 @@ impl Drop for ServiceInner {
         if let Some(task) = lifecycle.task.take() {
             task.shutdown.cancel();
             task.handle.abort();
-            if let Some(host) = task.host {
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.restore()));
-            }
+            drop(task.host);
         }
-        if let Some(host) = lifecycle.pending_restore.take() {
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.restore()));
-        }
+        drop(lifecycle.pending_restore.take());
     }
 }
 
@@ -388,7 +384,7 @@ impl ApplicationSessionService {
             match restore_transaction(transaction).await {
                 Ok(()) => Ok(()),
                 Err((transaction, message)) => {
-                    self.lock_lifecycle().pending_restore = Some(transaction);
+                    self.lock_lifecycle().pending_restore = transaction;
                     Err(ServiceError::HostRestore(message))
                 }
             }
@@ -442,7 +438,7 @@ impl ApplicationSessionService {
                 Ok(())
             }
             Err((transaction, message)) => {
-                self.lock_lifecycle().pending_restore = Some(transaction);
+                self.lock_lifecycle().pending_restore = transaction;
                 Err(ServiceError::HostRestore(message))
             }
         }
@@ -491,7 +487,7 @@ impl ApplicationSessionService {
         let control = runner.control();
         let shutdown = ExchangeCancellation::new();
         let task_shutdown = shutdown.clone();
-        let inner = Arc::clone(&self.inner);
+        let inner = Arc::downgrade(&self.inner);
         let generation = {
             let mut lifecycle = self.lock_lifecycle();
             lifecycle.next_generation = lifecycle.next_generation.saturating_add(1);
@@ -501,6 +497,9 @@ impl ApplicationSessionService {
         let handle = tokio::spawn(async move {
             let _ = wait_until_published.await;
             let result = runner.run(task_shutdown).await;
+            let Some(inner) = inner.upgrade() else {
+                return result;
+            };
             let mut lifecycle = inner
                 .lifecycle
                 .lock()
@@ -573,17 +572,20 @@ trait SessionRunner: Send {
 
 async fn restore_transaction(
     transaction: HostTransaction,
-) -> Result<(), (HostTransaction, String)> {
-    let attempt = transaction.clone();
-    let restored = tokio::task::spawn_blocking(move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| attempt.restore()))
-    })
-    .await;
+) -> Result<(), (Option<HostTransaction>, String)> {
+    let restored = tokio::task::spawn_blocking(move || transaction.restore()).await;
     match restored {
-        Ok(Ok(Ok(()))) => Ok(()),
-        Ok(Ok(Err(error))) => Err((transaction, error.message)),
-        Ok(Err(_)) => Err((transaction, "host integration panicked".into())),
-        Err(_) => Err((transaction, "host restore task failed".into())),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err((transaction, message))) => Err((Some(transaction), message)),
+        Err(_) => {
+            // `spawn_blocking` tasks are not abortable. A join failure is only
+            // possible during runtime teardown, and the moved transaction's
+            // Drop guard still attempts exact restoration.
+            Err((
+                None,
+                "host restore task failed during runtime teardown".into(),
+            ))
+        }
     }
 }
 
@@ -820,5 +822,22 @@ mod tests {
         assert!(!service.has_pending_host_restore());
         assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
         assert_eq!(service.status(), ServiceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn dropping_the_last_service_owner_cancels_and_restores() {
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        service
+            .start_runner_with_host(
+                runner(None),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        drop(service);
+        assert_eq!(*host.restored.lock().unwrap(), [42]);
     }
 }

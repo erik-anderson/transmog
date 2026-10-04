@@ -82,10 +82,10 @@ impl std::fmt::Debug for HostIntegrationPlan {
     }
 }
 
-#[derive(Clone)]
 pub(crate) struct HostTransaction {
     integration: Arc<dyn HostIntegration>,
     token: HostRestoreToken,
+    armed: bool,
 }
 
 impl HostTransaction {
@@ -97,10 +97,31 @@ impl HostTransaction {
         Ok(Self {
             integration: plan.integration,
             token,
+            armed: true,
         })
     }
 
-    pub(crate) fn restore(&self) -> Result<(), HostIntegrationError> {
-        self.integration.restore(&self.token)
+    pub(crate) fn restore(mut self) -> Result<(), (Self, String)> {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.integration.restore(&self.token)
+        }));
+        match result {
+            Ok(Ok(())) => {
+                self.armed = false;
+                Ok(())
+            }
+            Ok(Err(error)) => Err((self, error.message)),
+            Err(_) => Err((self, "host integration panicked".into())),
+        }
+    }
+}
+
+impl Drop for HostTransaction {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.integration.restore(&self.token)
+            }));
+        }
     }
 }

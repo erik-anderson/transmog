@@ -1,8 +1,8 @@
 # Plan: Layered monorepo roadmap
 
-Status: active; milestones 0-8 and the standalone interoperability expansion
-are locally complete; the headless application/session service is next and
-hosted Linux/macOS automation remains intentionally deferred
+Status: active; milestones 0-9 and the standalone interoperability expansion
+are locally complete; the product shell is next and hosted Linux/macOS
+automation remains intentionally deferred
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -208,6 +208,8 @@ testable and a paused connection cannot block unrelated traffic.
 
 ### 9. Headless application/session service
 
+Status: complete.
+
 Compose runtime, control, capture, automation, and WebSocket evidence into a
 bounded application-owned service. It owns proxy run state, a finite searchable
 live-session catalog, visible event loss, controller attachment, capture
@@ -283,13 +285,11 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Implement the
+1. Build product shells against the completed
    [headless application/session service](application-session-service-plan.md)
-   above the completed proxy, control, capture, automation, and WebSocket
-   layers.
-2. Build product shells against that service rather than introducing UI-owned
-   proxy correctness state or a second session model.
-3. Keep the standalone interoperability, live Chromium, and local Linux gates
+   rather than introducing UI-owned proxy correctness state or a second
+   session model.
+2. Keep the standalone interoperability, live Chromium, and local Linux gates
    passing. When a human explicitly enables hosted automation, activate and
    observe the parked Linux/macOS templates and close platform-specific
    findings.

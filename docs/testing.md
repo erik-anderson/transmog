@@ -101,6 +101,18 @@ and corpus handling are documented in `fuzz/README.md`. Prepared hosted
 automation is parked under `ci/github-actions/` and is intentionally inactive;
 see `ci/README.md`.
 
+The headless application/session suite covers deterministic terminal eviction,
+active-session admission refusal, stable cursor paging and filters, credential
+redaction before storage, cross-boundary body retention, subscriber lag,
+observer sequence gaps, 512 concurrent exchange updates, create-new capture,
+sealing and quota failure isolation, concurrent/idempotent stop, unexpected
+runtime failure, controller exclusivity, capability negotiation, authority-safe
+head edits, phase-invalid actions, bounded decoded body replacement with stable
+hook attribution, replay risk/credential validation, replay timeout and
+cancellation, host apply-before-publication, exact restore retry, and final-owner
+cleanup. The service tests use injected runners, replay executors, and host
+adapters; no test mutates the operating system.
+
 ## Standalone interoperability
 
 The local interoperability gate runs the release proxy between independently

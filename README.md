@@ -18,6 +18,8 @@ is described in [automation](docs/automation.md); embedders may instead install
 their own Hooks v2 interceptors directly. WebSocket upgrade, framing, hook, and
 resource semantics are documented in
 [WebSocket inspection](docs/websocket-inspection.md).
+The UI-independent composition boundary is documented in the
+[application/session service guide](docs/application-session-service.md).
 
 ## Local verification
 

@@ -26,6 +26,7 @@ pub struct SessionLimits {
     /// Maximum simultaneously retained exchanges.
     pub max_sessions: NonZeroUsize,
     /// Maximum sampled body bytes retained across all boundaries of one exchange.
+    /// Zero, the default, retains metadata only.
     pub body_bytes_per_session: usize,
     /// Maximum initialization diagnostics retained per exchange.
     pub initialization_diagnostics_per_session: usize,
@@ -45,7 +46,9 @@ impl Default for SessionLimits {
     fn default() -> Self {
         Self {
             max_sessions: NonZeroUsize::new(10_000).expect("constant is nonzero"),
-            body_bytes_per_session: 64 * 1024,
+            // Metadata-only is the safe default. Applications must make body
+            // retention an explicit privacy and memory-policy decision.
+            body_bytes_per_session: 0,
             initialization_diagnostics_per_session: 64,
             hook_effects_per_session: 256,
             route_attempts_per_session: 16,
@@ -753,6 +756,11 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn default_policy_retains_metadata_only() {
+        assert_eq!(SessionLimits::default().body_bytes_per_session, 0);
+    }
+
     fn limits(max_sessions: usize) -> SessionLimits {
         SessionLimits {
             max_sessions: NonZeroUsize::new(max_sessions).unwrap(),
@@ -1058,5 +1066,90 @@ mod tests {
         start(&catalog, 2, "two.test");
         let page = catalog.query(&CatalogQuery::default());
         assert_eq!(page.next.unwrap().exchange_id, ExchangeId(1));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_catalog_stress_preserves_bounds_and_terminal_state() {
+        const EXCHANGES: usize = 512;
+        let catalog = SessionCatalog::new(SessionLimits {
+            max_sessions: NonZeroUsize::new(EXCHANGES).unwrap(),
+            body_bytes_per_session: 8,
+            max_page_size: NonZeroUsize::new(31).unwrap(),
+            ..SessionLimits::default()
+        });
+        let mut tasks = Vec::with_capacity(EXCHANGES);
+        for index in 0..EXCHANGES {
+            let catalog = catalog.clone();
+            tasks.push(tokio::spawn(async move {
+                let id = index as u128 + 1;
+                let metadata = metadata(id, "stress.test");
+                assert_eq!(
+                    catalog.apply(event(
+                        id,
+                        1,
+                        ObserverEventKind::ExchangeStarted {
+                            metadata: Arc::clone(&metadata)
+                        }
+                    )),
+                    CatalogApply::Applied
+                );
+                assert_eq!(
+                    catalog.apply(event(
+                        id,
+                        2,
+                        ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                            boundary: ExchangeBoundary::ClientRequest,
+                            byte_count: 32,
+                            sample: Some(Bytes::from_static(b"0123456789abcdef")),
+                            truncated: true,
+                        })
+                    )),
+                    CatalogApply::Applied
+                );
+                assert_eq!(
+                    catalog.apply(event(
+                        id,
+                        3,
+                        ObserverEventKind::Failed(ExchangeFailure {
+                            metadata,
+                            stage: ExchangeStage::Upstream,
+                            kind: ExchangeFailureKind::Upstream,
+                            request_committed: false,
+                            response_committed: false,
+                            message: "unavailable".into(),
+                        })
+                    )),
+                    CatalogApply::Applied
+                );
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        let mut count = 0;
+        let mut after = None;
+        loop {
+            let page = catalog.query(&CatalogQuery {
+                after,
+                ..CatalogQuery::default()
+            });
+            count += page.sessions.len();
+            assert!(page.sessions.iter().all(|session| {
+                session.terminal.is_some()
+                    && session
+                        .bodies
+                        .iter()
+                        .map(|body| body.retained_prefix.len())
+                        .sum::<usize>()
+                        <= 8
+            }));
+            let Some(next) = page.next else {
+                break;
+            };
+            after = Some(next);
+        }
+        assert_eq!(count, EXCHANGES);
+        assert_eq!(catalog.counters(), CatalogCounters::default());
     }
 }
