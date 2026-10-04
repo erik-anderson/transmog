@@ -289,6 +289,11 @@ baselines for every codec. Shipping and fuzz-only dependency graphs remain
 separate. Cross-platform CI observation and a preemptible per-codec work/deadline
 mechanism are still open.
 
+Local Linux sanitizer validation on 2026-10-03 used the checked-in
+Docker Desktop/WSL2 environment and completed 10,000 mutation runs for each
+target without a finding. Hosted Linux CI observation and macOS codec
+observation remain separate exit gates.
+
 ## Dependency acceptance criteria
 
 Codec dependencies are accepted only after checking:

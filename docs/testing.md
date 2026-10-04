@@ -83,7 +83,9 @@ under fixed encoded, decoded, ratio, window, output, and stack-depth limits.
 The separate workspace keeps `libfuzzer-sys` out of the shipping dependency
 graph and SBOM. Linux CI installs the pinned `cargo-fuzz` driver and runs bounded
 smoke sessions; longer local campaigns and corpus handling are documented in
-`fuzz/README.md`.
+`fuzz/README.md`. The checked-in Docker/WSL2 runner supplies the same pinned
+nightly and driver with Clang/Ninja, mounts the source read-only, and isolates
+generated corpus entries from the checkout.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

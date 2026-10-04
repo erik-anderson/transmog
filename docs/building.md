@@ -90,6 +90,9 @@ Content fuzzing is an optional maintainer workflow, not a build prerequisite.
 It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
 LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal
 deterministic bomb and cancellation tests still run on Windows and macOS.
+Windows maintainers can run the Linux fuzz environment through Docker Desktop's
+WSL2 backend with `./scripts/fuzz-content-docker.ps1` without installing Rust
+inside the internal `docker-desktop` distribution.
 
 ## macOS
 
