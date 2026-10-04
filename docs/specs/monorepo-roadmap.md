@@ -224,9 +224,15 @@ cannot stall or silently weaken proxy traffic.
 
 ### 10. Product shell
 
-Add session browsing, breakpoint controls, inspectors/editors, search, export,
-and diagnostics against the control and capture layers. UI state never becomes
-proxy correctness state.
+Status: planned; implementation has not started.
+
+Build the Windows-first desktop shell with Tauri, the operating-system WebView,
+Rust-rendered Microsoft WebUI templates, and TypeScript only for authored
+browser-side behavior. Add session browsing, breakpoint controls,
+inspectors/editors, search, export, and diagnostics against the application
+service. UI state never becomes proxy correctness state. The dedicated
+[Tauri and WebUI product shell plan](tauri-webui-product-shell-plan.md) defines
+the layering, security model, platform gates, and implementation phases.
 
 Exit gate: closing or restarting the UI cannot silently disable proxy safety,
 and headless embedding remains fully supported.
@@ -285,10 +291,11 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Build product shells against the completed
-   [headless application/session service](application-session-service-plan.md)
-   rather than introducing UI-owned proxy correctness state or a second
-   session model.
+1. Complete Phase 0 of the
+   [Tauri and WebUI product shell plan](tauri-webui-product-shell-plan.md),
+   proving packaged WebView2 delivery, Rust SSR, TypeScript island hydration,
+   CSP, narrow Tauri commands, and bounded notifications before building the
+   full shell.
 2. Keep the standalone interoperability, live Chromium, and local Linux gates
    passing. When a human explicitly enables hosted automation, activate and
    observe the parked Linux/macOS templates and close platform-specific
