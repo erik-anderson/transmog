@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 
 use thiserror::Error;
 
@@ -12,6 +12,7 @@ pub struct ContentLimits {
     max_expansion_ratio: NonZeroUsize,
     expansion_slack_bytes: usize,
     max_coding_layers: NonZeroUsize,
+    work: ContentWorkLimits,
 }
 
 impl ContentLimits {
@@ -33,7 +34,15 @@ impl ContentLimits {
             max_expansion_ratio,
             expansion_slack_bytes,
             max_coding_layers,
+            work: ContentWorkLimits::DEFAULT,
         }
+    }
+
+    /// Replaces the cooperative codec work and deadline limits.
+    #[must_use]
+    pub const fn with_work_limits(mut self, work: ContentWorkLimits) -> Self {
+        self.work = work;
+        self
     }
 
     /// Maximum encoded input bytes.
@@ -70,6 +79,11 @@ impl ContentLimits {
     pub const fn max_coding_layers(self) -> NonZeroUsize {
         self.max_coding_layers
     }
+
+    /// Cooperative scheduling and active-work deadlines for each codec layer.
+    pub const fn work_limits(self) -> ContentWorkLimits {
+        self.work
+    }
 }
 
 impl Default for ContentLimits {
@@ -84,6 +98,98 @@ impl Default for ContentLimits {
             NonZeroUsize::new(4).expect("4 is nonzero"),
         )
     }
+}
+
+/// Finite cooperative scheduling and active-work deadlines for one codec layer.
+///
+/// The per-operation deadline covers one data-frame or completion call. The
+/// per-body deadline accumulates time spent inside codec calls and cooperative
+/// yields, but excludes time waiting for the next network body frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContentWorkLimits {
+    bytes_per_yield: NonZeroUsize,
+    operation_duration: Duration,
+    body_duration: Duration,
+}
+
+impl ContentWorkLimits {
+    const DEFAULT: Self = Self {
+        bytes_per_yield: NonZeroUsize::new(64 * 1024).expect("64 KiB is nonzero"),
+        operation_duration: Duration::from_secs(2),
+        body_duration: Duration::from_secs(30),
+    };
+
+    /// Creates explicit cooperative scheduling and deadline limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns a configuration error when either deadline is zero or the
+    /// cumulative per-body deadline is shorter than one operation deadline.
+    pub fn new(
+        max_bytes_per_yield: NonZeroUsize,
+        max_operation_duration: Duration,
+        max_body_duration: Duration,
+    ) -> Result<Self, ContentWorkLimitError> {
+        if max_operation_duration.is_zero() {
+            return Err(ContentWorkLimitError::ZeroOperationDuration);
+        }
+        if max_body_duration.is_zero() {
+            return Err(ContentWorkLimitError::ZeroBodyDuration);
+        }
+        if max_body_duration < max_operation_duration {
+            return Err(ContentWorkLimitError::BodyShorterThanOperation {
+                operation: max_operation_duration,
+                body: max_body_duration,
+            });
+        }
+        Ok(Self {
+            bytes_per_yield: max_bytes_per_yield,
+            operation_duration: max_operation_duration,
+            body_duration: max_body_duration,
+        })
+    }
+
+    /// Maximum input or output byte progress between cooperative executor yields.
+    pub const fn max_bytes_per_yield(self) -> NonZeroUsize {
+        self.bytes_per_yield
+    }
+
+    /// Maximum active duration of one codec data-frame or completion call.
+    pub const fn max_operation_duration(self) -> Duration {
+        self.operation_duration
+    }
+
+    /// Maximum cumulative active duration of one codec layer for a body.
+    pub const fn max_body_duration(self) -> Duration {
+        self.body_duration
+    }
+}
+
+impl Default for ContentWorkLimits {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Invalid cooperative codec scheduling or deadline configuration.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum ContentWorkLimitError {
+    /// A codec operation deadline must permit some work.
+    #[error("content codec operation deadline must be nonzero")]
+    ZeroOperationDuration,
+    /// A codec body deadline must permit some work.
+    #[error("content codec body deadline must be nonzero")]
+    ZeroBodyDuration,
+    /// The cumulative deadline cannot be shorter than one operation deadline.
+    #[error(
+        "content codec body deadline {body:?} is shorter than operation deadline {operation:?}"
+    )]
+    BodyShorterThanOperation {
+        /// Configured per-operation deadline.
+        operation: Duration,
+        /// Configured cumulative per-body deadline.
+        body: Duration,
+    },
 }
 
 /// Incremental resource accounting for one content-processing body.
@@ -332,5 +438,46 @@ mod tests {
             })
         );
         assert_eq!(budget.encoded_bytes(), usize::MAX - 1);
+    }
+
+    #[test]
+    fn work_limits_are_finite_validated_and_replaceable() {
+        let defaults = ContentWorkLimits::default();
+        assert_eq!(defaults.max_bytes_per_yield().get(), 64 * 1024);
+        assert_eq!(defaults.max_operation_duration(), Duration::from_secs(2));
+        assert_eq!(defaults.max_body_duration(), Duration::from_secs(30));
+
+        assert_eq!(
+            ContentWorkLimits::new(
+                NonZeroUsize::new(1).unwrap(),
+                Duration::ZERO,
+                Duration::from_secs(1)
+            ),
+            Err(ContentWorkLimitError::ZeroOperationDuration)
+        );
+        assert_eq!(
+            ContentWorkLimits::new(
+                NonZeroUsize::new(1).unwrap(),
+                Duration::from_secs(1),
+                Duration::ZERO
+            ),
+            Err(ContentWorkLimitError::ZeroBodyDuration)
+        );
+        assert!(matches!(
+            ContentWorkLimits::new(
+                NonZeroUsize::new(1).unwrap(),
+                Duration::from_secs(2),
+                Duration::from_secs(1)
+            ),
+            Err(ContentWorkLimitError::BodyShorterThanOperation { .. })
+        ));
+
+        let custom = ContentWorkLimits::new(
+            NonZeroUsize::new(4 * 1024).unwrap(),
+            Duration::from_millis(50),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(limits().with_work_limits(custom).work_limits(), custom);
     }
 }

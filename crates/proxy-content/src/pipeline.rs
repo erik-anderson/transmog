@@ -244,7 +244,7 @@ impl ContentBodyPipeline {
         self.ensure_active()?;
         self.terminal = true;
 
-        let decoded = self.decoders.finish()?;
+        let decoded = self.decoders.finish().await?;
         let mut output = self.process_hook_input(decoded, true).await?;
         let body_output = self.body.finish().await?;
         output.extend(self.process_hook_output(body_output).await?);
@@ -261,7 +261,7 @@ impl ContentBodyPipeline {
             self.process_hook_input(vec![frame], self.decoded_source_frames)
                 .await
         } else {
-            let decoded = self.decoders.process(frame)?;
+            let decoded = self.decoders.process(frame).await?;
             self.process_hook_input(decoded, true).await
         }
     }
@@ -347,20 +347,20 @@ impl DecoderStack {
         self.0.is_empty()
     }
 
-    fn process(&mut self, frame: BodyFrame) -> Result<Vec<BodyFrame>, ContentCodecError> {
-        self.process_from(0, vec![frame])
+    async fn process(&mut self, frame: BodyFrame) -> Result<Vec<BodyFrame>, ContentCodecError> {
+        self.process_from(0, vec![frame]).await
     }
 
-    fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentCodecError> {
+    async fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentCodecError> {
         let mut output = Vec::new();
         for index in 0..self.0.len() {
-            let frames = self.0[index].finish()?;
-            output.extend(self.process_from(index + 1, frames)?);
+            let frames = self.0[index].finish().await?;
+            output.extend(self.process_from(index + 1, frames).await?);
         }
         Ok(output)
     }
 
-    fn process_from(
+    async fn process_from(
         &mut self,
         start: usize,
         mut frames: Vec<BodyFrame>,
@@ -368,7 +368,7 @@ impl DecoderStack {
         for decoder in &mut self.0[start..] {
             let mut output = Vec::new();
             for frame in frames {
-                output.extend(decoder.on_frame(frame)?);
+                output.extend(decoder.on_frame(frame).await?);
             }
             frames = output;
         }
@@ -454,6 +454,7 @@ mod tests {
             Arc,
             atomic::{AtomicUsize, Ordering},
         },
+        time::Duration,
     };
 
     use bytes::Bytes;
@@ -469,7 +470,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::ContentCoding;
+    use crate::{ContentCoding, ContentWorkLimits};
 
     #[derive(Clone)]
     enum TestPlan {
@@ -620,12 +621,13 @@ mod tests {
         data(frames)
     }
 
-    fn decode_layer(coding: ContentCoding, input: &[u8]) -> Vec<u8> {
+    async fn decode_layer(coding: ContentCoding, input: &[u8]) -> Vec<u8> {
         let mut decoder = ContentDecoder::new(coding, ContentLimits::default()).unwrap();
         let mut frames = decoder
             .on_frame(BodyFrame::Data(Bytes::copy_from_slice(input)))
+            .await
             .unwrap();
-        frames.extend(decoder.finish().unwrap());
+        frames.extend(decoder.finish().await.unwrap());
         data(frames)
     }
 
@@ -708,8 +710,8 @@ mod tests {
         );
 
         let output = data(output);
-        let brotli_decoded = decode_layer(ContentCoding::Brotli, &output);
-        let decoded = decode_layer(ContentCoding::Gzip, &brotli_decoded);
+        let brotli_decoded = decode_layer(ContentCoding::Brotli, &output).await;
+        let decoded = decode_layer(ContentCoding::Gzip, &brotli_decoded).await;
         assert_eq!(decoded, b"xhello");
     }
 
@@ -921,7 +923,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            decode_layer(ContentCoding::Gzip, &data(output)),
+            decode_layer(ContentCoding::Gzip, &data(output)).await,
             b"replacement"
         );
     }
@@ -959,6 +961,40 @@ mod tests {
         assert_eq!(
             pipeline.finish().await.unwrap_err(),
             ContentPipelineError::AlreadyFinished
+        );
+    }
+
+    #[tokio::test]
+    async fn codec_work_timeout_propagates_and_terminates_the_pipeline() {
+        let source_headers = headers("gzip");
+        let encoded = encode_layer(ContentCoding::Gzip, &vec![b'a'; 64 * 1024]).await;
+        let body = body_pipeline(source_headers.clone(), TestPlan::DecodedPrefix).await;
+        let work = ContentWorkLimits::new(
+            NonZeroUsize::new(1).unwrap(),
+            Duration::from_nanos(1),
+            Duration::from_nanos(1),
+        )
+        .unwrap();
+        let mut pipeline = ContentBodyPipeline::new(
+            body,
+            &source_headers,
+            ContentOutput::Identity,
+            ContentLimits::default().with_work_limits(work),
+            ContentDecoderOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            pipeline
+                .process(BodyFrame::Data(Bytes::from(encoded)))
+                .await,
+            Err(ContentPipelineError::Codec(ContentCodecError::Timeout {
+                coding: ContentCoding::Gzip
+            }))
+        );
+        assert_eq!(
+            pipeline.finish().await,
+            Err(ContentPipelineError::AlreadyFinished)
         );
     }
 }

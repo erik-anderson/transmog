@@ -54,6 +54,9 @@ pipeline composes those engines around the Hooks v2 body pipeline without
 moving compression policy into Hyper, quiche, or core lifecycle types. Hooks
 declare neutral, raw, required-decoded, or optional-decoded representation
 requirements; raw/decoded conflicts fail before body processing begins.
+Codec operations use content-layer byte quanta, cooperative executor yields,
+per-call deadlines, and cumulative active-work deadlines. Timeout is a typed
+terminal content failure; transports neither schedule nor reinterpret it.
 
 The immutable `OriginalTarget` records client intent. Head edits are logical
 message edits and cannot silently redirect a socket. A `Reroute` action is fed
@@ -94,11 +97,11 @@ belong above the core.
 
 ## Resource and failure model
 
-`RuntimeLimits`, `HookLimits`, and `H3TransportLimits` make every queue, buffer,
-deadline, connection count, and paused-callback count finite. A slow observer
-uses one declared delivery policy: bounded backpressure, drop-newest with a
-visible counter, or disconnect. Body bytes and credential fields are excluded
-or redacted by default.
+`RuntimeLimits`, `HookLimits`, `ContentLimits`, and `H3TransportLimits` make
+every queue, buffer, deadline, connection count, and paused-callback count
+finite. A slow observer uses one declared delivery policy: bounded
+backpressure, drop-newest with a visible counter, or disconnect. Body bytes and
+credential fields are excluded or redacted by default.
 
 Hook, route-selector, upstream-service, body-filter, and observer callbacks run
 behind panic, timeout, cancellation, and drop containment. Dropping a boundary

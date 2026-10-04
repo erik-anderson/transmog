@@ -4,6 +4,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 use async_compression::tokio::{
@@ -23,7 +24,7 @@ use rustymiddle_core::{BodyFrame, HeaderBlock};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use crate::{ContentBudget, ContentCoding, ContentLimitError, ContentLimits};
+use crate::{ContentBudget, ContentCoding, ContentLimitError, ContentLimits, ContentWorkLimits};
 
 const MINIMUM_ZSTD_WINDOW_BYTES: usize = 1 << 10;
 
@@ -83,6 +84,7 @@ pub struct ContentDecoder {
     deflate_probe: Option<Vec<u8>>,
     stream_complete: bool,
     trailers: Option<HeaderBlock>,
+    work: CodecWorkBudget,
     terminal: bool,
 }
 
@@ -148,6 +150,7 @@ impl ContentDecoder {
             deflate_probe,
             stream_complete: false,
             trailers: None,
+            work: CodecWorkBudget::new(limits.work_limits()),
             terminal: false,
         })
     }
@@ -162,10 +165,13 @@ impl ContentDecoder {
     ///
     /// Fails closed on malformed input, a configured limit, invalid frame
     /// ordering, or use after a terminal success or failure.
-    pub fn on_frame(&mut self, frame: BodyFrame) -> Result<Vec<BodyFrame>, ContentCodecError> {
+    pub async fn on_frame(
+        &mut self,
+        frame: BodyFrame,
+    ) -> Result<Vec<BodyFrame>, ContentCodecError> {
         self.ensure_active()?;
         let result = match frame {
-            BodyFrame::Data(bytes) => self.decode_data(&bytes),
+            BodyFrame::Data(bytes) => self.decode_data(&bytes).await,
             BodyFrame::Trailers(trailers) => {
                 if self.trailers.replace(trailers).is_some() {
                     Err(ContentCodecError::DuplicateTrailers)
@@ -189,7 +195,7 @@ impl ContentDecoder {
     ///
     /// Returns a typed truncation, corruption, limit, allocation, sequencing,
     /// or terminal-state failure.
-    pub fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentCodecError> {
+    pub async fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentCodecError> {
         self.ensure_active()?;
         self.terminal = true;
         if !self.stream_complete {
@@ -197,7 +203,7 @@ impl ContentDecoder {
                 self.engine.push(Bytes::from(probe));
             }
             self.engine.finish_input();
-            if !self.pump()? {
+            if !self.pump().await? {
                 return Err(ContentCodecError::Codec {
                     coding: self.coding,
                 });
@@ -216,7 +222,7 @@ impl ContentDecoder {
         Ok(output)
     }
 
-    fn decode_data(&mut self, bytes: &Bytes) -> Result<Vec<BodyFrame>, ContentCodecError> {
+    async fn decode_data(&mut self, bytes: &Bytes) -> Result<Vec<BodyFrame>, ContentCodecError> {
         if self.trailers.is_some() {
             return Err(ContentCodecError::DataAfterTrailers);
         }
@@ -229,7 +235,7 @@ impl ContentDecoder {
         if !self.queue_encoded(bytes) {
             return Ok(Vec::new());
         }
-        if self.pump()? {
+        if self.pump().await? {
             self.stream_complete = true;
             if self.engine.has_buffered_input() {
                 return Err(ContentCodecError::InvalidData {
@@ -263,13 +269,34 @@ impl ContentDecoder {
         true
     }
 
-    fn pump(&mut self) -> Result<bool, ContentCodecError> {
-        let waker = std::task::Waker::noop();
-        let mut context = Context::from_waker(waker);
+    async fn pump(&mut self) -> Result<bool, ContentCodecError> {
+        let mut operation = self.work.begin(self.coding)?;
+        let result = self.pump_inner(&mut operation).await;
+        self.work.complete(&operation)?;
+        result
+    }
+
+    async fn pump_inner(
+        &mut self,
+        operation: &mut CodecWorkOperation,
+    ) -> Result<bool, ContentCodecError> {
         loop {
             let mut bytes = [0_u8; 8 * 1024];
-            match self.engine.poll_read(&mut context, &mut bytes) {
-                Poll::Ready(Ok(0)) => return Ok(true),
+            let work_limit = operation.max_bytes_per_yield();
+            let (result, consumed, quantum_exhausted) = {
+                // `Context` is intentionally scoped to this single poll. It is
+                // not `Send` and must never be retained across a yield point.
+                let waker = std::task::Waker::noop();
+                let mut context = Context::from_waker(waker);
+                let output_limit = bytes.len().min(work_limit);
+                self.engine
+                    .poll_read(&mut context, &mut bytes[..output_limit], work_limit)
+            };
+            match result {
+                Poll::Ready(Ok(0)) => {
+                    operation.checkpoint(consumed).await?;
+                    return Ok(true);
+                }
                 Poll::Ready(Ok(written)) => {
                     self.budget.record_decoded(written)?;
                     if self.pending.try_reserve(written).is_err() {
@@ -278,11 +305,18 @@ impl ContentDecoder {
                         });
                     }
                     self.pending.extend_from_slice(&bytes[..written]);
+                    operation.checkpoint(consumed.max(written)).await?;
                 }
                 Poll::Ready(Err(error)) => {
                     return Err(map_decode_io_error(self.coding, &error));
                 }
-                Poll::Pending => return Ok(false),
+                Poll::Pending if quantum_exhausted => {
+                    operation.checkpoint(consumed.max(work_limit)).await?;
+                }
+                Poll::Pending => {
+                    operation.checkpoint(consumed).await?;
+                    return Ok(false);
+                }
             }
         }
     }
@@ -321,6 +355,7 @@ pub struct ContentEncoder {
     limits: ContentLimits,
     input_bytes: usize,
     trailers: Option<HeaderBlock>,
+    work: CodecWorkBudget,
     terminal: bool,
 }
 
@@ -348,6 +383,7 @@ impl ContentEncoder {
             limits,
             input_bytes: 0,
             trailers: None,
+            work: CodecWorkBudget::new(limits.work_limits()),
             terminal: false,
         })
     }
@@ -394,7 +430,10 @@ impl ContentEncoder {
     pub async fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentCodecError> {
         self.ensure_active()?;
         self.terminal = true;
-        if self.engine.shutdown().await.is_err() {
+        let operation = self.work.begin(self.coding)?;
+        let result = self.engine.shutdown().await;
+        self.work.complete(&operation)?;
+        if result.is_err() {
             return Err(map_encode_io_error(self.coding, &self.capture));
         }
         let mut output = self.capture.drain_data(self.coding)?;
@@ -409,10 +448,26 @@ impl ContentEncoder {
             return Err(ContentCodecError::DataAfterTrailers);
         }
         self.record_input(bytes.len())?;
-        if self.engine.write_all(bytes).await.is_err() {
-            return Err(map_encode_io_error(self.coding, &self.capture));
-        }
+        let mut operation = self.work.begin(self.coding)?;
+        let result = self.encode_chunks(bytes, &mut operation).await;
+        self.work.complete(&operation)?;
+        result?;
         self.capture.drain_data(self.coding)
+    }
+
+    async fn encode_chunks(
+        &mut self,
+        bytes: &Bytes,
+        operation: &mut CodecWorkOperation,
+    ) -> Result<(), ContentCodecError> {
+        let quantum = operation.max_bytes_per_yield();
+        for chunk in bytes.chunks(quantum) {
+            if self.engine.write_all(chunk).await.is_err() {
+                return Err(map_encode_io_error(self.coding, &self.capture));
+            }
+            operation.checkpoint(chunk.len()).await?;
+        }
+        Ok(())
     }
 
     fn record_input(&mut self, bytes: usize) -> Result<(), ContentCodecError> {
@@ -484,12 +539,109 @@ pub enum ContentCodecError {
         /// Codec whose output allocation failed.
         coding: ContentCoding,
     },
+    /// Active codec work exceeded an operation or cumulative body deadline.
+    #[error("{coding:?} content codec exceeded its configured work deadline")]
+    Timeout {
+        /// Codec which exceeded the deadline.
+        coding: ContentCoding,
+    },
     /// The codec engine failed for another reason.
     #[error("{coding:?} content codec failed")]
     Codec {
         /// Codec which failed.
         coding: ContentCoding,
     },
+}
+
+#[derive(Debug)]
+struct CodecWorkBudget {
+    limits: ContentWorkLimits,
+    elapsed: Duration,
+}
+
+impl CodecWorkBudget {
+    const fn new(limits: ContentWorkLimits) -> Self {
+        Self {
+            limits,
+            elapsed: Duration::ZERO,
+        }
+    }
+
+    fn begin(&self, coding: ContentCoding) -> Result<CodecWorkOperation, ContentCodecError> {
+        self.begin_at(coding, Instant::now())
+    }
+
+    fn begin_at(
+        &self,
+        coding: ContentCoding,
+        started: Instant,
+    ) -> Result<CodecWorkOperation, ContentCodecError> {
+        if self.elapsed >= self.limits.max_body_duration() {
+            return Err(ContentCodecError::Timeout { coding });
+        }
+        Ok(CodecWorkOperation {
+            coding,
+            limits: self.limits,
+            elapsed_before: self.elapsed,
+            started,
+            work_since_yield: 0,
+        })
+    }
+
+    fn complete(&mut self, operation: &CodecWorkOperation) -> Result<(), ContentCodecError> {
+        self.complete_at(operation, Instant::now())
+    }
+
+    fn complete_at(
+        &mut self,
+        operation: &CodecWorkOperation,
+        finished: Instant,
+    ) -> Result<(), ContentCodecError> {
+        let elapsed = finished.saturating_duration_since(operation.started);
+        self.elapsed = self.elapsed.saturating_add(elapsed);
+        operation.ensure_within(finished)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct CodecWorkOperation {
+    coding: ContentCoding,
+    limits: ContentWorkLimits,
+    elapsed_before: Duration,
+    started: Instant,
+    work_since_yield: usize,
+}
+
+impl CodecWorkOperation {
+    fn max_bytes_per_yield(&self) -> usize {
+        self.limits.max_bytes_per_yield().get()
+    }
+
+    async fn checkpoint(&mut self, work: usize) -> Result<(), ContentCodecError> {
+        self.work_since_yield = self.work_since_yield.saturating_add(work);
+        self.ensure_within(Instant::now())?;
+        if self.work_since_yield >= self.max_bytes_per_yield() {
+            self.work_since_yield = 0;
+            tokio::task::yield_now().await;
+            self.ensure_within(Instant::now())?;
+        }
+        Ok(())
+    }
+
+    fn ensure_within(&self, now: Instant) -> Result<(), ContentCodecError> {
+        let operation_elapsed = now.saturating_duration_since(self.started);
+        let body_elapsed = self.elapsed_before.saturating_add(operation_elapsed);
+        if operation_elapsed > self.limits.max_operation_duration()
+            || body_elapsed > self.limits.max_body_duration()
+        {
+            Err(ContentCodecError::Timeout {
+                coding: self.coding,
+            })
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -526,7 +678,9 @@ impl DecoderEngine {
         &mut self,
         context: &mut Context<'_>,
         output: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+        input_quantum: usize,
+    ) -> (Poll<io::Result<usize>>, usize, bool) {
+        self.reader_mut().begin_work_quantum(input_quantum);
         let mut read = ReadBuf::new(output);
         let result = match self {
             Self::Gzip(engine) => Pin::new(engine).poll_read(context, &mut read),
@@ -535,11 +689,13 @@ impl DecoderEngine {
             Self::RawDeflate(engine) => Pin::new(engine).poll_read(context, &mut read),
             Self::Zstd(engine) => Pin::new(engine).poll_read(context, &mut read),
         };
-        match result {
+        let result = match result {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(read.filled().len())),
             Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Pending => Poll::Pending,
-        }
+        };
+        let (consumed, exhausted) = self.reader_mut().finish_work_quantum();
+        (result, consumed, exhausted)
     }
 
     fn has_buffered_input(&self) -> bool {
@@ -555,6 +711,16 @@ impl DecoderEngine {
     fn select_raw_deflate(&mut self) {
         *self = Self::RawDeflate(AsyncDeflateDecoder::new(ChunkReader::new()));
     }
+
+    fn reader_mut(&mut self) -> &mut ChunkReader {
+        match self {
+            Self::Gzip(engine) => engine.get_mut(),
+            Self::Brotli(engine) => engine.get_mut(),
+            Self::Zlib(engine) => engine.get_mut(),
+            Self::RawDeflate(engine) => engine.get_mut(),
+            Self::Zstd(engine) => engine.get_mut(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -562,6 +728,9 @@ struct ChunkReader {
     chunks: VecDeque<Bytes>,
     offset: usize,
     finished: bool,
+    work_remaining: usize,
+    work_consumed: usize,
+    work_exhausted: bool,
 }
 
 impl ChunkReader {
@@ -570,6 +739,9 @@ impl ChunkReader {
             chunks: VecDeque::new(),
             offset: 0,
             finished: false,
+            work_remaining: usize::MAX,
+            work_consumed: 0,
+            work_exhausted: false,
         }
     }
 
@@ -588,6 +760,16 @@ impl ChunkReader {
             .front()
             .is_some_and(|chunk| self.offset < chunk.len())
             || self.chunks.len() > 1
+    }
+
+    fn begin_work_quantum(&mut self, bytes: usize) {
+        self.work_remaining = bytes;
+        self.work_consumed = 0;
+        self.work_exhausted = false;
+    }
+
+    const fn finish_work_quantum(&self) -> (usize, bool) {
+        (self.work_consumed, self.work_exhausted)
     }
 }
 
@@ -626,11 +808,18 @@ impl AsyncBufRead for ChunkReader {
         if self.chunks.is_empty() && !self.finished {
             return Poll::Pending;
         }
+        if !self.chunks.is_empty() && self.work_remaining == 0 {
+            self.work_exhausted = true;
+            return Poll::Pending;
+        }
         let this = self.get_mut();
-        Poll::Ready(Ok(this
-            .chunks
-            .front()
-            .map_or(&[], |chunk| &chunk[this.offset..])))
+        Poll::Ready(Ok(this.chunks.front().map_or(&[], |chunk| {
+            let end = this
+                .offset
+                .saturating_add(this.work_remaining)
+                .min(chunk.len());
+            &chunk[this.offset..end]
+        })))
     }
 
     fn consume(mut self: Pin<&mut Self>, amount: usize) {
@@ -638,7 +827,10 @@ impl AsyncBufRead for ChunkReader {
             .chunks
             .front()
             .map_or(0, |chunk| chunk.len().saturating_sub(self.offset));
-        self.offset = self.offset.saturating_add(amount.min(available));
+        let consumed = amount.min(available).min(self.work_remaining);
+        self.offset = self.offset.saturating_add(consumed);
+        self.work_remaining = self.work_remaining.saturating_sub(consumed);
+        self.work_consumed = self.work_consumed.saturating_add(consumed);
     }
 }
 
@@ -800,7 +992,7 @@ mod tests {
         num::NonZeroUsize,
         sync::{
             Arc,
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
         time::Duration,
     };
@@ -842,6 +1034,10 @@ mod tests {
         limits(1024 * 1024, 1024 * 1024, 1024 * 1024, 1000, 1024 * 1024)
     }
 
+    fn work_limits(bytes: usize, operation: Duration, body: Duration) -> ContentWorkLimits {
+        ContentWorkLimits::new(NonZeroUsize::new(bytes).unwrap(), operation, body).unwrap()
+    }
+
     const fn enabled_codings() -> [ContentCoding; 4] {
         [
             ContentCoding::Gzip,
@@ -879,7 +1075,7 @@ mod tests {
         output
     }
 
-    fn decode_with_chunks(
+    async fn decode_with_chunks(
         coding: ContentCoding,
         data: &[u8],
         chunk_size: usize,
@@ -892,9 +1088,10 @@ mod tests {
             codec_limits,
             ContentDecoderOptions::default(),
         )
+        .await
     }
 
-    fn decode_with_options(
+    async fn decode_with_options(
         coding: ContentCoding,
         data: &[u8],
         chunk_size: usize,
@@ -904,10 +1101,12 @@ mod tests {
         let mut codec = ContentDecoder::with_options(coding, codec_limits, options).unwrap();
         let mut output = Vec::new();
         for chunk in data.chunks(chunk_size) {
-            let frames = codec.on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk)))?;
+            let frames = codec
+                .on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk)))
+                .await?;
             assert!(append_frames(&mut output, frames).is_none());
         }
-        let frames = codec.finish()?;
+        let frames = codec.finish().await?;
         assert!(append_frames(&mut output, frames).is_none());
         Ok(output)
     }
@@ -917,7 +1116,9 @@ mod tests {
         let input = b"streaming content across deliberately tiny frames";
         for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, input, 1).await;
-            let decoded = decode_with_chunks(coding, &encoded, 1, generous_limits()).unwrap();
+            let decoded = decode_with_chunks(coding, &encoded, 1, generous_limits())
+                .await
+                .unwrap();
             assert_eq!(decoded, input, "{coding:?}");
         }
     }
@@ -943,7 +1144,9 @@ mod tests {
             (ContentCoding::Zstd, ZSTD_HELLO),
         ] {
             assert_eq!(
-                decode_with_chunks(coding, encoded, 1, generous_limits()).unwrap(),
+                decode_with_chunks(coding, encoded, 1, generous_limits())
+                    .await
+                    .unwrap(),
                 b"hello",
                 "{coding:?}"
             );
@@ -966,7 +1169,9 @@ mod tests {
             let encoded = encode_with_chunks(coding, b"", 1).await;
             assert!(!encoded.is_empty());
             assert_eq!(
-                decode_with_chunks(coding, &encoded, 1, generous_limits()).unwrap(),
+                decode_with_chunks(coding, &encoded, 1, generous_limits())
+                    .await
+                    .unwrap(),
                 b""
             );
         }
@@ -1011,8 +1216,9 @@ mod tests {
     async fn malformed_and_truncated_streams_fail_closed() {
         for coding in enabled_codings() {
             let malformed = vec![0xff; 32];
-            let malformed_error =
-                decode_with_chunks(coding, &malformed, 3, generous_limits()).unwrap_err();
+            let malformed_error = decode_with_chunks(coding, &malformed, 3, generous_limits())
+                .await
+                .unwrap_err();
             assert!(
                 matches!(
                     malformed_error,
@@ -1025,8 +1231,9 @@ mod tests {
 
             let encoded = encode_with_chunks(coding, b"complete source body", 4).await;
             let truncated = &encoded[..encoded.len() - 1];
-            let truncated_error =
-                decode_with_chunks(coding, truncated, 2, generous_limits()).unwrap_err();
+            let truncated_error = decode_with_chunks(coding, truncated, 2, generous_limits())
+                .await
+                .unwrap_err();
             assert!(
                 matches!(
                     truncated_error,
@@ -1044,7 +1251,11 @@ mod tests {
         let mut encoded = encode_with_chunks(ContentCoding::Gzip, b"checksum body", 3).await;
         let last = encoded.len() - 1;
         encoded[last] ^= 0x80;
-        assert!(decode_with_chunks(ContentCoding::Gzip, &encoded, 1, generous_limits()).is_err());
+        assert!(
+            decode_with_chunks(ContentCoding::Gzip, &encoded, 1, generous_limits())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1053,7 +1264,9 @@ mod tests {
         let second = encode_with_chunks(ContentCoding::Gzip, b"second", 6).await;
         let concatenated = [first.clone(), second.clone()].concat();
         assert_eq!(
-            decode_with_chunks(ContentCoding::Gzip, &concatenated, 1, generous_limits()).unwrap(),
+            decode_with_chunks(ContentCoding::Gzip, &concatenated, 1, generous_limits())
+                .await
+                .unwrap(),
             b"firstsecond"
         );
 
@@ -1066,6 +1279,7 @@ mod tests {
                 trailing_junk.len(),
                 generous_limits()
             )
+            .await
             .is_err()
         );
 
@@ -1079,6 +1293,7 @@ mod tests {
                 1,
                 generous_limits()
             )
+            .await
             .is_err()
         );
     }
@@ -1094,6 +1309,7 @@ mod tests {
                 encoded.len(),
                 generous_limits()
             )
+            .await
             .is_err()
         );
     }
@@ -1104,7 +1320,9 @@ mod tests {
         let second = encode_with_chunks(ContentCoding::Zstd, b"second", 6).await;
         let concatenated = [first, second].concat();
         assert_eq!(
-            decode_with_chunks(ContentCoding::Zstd, &concatenated, 1, generous_limits()).unwrap(),
+            decode_with_chunks(ContentCoding::Zstd, &concatenated, 1, generous_limits())
+                .await
+                .unwrap(),
             b"firstsecond"
         );
 
@@ -1119,15 +1337,15 @@ mod tests {
             source.len(),
         );
         assert!(matches!(
-            decode_with_chunks(ContentCoding::Zstd, &encoded, encoded.len(), small_window),
+            decode_with_chunks(ContentCoding::Zstd, &encoded, encoded.len(), small_window).await,
             Err(ContentCodecError::InvalidData {
                 coding: ContentCoding::Zstd
             })
         ));
     }
 
-    #[test]
-    fn raw_deflate_compatibility_is_explicit_and_header_driven() {
+    #[tokio::test]
+    async fn raw_deflate_compatibility_is_explicit_and_header_driven() {
         const RAW_DEFLATE_HELLO: &[u8] = &[0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00];
         const ZLIB_HELLO: &[u8] = &[
             0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0x06, 0x2c, 0x02, 0x15,
@@ -1140,6 +1358,7 @@ mod tests {
                 1,
                 generous_limits()
             )
+            .await
             .is_err()
         );
 
@@ -1153,6 +1372,7 @@ mod tests {
                 generous_limits(),
                 compatibility
             )
+            .await
             .unwrap(),
             b"hello"
         );
@@ -1164,6 +1384,7 @@ mod tests {
                 generous_limits(),
                 compatibility
             )
+            .await
             .unwrap(),
             b"hello"
         );
@@ -1180,6 +1401,7 @@ mod tests {
                 encoded.len(),
                 limits(encoded.len() - 1, 16 * 1024, 16 * 1024, 1000, 16 * 1024),
             )
+            .await
             .unwrap_err();
             assert!(matches!(
                 encoded_error,
@@ -1192,6 +1414,7 @@ mod tests {
                 encoded.len(),
                 limits(encoded.len(), 8191, 16 * 1024, 1000, 16 * 1024),
             )
+            .await
             .unwrap_err();
             assert!(matches!(
                 decoded_error,
@@ -1204,6 +1427,7 @@ mod tests {
                 encoded.len(),
                 limits(encoded.len(), 16 * 1024, 16 * 1024, 2, 16),
             )
+            .await
             .unwrap_err();
             assert!(matches!(
                 ratio_error,
@@ -1260,7 +1484,10 @@ mod tests {
                 let mut released = Vec::new();
                 let mut error = None;
                 for chunk in encoded.chunks(chunk_size.max(1)) {
-                    match decoder.on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk))) {
+                    match decoder
+                        .on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk)))
+                        .await
+                    {
                         Ok(frames) => {
                             assert!(append_frames(&mut released, frames).is_none());
                         }
@@ -1270,7 +1497,11 @@ mod tests {
                         }
                     }
                 }
-                let error = error.unwrap_or_else(|| decoder.finish().unwrap_err());
+                let error = if let Some(error) = error {
+                    error
+                } else {
+                    decoder.finish().await.unwrap_err()
+                };
                 assert!(
                     matches!(
                         error,
@@ -1284,6 +1515,178 @@ mod tests {
                 assert!(released.len() <= DECODED_LIMIT);
             }
         }
+    }
+
+    #[test]
+    fn codec_work_deadlines_accept_exact_boundaries_and_reject_overruns() {
+        let limits = work_limits(16, Duration::from_millis(5), Duration::from_millis(10));
+        let first_start = Instant::now();
+        let mut budget = CodecWorkBudget::new(limits);
+        let first = budget.begin_at(ContentCoding::Gzip, first_start).unwrap();
+        first
+            .ensure_within(first_start + Duration::from_millis(5))
+            .unwrap();
+        budget
+            .complete_at(&first, first_start + Duration::from_millis(5))
+            .unwrap();
+
+        let second_start = first_start + Duration::from_secs(1);
+        let second = budget.begin_at(ContentCoding::Gzip, second_start).unwrap();
+        budget
+            .complete_at(&second, second_start + Duration::from_millis(5))
+            .unwrap();
+        assert!(matches!(
+            budget.begin_at(ContentCoding::Gzip, second_start + Duration::from_secs(1)),
+            Err(ContentCodecError::Timeout {
+                coding: ContentCoding::Gzip
+            })
+        ));
+
+        let overrun_start = Instant::now();
+        let overrun = CodecWorkBudget::new(limits)
+            .begin_at(ContentCoding::Brotli, overrun_start)
+            .unwrap();
+        assert_eq!(
+            overrun
+                .ensure_within(overrun_start + Duration::from_millis(5) + Duration::from_nanos(1)),
+            Err(ContentCodecError::Timeout {
+                coding: ContentCoding::Brotli
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn codec_work_quantum_yields_before_large_operations_complete() {
+        let codec_limits = generous_limits().with_work_limits(work_limits(
+            1024,
+            Duration::from_secs(2),
+            Duration::from_secs(10),
+        ));
+        let started = Arc::new(AtomicBool::new(false));
+        let peer_ran = Arc::new(AtomicBool::new(false));
+        let codec = {
+            let started = Arc::clone(&started);
+            let peer_ran = Arc::clone(&peer_ran);
+            async move {
+                let mut encoder = ContentEncoder::new(ContentCoding::Gzip, codec_limits).unwrap();
+                started.store(true, Ordering::SeqCst);
+                encoder
+                    .on_frame(BodyFrame::Data(Bytes::from(vec![b'x'; 256 * 1024])))
+                    .await
+                    .unwrap();
+                assert!(
+                    peer_ran.load(Ordering::SeqCst),
+                    "codec operation completed without a cooperative yield"
+                );
+            }
+        };
+        let peer = async {
+            while !started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            peer_ran.store(true, Ordering::SeqCst);
+        };
+
+        tokio::join!(codec, peer);
+
+        let source = (0_usize..256 * 1024)
+            .map(|index| u8::try_from((index * 31 + index / 251) & 0xff).unwrap())
+            .collect::<Vec<_>>();
+        let encoded = encode_with_chunks(ContentCoding::Gzip, &source, source.len()).await;
+        started.store(false, Ordering::SeqCst);
+        peer_ran.store(false, Ordering::SeqCst);
+        let decoder = {
+            let started = Arc::clone(&started);
+            let peer_ran = Arc::clone(&peer_ran);
+            async move {
+                let mut decoder = ContentDecoder::new(ContentCoding::Gzip, codec_limits).unwrap();
+                started.store(true, Ordering::SeqCst);
+                decoder
+                    .on_frame(BodyFrame::Data(Bytes::from(encoded)))
+                    .await
+                    .unwrap();
+                assert!(
+                    peer_ran.load(Ordering::SeqCst),
+                    "decoder operation completed without a cooperative yield"
+                );
+            }
+        };
+        let peer = async {
+            while !started.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+            peer_ran.store(true, Ordering::SeqCst);
+        };
+
+        tokio::join!(decoder, peer);
+    }
+
+    #[tokio::test]
+    async fn codec_timeout_is_typed_and_makes_the_codec_terminal() {
+        let codec_limits = generous_limits().with_work_limits(work_limits(
+            1,
+            Duration::from_nanos(1),
+            Duration::from_nanos(1),
+        ));
+        let mut encoder = ContentEncoder::new(ContentCoding::Brotli, codec_limits).unwrap();
+        assert_eq!(
+            encoder
+                .on_frame(BodyFrame::Data(Bytes::from(vec![b'x'; 64 * 1024])))
+                .await,
+            Err(ContentCodecError::Timeout {
+                coding: ContentCoding::Brotli
+            })
+        );
+        assert_eq!(
+            encoder.finish().await,
+            Err(ContentCodecError::AlreadyFinished {
+                coding: ContentCoding::Brotli
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn aborting_a_large_codec_operation_is_prompt_and_isolated() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let codec_limits = limits(
+            8 * 1024 * 1024,
+            8 * 1024 * 1024,
+            8 * 1024 * 1024,
+            1000,
+            8 * 1024 * 1024,
+        )
+        .with_work_limits(work_limits(
+            1,
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        ));
+        let task = {
+            let started = Arc::clone(&started);
+            tokio::spawn(async move {
+                let mut encoder = ContentEncoder::new(ContentCoding::Gzip, codec_limits).unwrap();
+                started.notify_one();
+                encoder
+                    .on_frame(BodyFrame::Data(Bytes::from(vec![b'x'; 4 * 1024 * 1024])))
+                    .await
+            })
+        };
+
+        started.notified().await;
+        tokio::task::yield_now().await;
+        task.abort();
+        let failure = tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("aborted codec operation did not stop promptly")
+            .unwrap_err();
+        assert!(failure.is_cancelled());
+
+        let encoded = encode_with_chunks(ContentCoding::Gzip, b"independent", 3).await;
+        assert_eq!(
+            decode_with_chunks(ContentCoding::Gzip, &encoded, 2, generous_limits())
+                .await
+                .unwrap(),
+            b"independent"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1316,7 +1719,9 @@ mod tests {
         for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, b"unrelated", 2).await;
             assert_eq!(
-                decode_with_chunks(coding, &encoded, 1, generous_limits()).unwrap(),
+                decode_with_chunks(coding, &encoded, 1, generous_limits())
+                    .await
+                    .unwrap(),
                 b"unrelated"
             );
         }
@@ -1335,13 +1740,16 @@ mod tests {
         let mut decoder = ContentDecoder::new(ContentCoding::Gzip, generous_limits()).unwrap();
         decoder
             .on_frame(BodyFrame::Trailers(trailers.clone()))
+            .await
             .unwrap();
         assert_eq!(
-            decoder.on_frame(BodyFrame::Data(Bytes::from_static(b"late"))),
+            decoder
+                .on_frame(BodyFrame::Data(Bytes::from_static(b"late")))
+                .await,
             Err(ContentCodecError::DataAfterTrailers)
         );
         assert!(matches!(
-            decoder.finish(),
+            decoder.finish().await,
             Err(ContentCodecError::AlreadyFinished { .. })
         ));
 

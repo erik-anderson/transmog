@@ -33,6 +33,14 @@ bodies remain available to decoded hooks in every mode because no codec is
 needed. Applications choose policy and finite limits, not codec implementation
 objects.
 
+`ContentLimits::with_work_limits` configures the maximum codec bytes between
+cooperative yields, the deadline for one frame/completion call, and the
+cumulative active deadline for each codec layer and body. The cumulative clock
+does not run while the pipeline is waiting for the next network frame. A codec
+timeout fails the body with a typed terminal error. Cancelling an owning body
+task drops codec work in place; an application using codec objects directly
+must discard an object if it cancels one of its borrowed async operations.
+
 An `UpstreamService` receives a bounded `BodyStream`, immutable `UpstreamPlan`,
 and exchange cancellation signal. It must stop work promptly when cancelled and
 return another bounded stream. It must not create an unbounded queue or retry a

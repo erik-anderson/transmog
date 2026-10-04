@@ -12,12 +12,12 @@
   multi-layer Hooks v2 composition. Runtime decoding is disabled by default;
   embedding applications must choose identity output or restoration of the
   original coding stack with an explicit finite `ContentPolicy`.
-- Content byte, expansion, stack-depth, and decoder-window bounds are enforced
-  inside codec calls. There is not yet a separately preemptible CPU-time budget
-  inside one synchronous decoder poll; runtime idle and hook deadlines apply at
-  the surrounding asynchronous boundaries. Applications handling hostile
-  traffic should keep content limits conservative until work-quantum/deadline
-  enforcement is added.
+- Content byte, expansion, stack-depth, decoder-window, work-quantum, and active
+  wall-time bounds are enforced inside codec operations. Preemption is
+  cooperative at bounded input/output progress boundaries: a dependency call,
+  including native zstd work, cannot be forcibly interrupted halfway through
+  an instruction sequence. Applications handling hostile traffic should keep
+  byte, ratio, window, and work limits conservative together.
 - Content processing does not transcode character sets, parse semantic media
   formats, negotiate dictionaries, or support WebSocket per-message
   compression. Raw-DEFLATE compatibility is opt-in and selected only from the

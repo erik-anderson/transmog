@@ -75,6 +75,14 @@ drops independently owned live encoders, verifies every task is cancelled, and
 proves unrelated round trips still complete. These tests stay in the ordinary
 cross-platform workspace gate.
 
+The codec work-bound suite validates configuration and exact monotonic-time
+boundaries without sleeping, then exercises the real async engines to prove
+large encode and decode calls cooperatively yield. A deliberately exhausted
+deadline must return typed `ContentCodecError::Timeout`, make the codec
+terminal, and leave independently owned tasks unaffected. Fuzz targets use
+smaller finite work quanta so their normal mutation paths also exercise the
+decoder's quantum-resume state machine.
+
 Coverage-guided targets live in the independent, non-published `fuzz/`
 workspace. `content_encoding` mutates duplicate field boundaries and coding
 syntax while checking canonical reparse invariants. `decode_stream` mutates

@@ -3932,12 +3932,13 @@ mod tests {
         Bytes::from(body_frame_data(frames))
     }
 
-    fn decode_test_content(coding: ContentCoding, input: &[u8]) -> Vec<u8> {
+    async fn decode_test_content(coding: ContentCoding, input: &[u8]) -> Vec<u8> {
         let mut decoder = ContentDecoder::new(coding, ContentLimits::default()).unwrap();
         let mut frames = decoder
             .on_frame(BodyFrame::Data(Bytes::copy_from_slice(input)))
+            .await
             .unwrap();
-        frames.extend(decoder.finish().unwrap());
+        frames.extend(decoder.finish().await.unwrap());
         body_frame_data(frames)
     }
 
@@ -4068,7 +4069,7 @@ mod tests {
         assert!(upstream_headers.values("content-length").next().is_none());
         assert!(upstream_headers.values("etag").next().is_none());
         assert_eq!(
-            decode_test_content(ContentCoding::Gzip, &observed_request.body),
+            decode_test_content(ContentCoding::Gzip, &observed_request.body).await,
             b"xrequest"
         );
 
@@ -4082,7 +4083,7 @@ mod tests {
         assert!(!response_head.contains("etag:"));
         let response_body = http1_response_body(&response);
         assert_eq!(
-            decode_test_content(ContentCoding::Brotli, &response_body),
+            decode_test_content(ContentCoding::Brotli, &response_body).await,
             b"xresponse"
         );
 

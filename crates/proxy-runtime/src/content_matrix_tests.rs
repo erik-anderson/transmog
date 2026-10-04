@@ -344,7 +344,7 @@ async fn auto_fallback_replays_the_processed_coded_body_before_response_start() 
         "GET",
     )
     .await;
-    assert_eq!(decode_stack(&response), b"xresponse");
+    assert_eq!(decode_stack(&response).await, b"xresponse");
     let proof = evidence.recv().await.unwrap();
     assert_eq!(proof.egress_version, HttpLegVersion::Http2);
     assert_eq!(proof.route_attempts.len(), 2);
@@ -832,7 +832,7 @@ async fn run_matrix_case(
     )
     .await;
     assert_eq!(
-        decode_stack(&response),
+        decode_stack(&response).await,
         b"xresponse",
         "{ingress:?}/{egress:?}"
     );
@@ -880,7 +880,7 @@ async fn spawn_content_tls_origin(
                 assert_eq!(request.version(), http_version(version));
                 assert_coded_headers(request.headers());
                 let request_body = request.into_body().collect().await.unwrap().to_bytes();
-                assert_eq!(decode_stack(&request_body), b"xrequest");
+                assert_eq!(decode_stack(&request_body).await, b"xrequest");
                 Ok::<_, Infallible>(
                     Response::builder()
                         .status(200)
@@ -1058,12 +1058,12 @@ async fn encode_one(coding: ContentCoding, input: &[u8]) -> Bytes {
     Bytes::from(frame_data(frames))
 }
 
-fn decode_stack(input: &[u8]) -> Vec<u8> {
+async fn decode_stack(input: &[u8]) -> Vec<u8> {
     let mut output = Bytes::copy_from_slice(input);
     for coding in CODINGS.into_iter().rev() {
         let mut decoder = ContentDecoder::new(coding, ContentLimits::default()).unwrap();
-        let mut frames = decoder.on_frame(BodyFrame::Data(output)).unwrap();
-        frames.extend(decoder.finish().unwrap());
+        let mut frames = decoder.on_frame(BodyFrame::Data(output)).await.unwrap();
+        frames.extend(decoder.finish().await.unwrap());
         output = Bytes::from(frame_data(frames));
     }
     output.to_vec()
@@ -1384,7 +1384,7 @@ async fn run_content_h3_origin(
                         }
                     },
                     Ok((stream_id, quiche::h3::Event::Finished)) => {
-                        assert_eq!(decode_stack(&request_body), b"xrequest");
+                        assert_eq!(decode_stack(&request_body).await, b"xrequest");
                         let content_length = response.len().to_string();
                         let headers = [
                             quiche::h3::Header::new(b":status", b"200"),

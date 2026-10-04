@@ -102,12 +102,13 @@ async fn encode(coding: ContentCoding, input: Bytes) -> Bytes {
     collect_data(frames)
 }
 
-fn decode(coding: ContentCoding, input: Bytes) -> Bytes {
+async fn decode(coding: ContentCoding, input: Bytes) -> Bytes {
     let mut decoder = ContentDecoder::new(coding, ContentLimits::default()).expect("decoder");
     let mut frames = decoder
         .on_frame(BodyFrame::Data(input))
+        .await
         .expect("decode frame");
-    frames.extend(decoder.finish().expect("decode finish"));
+    frames.extend(decoder.finish().await.expect("decode finish"));
     collect_data(frames)
 }
 
@@ -180,7 +181,7 @@ async fn main() {
             let encoded = encode(coding, input.clone()).await;
             let started = Instant::now();
             for _ in 0..iterations {
-                let decoded = decode(coding, encoded.clone());
+                let decoded = decode(coding, encoded.clone()).await;
                 assert_eq!(black_box(decoded.len()), input.len());
             }
             report(
@@ -192,7 +193,7 @@ async fn main() {
 
             let started = Instant::now();
             for _ in 0..iterations {
-                let decoded = decode(coding, encoded.clone());
+                let decoded = decode(coding, encoded.clone()).await;
                 let reencoded = encode(coding, decoded).await;
                 black_box(reencoded);
             }

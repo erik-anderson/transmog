@@ -13,7 +13,9 @@ mod pipeline;
 mod plan;
 mod policy;
 
-pub use budget::{ContentBudget, ContentLimitError, ContentLimits};
+pub use budget::{
+    ContentBudget, ContentLimitError, ContentLimits, ContentWorkLimitError, ContentWorkLimits,
+};
 pub use codec::{
     ContentCodecError, ContentDecoder, ContentDecoderOptions, ContentEncoder, DeflateCompatibility,
 };

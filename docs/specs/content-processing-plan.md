@@ -1,8 +1,8 @@
 # Plan: Production-grade content processing
 
-Status: active; Phases 1-5 and the local Phase 6 deterministic hardening,
-fuzz-target, benchmark, and dependency gates are implemented on Windows;
-cross-platform fuzz/codec observation and preemptible codec CPU deadlines remain
+Status: active; Phases 1-5, local Phase 6 hardening, cooperative codec work
+bounds, fuzz-target, benchmark, and dependency gates are implemented on
+Windows; cross-platform fuzz/codec observation remains
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -286,8 +286,9 @@ parsing and bounded corrupt/chunked decoder input. The normal suite owns
 deterministic decompression-bomb and cancellation stress, while the content
 release harness records pass-through, decode-only, and decode/re-encode
 baselines for every codec. Shipping and fuzz-only dependency graphs remain
-separate. Cross-platform CI observation and a preemptible per-codec work/deadline
-mechanism are still open.
+separate. Codec operations now have configurable byte quanta, cooperative
+executor yields, per-operation deadlines, cumulative per-layer body deadlines,
+and typed terminal timeouts. Cross-platform CI observation remains open.
 
 Local Linux sanitizer validation on 2026-10-03 used the checked-in
 Docker Desktop/WSL2 environment and completed 10,000 mutation runs for each
@@ -322,7 +323,7 @@ are regenerated in the same change that accepts a dependency.
 - [x] Untouched encoded traffic remains byte-preserving.
 - [x] Modified traffic has correct coding, framing, and validator headers.
 - [x] Requests and responses preserve trailers and bodyless semantics.
-- [ ] All byte, ratio, depth, frame, time, and cancellation bounds are tested.
+- [x] All byte, ratio, depth, frame, time, and cancellation bounds are tested.
 - [x] One paused codec stream does not block unrelated H2/H3 streams.
 - [x] All ingress/egress protocol matrix rows pass local coding fixtures.
 - [x] Public embedding example and rustdoc are complete.
@@ -339,8 +340,8 @@ are regenerated in the same change that accepts a dependency.
 
 ## Next implementation slice
 
-Observe the new Linux fuzz smoke job and the existing Linux/macOS codec matrix,
-then add a preemptible codec work-quantum/deadline design before checking the
-remaining all-bounds item. Preserve the deterministic protocol matrix as the
-behavioral baseline; do not weaken finite limits or move content policy into
-transport adapters to improve a benchmark.
+Observe the Linux fuzz-smoke job and Linux/macOS codec matrix, then extend the
+content performance harness into end-to-end throughput, first-byte,
+peak-memory, and cancellation benchmarks. Preserve the deterministic protocol
+matrix as the behavioral baseline; do not weaken finite limits or move content
+policy into transport adapters to improve a benchmark.

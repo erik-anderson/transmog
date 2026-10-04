@@ -3,13 +3,14 @@
 use std::{
     num::NonZeroUsize,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use rustymiddle_content::{
     ContentBodyPipeline, ContentCoding, ContentCodingStack, ContentDecoder, ContentDecoderOptions,
-    ContentEncoder, ContentLimits, ContentOutput, ContentPipelineError,
+    ContentEncoder, ContentLimits, ContentOutput, ContentPipelineError, ContentWorkLimits,
 };
 use rustymiddle_core::{
     BodyFrame, ConnectionId, HeaderBlock, HeaderField, HttpLegVersion, RequestHead, SessionId,
@@ -155,7 +156,7 @@ async fn run_pipeline(data: &[u8]) {
     let (mut output_data, trailers) = collect_output(output_frames);
     if output == ContentOutput::PreserveOriginal {
         for coding in stack.decode_order() {
-            output_data = decode_layer(coding, &output_data, codec_chunk, limits);
+            output_data = decode_layer(coding, &output_data, codec_chunk, limits).await;
         }
     }
     let mut expected = source.clone();
@@ -334,7 +335,7 @@ async fn encode_layer(
     output
 }
 
-fn decode_layer(
+async fn decode_layer(
     coding: ContentCoding,
     input: &[u8],
     chunk_size: usize,
@@ -347,10 +348,14 @@ fn decode_layer(
             &mut output,
             decoder
                 .on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk)))
+                .await
                 .expect("generated stream must decode"),
         );
     }
-    append_data(&mut output, decoder.finish().expect("decoder must finish"));
+    append_data(
+        &mut output,
+        decoder.finish().await.expect("decoder must finish"),
+    );
     output
 }
 
@@ -413,6 +418,14 @@ fn limits() -> ContentLimits {
         NonZeroUsize::new(1_024).expect("ratio limit"),
         MAX_PIPELINE_BYTES,
         NonZeroUsize::new(CODINGS.len()).expect("coding depth"),
+    )
+    .with_work_limits(
+        ContentWorkLimits::new(
+            NonZeroUsize::new(1024).expect("work quantum"),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+        )
+        .expect("valid work limits"),
     )
 }
 

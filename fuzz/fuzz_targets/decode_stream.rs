@@ -1,14 +1,15 @@
 #![no_main]
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, sync::OnceLock, time::Duration};
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use rustymiddle_content::{
     ContentCodecError, ContentCoding, ContentDecoder, ContentDecoderOptions, ContentLimits,
-    DeflateCompatibility,
+    ContentWorkLimits, DeflateCompatibility,
 };
 use rustymiddle_core::{BodyFrame, HeaderBlock, HeaderField};
+use tokio::runtime::{Builder, Runtime};
 
 const CODINGS: [ContentCoding; 4] = [
     ContentCoding::Gzip,
@@ -19,7 +20,9 @@ const CODINGS: [ContentCoding; 4] = [
 const MAX_ENCODED: usize = 4 * 1024;
 const MAX_DECODED: usize = 64 * 1024;
 
-fuzz_target!(|data: &[u8]| {
+fuzz_target!(|data: &[u8]| runtime().block_on(fuzz(data)));
+
+async fn fuzz(data: &[u8]) {
     let Some((&coding_selector, rest)) = data.split_first() else {
         return;
     };
@@ -61,13 +64,15 @@ fuzz_target!(|data: &[u8]| {
                 trailers(),
                 limits.max_decoded_bytes().get(),
                 &mut released,
-            ) {
+            )
+            .await
+            {
                 return;
             }
         }
         if flags & 8 != 0 && consumed >= split {
-            let _ = decoder.finish();
-            assert_terminal(&mut decoder);
+            let _ = decoder.finish().await;
+            assert_terminal(&mut decoder).await;
             return;
         }
         if !accept(
@@ -75,7 +80,9 @@ fuzz_target!(|data: &[u8]| {
             BodyFrame::Data(Bytes::copy_from_slice(chunk)),
             limits.max_decoded_bytes().get(),
             &mut released,
-        ) {
+        )
+        .await
+        {
             return;
         }
         consumed = consumed.saturating_add(chunk.len());
@@ -88,6 +95,7 @@ fuzz_target!(|data: &[u8]| {
             limits.max_decoded_bytes().get(),
             &mut released,
         )
+        .await
     {
         return;
     }
@@ -97,51 +105,66 @@ fuzz_target!(|data: &[u8]| {
             trailers(),
             limits.max_decoded_bytes().get(),
             &mut released,
-        ) {
+        )
+        .await
+        {
             return;
         }
-        assert!(!accept(
-            &mut decoder,
-            trailers(),
-            limits.max_decoded_bytes().get(),
-            &mut released,
-        ));
+        assert!(
+            !accept(
+                &mut decoder,
+                trailers(),
+                limits.max_decoded_bytes().get(),
+                &mut released,
+            )
+            .await
+        );
         return;
     }
 
-    if let Ok(frames) = decoder.finish() {
+    if let Ok(frames) = decoder.finish().await {
         count_output(released, frames, limits.max_decoded_bytes().get());
     }
-    assert_terminal(&mut decoder);
-});
+    assert_terminal(&mut decoder).await;
+}
 
-fn accept(
+async fn accept(
     decoder: &mut ContentDecoder,
     frame: BodyFrame,
     limit: usize,
     released: &mut usize,
 ) -> bool {
-    match decoder.on_frame(frame) {
+    match decoder.on_frame(frame).await {
         Ok(frames) => {
             *released = count_output(*released, frames, limit);
             true
         }
         Err(_) => {
-            assert_terminal(decoder);
+            assert_terminal(decoder).await;
             false
         }
     }
 }
 
-fn assert_terminal(decoder: &mut ContentDecoder) {
+async fn assert_terminal(decoder: &mut ContentDecoder) {
     assert!(matches!(
-        decoder.finish(),
+        decoder.finish().await,
         Err(ContentCodecError::AlreadyFinished { .. })
     ));
     assert!(matches!(
-        decoder.on_frame(BodyFrame::Data(Bytes::new())),
+        decoder.on_frame(BodyFrame::Data(Bytes::new())).await,
         Err(ContentCodecError::AlreadyFinished { .. })
     ));
+}
+
+fn runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("fuzz runtime must initialize")
+    })
 }
 
 fn count_output(mut released: usize, frames: Vec<BodyFrame>, limit: usize) -> usize {
@@ -176,6 +199,15 @@ fn limits(selector: u8) -> ContentLimits {
         NonZeroUsize::new(ratio).expect("ratio limit"),
         slack,
         NonZeroUsize::new(CODINGS.len()).expect("coding depth"),
+    )
+    .with_work_limits(
+        ContentWorkLimits::new(
+            NonZeroUsize::new([64, 256, 1024, 4096][usize::from(selector % 4)])
+                .expect("work quantum"),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+        )
+        .expect("valid work limits"),
     )
 }
 
