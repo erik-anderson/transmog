@@ -18,8 +18,10 @@ use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
 
 use crate::{
     AttachedController, CaptureManager, CaptureServiceError, CaptureStart, CaptureStatus,
-    ControlConnectionError, ControlConnector, ControlPolicy, INTERACTIVE_CONTROL_HOOK_ID,
-    SessionCatalog, SessionLimits, SessionObserver, session_observer_config,
+    ControlConnectionError, ControlConnector, ControlPolicy, HostIntegrationPlan,
+    INTERACTIVE_CONTROL_HOOK_ID, ReplayError, ReplayExecutor, ReplayLimits, ReplayRequest,
+    ReplayResponse, SessionCatalog, SessionLimits, SessionObserver, execute_replay,
+    host::HostTransaction, session_observer_config,
 };
 
 /// Finite composition settings for one application/session service.
@@ -85,6 +87,18 @@ pub enum ServiceError {
     /// Dynamic capture failed during a service operation.
     #[error(transparent)]
     Capture(#[from] CaptureServiceError),
+    /// Host apply failed before the listener was published.
+    #[error("host integration apply failed: {0}")]
+    HostApply(String),
+    /// Exact host restoration failed and remains retryable.
+    #[error("host integration restore failed: {0}")]
+    HostRestore(String),
+    /// A prior host restore must succeed before another run starts.
+    #[error("a host integration restore is still pending")]
+    HostRestorePending,
+    /// A failed runtime task must be stopped before another run starts.
+    #[error("the failed proxy run must be stopped before restart")]
+    FailedRunNeedsStop,
 }
 
 struct RunTask {
@@ -92,6 +106,7 @@ struct RunTask {
     local_addr: SocketAddr,
     shutdown: ExchangeCancellation,
     control: Option<ProxyControl>,
+    host: Option<HostTransaction>,
     handle: JoinHandle<Result<(), String>>,
 }
 
@@ -99,6 +114,7 @@ struct Lifecycle {
     status: ServiceStatus,
     next_generation: u64,
     task: Option<RunTask>,
+    pending_restore: Option<HostTransaction>,
 }
 
 struct ServiceInner {
@@ -119,6 +135,12 @@ impl Drop for ServiceInner {
         if let Some(task) = lifecycle.task.take() {
             task.shutdown.cancel();
             task.handle.abort();
+            if let Some(host) = task.host {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.restore()));
+            }
+        }
+        if let Some(host) = lifecycle.pending_restore.take() {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.restore()));
         }
     }
 }
@@ -159,6 +181,7 @@ impl ApplicationSessionService {
                     status: ServiceStatus::Stopped,
                     next_generation: 0,
                     task: None,
+                    pending_restore: None,
                 }),
                 operation: AsyncMutex::new(()),
             }),
@@ -236,19 +259,44 @@ impl ApplicationSessionService {
     ///
     /// Returns a listener-address error or [`ServiceError::AlreadyRunning`].
     pub async fn start(&self, server: ProxyServer) -> Result<SocketAddr, ServiceError> {
-        let local_addr = server
-            .local_addr()
-            .map_err(|error| ServiceError::ListenerAddress(error.to_string()))?;
-        let control = server.control();
-        let websocket = server.subscribe_websocket_evidence();
-        self.start_runner(Box::new(ProxyRunner {
-            server,
-            local_addr,
-            control,
-            websocket,
-            catalog: self.inner.catalog.clone(),
-        }))
+        let runner = self.proxy_runner(server)?;
+        self.start_runner(runner).await
+    }
+
+    /// Applies caller-owned host configuration before publishing a bound
+    /// runtime. The exact returned restore token remains owned until stop.
+    ///
+    /// # Errors
+    ///
+    /// Returns a lifecycle, apply, or worker failure. Apply failure prevents
+    /// the listener task from starting.
+    pub async fn start_with_host(
+        &self,
+        server: ProxyServer,
+        plan: HostIntegrationPlan,
+    ) -> Result<SocketAddr, ServiceError> {
+        let runner = self.proxy_runner(server)?;
+        self.start_runner_with_host(runner, plan).await
+    }
+
+    async fn start_runner_with_host(
+        &self,
+        runner: Box<dyn SessionRunner>,
+        plan: HostIntegrationPlan,
+    ) -> Result<SocketAddr, ServiceError> {
+        let endpoint = runner.local_addr();
+        let _operation = self.inner.operation.lock().await;
+        self.prepare_start().await?;
+        let transaction = tokio::task::spawn_blocking(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                HostTransaction::apply(plan, endpoint)
+            }))
+        })
         .await
+        .map_err(|_| ServiceError::HostApply("host apply task failed".into()))?
+        .map_err(|_| ServiceError::HostApply("host integration panicked".into()))?
+        .map_err(|error| ServiceError::HostApply(error.message))?;
+        Ok(self.launch_runner(runner, Some(transaction)))
     }
 
     /// Starts a create-new native capture while the service remains live.
@@ -269,6 +317,23 @@ impl ApplicationSessionService {
         self.inner.capture.stop().await.map_err(Into::into)
     }
 
+    /// Validates and executes an owned composer/replay request through a
+    /// caller-supplied route-aware executor.
+    ///
+    /// # Errors
+    ///
+    /// Returns typed validation, timeout, cancellation, executor, or response
+    /// bound failures.
+    pub async fn replay(
+        &self,
+        executor: Arc<dyn ReplayExecutor>,
+        request: ReplayRequest,
+        limits: ReplayLimits,
+        cancellation: &ExchangeCancellation,
+    ) -> Result<ReplayResponse, ReplayError> {
+        execute_replay(executor, request, limits, cancellation).await
+    }
+
     /// Requests graceful runtime shutdown, waits for bounded drain, and seals
     /// an active capture. Concurrent callers serialize and the stopped result
     /// is idempotent.
@@ -278,7 +343,7 @@ impl ApplicationSessionService {
     /// Returns a runtime or capture failure after owned cleanup is attempted.
     pub async fn stop(&self) -> Result<(), ServiceError> {
         let _operation = self.inner.operation.lock().await;
-        let (task, existing_failure) = {
+        let (task, pending_restore, existing_failure) = {
             let mut lifecycle = self.lock_lifecycle();
             let existing_failure = match &lifecycle.status {
                 ServiceStatus::Failed { message, .. } => Some(message.clone()),
@@ -289,21 +354,25 @@ impl ApplicationSessionService {
                 lifecycle.status = ServiceStatus::Stopping {
                     local_addr: task.local_addr,
                 };
-                (Some(task), existing_failure)
+                let pending = lifecycle.pending_restore.take();
+                (Some(task), pending, existing_failure)
             } else {
-                (None, existing_failure)
+                let pending = lifecycle.pending_restore.take();
+                (None, pending, existing_failure)
             }
         };
 
-        let runtime_result = if let Some(task) = task {
-            match task.handle.await {
+        let (runtime_result, host) = if let Some(task) = task {
+            let RunTask { handle, host, .. } = task;
+            let result = match handle.await {
                 Ok(result) => result,
                 Err(error) => Err(format!("runtime task join failed: {error}")),
-            }
+            };
+            (result, host.or(pending_restore))
         } else if let Some(message) = existing_failure {
-            Err(message)
+            (Err(message), pending_restore)
         } else {
-            Ok(())
+            (Ok(()), pending_restore)
         };
 
         let capture_result = if matches!(
@@ -315,9 +384,22 @@ impl ApplicationSessionService {
             Ok(())
         };
 
+        let host_result = if let Some(transaction) = host {
+            match restore_transaction(transaction).await {
+                Ok(()) => Ok(()),
+                Err((transaction, message)) => {
+                    self.lock_lifecycle().pending_restore = Some(transaction);
+                    Err(ServiceError::HostRestore(message))
+                }
+            }
+        } else {
+            Ok(())
+        };
+
         let result = runtime_result
             .map_err(ServiceError::Runtime)
-            .and_then(|()| capture_result.map_err(ServiceError::Capture));
+            .and_then(|()| capture_result.map_err(ServiceError::Capture))
+            .and(host_result);
         let mut lifecycle = self.lock_lifecycle();
         lifecycle.status = match &result {
             Ok(()) => ServiceStatus::Stopped,
@@ -333,18 +415,63 @@ impl ApplicationSessionService {
         result
     }
 
+    /// Whether an exact host restore token remains pending after failure.
+    pub fn has_pending_host_restore(&self) -> bool {
+        self.lock_lifecycle().pending_restore.is_some()
+    }
+
+    /// Retries exact host restoration with the same opaque token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServiceError::HostRestore`] while the adapter still fails, or
+    /// [`ServiceError::HostRestorePending`] when no retry is pending.
+    pub async fn retry_host_restore(&self) -> Result<(), ServiceError> {
+        let _operation = self.inner.operation.lock().await;
+        let transaction = self
+            .lock_lifecycle()
+            .pending_restore
+            .take()
+            .ok_or(ServiceError::HostRestorePending)?;
+        match restore_transaction(transaction).await {
+            Ok(()) => {
+                let mut lifecycle = self.lock_lifecycle();
+                if lifecycle.task.is_none() {
+                    lifecycle.status = ServiceStatus::Stopped;
+                }
+                Ok(())
+            }
+            Err((transaction, message)) => {
+                self.lock_lifecycle().pending_restore = Some(transaction);
+                Err(ServiceError::HostRestore(message))
+            }
+        }
+    }
+
     async fn start_runner(
         &self,
         runner: Box<dyn SessionRunner>,
     ) -> Result<SocketAddr, ServiceError> {
         let _operation = self.inner.operation.lock().await;
+        self.prepare_start().await?;
+        Ok(self.launch_runner(runner, None))
+    }
+
+    async fn prepare_start(&self) -> Result<(), ServiceError> {
         let old_task = {
             let mut lifecycle = self.lock_lifecycle();
+            if lifecycle.pending_restore.is_some() {
+                return Err(ServiceError::HostRestorePending);
+            }
             if matches!(
                 lifecycle.status,
                 ServiceStatus::Running { .. } | ServiceStatus::Stopping { .. }
             ) {
                 return Err(ServiceError::AlreadyRunning);
+            }
+            if lifecycle.task.is_some() && matches!(lifecycle.status, ServiceStatus::Failed { .. })
+            {
+                return Err(ServiceError::FailedRunNeedsStop);
             }
             lifecycle.task.take()
         };
@@ -352,7 +479,14 @@ impl ApplicationSessionService {
             task.shutdown.cancel();
             let _ = task.handle.await;
         }
+        Ok(())
+    }
 
+    fn launch_runner(
+        &self,
+        runner: Box<dyn SessionRunner>,
+        host: Option<HostTransaction>,
+    ) -> SocketAddr {
         let local_addr = runner.local_addr();
         let control = runner.control();
         let shutdown = ExchangeCancellation::new();
@@ -398,11 +532,27 @@ impl ApplicationSessionService {
             local_addr,
             shutdown,
             control,
+            host,
             handle,
         });
         drop(lifecycle);
         let _ = published.send(());
-        Ok(local_addr)
+        local_addr
+    }
+
+    fn proxy_runner(&self, server: ProxyServer) -> Result<Box<dyn SessionRunner>, ServiceError> {
+        let local_addr = server
+            .local_addr()
+            .map_err(|error| ServiceError::ListenerAddress(error.to_string()))?;
+        let control = server.control();
+        let websocket = server.subscribe_websocket_evidence();
+        Ok(Box::new(ProxyRunner {
+            server,
+            local_addr,
+            control,
+            websocket,
+            catalog: self.inner.catalog.clone(),
+        }))
     }
 
     fn lock_lifecycle(&self) -> std::sync::MutexGuard<'_, Lifecycle> {
@@ -419,6 +569,22 @@ trait SessionRunner: Send {
     fn local_addr(&self) -> SocketAddr;
     fn control(&self) -> Option<ProxyControl>;
     fn run(self: Box<Self>, shutdown: ExchangeCancellation) -> RunnerFuture;
+}
+
+async fn restore_transaction(
+    transaction: HostTransaction,
+) -> Result<(), (HostTransaction, String)> {
+    let attempt = transaction.clone();
+    let restored = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| attempt.restore()))
+    })
+    .await;
+    match restored {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(error))) => Err((transaction, error.message)),
+        Ok(Err(_)) => Err((transaction, "host integration panicked".into())),
+        Err(_) => Err((transaction, "host restore task failed".into())),
+    }
 }
 
 struct ProxyRunner {
@@ -469,7 +635,13 @@ impl SessionRunner for ProxyRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{
+        sync::{
+            Mutex as StdMutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use super::*;
 
@@ -538,6 +710,14 @@ mod tests {
         })
         .await
         .unwrap();
+        assert_eq!(
+            service.start_runner(runner(None)).await,
+            Err(ServiceError::FailedRunNeedsStop)
+        );
+        assert!(matches!(
+            service.stop().await,
+            Err(ServiceError::Runtime(_))
+        ));
         service.start_runner(runner(None)).await.unwrap();
         assert!(matches!(service.status(), ServiceStatus::Running { .. }));
         service.stop().await.unwrap();
@@ -557,6 +737,88 @@ mod tests {
         };
         assert_eq!(first.await.unwrap(), Ok(()));
         assert_eq!(second.await.unwrap(), Ok(()));
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+    }
+
+    #[derive(Default)]
+    struct TestHost {
+        applied: StdMutex<Vec<SocketAddr>>,
+        restored: StdMutex<Vec<u64>>,
+        restore_failures: AtomicUsize,
+        apply_failure: bool,
+    }
+
+    impl crate::HostIntegration for TestHost {
+        fn apply(
+            &self,
+            endpoint: SocketAddr,
+        ) -> Result<crate::HostRestoreToken, crate::HostIntegrationError> {
+            if self.apply_failure {
+                return Err(crate::HostIntegrationError::new("apply rejected"));
+            }
+            self.applied.lock().unwrap().push(endpoint);
+            Ok(crate::HostRestoreToken::new(42_u64))
+        }
+
+        fn restore(
+            &self,
+            token: &crate::HostRestoreToken,
+        ) -> Result<(), crate::HostIntegrationError> {
+            let token = *token.downcast_ref::<u64>().expect("test token type");
+            self.restored.lock().unwrap().push(token);
+            if self
+                .restore_failures
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(crate::HostIntegrationError::new("restore rejected"));
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn host_apply_failure_does_not_publish_runner() {
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost {
+            apply_failure: true,
+            ..TestHost::default()
+        });
+        let result = service
+            .start_runner_with_host(runner(None), HostIntegrationPlan { integration: host })
+            .await;
+        assert!(matches!(result, Err(ServiceError::HostApply(_))));
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn failed_host_restore_retries_with_the_exact_token() {
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        host.restore_failures.store(1, Ordering::Relaxed);
+        service
+            .start_runner_with_host(
+                runner(None),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.stop().await,
+            Err(ServiceError::HostRestore(_))
+        ));
+        assert!(service.has_pending_host_restore());
+        assert_eq!(
+            service.start_runner(runner(None)).await,
+            Err(ServiceError::HostRestorePending)
+        );
+        service.retry_host_restore().await.unwrap();
+        assert!(!service.has_pending_host_restore());
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
         assert_eq!(service.status(), ServiceStatus::Stopped);
     }
 }

@@ -6,7 +6,9 @@
 mod capture;
 mod catalog;
 mod control;
+mod host;
 mod observer;
+mod replay;
 mod service;
 
 pub use capture::{
@@ -22,5 +24,11 @@ pub use control::{
     AttachedController, ControlConnectionError, ControlConnector, ControlPhase, ControlPolicy,
     ControlStats, INTERACTIVE_CONTROL_HOOK_ID,
 };
+pub use host::{HostIntegration, HostIntegrationError, HostIntegrationPlan, HostRestoreToken};
 pub use observer::{SessionObserver, session_observer_config};
+pub use replay::{
+    BoxReplayFuture, ReplayCredentialPolicy, ReplayError, ReplayExecutionError, ReplayExecutor,
+    ReplayLimits, ReplayRequest, ReplayResponse, ReplayRisk, ValidatedReplayRequest,
+    execute_replay,
+};
 pub use service::{ApplicationSessionService, ServiceConfig, ServiceError, ServiceStatus};
