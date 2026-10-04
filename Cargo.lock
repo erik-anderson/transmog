@@ -895,6 +895,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "quiche",
+ "rustymiddle-content",
  "rustymiddle-core",
  "rustymiddle-h3",
  "rustymiddle-http",

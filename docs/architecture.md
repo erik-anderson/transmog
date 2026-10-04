@@ -66,6 +66,7 @@ generation, TLS policy, and connector policy.
 `ProxyComponents` freezes the application-owned pieces before bind:
 
 - an immutable interceptor chain;
+- an immutable, finite content-processing policy (disabled by default);
 - a bounded `ObserverHub`;
 - an optional custom `RouteSelector`;
 - an optional canonical streaming `UpstreamService`;

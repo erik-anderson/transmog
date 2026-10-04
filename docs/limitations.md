@@ -9,17 +9,15 @@
 - 0-RTT and QUIC migration are disabled.
 - The content-processing layer provides strict coding plans, header repair,
   resource budgets, transport-neutral gzip/Brotli/deflate/zstd engines, and
-  multi-layer Hooks v2 composition. Runtime policy and listener integration
-  remain under implementation, so the proxy executable does not yet rewrite
-  compressed bodies.
+  multi-layer Hooks v2 composition. Runtime decoding is disabled by default;
+  embedding applications must choose identity output or restoration of the
+  original coding stack with an explicit finite `ContentPolicy`.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over HTTP/2.
   Forced-protocol routes and Auto without a cached HTTP/3 alternative stream.
 - A body-phase hook cannot replace an exchange with a synthetic response
   after the upstream response head has been committed. Synthetic responses are
   supported at the request- and response-head phases.
-- Runtime hooks still operate on raw transfer-decoded body bytes until the
-  content-aware pipeline is integrated around them.
 - WebSocket handshake heads can pass through HTTP handling, but WebSocket frame
   inspection and modification are not implemented.
 - The included `DecisionBridge` is an in-process bounded adapter. There is no

@@ -5,9 +5,9 @@ use rustymiddle_core::{
 use thiserror::Error;
 
 use crate::{
-    ContentBudget, ContentCodecError, ContentCodingError, ContentDecoder, ContentDecoderOptions,
-    ContentEncoder, ContentLength, ContentLimitError, ContentLimits, ContentOutput, ContentPlan,
-    plan::repaired_raw_output_headers,
+    ContentBudget, ContentCodecError, ContentCodingError, ContentCodingStack, ContentDecoder,
+    ContentDecoderOptions, ContentEncoder, ContentLength, ContentLimitError, ContentLimits,
+    ContentMode, ContentOutput, ContentPlan, ContentPolicy, plan::repaired_raw_output_headers,
 };
 
 /// A Hooks v2 body pipeline wrapped in bounded content decoding and encoding.
@@ -30,6 +30,68 @@ pub struct ContentBodyPipeline {
 }
 
 impl ContentBodyPipeline {
+    /// Constructs a pipeline from an embedding application's listener policy.
+    ///
+    /// Disabled policy preserves coded bodies exactly when every semantic hook
+    /// is optional. A required semantic hook instead fails before consuming the
+    /// body. Identity bodies remain available to semantic hooks because no
+    /// decoding capability is required.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed policy, coding, codec, or representation failure.
+    pub fn from_policy(
+        mut body: BodyPipeline,
+        source_headers: &HeaderBlock,
+        policy: ContentPolicy,
+    ) -> Result<Self, ContentPipelineError> {
+        if policy.mode() != ContentMode::Disabled {
+            let output = match policy.mode() {
+                ContentMode::InspectToIdentity => ContentOutput::Identity,
+                ContentMode::PreserveOriginalOutput => ContentOutput::PreserveOriginal,
+                ContentMode::Disabled => unreachable!("disabled mode handled above"),
+            };
+            return Self::new(
+                body,
+                source_headers,
+                output,
+                policy.limits(),
+                policy.decoder_options(),
+            );
+        }
+
+        match body.representation() {
+            BodyRepresentation::Neutral | BodyRepresentation::Raw => Self::new(
+                body,
+                source_headers,
+                ContentOutput::Identity,
+                policy.limits(),
+                policy.decoder_options(),
+            ),
+            BodyRepresentation::DecodedRequired | BodyRepresentation::DecodedIfSupported => {
+                let optional = body.representation() == BodyRepresentation::DecodedIfSupported;
+                match ContentCodingStack::from_headers(
+                    source_headers,
+                    policy.limits().max_coding_layers(),
+                ) {
+                    Ok(stack) if stack.is_empty() => Self::new(
+                        body,
+                        source_headers,
+                        ContentOutput::Identity,
+                        policy.limits(),
+                        policy.decoder_options(),
+                    ),
+                    Ok(_) | Err(ContentCodingError::Unsupported(_)) if optional => {
+                        body.decline_optional_decoded()?;
+                        Ok(Self::direct(body, source_headers, policy.limits()))
+                    }
+                    Ok(_) => Err(ContentPipelineError::DecodingDisabled),
+                    Err(error) => Err(error.into()),
+                }
+            }
+        }
+    }
+
     /// Resolves content policy and constructs one body pipeline.
     ///
     /// Unsupported coding disables a wholly optional decoded pipeline and
@@ -160,7 +222,9 @@ impl ContentBodyPipeline {
         frame: BodyFrame,
     ) -> Result<Vec<BodyFrame>, ContentPipelineError> {
         self.ensure_active()?;
-        if let BodyFrame::Data(bytes) = &frame {
+        if self.plan.is_some()
+            && let BodyFrame::Data(bytes) = &frame
+        {
             self.budget.record_encoded(bytes.len())?;
         }
         let result = self.process_inner(frame).await;
@@ -244,9 +308,11 @@ impl ContentBodyPipeline {
         &mut self,
         frames: Vec<BodyFrame>,
     ) -> Result<Vec<BodyFrame>, ContentPipelineError> {
-        for frame in &frames {
-            if let BodyFrame::Data(bytes) = frame {
-                self.budget.record_output(bytes.len())?;
+        if self.plan.is_some() {
+            for frame in &frames {
+                if let BodyFrame::Data(bytes) = frame {
+                    self.budget.record_output(bytes.len())?;
+                }
             }
         }
         Ok(frames)
@@ -357,6 +423,9 @@ impl EncoderStack {
 /// Failure constructing or running a content-aware body pipeline.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ContentPipelineError {
+    /// A required semantic hook encountered a coded body while decoding was disabled.
+    #[error("content decoding is disabled but a hook requires decoded bytes")]
+    DecodingDisabled,
     /// Selected body plans had an invalid representation policy.
     #[error(transparent)]
     Representation(#[from] BodyRepresentationError),
@@ -762,6 +831,70 @@ mod tests {
             ))
         ));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_policy_is_explicit_for_coded_and_identity_bodies() {
+        let coded_headers = headers("gzip");
+        let required = body_pipeline(coded_headers.clone(), TestPlan::DecodedPrefix).await;
+        assert!(matches!(
+            ContentBodyPipeline::from_policy(required, &coded_headers, ContentPolicy::disabled()),
+            Err(ContentPipelineError::DecodingDisabled)
+        ));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let optional = body_pipeline(
+            coded_headers.clone(),
+            TestPlan::OptionalPrefix(Arc::clone(&calls)),
+        )
+        .await;
+        let mut optional =
+            ContentBodyPipeline::from_policy(optional, &coded_headers, ContentPolicy::disabled())
+                .unwrap();
+        let opaque = vec![BodyFrame::Data(Bytes::from_static(b"opaque"))];
+        assert_eq!(drive(&mut optional, opaque.clone()).await.unwrap(), opaque);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let identity_headers = HeaderBlock::new();
+        let identity = body_pipeline(identity_headers.clone(), TestPlan::DecodedPrefix).await;
+        let mut identity = ContentBodyPipeline::from_policy(
+            identity,
+            &identity_headers,
+            ContentPolicy::disabled(),
+        )
+        .unwrap();
+        let output = drive(
+            &mut identity,
+            vec![BodyFrame::Data(Bytes::from_static(b"identity"))],
+        )
+        .await
+        .unwrap();
+        assert_eq!(data(output), b"xidentity");
+    }
+
+    #[tokio::test]
+    async fn inspect_to_identity_policy_removes_coding_after_decoded_hooks() {
+        let source_headers = headers("gzip");
+        let encoded = encode_layer(ContentCoding::Gzip, b"identity-output").await;
+        let body = body_pipeline(source_headers.clone(), TestPlan::DecodedPrefix).await;
+        let mut pipeline = ContentBodyPipeline::from_policy(
+            body,
+            &source_headers,
+            ContentPolicy::inspect_to_identity(ContentLimits::default()),
+        )
+        .unwrap();
+
+        assert!(
+            pipeline
+                .output_headers()
+                .values("content-encoding")
+                .next()
+                .is_none()
+        );
+        let output = drive(&mut pipeline, vec![BodyFrame::Data(Bytes::from(encoded))])
+            .await
+            .unwrap();
+        assert_eq!(data(output), b"xidentity-output");
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 # Plan: Production-grade content processing
 
-Status: active; Phases 1-3 are implemented and validated on Windows; Phase 4
-runtime policy/integration and cross-platform codec validation remain
+Status: active; Phases 1-4 are implemented and validated on Windows; Phase 5
+protocol-matrix expansion and cross-platform codec validation remain
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -307,12 +307,12 @@ are regenerated in the same change that accepts a dependency.
 - [x] Unsupported or malformed coding never reaches decoded hooks as identity.
 - [x] Untouched encoded traffic remains byte-preserving.
 - [x] Modified traffic has correct coding, framing, and validator headers.
-- [ ] Requests and responses preserve trailers and bodyless semantics.
+- [x] Requests and responses preserve trailers and bodyless semantics.
 - [ ] All byte, ratio, depth, frame, time, and cancellation bounds are tested.
 - [ ] One paused codec stream does not block unrelated H2/H3 streams.
 - [ ] All ingress/egress protocol matrix rows pass local coding fixtures.
-- [ ] Public embedding example and rustdoc are complete.
-- [ ] Formatting, strict Clippy, locked tests, dependency policy, notices, SBOM,
+- [x] Public embedding example and rustdoc are complete.
+- [x] Formatting, strict Clippy, locked tests, dependency policy, notices, SBOM,
       and the one-BoringSSL check pass.
 - [ ] Windows LLVM/Ninja release build and Linux/macOS CI pass.
 - [ ] Live Chromium verification passes without certificate bypass or route

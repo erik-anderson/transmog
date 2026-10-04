@@ -18,6 +18,7 @@ use http_body::{Body, Frame};
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use rustymiddle_content::{ContentBodyPipeline, ContentPipelineError, ContentPolicy};
 use rustymiddle_core::{
     BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender, BoundedBodyBuffer,
     CanonicalRequest, CanonicalResponse, ConnectionId, FallbackDecision, HeaderBlock, HeaderField,
@@ -96,6 +97,7 @@ impl Default for ProxyConfig {
 #[derive(Clone)]
 pub struct ProxyComponents {
     hooks: InterceptorChainFactory,
+    content: ContentPolicy,
     observers: ObserverHub,
     route_selector: Option<Arc<dyn RouteSelector>>,
     application_upstream: Option<Arc<dyn UpstreamService>>,
@@ -109,6 +111,7 @@ impl std::fmt::Debug for ProxyComponents {
         formatter
             .debug_struct("ProxyComponents")
             .field("hooks", &self.hooks)
+            .field("content", &self.content)
             .field("observers", &self.observers)
             .field("custom_route_selector", &self.route_selector.is_some())
             .field("application_upstream", &self.application_upstream.is_some())
@@ -125,6 +128,7 @@ impl ProxyComponents {
     ) -> Self {
         Self {
             hooks,
+            content: ContentPolicy::default(),
             observers: ObserverHub::default(),
             route_selector: None,
             application_upstream: None,
@@ -132,6 +136,13 @@ impl ProxyComponents {
             clock: Arc::new(SystemRuntimeClock),
             ids: Arc::new(AtomicRuntimeIdGenerator::new()),
         }
+    }
+
+    /// Installs immutable content decoding, encoding, and resource policy.
+    #[must_use]
+    pub fn with_content_policy(mut self, policy: ContentPolicy) -> Self {
+        self.content = policy;
+        self
     }
 
     /// Installs an immutable bounded observer hub.
@@ -339,6 +350,7 @@ impl ProxyServer {
         let (evidence, _) = broadcast::channel(1_024);
         let state = Arc::new(ProxyState {
             hooks: components.hooks,
+            content: components.content,
             observers: components.observers,
             route_selector: components.route_selector,
             application_upstream: components.application_upstream,
@@ -435,6 +447,7 @@ impl ProxyServer {
 
 struct ProxyState {
     hooks: InterceptorChainFactory,
+    content: ContentPolicy,
     observers: ObserverHub,
     route_selector: Option<Arc<dyn RouteSelector>>,
     application_upstream: Option<Arc<dyn UpstreamService>>,
@@ -890,7 +903,12 @@ impl ProxyState {
                 return Err(error);
             }
         };
-        let (request_body, request_body_modified) = request_body_outcome;
+        let ProcessedBody {
+            frames: request_body,
+            headers: request_headers,
+            modified: request_body_modified,
+        } = request_body_outcome;
+        request_head.headers = request_headers;
 
         let route = plan.pool_key.version_policy;
         let intended = match route {
@@ -980,7 +998,11 @@ impl ProxyState {
         let outcome = if body_semantics(&request_head.method, response.head.status)
             == BodySemantics::Forbidden
         {
-            (Vec::new(), true)
+            ProcessedBody {
+                frames: Vec::new(),
+                headers: response.head.headers.clone(),
+                modified: true,
+            }
         } else {
             match self
                 .process_response_body(
@@ -1006,8 +1028,13 @@ impl ProxyState {
                 }
             }
         };
-        let (body, body_modified) = outcome;
+        let ProcessedBody {
+            frames: body,
+            headers,
+            modified: body_modified,
+        } = outcome;
         response.body = body;
+        response.head.headers = headers;
         let prepared_response_headers = prepare_headers(
             &response.head.headers,
             TranslationOptions {
@@ -1123,50 +1150,13 @@ impl ProxyState {
         service: Arc<dyn UpstreamService>,
         chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        request_head.headers = match prepare_headers(
-            &request_head.headers,
-            TranslationOptions {
-                destination: request_head.source_version,
-                kind: MessageKind::Request,
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::RequestHead,
-                    ExchangeFailureKind::RequestTranslation,
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+        let destination = request_head.source_version;
+        let request_pipeline = self
+            .prepare_streaming_request_pipeline(&chain, &mut request_head, destination)
+            .await?;
 
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
-        let request_pipeline = match chain
-            .request_body_pipeline(&request_head, self.body_pipeline_limits())
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::RequestBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
         let (request_sender, request_body) = BodyStream::channel(capacity);
         let request_chain = Arc::clone(&chain);
         let request_limit = self.config.limits.max_request_body_bytes;
@@ -1263,31 +1253,7 @@ impl ProxyState {
                 )
                 .await;
         }
-        upstream.head.headers = match prepare_headers(
-            &upstream.head.headers,
-            TranslationOptions {
-                destination: ingress_version,
-                kind: MessageKind::Response,
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::ResponseHead,
-                    ExchangeFailureKind::ResponseTranslation,
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
-
-        let response_head = upstream.head;
+        let mut response_head = upstream.head;
         let attempts = vec![RouteAttemptEvidence {
             protocol: session.egress_version.expect("egress was assigned"),
             outcome: "application-success".to_owned(),
@@ -1306,29 +1272,15 @@ impl ProxyState {
                 )
                 .await;
         }
-        let response_pipeline = match chain
-            .response_body_pipeline(
+        let response_pipeline = self
+            .prepare_streaming_response_pipeline(
+                &chain,
                 &request_head,
-                &response_head,
+                &mut response_head,
                 local_response,
-                self.body_pipeline_limits(),
+                ingress_version,
             )
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::ResponseBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+            .await?;
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
         let evidence = self.evidence.clone();
         let response_head_for_body = response_head.clone();
@@ -1371,51 +1323,11 @@ impl ProxyState {
             HyperEgressMode::Http1Only => HttpLegVersion::Http1,
             HyperEgressMode::Http2Only | HyperEgressMode::Auto => HttpLegVersion::Http2,
         };
-        request_head.headers = match prepare_headers(
-            &request_head.headers,
-            TranslationOptions {
-                destination,
-                kind: MessageKind::Request,
-                // A body callback can change length after the upstream head is
-                // sent, so streaming requests deliberately use synthesized
-                // destination framing.
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_exchange(
-                    &chain,
-                    ExchangeStage::RequestHead,
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+        let request_pipeline = self
+            .prepare_streaming_request_pipeline(&chain, &mut request_head, destination)
+            .await?;
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
-        let request_pipeline = match chain
-            .request_body_pipeline(&request_head, self.body_pipeline_limits())
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::RequestBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
         let (request_sender, request_body) = BodyStream::channel(capacity);
         let request_chain = Arc::clone(&chain);
         let request_limit = self.config.limits.max_request_body_bytes;
@@ -1517,33 +1429,7 @@ impl ProxyState {
                 )
                 .await;
         }
-        upstream.head.headers = match prepare_headers(
-            &upstream.head.headers,
-            TranslationOptions {
-                destination: ingress_version,
-                kind: MessageKind::Response,
-                // The streaming callback may alter bytes after the response
-                // head is released, so stale length and digest fields cannot
-                // cross the boundary.
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_exchange(
-                    &chain,
-                    ExchangeStage::ResponseHead,
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
-
-        let response_head = upstream.head;
+        let mut response_head = upstream.head;
         let attempts = vec![RouteAttemptEvidence {
             protocol: session.egress_version.expect("egress was assigned"),
             outcome: "success".to_owned(),
@@ -1563,30 +1449,16 @@ impl ProxyState {
                 )
                 .await;
         }
-        let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
-        let response_pipeline = match chain
-            .response_body_pipeline(
+        let response_pipeline = self
+            .prepare_streaming_response_pipeline(
+                &chain,
                 &request_head,
-                &response_head,
+                &mut response_head,
                 local_response,
-                self.body_pipeline_limits(),
+                ingress_version,
             )
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::ResponseBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+            .await?;
+        let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
         let evidence = self.evidence.clone();
         let response_session = session.clone();
         let response_request_head = request_head.clone();
@@ -1636,48 +1508,11 @@ impl ProxyState {
             .await;
             return Err(ProxyRuntimeError::Http3RequiresHttps);
         }
-        request_head.headers = match prepare_headers(
-            &request_head.headers,
-            TranslationOptions {
-                destination: HttpLegVersion::Http3,
-                kind: MessageKind::Request,
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_exchange(
-                    &chain,
-                    ExchangeStage::RequestHead,
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+        let request_pipeline = self
+            .prepare_streaming_request_pipeline(&chain, &mut request_head, HttpLegVersion::Http3)
+            .await?;
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
-        let request_pipeline = match chain
-            .request_body_pipeline(&request_head, self.body_pipeline_limits())
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::RequestBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    false,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
         let (request_sender, request_body) = BodyStream::channel(capacity);
         let request_chain = Arc::clone(&chain);
         let request_limit = self.config.limits.max_request_body_bytes;
@@ -1779,30 +1614,7 @@ impl ProxyState {
                 )
                 .await;
         }
-        upstream.response.head.headers = match prepare_headers(
-            &upstream.response.head.headers,
-            TranslationOptions {
-                destination: ingress_version,
-                kind: MessageKind::Response,
-                body_modified: true,
-                force_identity_encoding: false,
-            },
-        ) {
-            Ok(headers) => headers,
-            Err(error) => {
-                self.fail_exchange(
-                    &chain,
-                    ExchangeStage::ResponseHead,
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
-
-        let response_head = upstream.response.head;
+        let mut response_head = upstream.response.head;
         let h3 = upstream.telemetry;
         let attempts = vec![RouteAttemptEvidence {
             protocol: HttpLegVersion::Http3,
@@ -1823,30 +1635,16 @@ impl ProxyState {
                 )
                 .await;
         }
-        let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
-        let response_pipeline = match chain
-            .response_body_pipeline(
+        let response_pipeline = self
+            .prepare_streaming_response_pipeline(
+                &chain,
                 &request_head,
-                &response_head,
+                &mut response_head,
                 local_response,
-                self.body_pipeline_limits(),
+                ingress_version,
             )
-            .await
-        {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                self.fail_chain(
-                    &chain,
-                    ExchangeStage::ResponseBody,
-                    body_pipeline_failure_kind(&error),
-                    error.to_string(),
-                    true,
-                    false,
-                )
-                .await;
-                return Err(error.into());
-            }
-        };
+            .await?;
+        let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
         let evidence = self.evidence.clone();
         let response_session = session.clone();
         let response_request_head = request_head;
@@ -1951,7 +1749,11 @@ impl ProxyState {
                     response.body,
                 )
                 .await;
-            let (body, _) = match processed {
+            let ProcessedBody {
+                frames: body,
+                headers,
+                modified: body_modified,
+            } = match processed {
                 Ok(body) => body,
                 Err(error) => {
                     self.fail_runtime_exchange(
@@ -1966,6 +1768,32 @@ impl ProxyState {
                 }
             };
             response.body = body;
+            response.head.headers = headers;
+            let prepared_headers = prepare_headers(
+                &response.head.headers,
+                TranslationOptions {
+                    destination: session.ingress_version,
+                    kind: MessageKind::Response,
+                    body_modified,
+                    force_identity_encoding: false,
+                },
+            );
+            response.head.headers = match prepared_headers {
+                Ok(headers) => headers,
+                Err(error) => {
+                    self.fail_exchange(
+                        &chain,
+                        ExchangeStage::ResponseHead,
+                        error.to_string(),
+                        false,
+                        false,
+                    )
+                    .await;
+                    return Err(error.into());
+                }
+            };
+            self.complete_chain(&chain, request, &response.head).await;
+            return response_to_hyper(response);
         }
         let prepared_headers = prepare_headers(
             &response.head.headers,
@@ -2125,7 +1953,7 @@ impl ProxyState {
         chain: &ExchangeChain,
         request_head: &RequestHead,
         frames: Vec<BodyFrame>,
-    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+    ) -> Result<ProcessedBody, ProxyRuntimeError> {
         let pipeline = chain
             .request_body_pipeline(request_head, self.body_pipeline_limits())
             .await?;
@@ -2133,10 +1961,133 @@ impl ProxyState {
             chain,
             BodyDirection::Request,
             pipeline,
+            &request_head.headers,
             frames,
             self.config.limits.max_request_body_bytes,
         )
         .await
+    }
+
+    async fn request_content_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &RequestHead,
+    ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
+        let pipeline = chain
+            .request_body_pipeline(request_head, self.body_pipeline_limits())
+            .await?;
+        Ok(ContentBodyPipeline::from_policy(
+            pipeline,
+            &request_head.headers,
+            self.content,
+        )?)
+    }
+
+    async fn prepare_streaming_request_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &mut RequestHead,
+        destination: HttpLegVersion,
+    ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
+        let pipeline = match self.request_content_pipeline(chain, request_head).await {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_runtime_exchange(chain, ExchangeStage::RequestBody, &error, false, false)
+                    .await;
+                return Err(error);
+            }
+        };
+        request_head.headers = pipeline.output_headers().clone();
+        request_head.headers = match prepare_headers(
+            &request_head.headers,
+            TranslationOptions {
+                destination,
+                kind: MessageKind::Request,
+                body_modified: pipeline.modifies_body(),
+                force_identity_encoding: false,
+            },
+        ) {
+            Ok(headers) => headers,
+            Err(error) => {
+                self.fail_exchange(
+                    chain,
+                    ExchangeStage::RequestHead,
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
+        Ok(pipeline)
+    }
+
+    async fn response_content_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &RequestHead,
+        response_head: &ResponseHead,
+        local_response: bool,
+    ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
+        let pipeline = chain
+            .response_body_pipeline(
+                request_head,
+                response_head,
+                local_response,
+                self.body_pipeline_limits(),
+            )
+            .await?;
+        Ok(ContentBodyPipeline::from_policy(
+            pipeline,
+            &response_head.headers,
+            self.content,
+        )?)
+    }
+
+    async fn prepare_streaming_response_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        request_head: &RequestHead,
+        response_head: &mut ResponseHead,
+        local_response: bool,
+        destination: HttpLegVersion,
+    ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
+        let pipeline = match self
+            .response_content_pipeline(chain, request_head, response_head, local_response)
+            .await
+        {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.fail_runtime_exchange(chain, ExchangeStage::ResponseBody, &error, true, false)
+                    .await;
+                return Err(error);
+            }
+        };
+        response_head.headers = pipeline.output_headers().clone();
+        response_head.headers = match prepare_headers(
+            &response_head.headers,
+            TranslationOptions {
+                destination,
+                kind: MessageKind::Response,
+                body_modified: pipeline.modifies_body(),
+                force_identity_encoding: false,
+            },
+        ) {
+            Ok(headers) => headers,
+            Err(error) => {
+                self.fail_exchange(
+                    chain,
+                    ExchangeStage::ResponseHead,
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
+        Ok(pipeline)
     }
 
     async fn process_response_body(
@@ -2146,7 +2097,7 @@ impl ProxyState {
         response_head: &ResponseHead,
         local_response: bool,
         frames: Vec<BodyFrame>,
-    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+    ) -> Result<ProcessedBody, ProxyRuntimeError> {
         let pipeline = chain
             .response_body_pipeline(
                 request_head,
@@ -2159,6 +2110,7 @@ impl ProxyState {
             chain,
             BodyDirection::Response,
             pipeline,
+            &response_head.headers,
             frames,
             self.config.limits.max_response_body_bytes,
         )
@@ -2169,11 +2121,15 @@ impl ProxyState {
         &self,
         chain: &ExchangeChain,
         direction: BodyDirection,
-        mut pipeline: BodyPipeline,
+        pipeline: BodyPipeline,
+        source_headers: &HeaderBlock,
         frames: Vec<BodyFrame>,
         limit: usize,
-    ) -> Result<(Vec<BodyFrame>, bool), ProxyRuntimeError> {
+    ) -> Result<ProcessedBody, ProxyRuntimeError> {
+        let mut pipeline =
+            ContentBodyPipeline::from_policy(pipeline, source_headers, self.content)?;
         let modified = pipeline.modifies_body();
+        let headers = pipeline.output_headers().clone();
         let mut output = Vec::new();
         for frame in frames {
             output.extend(pipeline.process(frame).await?);
@@ -2181,7 +2137,11 @@ impl ProxyState {
         output.extend(pipeline.finish().await?);
         validate_frames(&output, limit)?;
         observe_body_frames(chain, direction, &output).await;
-        Ok((output, modified))
+        Ok(ProcessedBody {
+            frames: output,
+            headers,
+            modified,
+        })
     }
 
     fn body_pipeline_limits(&self) -> BodyPipelineLimits {
@@ -2369,6 +2329,12 @@ struct RoutedResponse {
     h3: Option<H3Telemetry>,
 }
 
+struct ProcessedBody {
+    frames: Vec<BodyFrame>,
+    headers: HeaderBlock,
+    modified: bool,
+}
+
 fn runtime_observer(chain: &ExchangeChain) -> Option<Arc<ExchangeObserver>> {
     chain
         .context()
@@ -2401,6 +2367,7 @@ fn runtime_failure_kind(error: &ProxyRuntimeError, stage: ExchangeStage) -> Exch
         ProxyRuntimeError::BodyPipeline(BodyPipelineError::Hook(BodyHookError::Abort(reason))) => {
             ExchangeFailureKind::HookAborted(reason.clone())
         }
+        ProxyRuntimeError::ContentPipeline(error) => content_pipeline_failure_kind(error),
         ProxyRuntimeError::Route(_) | ProxyRuntimeError::UnsupportedNetworkPlan(_) => {
             ExchangeFailureKind::Route
         }
@@ -2453,6 +2420,18 @@ fn body_pipeline_failure_kind(error: &BodyPipelineError) -> ExchangeFailureKind 
         | BodyPipelineError::OutputByteLimit { .. }
         | BodyPipelineError::Input(_)
         | BodyPipelineError::OutputClosed(_) => ExchangeFailureKind::Body,
+    }
+}
+
+fn content_pipeline_failure_kind(error: &ContentPipelineError) -> ExchangeFailureKind {
+    match error {
+        ContentPipelineError::Body(error) => body_pipeline_failure_kind(error),
+        ContentPipelineError::DecodingDisabled
+        | ContentPipelineError::Representation(_)
+        | ContentPipelineError::Coding(_)
+        | ContentPipelineError::Codec(_)
+        | ContentPipelineError::Limit(_)
+        | ContentPipelineError::AlreadyFinished => ExchangeFailureKind::Body,
     }
 }
 
@@ -2586,7 +2565,7 @@ async fn collect_incoming(
 async fn stream_incoming_through_hooks(
     mut body: Incoming,
     sender: BodyStreamSender,
-    mut pipeline: BodyPipeline,
+    mut pipeline: ContentBodyPipeline,
     chain: Arc<ExchangeChain>,
     limit: usize,
     body_idle_timeout: Duration,
@@ -2668,7 +2647,7 @@ async fn stream_incoming_through_hooks(
 async fn stream_response_through_hooks(
     mut body: BodyStream,
     sender: BodyStreamSender,
-    mut pipeline: BodyPipeline,
+    mut pipeline: ContentBodyPipeline,
     chain: Arc<ExchangeChain>,
     session: SessionMetadata,
     request_head: RequestHead,
@@ -2819,9 +2798,9 @@ async fn fail_hook_pipeline(
     sender: &BodyStreamSender,
     chain: &ExchangeChain,
     stage: ExchangeStage,
-    error: BodyPipelineError,
+    error: ContentPipelineError,
 ) {
-    let kind = body_pipeline_failure_kind(&error);
+    let kind = content_pipeline_failure_kind(&error);
     let message = error.to_string();
     let _ = sender
         .send(Err(BodyStreamError::Failed(message.clone())))
@@ -3252,6 +3231,9 @@ pub enum ProxyRuntimeError {
     /// A composed body hook or plan failed.
     #[error(transparent)]
     BodyPipeline(#[from] BodyPipelineError),
+    /// Content decoding, encoding, policy, or whole-pipeline accounting failed.
+    #[error(transparent)]
+    ContentPipeline(#[from] ContentPipelineError),
     /// Route selection or destination authorization failed.
     #[error(transparent)]
     Route(#[from] RouteError),
@@ -3332,10 +3314,12 @@ mod tests {
         ssl::{SslContext, SslMethod},
     };
     use quiche::h3::NameValue;
+    use rustymiddle_content::{ContentCoding, ContentDecoder, ContentEncoder, ContentLimits};
     use rustymiddle_core::intercept::{
-        BodyPlan, BoxHookFuture, BufferedBody, ExchangeInterceptor, HookInitError,
-        RequestBodyAction, RequestBodyEvent, RequestHeadAction, RequestHeadEvent,
-        ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
+        BodyFilter, BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody,
+        ExchangeInterceptor, HookInitError, RequestBodyAction, RequestBodyEvent, RequestHeadAction,
+        RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction,
+        ResponseHeadEvent,
     };
     use rustymiddle_h3::H3UpstreamService;
     use rustymiddle_http::HyperUpstreamService;
@@ -3379,7 +3363,25 @@ mod tests {
         observed: Arc<StdMutex<Vec<(String, String)>>>,
     }
 
+    struct CompressedUpstream {
+        observed: Arc<StdMutex<Option<ObservedCompressedRequest>>>,
+        response: Bytes,
+    }
+
+    struct ObservedCompressedRequest {
+        headers: HeaderBlock,
+        body: Vec<u8>,
+    }
+
     struct ContractApplicationUpstream;
+
+    #[derive(Clone, Copy)]
+    struct DecodedPrefixHandler;
+
+    #[derive(Default)]
+    struct PrefixFirstData {
+        prefixed: bool,
+    }
 
     struct LifecycleObserver {
         phases: Arc<StdMutex<Vec<&'static str>>>,
@@ -3448,6 +3450,59 @@ mod tests {
                 ResponseBodyAction::decoded(BodyPlan::Replace(
                     BufferedBody::try_new(64, Bytes::from_static(b"edited"), None).unwrap(),
                 ))
+            })
+        }
+    }
+
+    impl InterceptorFactory for DecodedPrefixHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(*self))
+        }
+    }
+
+    impl ExchangeInterceptor for DecodedPrefixHandler {
+        fn on_request_body(
+            &self,
+            _event: RequestBodyEvent,
+        ) -> BoxHookFuture<'_, RequestBodyAction> {
+            Box::pin(async {
+                RequestBodyAction::decoded(BodyPlan::Transform(
+                    Box::new(PrefixFirstData::default()),
+                ))
+            })
+        }
+
+        fn on_response_body(
+            &self,
+            _event: ResponseBodyEvent,
+        ) -> BoxHookFuture<'_, ResponseBodyAction> {
+            Box::pin(async {
+                ResponseBodyAction::decoded(BodyPlan::Transform(Box::new(
+                    PrefixFirstData::default(),
+                )))
+            })
+        }
+    }
+
+    impl BodyFilter for PrefixFirstData {
+        fn on_frame(
+            &mut self,
+            frame: BodyFrame,
+        ) -> BoxBodyFuture<'_, Result<Vec<BodyFrame>, BodyHookError>> {
+            Box::pin(async move {
+                match frame {
+                    BodyFrame::Data(data) if !data.is_empty() && !self.prefixed => {
+                        self.prefixed = true;
+                        let mut output = Vec::with_capacity(data.len().saturating_add(1));
+                        output.push(b'x');
+                        output.extend_from_slice(&data);
+                        Ok(vec![BodyFrame::Data(Bytes::from(output))])
+                    }
+                    frame => Ok(vec![frame]),
+                }
             })
         }
     }
@@ -3591,6 +3646,48 @@ mod tests {
                     head: ResponseHead {
                         status: 200,
                         headers: HeaderBlock::new(),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                    body,
+                })
+            })
+        }
+    }
+
+    impl UpstreamService for CompressedUpstream {
+        fn execute(
+            &self,
+            mut request: StreamingRequest,
+            _plan: UpstreamPlan,
+            _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        ) -> rustymiddle_core::upstream::BoxUpstreamFuture<'_> {
+            let observed = Arc::clone(&self.observed);
+            let response = self.response.clone();
+            Box::pin(async move {
+                let mut request_data = Vec::new();
+                while let Some(frame) = request.body.recv().await {
+                    match frame.map_err(|error| UpstreamError::application(error.to_string()))? {
+                        BodyFrame::Data(data) => request_data.extend_from_slice(&data),
+                        BodyFrame::Trailers(_) => {}
+                    }
+                }
+                *observed.lock().unwrap() = Some(ObservedCompressedRequest {
+                    headers: request.head.headers,
+                    body: request_data,
+                });
+
+                let (sender, body) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+                tokio::spawn(async move {
+                    sender.send(Ok(BodyFrame::Data(response))).await.unwrap();
+                });
+                Ok(rustymiddle_core::StreamingResponse {
+                    head: ResponseHead {
+                        status: 200,
+                        headers: HeaderBlock::from_fields(vec![
+                            HeaderField::try_new("content-encoding", "br").unwrap(),
+                            HeaderField::try_new("content-length", "999").unwrap(),
+                            HeaderField::try_new("etag", "\"stale\"").unwrap(),
+                        ]),
                         source_version: HttpLegVersion::Http1,
                     },
                     body,
@@ -3815,6 +3912,174 @@ mod tests {
                 "body",
                 "completed"
             ]
+        );
+
+        shutdown_tx.send(()).unwrap();
+        proxy_task.await.unwrap().unwrap();
+    }
+
+    async fn encode_test_content(coding: ContentCoding, input: &[u8]) -> Bytes {
+        let mut encoder = ContentEncoder::new(coding, ContentLimits::default()).unwrap();
+        let mut frames = encoder
+            .on_frame(BodyFrame::Data(Bytes::copy_from_slice(input)))
+            .await
+            .unwrap();
+        frames.extend(encoder.finish().await.unwrap());
+        Bytes::from(body_frame_data(frames))
+    }
+
+    fn decode_test_content(coding: ContentCoding, input: &[u8]) -> Vec<u8> {
+        let mut decoder = ContentDecoder::new(coding, ContentLimits::default()).unwrap();
+        let mut frames = decoder
+            .on_frame(BodyFrame::Data(Bytes::copy_from_slice(input)))
+            .unwrap();
+        frames.extend(decoder.finish().unwrap());
+        body_frame_data(frames)
+    }
+
+    fn body_frame_data(frames: Vec<BodyFrame>) -> Vec<u8> {
+        frames
+            .into_iter()
+            .filter_map(|frame| match frame {
+                BodyFrame::Data(data) => Some(data),
+                BodyFrame::Trailers(_) => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn http1_response_body(response: &[u8]) -> Vec<u8> {
+        let head_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("response contains a complete HTTP/1 head");
+        let body = &response[head_end + 4..];
+        let head = String::from_utf8_lossy(&response[..head_end]).to_ascii_lowercase();
+        if !head.contains("transfer-encoding: chunked") {
+            return body.to_vec();
+        }
+
+        let mut decoded = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let size_end = body[cursor..]
+                .windows(2)
+                .position(|window| window == b"\r\n")
+                .map(|offset| cursor + offset)
+                .expect("chunk contains a size line");
+            let size_text = std::str::from_utf8(&body[cursor..size_end]).unwrap();
+            let size = usize::from_str_radix(size_text.split(';').next().unwrap(), 16).unwrap();
+            cursor = size_end + 2;
+            if size == 0 {
+                break;
+            }
+            decoded.extend_from_slice(&body[cursor..cursor + size]);
+            cursor += size;
+            assert_eq!(&body[cursor..cursor + 2], b"\r\n");
+            cursor += 2;
+        }
+        decoded
+    }
+
+    #[tokio::test]
+    async fn content_policy_decodes_hooks_and_restores_request_and_response_codings() {
+        let gzip_request = encode_test_content(ContentCoding::Gzip, b"request").await;
+        let brotli_response = encode_test_content(ContentCoding::Brotli, b"response").await;
+        let observed = Arc::new(StdMutex::new(None));
+
+        let trust_generation = 64;
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, trust_generation).unwrap());
+        let config = ProxyConfig {
+            route_policy: RoutePolicy::Http1Only,
+            ..ProxyConfig::default()
+        };
+        let hooks = InterceptorChainFactory::new(
+            vec![
+                InterceptorRegistration::new(
+                    "reroute",
+                    Arc::new(ReroutingHandler),
+                    InterceptorRequirement::Required,
+                ),
+                InterceptorRegistration::new(
+                    "decoded-prefix",
+                    Arc::new(DecodedPrefixHandler),
+                    InterceptorRequirement::Required,
+                ),
+            ],
+            config.limits.hooks,
+        );
+        let certificates = Arc::new(
+            CachedMitmCertificateResolver::new(
+                ProxyCa::generate("rustymiddle content policy test", 2).unwrap(),
+                config.limits.leaf_cache_capacity,
+                config.limits.leaf_validity_days,
+            )
+            .unwrap(),
+        );
+        let selector = PolicyRouteSelector::new(
+            Arc::new(AllowAllDestinations),
+            RoutePolicy::Http1Only,
+            trust_generation,
+            "application",
+            "in-process",
+            "content-policy-test",
+        );
+        let components = ProxyComponents::new(hooks, certificates)
+            .with_content_policy(ContentPolicy::preserve_original_output(
+                ContentLimits::default(),
+            ))
+            .with_route_selector(Arc::new(selector))
+            .with_upstream_service(Arc::new(CompressedUpstream {
+                observed: Arc::clone(&observed),
+                response: brotli_response,
+            }));
+        let proxy = ProxyServer::bind_with_components(config, trust, components)
+            .await
+            .unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut request = format!(
+            "POST http://original.invalid/content HTTP/1.1\r\nHost: original.invalid\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nETag: \"stale\"\r\nConnection: close\r\n\r\n",
+            gzip_request.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&gzip_request);
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client.write_all(&request).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+
+        let observed_request = observed.lock().unwrap().take().unwrap();
+        let upstream_headers = &observed_request.headers;
+        assert_eq!(
+            upstream_headers
+                .values("content-encoding")
+                .collect::<Vec<_>>(),
+            [b"gzip".as_slice()]
+        );
+        assert!(upstream_headers.values("content-length").next().is_none());
+        assert!(upstream_headers.values("etag").next().is_none());
+        assert_eq!(
+            decode_test_content(ContentCoding::Gzip, &observed_request.body),
+            b"xrequest"
+        );
+
+        let response_head_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap();
+        let response_head =
+            String::from_utf8_lossy(&response[..response_head_end]).to_ascii_lowercase();
+        assert!(response_head.contains("content-encoding: br"));
+        assert!(!response_head.contains("etag:"));
+        let response_body = http1_response_body(&response);
+        assert_eq!(
+            decode_test_content(ContentCoding::Brotli, &response_body),
+            b"xresponse"
         );
 
         shutdown_tx.send(()).unwrap();

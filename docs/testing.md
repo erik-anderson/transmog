@@ -52,6 +52,13 @@ pass-through, optional unsupported-coding bypass without invoking the hook,
 required unsupported-coding failure, header and trailer repair, whole-stack
 limits, and replacement of corrupt encoded input without decoding discarded
 source bytes.
+The Phase 4 runtime suite sends a gzip request through an application-owned
+streaming upstream and returns a Brotli response. Required decoded hooks modify
+both identity representations; the runtime restores each original coding,
+repairs stale length and validator fields before head commitment, and exposes
+only canonical frames to the application boundary. Policy tests also prove
+disabled-mode required failure, optional exact bypass, and identity-body
+compatibility.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright

@@ -1,8 +1,9 @@
 # Embedding rustymiddle
 
 The [`embedded` example](../crates/proxy-runtime/examples/embedded.rs) constructs
-the proxy without CLI modules or global state. It supplies an interceptor,
-bounded observer, route selector, certificate resolver, and canonical streaming
+the proxy without CLI modules or global state. It supplies an interceptor that
+modifies decoded request and response bytes, bounded observer, route selector,
+certificate resolver, immutable content policy, and canonical streaming
 application upstream:
 
 ```powershell
@@ -14,6 +15,23 @@ cargo run --locked -p rustymiddle-runtime --example embedded
 starts. Clone configuration into factories before bind. Each factory invocation
 must return an exchange-scoped interceptor. Shared application state is allowed
 only when the factory explicitly owns synchronized `Arc` state.
+
+Content processing is disabled by default. Configure it before bind with one
+of these immutable policies:
+
+- `ContentPolicy::inspect_to_identity(limits)` decodes supported content for
+  semantic hooks and sends identity output;
+- `ContentPolicy::preserve_original_output(limits)` decodes for hooks and
+  re-encodes the modified body with its original coding stack;
+- `ContentPolicy::disabled()` preserves coded bodies without invoking codecs.
+
+With disabled policy, a required decoded hook fails on a coded body before body
+bytes are processed. An optional decoded hook is declined and preserves the
+complete representation exactly. Unknown codings follow the same required
+failure/optional bypass rule; a stack is never partially decoded. Identity
+bodies remain available to decoded hooks in every mode because no codec is
+needed. Applications choose policy and finite limits, not codec implementation
+objects.
 
 An `UpstreamService` receives a bounded `BodyStream`, immutable `UpstreamPlan`,
 and exchange cancellation signal. It must stop work promptly when cancelled and

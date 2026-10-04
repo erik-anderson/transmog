@@ -3,13 +3,15 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use bytes::Bytes;
+use rustymiddle_content::{ContentLimits, ContentPolicy};
 use rustymiddle_core::{
     BodyFrame, BodyStream, HeaderBlock, HeaderField, HttpLegVersion, ResponseHead, RoutePolicy,
     StreamingRequest, StreamingResponse,
     intercept::{
-        BoxHookFuture, ExchangeInterceptor, ExchangeMetadata, HookInitError,
-        InterceptorChainFactory, InterceptorFactory, InterceptorRegistration,
-        InterceptorRequirement, RequestHeadAction, RequestHeadEvent,
+        BodyFilter, BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, ExchangeInterceptor,
+        ExchangeMetadata, HookInitError, InterceptorChainFactory, InterceptorFactory,
+        InterceptorRegistration, InterceptorRequirement, RequestBodyAction, RequestBodyEvent,
+        RequestHeadAction, RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent,
     },
     observe::{
         BoxObserverFuture, Observer, ObserverConfig, ObserverError, ObserverEvent, ObserverHub,
@@ -41,6 +43,43 @@ impl ExchangeInterceptor for AddApplicationHeader {
                     .expect("static header is valid"),
             );
             RequestHeadAction::Replace(head)
+        })
+    }
+
+    fn on_request_body(&self, _event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
+        Box::pin(async {
+            RequestBodyAction::decoded(BodyPlan::Transform(Box::new(PrefixFirstData::default())))
+        })
+    }
+
+    fn on_response_body(&self, _event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
+        Box::pin(async {
+            ResponseBodyAction::decoded(BodyPlan::Transform(Box::new(PrefixFirstData::default())))
+        })
+    }
+}
+
+#[derive(Default)]
+struct PrefixFirstData {
+    prefixed: bool,
+}
+
+impl BodyFilter for PrefixFirstData {
+    fn on_frame(
+        &mut self,
+        frame: BodyFrame,
+    ) -> BoxBodyFuture<'_, Result<Vec<BodyFrame>, BodyHookError>> {
+        Box::pin(async move {
+            match frame {
+                BodyFrame::Data(data) if !data.is_empty() && !self.prefixed => {
+                    self.prefixed = true;
+                    let mut output = Vec::with_capacity(data.len().saturating_add(9));
+                    output.extend_from_slice(b"embedded:");
+                    output.extend_from_slice(&data);
+                    Ok(vec![BodyFrame::Data(Bytes::from(output))])
+                }
+                frame => Ok(vec![frame]),
+            }
         })
     }
 }
@@ -130,6 +169,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.limits.leaf_validity_days,
     )?);
     let components = ProxyComponents::new(hooks, certificates)
+        // Semantic hooks see identity bytes. Coded requests and responses are
+        // restored to their original gzip/br/deflate/zstd representation.
+        .with_content_policy(ContentPolicy::preserve_original_output(
+            ContentLimits::default(),
+        ))
         .with_observers(observers)
         .with_route_selector(Arc::new(selector))
         .with_upstream_service(Arc::new(ApplicationUpstream));

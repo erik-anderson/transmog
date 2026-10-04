@@ -11,6 +11,7 @@ mod codec;
 mod coding;
 mod pipeline;
 mod plan;
+mod policy;
 
 pub use budget::{ContentBudget, ContentLimitError, ContentLimits};
 pub use codec::{
@@ -19,3 +20,4 @@ pub use codec::{
 pub use coding::{ContentCoding, ContentCodingError, ContentCodingStack};
 pub use pipeline::{ContentBodyPipeline, ContentPipelineError};
 pub use plan::{ContentLength, ContentOutput, ContentPlan};
+pub use policy::{ContentMode, ContentPolicy};
