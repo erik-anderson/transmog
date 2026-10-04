@@ -1019,6 +1019,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustymiddle-session"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "rustymiddle-core",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rustymiddle-tls"
 version = "0.1.0"
 dependencies = [

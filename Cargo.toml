@@ -13,6 +13,7 @@ members = [
     "crates/proxy-saz",
     "crates/proxy-automation",
     "crates/proxy-websocket",
+    "crates/proxy-session",
     "crates/proxy-cli",
 ]
 

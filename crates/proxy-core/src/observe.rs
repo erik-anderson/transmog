@@ -520,6 +520,21 @@ impl ObserverHub {
         }
     }
 
+    /// Adds one bounded registration while preserving existing observers.
+    ///
+    /// This is useful for higher-level composition layers that must observe a
+    /// proxy without taking ownership of application-supplied registrations.
+    /// Like [`Self::new`], this method must be called from an active Tokio
+    /// runtime because it starts the new observer worker immediately.
+    #[must_use]
+    pub fn with_registration(self, observer: Arc<dyn Observer>, config: ObserverConfig) -> Self {
+        let mut dispatchers = self.dispatchers.iter().cloned().collect::<Vec<_>>();
+        dispatchers.push(ObserverDispatcher::new(observer, config));
+        Self {
+            dispatchers: dispatchers.into(),
+        }
+    }
+
     /// Creates sequenced observation state for one exchange.
     pub fn start_exchange(&self, metadata: Arc<ExchangeMetadata>) -> ExchangeObserver {
         ExchangeObserver {

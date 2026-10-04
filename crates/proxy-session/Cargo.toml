@@ -1,0 +1,17 @@
+[package]
+name = "rustymiddle-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless application and live-session service for rustymiddle"
+
+[dependencies]
+bytes.workspace = true
+rustymiddle-core = { path = "../proxy-core" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

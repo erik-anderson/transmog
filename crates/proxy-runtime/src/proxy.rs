@@ -34,7 +34,8 @@ use rustymiddle_core::{
     },
     observe::{
         ExchangeBoundary, ExchangeObserver, ObservedBodyChunk, ObservedBodyTrailers,
-        ObservedRouteAttempt, ObserverEventKind, ObserverHub, ObserverStats,
+        ObservedRouteAttempt, Observer, ObserverConfig, ObserverEventKind, ObserverHub,
+        ObserverStats,
     },
     prepare_headers,
     route::{
@@ -167,6 +168,13 @@ impl ProxyComponents {
     #[must_use]
     pub fn with_observers(mut self, observers: ObserverHub) -> Self {
         self.observers = observers;
+        self
+    }
+
+    /// Adds one bounded observer without replacing caller registrations.
+    #[must_use]
+    pub fn with_observer(mut self, observer: Arc<dyn Observer>, config: ObserverConfig) -> Self {
+        self.observers = self.observers.with_registration(observer, config);
         self
     }
 
