@@ -9,6 +9,7 @@ members = [
     "crates/proxy-runtime",
     "crates/proxy-control-model",
     "crates/proxy-control-transport",
+    "crates/proxy-capture",
     "crates/proxy-cli",
 ]
 
@@ -23,6 +24,7 @@ repository = "https://github.com/erik-anderson/rustymiddle"
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 boring = "=5.2.0"
 bytes = { version = "1.11.1", features = ["serde"] }
+crc32fast = "1.5.2"
 http = "1.3.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
