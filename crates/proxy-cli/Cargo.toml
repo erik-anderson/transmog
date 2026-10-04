@@ -12,6 +12,7 @@ bytes.workspace = true
 rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
 rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
 rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+rustymiddle-saz = { version = "=0.1.0", path = "../proxy-saz" }
 rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
 tokio.workspace = true
 tracing.workspace = true

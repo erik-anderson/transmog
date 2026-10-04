@@ -12,6 +12,8 @@ The project is under active implementation. See [architecture](docs/architecture
 [limitations](docs/limitations.md). Forward work is organized by the
 [layered monorepo roadmap](docs/specs/monorepo-roadmap.md), with a dedicated
 [content-processing plan](docs/specs/content-processing-plan.md).
+SAZ conversion behavior and its fidelity limits are documented in
+[SAZ compatibility](docs/saz-compatibility.md).
 
 ## Local verification
 
@@ -72,7 +74,13 @@ overwritten. Headless inspection and conversion use the same capture library:
 cargo run --locked -p rustymiddle -- capture inspect --input ./session.rmcap
 cargo run --locked -p rustymiddle -- capture validate --input ./session.rmcap
 cargo run --locked -p rustymiddle -- capture export --input ./session.rmcap --format jsonl --output ./session.jsonl
+cargo run --locked -p rustymiddle -- capture export --input ./session.rmcap --format saz --output ./session.saz
 ```
+
+SAZ is a finalized compatibility export, not the live storage format. Strict
+mode emits conventional Fiddler archive members; `saz-extended` additionally
+includes a namespaced fidelity manifest. Missing body bytes and observer loss
+are marked as incomplete rather than silently presented as complete.
 
 Configure the browser's HTTP proxy to the printed `LISTEN_ADDR`. HTTPS is
 intercepted through `CONNECT`; HTTP/3 is origin egress only. When finished,

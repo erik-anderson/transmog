@@ -512,13 +512,16 @@ pub struct ExportReport {
 
 /// Adapter boundary for derived capture formats.
 pub trait CaptureExporter {
+    /// Exporter-specific failure.
+    type Error;
+
     /// Writes a recovered native capture.
     ///
     /// # Errors
     ///
     /// Returns [`CaptureError`] for serialization, format, or destination
     /// failures.
-    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, CaptureError>;
+    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, Self::Error>;
 }
 
 /// Streaming newline-delimited JSON exporter for scripting and diagnostics.
@@ -543,7 +546,9 @@ impl<W: Write> JsonLinesExporter<W> {
 }
 
 impl<W: Write> CaptureExporter for JsonLinesExporter<W> {
-    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, CaptureError> {
+    type Error = CaptureError;
+
+    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, Self::Error> {
         let starting_bytes = self.bytes_written;
         for record in &capture.records {
             let payload = serde_json::to_vec(&store(record)?)?;

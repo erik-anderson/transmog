@@ -127,6 +127,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | tracing-serde | 0.2.0 | MIT | https://github.com/tokio-rs/tracing |
 | tracing-subscriber | 0.3.23 | MIT | https://github.com/tokio-rs/tracing |
 | try-lock | 0.2.5 | MIT | https://github.com/seanmonstar/try-lock |
+| typed-path | 0.12.3 | MIT OR Apache-2.0 | https://github.com/chipsenkbeil/typed-path |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident |
 | valuable | 0.1.1 | MIT | https://github.com/tokio-rs/valuable |
 | want | 0.3.1 | MIT | https://github.com/seanmonstar/want |
@@ -147,6 +148,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| zip | 8.6.0 | MIT | https://github.com/zip-rs/zip2 |
 | zlib-rs | 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 | zstd | 0.14.0 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |

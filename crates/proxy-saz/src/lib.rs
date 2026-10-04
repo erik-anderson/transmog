@@ -1,0 +1,687 @@
+#![deny(missing_docs)]
+
+//! Session Archive Zip export adapter over sealed or recovered native captures.
+//!
+//! Strict mode emits only the conventional OPC content-types member and the
+//! three `raw/<id>_{c,s,m}` files per complete HTTP exchange. The native format
+//! remains authoritative because SAZ cannot represent every proxy boundary or
+//! hook effect.
+
+use std::{
+    collections::BTreeMap,
+    io::{Seek, Write},
+};
+
+use rustymiddle_capture::{
+    CaptureExporter, CaptureRecordKind, CapturedHeader, ExportReport, RecoveredCapture,
+};
+use rustymiddle_core::observe::ExchangeBoundary;
+use serde::Serialize;
+use thiserror::Error;
+use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+const CONTENT_TYPES: &str = concat!(
+    "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
+    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">",
+    "<Default Extension=\"txt\" ContentType=\"text/plain\"/>",
+    "<Default Extension=\"xml\" ContentType=\"text/xml\"/>",
+    "</Types>"
+);
+
+/// SAZ compatibility profile.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SazMode {
+    /// Emit conventional SAZ members only.
+    #[default]
+    Strict,
+    /// Also emit a namespaced fidelity manifest.
+    Extended,
+}
+
+/// Finite SAZ conversion limits.
+#[derive(Clone, Copy, Debug)]
+pub struct SazLimits {
+    /// Maximum exchanges scanned from one native capture.
+    pub max_sessions: usize,
+    /// Maximum retained request or response body per exchange.
+    pub max_body_bytes_per_direction: usize,
+    /// Maximum ZIP members emitted.
+    pub max_entries: usize,
+}
+
+impl Default for SazLimits {
+    fn default() -> Self {
+        Self {
+            max_sessions: 1_000_000,
+            max_body_bytes_per_direction: 256 * 1024 * 1024,
+            max_entries: 3_000_002,
+        }
+    }
+}
+
+impl SazLimits {
+    fn validate(self) -> Result<Self, SazError> {
+        if self.max_sessions == 0 || self.max_body_bytes_per_direction == 0 || self.max_entries < 4
+        {
+            return Err(SazError::InvalidLimits);
+        }
+        Ok(self)
+    }
+}
+
+/// Detailed conversion result.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SazReport {
+    /// Complete sessions emitted.
+    pub sessions: usize,
+    /// Exchanges omitted because either head was absent.
+    pub skipped_incomplete: usize,
+    /// Emitted sessions whose retained body was incomplete.
+    pub incomplete_bodies: usize,
+    /// ZIP members emitted.
+    pub entries: usize,
+    /// Final archive length.
+    pub bytes: u64,
+}
+
+/// SAZ exporter requiring a seekable destination for ZIP finalization.
+pub struct SazExporter<W> {
+    output: Option<W>,
+    mode: SazMode,
+    limits: SazLimits,
+    report: Option<SazReport>,
+}
+
+impl<W: Write + Seek> SazExporter<W> {
+    /// Creates a strict compatibility exporter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SazError::InvalidLimits`] for zero or inconsistent bounds.
+    pub fn new(output: W, mode: SazMode, limits: SazLimits) -> Result<Self, SazError> {
+        Ok(Self {
+            output: Some(output),
+            mode,
+            limits: limits.validate()?,
+            report: None,
+        })
+    }
+
+    /// Returns the report after a successful export.
+    pub fn report(&self) -> Option<SazReport> {
+        self.report
+    }
+
+    /// Returns the finalized destination.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SazError::NotExported`] before a successful export.
+    pub fn into_inner(self) -> Result<W, SazError> {
+        if self.report.is_none() {
+            return Err(SazError::NotExported);
+        }
+        self.output.ok_or(SazError::NotExported)
+    }
+}
+
+impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
+    type Error = SazError;
+
+    fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, Self::Error> {
+        if self.report.is_some() {
+            return Err(SazError::AlreadyExported);
+        }
+        let mut output = self.output.take().ok_or(SazError::AlreadyExported)?;
+        let starting_position = output.stream_position()?;
+        let mut sessions = collect_sessions(capture, self.limits)?;
+        let mut writer = ZipWriter::new(output);
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Stored)
+            .large_file(true);
+        write_member(
+            &mut writer,
+            "[Content_Types].xml",
+            CONTENT_TYPES.as_bytes(),
+            options,
+        )?;
+        let mut report = SazReport {
+            entries: 1,
+            ..SazReport::default()
+        };
+        let mut manifest = Vec::new();
+        for (exchange_id, session) in &mut sessions {
+            let (Some(request), Some(response)) = (&session.request, &session.response) else {
+                report.skipped_incomplete = report.skipped_incomplete.saturating_add(1);
+                continue;
+            };
+            if report.sessions >= self.limits.max_sessions {
+                return Err(SazError::SessionLimitExceeded);
+            }
+            let session_id = report.sessions.saturating_add(1);
+            let names = [
+                format!("raw/{session_id}_c.txt"),
+                format!("raw/{session_id}_s.txt"),
+                format!("raw/{session_id}_m.xml"),
+            ];
+            if report.entries.saturating_add(names.len()) > self.limits.max_entries {
+                return Err(SazError::EntryLimitExceeded);
+            }
+            let incomplete = session.request_body_incomplete
+                || session.response_body_incomplete
+                || session.loss
+                || session.terminal != TerminalState::Completed;
+            let request_wire = render_request(request, &session.request_body)?;
+            let response_wire = render_response(response, &session.response_body)?;
+            let metadata = render_metadata(
+                session_id,
+                session.request_body_incomplete
+                    || session.loss
+                    || session.terminal == TerminalState::Open,
+                session.response_body_incomplete
+                    || session.loss
+                    || session.terminal != TerminalState::Completed,
+            );
+            write_member(&mut writer, &names[0], &request_wire, options)?;
+            write_member(&mut writer, &names[1], &response_wire, options)?;
+            write_member(&mut writer, &names[2], metadata.as_bytes(), options)?;
+            report.sessions = report.sessions.saturating_add(1);
+            report.entries = report.entries.saturating_add(3);
+            report.incomplete_bodies = report
+                .incomplete_bodies
+                .saturating_add(usize::from(incomplete));
+            manifest.push(ManifestSession {
+                saz_id: session_id,
+                native_exchange_id: exchange_id.to_string(),
+                incomplete,
+            });
+        }
+        if self.mode == SazMode::Extended {
+            if report.entries >= self.limits.max_entries {
+                return Err(SazError::EntryLimitExceeded);
+            }
+            let manifest = serde_json::to_vec_pretty(&Manifest {
+                format: "rustymiddle-saz-extension-v1",
+                source_sealed: capture.sealed,
+                source_truncated_tail: capture.truncated_tail,
+                sessions: &manifest,
+            })?;
+            write_member(&mut writer, "rustymiddle/manifest.json", &manifest, options)?;
+            report.entries = report.entries.saturating_add(1);
+        }
+        let mut output = writer.finish()?;
+        output.flush()?;
+        report.bytes = output.stream_position()?.saturating_sub(starting_position);
+        self.output = Some(output);
+        self.report = Some(report);
+        Ok(ExportReport {
+            records: report.sessions,
+            bytes: report.bytes,
+        })
+    }
+}
+
+#[derive(Default)]
+struct Session {
+    request: Option<CapturedRequest>,
+    response: Option<CapturedResponse>,
+    request_body: Vec<u8>,
+    response_body: Vec<u8>,
+    request_body_incomplete: bool,
+    response_body_incomplete: bool,
+    loss: bool,
+    terminal: TerminalState,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum TerminalState {
+    #[default]
+    Open,
+    Completed,
+    Failed,
+}
+
+struct CapturedRequest {
+    method: String,
+    target: String,
+    headers: Vec<CapturedHeader>,
+}
+
+struct CapturedResponse {
+    status: u16,
+    headers: Vec<CapturedHeader>,
+}
+
+#[derive(Serialize)]
+struct Manifest<'a> {
+    format: &'static str,
+    source_sealed: bool,
+    source_truncated_tail: bool,
+    sessions: &'a [ManifestSession],
+}
+
+#[derive(Serialize)]
+struct ManifestSession {
+    saz_id: usize,
+    native_exchange_id: String,
+    incomplete: bool,
+}
+
+fn collect_sessions(
+    capture: &RecoveredCapture,
+    limits: SazLimits,
+) -> Result<BTreeMap<u128, Session>, SazError> {
+    let mut sessions = BTreeMap::<u128, Session>::new();
+    for record in &capture.records {
+        if record.exchange_id == 0 {
+            continue;
+        }
+        if !sessions.contains_key(&record.exchange_id) && sessions.len() >= limits.max_sessions {
+            return Err(SazError::SessionLimitExceeded);
+        }
+        let session = sessions.entry(record.exchange_id).or_default();
+        match &record.kind {
+            CaptureRecordKind::RequestHead {
+                boundary: ExchangeBoundary::ClientRequest,
+                method,
+                target,
+                headers,
+            } => {
+                session.request = Some(CapturedRequest {
+                    method: method.clone(),
+                    target: target.clone(),
+                    headers: headers.clone(),
+                });
+            }
+            CaptureRecordKind::ResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                status,
+                headers,
+            } => {
+                session.response = Some(CapturedResponse {
+                    status: *status,
+                    headers: headers.clone(),
+                });
+            }
+            CaptureRecordKind::BodySegment {
+                boundary,
+                byte_count,
+                bytes,
+                truncated,
+            } => {
+                let (body, incomplete) = match boundary {
+                    ExchangeBoundary::ClientRequest => (
+                        &mut session.request_body,
+                        &mut session.request_body_incomplete,
+                    ),
+                    ExchangeBoundary::ClientResponse => (
+                        &mut session.response_body,
+                        &mut session.response_body_incomplete,
+                    ),
+                    ExchangeBoundary::UpstreamRequest | ExchangeBoundary::UpstreamResponse => {
+                        continue;
+                    }
+                };
+                let Some(bytes) = bytes else {
+                    *incomplete = *byte_count > 0;
+                    continue;
+                };
+                *incomplete |= *truncated || bytes.len() != *byte_count;
+                let next = body
+                    .len()
+                    .checked_add(bytes.len())
+                    .ok_or(SazError::BodyLimitExceeded)?;
+                if next > limits.max_body_bytes_per_direction {
+                    return Err(SazError::BodyLimitExceeded);
+                }
+                body.extend_from_slice(bytes);
+            }
+            CaptureRecordKind::Loss { .. } => session.loss = true,
+            CaptureRecordKind::Completed => session.terminal = TerminalState::Completed,
+            CaptureRecordKind::Failed { .. } => session.terminal = TerminalState::Failed,
+            _ => {}
+        }
+    }
+    Ok(sessions)
+}
+
+fn render_request(request: &CapturedRequest, body: &[u8]) -> Result<Vec<u8>, SazError> {
+    validate_line_component(request.method.as_bytes())?;
+    validate_line_component(request.target.as_bytes())?;
+    let mut output = Vec::new();
+    output.extend_from_slice(request.method.as_bytes());
+    output.push(b' ');
+    output.extend_from_slice(request.target.as_bytes());
+    output.extend_from_slice(b" HTTP/1.1\r\n");
+    render_headers(&mut output, &request.headers)?;
+    output.extend_from_slice(b"\r\n");
+    output.extend_from_slice(body);
+    Ok(output)
+}
+
+fn render_response(response: &CapturedResponse, body: &[u8]) -> Result<Vec<u8>, SazError> {
+    if !(100..=999).contains(&response.status) {
+        return Err(SazError::UnsafeWireField);
+    }
+    let mut output = format!(
+        "HTTP/1.1 {} {}\r\n",
+        response.status,
+        reason_phrase(response.status)
+    )
+    .into_bytes();
+    render_headers(&mut output, &response.headers)?;
+    output.extend_from_slice(b"\r\n");
+    output.extend_from_slice(body);
+    Ok(output)
+}
+
+fn render_headers(output: &mut Vec<u8>, headers: &[CapturedHeader]) -> Result<(), SazError> {
+    for header in headers {
+        let Some(value) = &header.value else {
+            continue;
+        };
+        if header.name.contains(&b'\r')
+            || header.name.contains(&b'\n')
+            || value.contains(&b'\r')
+            || value.contains(&b'\n')
+        {
+            return Err(SazError::UnsafeWireField);
+        }
+        output.extend_from_slice(&header.name);
+        output.extend_from_slice(b": ");
+        output.extend_from_slice(value);
+        output.extend_from_slice(b"\r\n");
+    }
+    Ok(())
+}
+
+fn validate_line_component(value: &[u8]) -> Result<(), SazError> {
+    if value.is_empty() || value.contains(&b'\r') || value.contains(&b'\n') {
+        return Err(SazError::UnsafeWireField);
+    }
+    Ok(())
+}
+
+fn render_metadata(
+    session_id: usize,
+    request_incomplete: bool,
+    response_incomplete: bool,
+) -> String {
+    let mut flags = String::new();
+    if request_incomplete {
+        flags.push_str("<SessionFlag N=\"log-drop-request-body\" V=\"true\" />");
+    }
+    if response_incomplete {
+        flags.push_str("<SessionFlag N=\"log-drop-response-body\" V=\"true\" />");
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{session_id}\" BitFlags=\"0\"><SessionTimers/><SessionFlags>{flags}</SessionFlags></Session>"
+    )
+}
+
+const fn reason_phrase(status: u16) -> &'static str {
+    match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        206 => "Partial Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        407 => "Proxy Authentication Required",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        413 => "Content Too Large",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "Unknown",
+    }
+}
+
+fn write_member<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    name: &str,
+    bytes: &[u8],
+    options: SimpleFileOptions,
+) -> Result<(), SazError> {
+    writer.start_file(name, options)?;
+    writer.write_all(bytes)?;
+    Ok(())
+}
+
+/// SAZ conversion failure.
+#[derive(Debug, Error)]
+pub enum SazError {
+    /// Limits were zero or inconsistent.
+    #[error("SAZ limits are invalid")]
+    InvalidLimits,
+    /// Exporter was already consumed.
+    #[error("SAZ exporter has already produced an archive")]
+    AlreadyExported,
+    /// Destination was requested before export.
+    #[error("SAZ exporter has not produced an archive")]
+    NotExported,
+    /// Session count exceeded its finite bound.
+    #[error("SAZ session limit exceeded")]
+    SessionLimitExceeded,
+    /// ZIP member count exceeded its finite bound.
+    #[error("SAZ entry limit exceeded")]
+    EntryLimitExceeded,
+    /// Retained body bytes exceeded the per-direction bound.
+    #[error("SAZ body limit exceeded")]
+    BodyLimitExceeded,
+    /// Captured values could inject or corrupt raw HTTP wire rendering.
+    #[error("SAZ capture contains an unsafe HTTP wire field")]
+    UnsafeWireField,
+    /// ZIP writer failed.
+    #[error("SAZ ZIP failure: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    /// Destination I/O failed.
+    #[error("SAZ I/O failure: {0}")]
+    Io(#[from] std::io::Error),
+    /// Extended manifest serialization failed.
+    #[error("SAZ manifest failure: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Cursor, Read};
+
+    use rustymiddle_capture::CaptureRecord;
+
+    use super::*;
+
+    fn capture(include_response: bool, include_body: bool) -> RecoveredCapture {
+        let headers = vec![
+            CapturedHeader {
+                name: b"host".to_vec(),
+                value: Some(b"example.test".to_vec()),
+            },
+            CapturedHeader {
+                name: b"authorization".to_vec(),
+                value: None,
+            },
+        ];
+        let mut records = vec![CaptureRecord {
+            sequence: 1,
+            exchange_id: 42,
+            kind: CaptureRecordKind::RequestHead {
+                boundary: ExchangeBoundary::ClientRequest,
+                method: "POST".to_owned(),
+                target: "https://example.test/upload".to_owned(),
+                headers: headers.clone(),
+            },
+        }];
+        if include_body {
+            records.push(CaptureRecord {
+                sequence: 2,
+                exchange_id: 42,
+                kind: CaptureRecordKind::BodySegment {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 3,
+                    bytes: Some(b"req".to_vec()),
+                    truncated: false,
+                },
+            });
+        } else {
+            records.push(CaptureRecord {
+                sequence: 2,
+                exchange_id: 42,
+                kind: CaptureRecordKind::BodySegment {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 3,
+                    bytes: None,
+                    truncated: true,
+                },
+            });
+        }
+        if include_response {
+            records.extend([
+                CaptureRecord {
+                    sequence: 3,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::ResponseHead {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        status: 200,
+                        headers: vec![CapturedHeader {
+                            name: b"content-type".to_vec(),
+                            value: Some(b"text/plain".to_vec()),
+                        }],
+                    },
+                },
+                CaptureRecord {
+                    sequence: 4,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::BodySegment {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        byte_count: 3,
+                        bytes: Some(b"res".to_vec()),
+                        truncated: false,
+                    },
+                },
+                CaptureRecord {
+                    sequence: 5,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::Completed,
+                },
+            ]);
+        }
+        RecoveredCapture {
+            records,
+            valid_bytes: 0,
+            truncated_tail: false,
+            sealed: true,
+        }
+    }
+
+    fn export(mode: SazMode, capture: &RecoveredCapture) -> (Vec<u8>, SazReport) {
+        let mut exporter =
+            SazExporter::new(Cursor::new(Vec::new()), mode, SazLimits::default()).unwrap();
+        exporter.export(capture).unwrap();
+        let report = exporter.report().unwrap();
+        let bytes = exporter.into_inner().unwrap().into_inner();
+        (bytes, report)
+    }
+
+    fn member(archive: &mut zip::ZipArchive<Cursor<Vec<u8>>>, name: &str) -> Vec<u8> {
+        let mut file = archive.by_name(name).unwrap();
+        let mut value = Vec::new();
+        file.read_to_end(&mut value).unwrap();
+        value
+    }
+
+    #[test]
+    fn strict_archive_has_conventional_triplet_and_wire_bytes() {
+        let source = capture(true, true);
+        let (bytes, report) = export(SazMode::Strict, &source);
+        let (second, _) = export(SazMode::Strict, &source);
+        assert_eq!(bytes, second, "strict SAZ output must be deterministic");
+        assert_eq!(report.sessions, 1);
+        assert_eq!(report.entries, 4);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), 4);
+        assert_eq!(
+            member(&mut archive, "[Content_Types].xml"),
+            CONTENT_TYPES.as_bytes()
+        );
+        let request = member(&mut archive, "raw/1_c.txt");
+        assert_eq!(
+            request,
+            b"POST https://example.test/upload HTTP/1.1\r\nhost: example.test\r\n\r\nreq"
+        );
+        let response = member(&mut archive, "raw/1_s.txt");
+        assert_eq!(
+            response,
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\n\r\nres"
+        );
+        let metadata = String::from_utf8(member(&mut archive, "raw/1_m.xml")).unwrap();
+        assert!(!metadata.contains("log-drop-request-body"));
+        assert!(!metadata.contains("log-drop-response-body"));
+        assert!(archive.by_name("rustymiddle/manifest.json").is_err());
+    }
+
+    #[test]
+    fn incomplete_bodies_are_disclosed_and_incomplete_sessions_are_skipped() {
+        let (bytes, report) = export(SazMode::Extended, &capture(true, false));
+        assert_eq!(report.incomplete_bodies, 1);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let metadata = String::from_utf8(member(&mut archive, "raw/1_m.xml")).unwrap();
+        assert!(metadata.contains("log-drop-request-body"));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&member(&mut archive, "rustymiddle/manifest.json")).unwrap();
+        assert_eq!(manifest["sessions"][0]["native_exchange_id"], "42");
+
+        let (_, report) = export(SazMode::Strict, &capture(false, true));
+        assert_eq!(report.sessions, 0);
+        assert_eq!(report.skipped_incomplete, 1);
+    }
+
+    #[test]
+    fn body_and_entry_limits_fail_before_unbounded_growth() {
+        let limits = SazLimits {
+            max_sessions: 1,
+            max_body_bytes_per_direction: 2,
+            max_entries: 4,
+        };
+        let mut exporter =
+            SazExporter::new(Cursor::new(Vec::new()), SazMode::Strict, limits).unwrap();
+        assert!(matches!(
+            exporter.export(&capture(true, true)),
+            Err(SazError::BodyLimitExceeded)
+        ));
+    }
+
+    #[test]
+    fn unsafe_raw_http_fields_fail_closed() {
+        let mut capture = capture(true, true);
+        let CaptureRecordKind::RequestHead { method, .. } = &mut capture.records[0].kind else {
+            panic!("expected request head");
+        };
+        *method = "GET\r\ninjected: true".to_owned();
+        let mut exporter = SazExporter::new(
+            Cursor::new(Vec::new()),
+            SazMode::Strict,
+            SazLimits::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            exporter.export(&capture),
+            Err(SazError::UnsafeWireField)
+        ));
+    }
+}

@@ -37,6 +37,7 @@ use rustymiddle_core::{
 use rustymiddle_runtime::{
     ExchangeEvidence, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
 };
+use rustymiddle_saz::{SazExporter, SazLimits, SazMode};
 use rustymiddle_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
 #[tokio::main]
@@ -363,20 +364,38 @@ fn write_sealed_capture<W: Write>(
 fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let capture = recover_file(arguments)?;
     let format = option(arguments, "--format").unwrap_or("jsonl");
-    if format != "jsonl" {
-        return Err(invalid_input("--format must currently be jsonl").into());
-    }
     let output = option(arguments, "--output").unwrap_or("-");
-    let report = if output == "-" {
-        let stdout = io::stdout();
-        let mut lock = stdout.lock();
-        JsonLinesExporter::new(&mut lock).export(&capture)?
-    } else {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(output)?;
-        JsonLinesExporter::new(file).export(&capture)?
+    let report = match format {
+        "jsonl" if output == "-" => {
+            let stdout = io::stdout();
+            let mut lock = stdout.lock();
+            JsonLinesExporter::new(&mut lock).export(&capture)?
+        }
+        "jsonl" => {
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output)?;
+            JsonLinesExporter::new(file).export(&capture)?
+        }
+        "saz" | "saz-extended" if output == "-" => {
+            return Err(invalid_input("SAZ output must be a seekable file, not stdout").into());
+        }
+        "saz" | "saz-extended" => {
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(output)?;
+            let mode = if format == "saz" {
+                SazMode::Strict
+            } else {
+                SazMode::Extended
+            };
+            let mut exporter = SazExporter::new(file, mode, SazLimits::default())?;
+            exporter.export(&capture)?
+        }
+        _ => return Err(invalid_input("--format must be jsonl, saz, or saz-extended").into()),
     };
     eprintln!("EXPORTED_RECORDS={}", report.records);
     eprintln!("EXPORTED_BYTES={}", report.bytes);
@@ -519,7 +538,7 @@ fn print_usage() {
          rustymiddle capture inspect --input FILE\n  \
          rustymiddle capture validate --input FILE\n  \
          rustymiddle capture seal --input FILE --output RECOVERED_FILE\n  \
-         rustymiddle capture export --input FILE [--format jsonl] [--output FILE|-]\n\n\
+         rustymiddle capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
          Non-loopback listening additionally requires --allow-remote."
     );
 }

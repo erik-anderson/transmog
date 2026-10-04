@@ -10,6 +10,7 @@ members = [
     "crates/proxy-control-model",
     "crates/proxy-control-transport",
     "crates/proxy-capture",
+    "crates/proxy-saz",
     "crates/proxy-cli",
 ]
 
@@ -41,6 +42,7 @@ tokio-boring = "=5.2.0"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
+zip = { version = "=8.6.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
