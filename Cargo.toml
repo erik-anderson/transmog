@@ -7,6 +7,8 @@ members = [
     "crates/proxy-http",
     "crates/proxy-h3",
     "crates/proxy-runtime",
+    "crates/proxy-control-model",
+    "crates/proxy-control-transport",
     "crates/proxy-cli",
 ]
 

@@ -841,6 +841,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustymiddle-control-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "rustymiddle-control-transport"
+version = "0.1.0"
+dependencies = [
+ "rustymiddle-control-model",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rustymiddle-core"
 version = "0.1.0"
 dependencies = [

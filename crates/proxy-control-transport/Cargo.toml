@@ -1,0 +1,16 @@
+[package]
+name = "rustymiddle-control-transport"
+description = "Bounded in-process transport for experimental rustymiddle control v0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rustymiddle-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
