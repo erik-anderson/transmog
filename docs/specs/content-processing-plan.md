@@ -1,8 +1,8 @@
 # Plan: Production-grade content processing
 
 Status: active; Phases 1-5, local Phase 6 hardening, cooperative codec work
-bounds, fuzz-target, benchmark, and dependency gates are implemented on
-Windows; cross-platform fuzz/codec observation remains
+bounds, fuzz-target, end-to-end performance, and dependency gates are
+implemented on Windows; cross-platform fuzz/codec observation remains
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -335,13 +335,16 @@ are regenerated in the same change that accepts a dependency.
       interception.
 - [x] Header and codec fuzz targets, deterministic decompression-bomb and
       cancellation stress, and per-codec release benchmarks are checked in.
+- [x] End-to-end content throughput, first-byte, sampled peak-memory, and
+      cancellation benchmarks generate machine-readable evidence.
 - [x] Shipping dependency licenses, advisories, duplicate graph, notices, SBOM,
       and native-code ownership are reviewed by the automated gate.
 
 ## Next implementation slice
 
-Observe the Linux fuzz-smoke job and Linux/macOS codec matrix, then extend the
-content performance harness into end-to-end throughput, first-byte,
-peak-memory, and cancellation benchmarks. Preserve the deterministic protocol
-matrix as the behavioral baseline; do not weaken finite limits or move content
-policy into transport adapters to improve a benchmark.
+Observe and close the Linux fuzz-smoke and Linux/macOS codec-matrix gates while
+keeping the live Chromium gate passing. The next broader roadmap phase is the
+experimental control-v0 boundary, based on the content and capture needs now
+demonstrated. Preserve the deterministic protocol matrix and finite limits as
+behavioral baselines; do not move content policy into transport adapters to
+improve a benchmark.

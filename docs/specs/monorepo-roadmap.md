@@ -1,8 +1,8 @@
 # Plan: Layered monorepo roadmap
 
 Status: active; Hooks v2, the deterministic content protocol matrix, local
-content hardening, and cooperative codec work/deadline bounds are complete on
-Windows; cross-platform observation and end-to-end content benchmarks are next
+content hardening, cooperative codec work/deadline bounds, and end-to-end
+content benchmarks are complete on Windows; cross-platform observation remains
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -225,9 +225,7 @@ separately triggers stabilization.
 
 1. Observe and close the Hooks v2/content and fuzz-smoke cross-platform CI
    gates.
-2. Add end-to-end content throughput, first-byte, peak-memory, and cancellation
-   benchmarks without weakening limits.
-3. Keep the live Chromium gate passing with content processing disabled by
+2. Keep the live Chromium gate passing with content processing disabled by
    default.
-4. Design experimental control v0 using actual content/capture needs rather
+3. Design experimental control v0 using actual content/capture needs rather
    than stabilizing speculative messages.

@@ -138,6 +138,10 @@ cargo test --locked --workspace --all-features --all-targets
 # Dependency-free fixed-input microbenchmarks; run on an otherwise idle host.
 cargo run --locked --release -p rustymiddle-core --example hooks_benchmark
 cargo run --locked --release -p rustymiddle-content --example content_benchmark
+
+# End-to-end decoded content throughput, first-byte, cancellation, and sampled
+# peak-working-set report. The JSON artifact is ignored by Git.
+./scripts/benchmark-content.ps1
 ```
 
 The transport-neutral core is intended to remain Miri-compatible. On a host

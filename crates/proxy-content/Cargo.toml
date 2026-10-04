@@ -14,5 +14,9 @@ rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
 thiserror.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
 [lints]
 workspace = true

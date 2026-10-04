@@ -1,0 +1,39 @@
+name: content-performance
+
+on:
+  schedule:
+    - cron: '43 10 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-content-performance:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+      - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - uses: ilammy/setup-nasm@v1
+      - name: Configure Clang and Ninja
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_ENV 'CC=clang-cl'
+          Add-Content $env:GITHUB_ENV 'CXX=clang-cl'
+          Add-Content $env:GITHUB_ENV 'AR=llvm-lib'
+          Add-Content $env:GITHUB_ENV 'CMAKE_GENERATOR=Ninja'
+      - name: Run end-to-end content benchmarks
+        shell: pwsh
+        run: ./scripts/benchmark-content.ps1
+      - name: Upload machine-readable report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-performance-${{ github.run_id }}
+          if-no-files-found: error
+          path: artifacts/performance/content-pipeline.json
