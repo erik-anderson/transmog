@@ -16,6 +16,7 @@ use rustymiddle_core::{
         ObserverEvent, ObserverEventKind,
     },
 };
+use rustymiddle_runtime::WebSocketSessionEvidence;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
@@ -122,6 +123,8 @@ pub struct SessionSnapshot {
     pub route_attempts: Vec<ObservedRouteAttempt>,
     /// Terminal result, when known.
     pub terminal: Option<SessionTerminal>,
+    /// Terminal relay evidence when the exchange upgraded to WebSocket.
+    pub websocket: Option<WebSocketSessionEvidence>,
 }
 
 /// Monotonic catalog loss and pressure counters.
@@ -143,6 +146,8 @@ pub struct CatalogCounters {
     pub detail_records_dropped: u64,
     /// Delta messages skipped by slow subscribers.
     pub subscriber_lag: u64,
+    /// WebSocket terminal reports skipped by a lagged runtime receiver.
+    pub websocket_evidence_lag: u64,
 }
 
 /// Result of applying one observer event.
@@ -251,6 +256,7 @@ struct MutableSession {
     route_selection: Option<(Arc<str>, Arc<str>)>,
     route_attempts: Vec<ObservedRouteAttempt>,
     terminal: Option<SessionTerminal>,
+    websocket: Option<WebSocketSessionEvidence>,
 }
 
 impl MutableSession {
@@ -277,6 +283,7 @@ impl MutableSession {
             route_selection: self.route_selection.clone(),
             route_attempts: self.route_attempts.clone(),
             terminal: self.terminal.clone(),
+            websocket: self.websocket.clone(),
         }
     }
 }
@@ -353,6 +360,7 @@ impl SessionCatalog {
                     route_selection: None,
                     route_attempts: Vec::new(),
                     terminal: None,
+                    websocket: None,
                 },
             );
         }
@@ -445,6 +453,32 @@ impl SessionCatalog {
     /// Returns monotonic pressure and loss counters.
     pub fn counters(&self) -> CatalogCounters {
         self.lock_state().counters
+    }
+
+    /// Attaches terminal WebSocket relay evidence to its originating exchange.
+    pub fn apply_websocket(&self, evidence: WebSocketSessionEvidence) -> CatalogApply {
+        let exchange_id = ExchangeId(evidence.session_id.0);
+        let mut state = self.lock_state();
+        let Some(session) = state.by_id.get_mut(&exchange_id) else {
+            state.counters.unknown_exchange_events =
+                state.counters.unknown_exchange_events.saturating_add(1);
+            return CatalogApply::UnknownExchange;
+        };
+        session.websocket = Some(evidence);
+        let delta = CatalogDelta {
+            exchange_id,
+            sequence: session.last_sequence,
+            terminal: session.terminal.is_some(),
+        };
+        drop(state);
+        let _ = self.inner.deltas.send(delta);
+        CatalogApply::Applied
+    }
+
+    pub(crate) fn record_websocket_lag(&self, count: u64) {
+        let mut state = self.lock_state();
+        state.counters.websocket_evidence_lag =
+            state.counters.websocket_evidence_lag.saturating_add(count);
     }
 
     /// Subscribes to bounded hint-only deltas.

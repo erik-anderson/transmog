@@ -178,6 +178,13 @@ impl ProxyComponents {
         self
     }
 
+    /// Adds one Hooks v2 registration after caller-supplied interceptors.
+    #[must_use]
+    pub fn with_interceptor(mut self, registration: InterceptorRegistration) -> Self {
+        self.hooks = self.hooks.with_registration(registration);
+        self
+    }
+
     /// Installs a custom route selector.
     #[must_use]
     pub fn with_route_selector(mut self, selector: Arc<dyn RouteSelector>) -> Self {

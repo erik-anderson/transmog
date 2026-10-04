@@ -9,8 +9,12 @@ description = "Headless application and live-session service for rustymiddle"
 
 [dependencies]
 bytes.workspace = true
+http.workspace = true
 rustymiddle-capture = { path = "../proxy-capture" }
+rustymiddle-control-model = { path = "../proxy-control-model" }
+rustymiddle-control-transport = { path = "../proxy-control-transport" }
 rustymiddle-core = { path = "../proxy-core" }
+rustymiddle-runtime = { path = "../proxy-runtime" }
 thiserror.workspace = true
 tokio.workspace = true
 

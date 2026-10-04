@@ -1023,8 +1023,12 @@ name = "rustymiddle-session"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "http",
  "rustymiddle-capture",
+ "rustymiddle-control-model",
+ "rustymiddle-control-transport",
  "rustymiddle-core",
+ "rustymiddle-runtime",
  "thiserror",
  "tokio",
 ]

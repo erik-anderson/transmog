@@ -143,6 +143,18 @@ impl InterceptorChainFactory {
         }
     }
 
+    /// Adds one registration after all existing hooks while preserving the
+    /// chain's callback limits and shared pause-permit pool.
+    #[must_use]
+    pub fn with_registration(self, registration: InterceptorRegistration) -> Self {
+        let mut registrations = self.registrations.iter().cloned().collect::<Vec<_>>();
+        registrations.push(registration);
+        Self {
+            registrations: registrations.into(),
+            runner: self.runner,
+        }
+    }
+
     /// Creates isolated interceptor instances for one exchange.
     ///
     /// Optional initialization failures are returned as diagnostics. A required

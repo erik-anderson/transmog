@@ -5,7 +5,9 @@
 
 mod capture;
 mod catalog;
+mod control;
 mod observer;
+mod service;
 
 pub use capture::{
     CaptureFailure, CaptureManager, CaptureServiceError, CaptureStart, CaptureStatus, SealedCapture,
@@ -16,4 +18,9 @@ pub use catalog::{
     SessionCatalog, SessionFilter, SessionLimits, SessionSnapshot, SessionTerminal,
     SubscriptionEvent,
 };
+pub use control::{
+    AttachedController, ControlConnectionError, ControlConnector, ControlPhase, ControlPolicy,
+    ControlStats, INTERACTIVE_CONTROL_HOOK_ID,
+};
 pub use observer::{SessionObserver, session_observer_config};
+pub use service::{ApplicationSessionService, ServiceConfig, ServiceError, ServiceStatus};

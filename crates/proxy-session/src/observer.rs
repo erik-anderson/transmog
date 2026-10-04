@@ -5,19 +5,31 @@ use rustymiddle_core::observe::{
     ObserverDeliveryPolicy, ObserverEvent,
 };
 
-use crate::{CaptureManager, SessionCatalog};
+use crate::{CaptureManager, ControlConnector, SessionCatalog};
 
 /// Observer that feeds the authoritative catalog and optional dynamic capture.
 #[derive(Clone, Debug)]
 pub struct SessionObserver {
     catalog: SessionCatalog,
     capture: CaptureManager,
+    control: Option<ControlConnector>,
 }
 
 impl SessionObserver {
     /// Creates a service observer over shared catalog and capture controllers.
     pub fn new(catalog: SessionCatalog, capture: CaptureManager) -> Self {
-        Self { catalog, capture }
+        Self {
+            catalog,
+            capture,
+            control: None,
+        }
+    }
+
+    /// Publishes supported lifecycle events to the attached control endpoint.
+    #[must_use]
+    pub fn with_control(mut self, control: ControlConnector) -> Self {
+        self.control = Some(control);
+        self
     }
 
     /// Returns the authoritative catalog fed by this observer.
@@ -33,6 +45,9 @@ impl SessionObserver {
 
 impl Observer for SessionObserver {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+        if let Some(control) = &self.control {
+            control.publish(&event);
+        }
         self.capture.record(event.clone());
         self.catalog.apply(event);
         Box::pin(async { Ok(()) })
