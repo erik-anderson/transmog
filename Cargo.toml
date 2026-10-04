@@ -12,6 +12,7 @@ members = [
     "crates/proxy-capture",
     "crates/proxy-saz",
     "crates/proxy-automation",
+    "crates/proxy-websocket",
     "crates/proxy-cli",
 ]
 
@@ -24,9 +25,13 @@ repository = "https://github.com/erik-anderson/rustymiddle"
 
 [workspace.dependencies]
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
+base64 = "0.22.1"
 boring = "=5.2.0"
 bytes = { version = "1.11.1", features = ["serde"] }
 crc32fast = "1.5.2"
+flate2 = "1.1.10"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+getrandom = "0.4.3"
 http = "1.3.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
@@ -37,6 +42,7 @@ quiche = { version = "=0.30.0", default-features = false, features = ["boringssl
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha1 = "0.10.6"
 thiserror = "2.0.17"
 tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-boring = "=5.2.0"

@@ -15,7 +15,9 @@ The project is under active implementation. See [architecture](docs/architecture
 SAZ conversion behavior and its fidelity limits are documented in
 [SAZ compatibility](docs/saz-compatibility.md). The optional declarative layer
 is described in [automation](docs/automation.md); embedders may instead install
-their own Hooks v2 interceptors directly.
+their own Hooks v2 interceptors directly. WebSocket upgrade, framing, hook, and
+resource semantics are documented in
+[WebSocket inspection](docs/websocket-inspection.md).
 
 ## Local verification
 

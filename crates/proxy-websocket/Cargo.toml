@@ -1,0 +1,21 @@
+[package]
+name = "rustymiddle-websocket"
+description = "Bounded protocol-neutral WebSocket inspection for rustymiddle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+sha1.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

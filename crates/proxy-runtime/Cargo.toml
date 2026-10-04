@@ -20,6 +20,7 @@ rustymiddle-content = { version = "=0.1.0", path = "../proxy-content" }
 rustymiddle-h3 = { version = "=0.1.0", path = "../proxy-h3" }
 rustymiddle-http = { version = "=0.1.0", path = "../proxy-http" }
 rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
+rustymiddle-websocket = { version = "=0.1.0", path = "../proxy-websocket" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-boring.workspace = true

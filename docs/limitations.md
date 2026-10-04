@@ -19,17 +19,21 @@
   an instruction sequence. Applications handling hostile traffic should keep
   byte, ratio, window, and work limits conservative together.
 - Content processing does not transcode character sets, parse semantic media
-  formats, negotiate dictionaries, or support WebSocket per-message
-  compression. Raw-DEFLATE compatibility is opt-in and selected only from the
-  initial zlib-header probe; it never retries after releasing decoded bytes.
+  formats, or negotiate dictionaries. WebSocket `permessage-deflate` is owned
+  by the separate WebSocket layer. Raw-DEFLATE HTTP-content compatibility is
+  opt-in and selected only from the initial zlib-header probe; it never retries
+  after releasing decoded bytes.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over HTTP/2.
   Forced-protocol routes and Auto without a cached HTTP/3 alternative stream.
 - A body-phase hook cannot replace an exchange with a synthetic response
   after the upstream response head has been committed. Synthetic responses are
   supported at the request- and response-head phases.
-- WebSocket handshake heads can pass through HTTP handling, but WebSocket frame
-  inspection and modification are not implemented.
+- WebSocket inspection currently supports HTTP/1.1 Upgrade. HTTP/2 extended
+  CONNECT, HTTP/3 WebSockets, application-owned upstream byte streams, and
+  inspected recompression for explicitly negotiated windows below 15 remain
+  future adapter work. The no-hook path is byte-transparent for frame semantics
+  it does not need to understand.
 - The included `DecisionBridge` is an in-process bounded adapter. There is no
   stable external control protocol, capture database, saved-rule engine, or UI.
 - Reverse-proxy listener configuration, ACME, load balancing, and health checks

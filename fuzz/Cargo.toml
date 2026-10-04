@@ -13,6 +13,7 @@ bytes = "1.11.1"
 libfuzzer-sys = "=0.4.13"
 rustymiddle-content = { version = "=0.1.0", path = "../crates/proxy-content" }
 rustymiddle-core = { version = "=0.1.0", path = "../crates/proxy-core" }
+rustymiddle-websocket = { version = "=0.1.0", path = "../crates/proxy-websocket" }
 tokio = { version = "1.53.1", features = ["rt", "time"] }
 
 [workspace]
@@ -41,6 +42,13 @@ bench = false
 [[bin]]
 name = "content_pipeline"
 path = "fuzz_targets/content_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "websocket_frames"
+path = "fuzz_targets/websocket_frames.rs"
 test = false
 doc = false
 bench = false

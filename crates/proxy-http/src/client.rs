@@ -18,8 +18,8 @@ use hyper_util::{
 };
 use rustymiddle_core::{
     BodyFrame, BodyStream, BodyStreamError, CanonicalRequest, CanonicalResponse, HeaderBlock,
-    HeaderField, HttpLegVersion, MessageKind, ResponseHead, StreamingRequest, StreamingResponse,
-    TranslationOptions, prepare_headers,
+    HeaderField, HttpLegVersion, MessageKind, RequestHead, ResponseHead, StreamingRequest,
+    StreamingResponse, TranslationOptions, prepare_headers,
 };
 use rustymiddle_tls::{TrustError, UpstreamTlsContextFactory};
 use thiserror::Error;
@@ -35,6 +35,31 @@ pub struct HyperOriginClient {
     h1: OriginClient,
     h2: OriginClient,
     auto: OriginClient,
+}
+
+/// Result of an HTTP/1.1 upgrade attempt.
+pub enum HyperUpgradeResponse {
+    /// Origin accepted the protocol switch and exposed the upgraded stream.
+    Switched {
+        /// Canonical 101 response head.
+        head: ResponseHead,
+        /// Future resolving to the origin byte stream.
+        upgraded: hyper::upgrade::OnUpgrade,
+    },
+    /// Origin declined the switch with an ordinary streaming response.
+    Rejected(StreamingResponse),
+}
+
+impl std::fmt::Debug for HyperUpgradeResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Switched { head, .. } => formatter
+                .debug_struct("Switched")
+                .field("head", head)
+                .finish_non_exhaustive(),
+            Self::Rejected(response) => formatter.debug_tuple("Rejected").field(response).finish(),
+        }
+    }
 }
 
 impl HyperOriginClient {
@@ -212,6 +237,84 @@ impl HyperOriginClient {
             body_idle_timeout,
         ));
         Ok(StreamingResponse { head, body })
+    }
+
+    /// Sends an HTTP/1.1 upgrade request while retaining Hyper's upgraded
+    /// origin stream. Hop-by-hop `Connection` and `Upgrade` fields are
+    /// intentionally preserved; proxy-only authorization fields are removed.
+    ///
+    /// A rejected upgrade remains an ordinary bounded streaming response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HyperOriginError`] for invalid canonical data or a transport
+    /// failure before the response head is available.
+    pub async fn execute_upgrade(
+        &self,
+        request: RequestHead,
+        max_response_bytes: usize,
+        body_channel_capacity: NonZeroUsize,
+        body_idle_timeout: Duration,
+    ) -> Result<HyperUpgradeResponse, HyperOriginError> {
+        let mut headers = prepare_headers(
+            &request.headers,
+            TranslationOptions {
+                destination: HttpLegVersion::Http1,
+                kind: MessageKind::Request,
+                body_modified: false,
+                force_identity_encoding: false,
+            },
+        )?;
+        headers.replace_all(HeaderField::try_new("connection", "Upgrade")?);
+        headers.replace_all(HeaderField::try_new("upgrade", "websocket")?);
+        headers.replace_all(HeaderField::try_new(
+            HOST.as_str(),
+            request.target.authority.as_bytes(),
+        )?);
+        let uri: http::Uri = format!(
+            "{}://{}{}{}",
+            request.target.scheme,
+            request.target.authority,
+            request.target.path,
+            request
+                .target
+                .query
+                .as_ref()
+                .map(|query| format!("?{query}"))
+                .unwrap_or_default()
+        )
+        .parse()?;
+        let mut outgoing = Request::builder()
+            .method(request.method.as_str())
+            .uri(uri)
+            .version(Version::HTTP_11)
+            .body(CanonicalHttpBody::new(Vec::new())?)?;
+        append_headers(outgoing.headers_mut(), &headers)?;
+
+        let mut response = self.h1.request(outgoing).await?;
+        let source_version = protocol_version(response.version())?;
+        let head = ResponseHead {
+            status: response.status().as_u16(),
+            headers: block_from_headers(response.headers())?,
+            source_version,
+        };
+        if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
+            return Ok(HyperUpgradeResponse::Switched {
+                head,
+                upgraded: hyper::upgrade::on(&mut response),
+            });
+        }
+        let (sender, body) = BodyStream::channel(body_channel_capacity);
+        tokio::spawn(stream_incoming(
+            response.into_body(),
+            sender,
+            max_response_bytes,
+            body_idle_timeout,
+        ));
+        Ok(HyperUpgradeResponse::Rejected(StreamingResponse {
+            head,
+            body,
+        }))
     }
 }
 

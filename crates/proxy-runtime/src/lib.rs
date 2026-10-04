@@ -14,7 +14,7 @@ pub use provider::{
 };
 pub use proxy::{
     ExchangeEvidence, ProxyComponents, ProxyConfig, ProxyControl, ProxyRuntimeError, ProxyServer,
-    RouteAttemptEvidence,
+    RouteAttemptEvidence, WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
 
 /// Network exposure configuration.

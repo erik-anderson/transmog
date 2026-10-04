@@ -38,3 +38,4 @@ run_target content_encoding 16384 -dict=fuzz/dictionaries/content_encoding.dict
 run_target decode_stream 8192
 run_target codec_roundtrip 16384
 run_target content_pipeline 8192
+run_target websocket_frames 8192

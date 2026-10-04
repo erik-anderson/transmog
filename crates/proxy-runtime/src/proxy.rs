@@ -23,7 +23,8 @@ use rustymiddle_core::{
     BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender, BoundedBodyBuffer,
     CanonicalRequest, CanonicalResponse, ConnectionId, FallbackDecision, HeaderBlock, HeaderField,
     HttpLegVersion, MessageKind, Replayability, RequestHead, ResponseHead, RoutePolicy, SessionId,
-    SessionMetadata, StreamId, StreamingRequest, Target, TranslationOptions, body_semantics,
+    SessionMetadata, StreamId, StreamingRequest, StreamingResponse, Target, TranslationOptions,
+    body_semantics,
     intercept::{
         BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, ChainExecutionError,
         ChainInitError, CompletedExchange, ExchangeChain, ExchangeFailure, ExchangeFailureKind,
@@ -45,11 +46,21 @@ use rustymiddle_core::{
 use rustymiddle_h3::{
     AltSvcCache, H3OriginClient, H3OriginError, H3Telemetry, H3TransportLimits, Origin,
 };
-use rustymiddle_http::{ConnectAuthority, HyperEgressMode, HyperOriginClient, HyperOriginError};
+use rustymiddle_http::{
+    ConnectAuthority, HyperEgressMode, HyperOriginClient, HyperOriginError, HyperUpgradeResponse,
+};
 use rustymiddle_tls::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
     DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, LeafCacheError, ProxyCa,
     TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy, normalize_connect_identity,
+};
+use rustymiddle_websocket::{
+    CompressionError as WebSocketCompressionError, Direction as WebSocketDirection,
+    HandshakeError as WebSocketHandshakeError, PerMessageDeflateCodec, RelayError, RelayLimits,
+    RelayReport, RequestHandshake, ResponseHandshake, SessionCancellation, WebSocketHookError,
+    WebSocketHookFactory, WebSocketSessionMetadata, relay_inspected, relay_transparent,
+    validate_request as validate_websocket_request,
+    validate_response as validate_websocket_response,
 };
 use thiserror::Error;
 use tokio::{
@@ -76,6 +87,8 @@ pub struct ProxyConfig {
     pub limits: RuntimeLimits,
     /// HTTP/3 transport flow-control and timeout bounds.
     pub h3: H3TransportLimits,
+    /// WebSocket frame, message, idle, write, and close-handshake bounds.
+    pub websocket: RelayLimits,
 }
 
 impl Default for ProxyConfig {
@@ -85,6 +98,7 @@ impl Default for ProxyConfig {
             route_policy: RoutePolicy::Auto,
             limits: RuntimeLimits::default(),
             h3: H3TransportLimits::default(),
+            websocket: RelayLimits::default(),
         }
     }
 }
@@ -101,6 +115,7 @@ pub struct ProxyComponents {
     observers: ObserverHub,
     route_selector: Option<Arc<dyn RouteSelector>>,
     application_upstream: Option<Arc<dyn UpstreamService>>,
+    websocket_hooks: WebSocketHookFactory,
     certificates: Arc<dyn DownstreamCertificateResolver>,
     clock: Arc<dyn RuntimeClock>,
     ids: Arc<dyn RuntimeIdGenerator>,
@@ -115,6 +130,7 @@ impl std::fmt::Debug for ProxyComponents {
             .field("observers", &self.observers)
             .field("custom_route_selector", &self.route_selector.is_some())
             .field("application_upstream", &self.application_upstream.is_some())
+            .field("websocket_hooks", &self.websocket_hooks)
             .finish_non_exhaustive()
     }
 }
@@ -132,6 +148,7 @@ impl ProxyComponents {
             observers: ObserverHub::default(),
             route_selector: None,
             application_upstream: None,
+            websocket_hooks: WebSocketHookFactory::empty(),
             certificates,
             clock: Arc::new(SystemRuntimeClock),
             ids: Arc::new(AtomicRuntimeIdGenerator::new()),
@@ -163,6 +180,16 @@ impl ProxyComponents {
     #[must_use]
     pub fn with_upstream_service(mut self, service: Arc<dyn UpstreamService>) -> Self {
         self.application_upstream = Some(service);
+        self
+    }
+
+    /// Installs optional WebSocket message/control hooks.
+    ///
+    /// With the default empty factory, accepted upgrades use a byte-transparent
+    /// bidirectional copy and perform no frame parsing.
+    #[must_use]
+    pub fn with_websocket_hooks(mut self, hooks: WebSocketHookFactory) -> Self {
+        self.websocket_hooks = hooks;
         self
     }
 
@@ -217,6 +244,26 @@ pub struct ExchangeEvidence {
     pub h3: Option<H3Telemetry>,
     /// Trust generation used by all upstream contexts.
     pub trust_generation: u64,
+}
+
+/// Terminal outcome of one upgraded WebSocket session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebSocketSessionOutcome {
+    /// Relay ended after a complete close handshake or transparent EOF.
+    Completed(RelayReport),
+    /// Relay failed with a redaction-safe typed error string.
+    Failed(String),
+}
+
+/// Auditable terminal evidence for one upgraded WebSocket session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebSocketSessionEvidence {
+    /// HTTP exchange/session identifier that established the upgrade.
+    pub session_id: SessionId,
+    /// Redaction-safe normalized `ws` or `wss` target without a query.
+    pub target: String,
+    /// Relay outcome, including attributed hook effects on success.
+    pub outcome: WebSocketSessionOutcome,
 }
 
 /// Bound explicit proxy ready to accept connections.
@@ -328,6 +375,7 @@ impl ProxyServer {
         components: ProxyComponents,
     ) -> Result<Self, ProxyRuntimeError> {
         config.listener.validate()?;
+        config.websocket.validate()?;
         if config.limits.max_connections == 0
             || config.limits.max_request_body_bytes == 0
             || config.limits.max_response_body_bytes == 0
@@ -348,12 +396,14 @@ impl ProxyServer {
         let upstream = Arc::new(UpstreamGeneration::new(trust, config.h3)?);
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
+        let (websocket_evidence, _) = broadcast::channel(1_024);
         let state = Arc::new(ProxyState {
             hooks: components.hooks,
             content: components.content,
             observers: components.observers,
             route_selector: components.route_selector,
             application_upstream: components.application_upstream,
+            websocket_hooks: components.websocket_hooks,
             downstream_tls: DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default()),
             certificates: components.certificates,
             clock: components.clock,
@@ -362,6 +412,7 @@ impl ProxyServer {
             alt_svc: Mutex::new(AltSvcCache::new(1_024)),
             config: config.clone(),
             evidence,
+            websocket_evidence,
         });
         Ok(Self {
             listener,
@@ -382,6 +433,12 @@ impl ProxyServer {
     /// Subscribes to metadata-only completed-exchange evidence.
     pub fn subscribe_evidence(&self) -> broadcast::Receiver<ExchangeEvidence> {
         self.state.evidence.subscribe()
+    }
+
+    /// Subscribes to terminal WebSocket relay reports, including attributed
+    /// hook decisions for inspected sessions.
+    pub fn subscribe_websocket_evidence(&self) -> broadcast::Receiver<WebSocketSessionEvidence> {
+        self.state.websocket_evidence.subscribe()
     }
 
     /// Creates a handle that remains usable after [`ProxyServer::serve`] takes ownership.
@@ -451,6 +508,7 @@ struct ProxyState {
     observers: ObserverHub,
     route_selector: Option<Arc<dyn RouteSelector>>,
     application_upstream: Option<Arc<dyn UpstreamService>>,
+    websocket_hooks: WebSocketHookFactory,
     downstream_tls: DownstreamTlsContextFactory,
     certificates: Arc<dyn DownstreamCertificateResolver>,
     clock: Arc<dyn RuntimeClock>,
@@ -459,6 +517,7 @@ struct ProxyState {
     alt_svc: Mutex<AltSvcCache>,
     config: ProxyConfig,
     evidence: broadcast::Sender<ExchangeEvidence>,
+    websocket_evidence: broadcast::Sender<WebSocketSessionEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -507,7 +566,7 @@ async fn serve_explicit_connection(
         let state = Arc::clone(&state);
         let context = context.clone();
         async move {
-            match state.handle_outer_request(request, context).await {
+            match Box::pin(state.handle_outer_request(request, context)).await {
                 Ok(response) => Ok::<_, Infallible>(response),
                 Err(error) => {
                     warn!(%error, "explicit proxy request failed");
@@ -599,7 +658,7 @@ impl ProxyState {
             let state = Arc::clone(&self);
             let context = context.clone();
             async move {
-                match state.handle_intercepted_request(request, context).await {
+                match Box::pin(state.handle_intercepted_request(request, context)).await {
                     Ok(response) => Ok::<_, Infallible>(response),
                     Err(error) => {
                         warn!(%error, "intercepted request failed");
@@ -807,6 +866,27 @@ impl ProxyState {
             )
             .await;
             return Err(error);
+        }
+
+        if is_websocket_upgrade_candidate(&request_head.headers) {
+            if self.application_upstream.is_some() {
+                let error = ProxyRuntimeError::WebSocketApplicationUpstreamUnsupported;
+                self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
+                    .await;
+                return Err(error);
+            }
+            if !matches!(
+                plan.pool_key.version_policy,
+                RoutePolicy::Http1Only | RoutePolicy::Auto
+            ) {
+                let error = ProxyRuntimeError::WebSocketRequiresHttp1;
+                self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
+                    .await;
+                return Err(error);
+            }
+            return self
+                .handle_websocket_upgrade(request, session, request_head, upstream, chain)
+                .await;
         }
 
         if let Err(error) = validate_declared_body_limit(
@@ -1085,6 +1165,385 @@ impl ProxyState {
             trust_generation: upstream.trust_generation,
         });
         response_to_hyper(response)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn handle_websocket_upgrade(
+        &self,
+        mut request: Request<Incoming>,
+        mut session: SessionMetadata,
+        request_head: RequestHead,
+        upstream_generation: Arc<UpstreamGeneration>,
+        chain: Arc<ExchangeChain>,
+    ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        if request_head.source_version != HttpLegVersion::Http1 {
+            return Err(ProxyRuntimeError::WebSocketRequiresHttp1);
+        }
+        if websocket_request_has_body(&request_head.headers)? {
+            return Err(ProxyRuntimeError::InvalidWebSocketHandshake(
+                "upgrade request must not carry a body".to_owned(),
+            ));
+        }
+        let client_handshake = validate_websocket_request(RequestHandshake {
+            method: &request_head.method,
+            connection: &required_combined_header(&request_head.headers, "connection")?,
+            upgrade: &required_combined_header(&request_head.headers, "upgrade")?,
+            version: &required_single_header(&request_head.headers, "sec-websocket-version")?,
+            key: &required_single_header(&request_head.headers, "sec-websocket-key")?,
+            extensions: combined_header(&request_head.headers, "sec-websocket-extensions")?
+                .as_deref(),
+            subprotocols: combined_header(&request_head.headers, "sec-websocket-protocol")?
+                .as_deref(),
+        })?;
+        observe_request_head(&chain, ExchangeBoundary::UpstreamRequest, &request_head).await;
+        let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
+            .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
+        let upstream = upstream_generation
+            .hyper
+            .execute_upgrade(
+                request_head.clone(),
+                self.config.limits.max_response_body_bytes,
+                capacity,
+                self.config.limits.body_idle_timeout,
+            )
+            .await?;
+        session.egress_version = Some(HttpLegVersion::Http1);
+        let HyperUpgradeResponse::Switched {
+            head: upstream_head,
+            upgraded: upstream_upgrade,
+        } = upstream
+        else {
+            let HyperUpgradeResponse::Rejected(response) = upstream else {
+                unreachable!("upgrade response variants are exhaustive")
+            };
+            return self
+                .finish_rejected_websocket_upgrade(
+                    response,
+                    session,
+                    request_head,
+                    upstream_generation.trust_generation,
+                    chain,
+                )
+                .await;
+        };
+
+        observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream_head).await;
+        let response_outcome = chain
+            .response_head(&request_head, upstream_head, None, false)
+            .await;
+        observe_hook_effects(&chain).await;
+        let (response_head, replacement_body, local_response) = match response_outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body,
+                local_response,
+            }) => (head, replacement_body, local_response),
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted WebSocket handshake: {reason:?}"),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(reason.into());
+            }
+            Err(error) => {
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    hook_failure_kind(&error),
+                    error.to_string(),
+                    true,
+                    false,
+                )
+                .await;
+                return Err(error.into());
+            }
+        };
+        if replacement_body.is_some() || local_response || response_head.status != 101 {
+            drop(upstream_upgrade);
+            return self
+                .finish_prepared_local_response(
+                    CanonicalResponse {
+                        head: response_head,
+                        body: replacement_body.unwrap_or_default(),
+                    },
+                    &session,
+                    &request_head,
+                    chain,
+                    true,
+                )
+                .await;
+        }
+
+        let negotiated = validate_websocket_response(
+            &client_handshake,
+            ResponseHandshake {
+                status: response_head.status,
+                connection: &required_combined_header(&response_head.headers, "connection")?,
+                upgrade: &required_combined_header(&response_head.headers, "upgrade")?,
+                accept: &required_single_header(&response_head.headers, "sec-websocket-accept")?,
+                extensions: combined_header(&response_head.headers, "sec-websocket-extensions")?
+                    .as_deref(),
+                subprotocol: optional_single_header(
+                    &response_head.headers,
+                    "sec-websocket-protocol",
+                )?
+                .as_deref(),
+            },
+        )?;
+        if !self.websocket_hooks.is_empty()
+            && let Some(compression) = negotiated.permessage_deflate
+        {
+            PerMessageDeflateCodec::new(compression, WebSocketDirection::ClientToServer)?;
+            PerMessageDeflateCodec::new(compression, WebSocketDirection::ServerToClient)?;
+        }
+        observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
+        self.complete_chain(&chain, &request_head, &response_head)
+            .await;
+        let attempts = vec![RouteAttemptEvidence {
+            protocol: HttpLegVersion::Http1,
+            outcome: "websocket-upgrade".to_owned(),
+        }];
+        observe_route_attempts(&chain, &attempts).await;
+        let _ = self.evidence.send(ExchangeEvidence {
+            session_id: session.session_id,
+            downstream_connection_id: session.downstream_connection_id,
+            stream_id: session.stream_id,
+            target_host: request_head.target.host.clone(),
+            target_scheme: request_head.target.scheme.clone(),
+            target_path: request_head.target.path.clone(),
+            ingress_version: session.ingress_version,
+            egress_version: HttpLegVersion::Http1,
+            request_breakpoint_fired: true,
+            response_breakpoint_fired: true,
+            route_attempts: attempts,
+            h3: None,
+            trust_generation: upstream_generation.trust_generation,
+        });
+
+        let downstream_upgrade = hyper::upgrade::on(&mut request);
+        let cancellation = SessionCancellation::new();
+        let websocket_target = format!(
+            "{}://{}{}",
+            if request_head.target.scheme == "https" {
+                "wss"
+            } else {
+                "ws"
+            },
+            request_head.target.authority,
+            request_head.target.path
+        );
+        let websocket_chain = if self.websocket_hooks.is_empty() {
+            None
+        } else {
+            Some(Arc::new(self.websocket_hooks.create_session(
+                WebSocketSessionMetadata {
+                    session_id: session.session_id.0,
+                    target: Arc::from(websocket_target.clone()),
+                    subprotocol: negotiated.subprotocol.clone().map(Arc::from),
+                },
+                cancellation.clone(),
+            )?))
+        };
+        let upgrade_timeout = self.config.limits.header_read_timeout;
+        let relay_limits = self.config.websocket;
+        let websocket_evidence = self.websocket_evidence.clone();
+        let websocket_session_id = session.session_id;
+        tokio::spawn(async move {
+            let (downstream, upstream) = tokio::join!(
+                timeout(upgrade_timeout, downstream_upgrade),
+                timeout(upgrade_timeout, upstream_upgrade),
+            );
+            let downstream = match downstream {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(error)) => {
+                    debug!(%error, "downstream WebSocket upgrade failed");
+                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
+                        session_id: websocket_session_id,
+                        target: websocket_target.clone(),
+                        outcome: WebSocketSessionOutcome::Failed(format!(
+                            "downstream upgrade failed: {error}"
+                        )),
+                    });
+                    return;
+                }
+                Err(_) => {
+                    debug!("downstream WebSocket upgrade timed out");
+                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
+                        session_id: websocket_session_id,
+                        target: websocket_target.clone(),
+                        outcome: WebSocketSessionOutcome::Failed(
+                            "downstream upgrade timed out".to_owned(),
+                        ),
+                    });
+                    return;
+                }
+            };
+            let upstream = match upstream {
+                Ok(Ok(stream)) => stream,
+                Ok(Err(error)) => {
+                    debug!(%error, "upstream WebSocket upgrade failed");
+                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
+                        session_id: websocket_session_id,
+                        target: websocket_target.clone(),
+                        outcome: WebSocketSessionOutcome::Failed(format!(
+                            "upstream upgrade failed: {error}"
+                        )),
+                    });
+                    return;
+                }
+                Err(_) => {
+                    debug!("upstream WebSocket upgrade timed out");
+                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
+                        session_id: websocket_session_id,
+                        target: websocket_target.clone(),
+                        outcome: WebSocketSessionOutcome::Failed(
+                            "upstream upgrade timed out".to_owned(),
+                        ),
+                    });
+                    return;
+                }
+            };
+            let result = if let Some(hooks) = websocket_chain {
+                relay_inspected(
+                    TokioIo::new(downstream),
+                    TokioIo::new(upstream),
+                    negotiated,
+                    relay_limits,
+                    hooks,
+                    cancellation,
+                )
+                .await
+            } else {
+                relay_transparent(
+                    TokioIo::new(downstream),
+                    TokioIo::new(upstream),
+                    relay_limits,
+                    cancellation,
+                )
+                .await
+            };
+            let outcome = match result {
+                Ok(report) => {
+                    debug!(
+                        messages = report.messages,
+                        control_frames = report.control_frames,
+                        "WebSocket relay completed"
+                    );
+                    WebSocketSessionOutcome::Completed(report)
+                }
+                Err(error) => {
+                    debug!(%error, "WebSocket relay ended");
+                    WebSocketSessionOutcome::Failed(error.to_string())
+                }
+            };
+            let _ = websocket_evidence.send(WebSocketSessionEvidence {
+                session_id: websocket_session_id,
+                target: websocket_target,
+                outcome,
+            });
+        });
+        response_to_hyper(CanonicalResponse {
+            head: response_head,
+            body: Vec::new(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    async fn finish_rejected_websocket_upgrade(
+        &self,
+        mut upstream: StreamingResponse,
+        session: SessionMetadata,
+        request_head: RequestHead,
+        trust_generation: u64,
+        chain: Arc<ExchangeChain>,
+    ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream.head).await;
+        let response_outcome = chain
+            .response_head(&request_head, upstream.head, None, false)
+            .await?;
+        observe_hook_effects(&chain).await;
+        let ResponseHeadOutcome::Continue {
+            head,
+            replacement_body,
+            local_response,
+        } = response_outcome
+        else {
+            let ResponseHeadOutcome::Abort(reason) = response_outcome else {
+                unreachable!("response outcomes are exhaustive")
+            };
+            return Err(reason.into());
+        };
+        upstream.head = head;
+        if let Some(body) = replacement_body {
+            drop(upstream.body);
+            return self
+                .finish_prepared_local_response(
+                    CanonicalResponse {
+                        head: upstream.head,
+                        body,
+                    },
+                    &session,
+                    &request_head,
+                    chain,
+                    local_response,
+                )
+                .await;
+        }
+        if body_semantics(&request_head.method, upstream.head.status) == BodySemantics::Forbidden {
+            drop(upstream.body);
+            return self
+                .finish_streaming_bodyless(
+                    upstream.head,
+                    &session,
+                    &request_head,
+                    vec![RouteAttemptEvidence {
+                        protocol: HttpLegVersion::Http1,
+                        outcome: "websocket-rejected".to_owned(),
+                    }],
+                    None,
+                    trust_generation,
+                    chain,
+                )
+                .await;
+        }
+        let mut response_head = upstream.head;
+        let response_pipeline = self
+            .prepare_streaming_response_pipeline(
+                &chain,
+                &request_head,
+                &mut response_head,
+                local_response,
+                session.ingress_version,
+            )
+            .await?;
+        let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
+            .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
+        let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
+        let attempts = vec![RouteAttemptEvidence {
+            protocol: HttpLegVersion::Http1,
+            outcome: "websocket-rejected".to_owned(),
+        }];
+        tokio::spawn(stream_response_through_hooks(
+            upstream.body,
+            downstream_sender,
+            response_pipeline,
+            Arc::clone(&chain),
+            session,
+            request_head,
+            response_head.clone(),
+            self.config.limits.max_response_body_bytes,
+            self.config.limits.body_idle_timeout,
+            self.evidence.clone(),
+            attempts,
+            None,
+            trust_generation,
+        ));
+        response_stream_to_hyper(&response_head, downstream_body)
     }
 
     async fn select_route(
@@ -3040,6 +3499,110 @@ fn canonical_head(
     })
 }
 
+fn is_websocket_upgrade_candidate(headers: &HeaderBlock) -> bool {
+    headers
+        .values("upgrade")
+        .any(|value| header_bytes_have_token(value, b"websocket"))
+}
+
+fn header_bytes_have_token(value: &[u8], expected: &[u8]) -> bool {
+    value
+        .split(|byte| *byte == b',')
+        .any(|token| trim_ascii(token).eq_ignore_ascii_case(expected))
+}
+
+fn trim_ascii(mut value: &[u8]) -> &[u8] {
+    while value.first().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[1..];
+    }
+    while value.last().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[..value.len() - 1];
+    }
+    value
+}
+
+fn combined_header(headers: &HeaderBlock, name: &str) -> Result<Option<String>, ProxyRuntimeError> {
+    let values = headers
+        .values(name)
+        .map(|value| {
+            std::str::from_utf8(value)
+                .map(str::trim)
+                .map(str::to_owned)
+                .map_err(|_| {
+                    ProxyRuntimeError::InvalidWebSocketHandshake(format!(
+                        "{name} is not valid ASCII/UTF-8"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((!values.is_empty()).then(|| values.join(", ")))
+}
+
+fn required_combined_header(
+    headers: &HeaderBlock,
+    name: &str,
+) -> Result<String, ProxyRuntimeError> {
+    combined_header(headers, name)?.ok_or_else(|| {
+        ProxyRuntimeError::InvalidWebSocketHandshake(format!("missing {name} header"))
+    })
+}
+
+fn optional_single_header(
+    headers: &HeaderBlock,
+    name: &str,
+) -> Result<Option<String>, ProxyRuntimeError> {
+    let values = headers.values(name).collect::<Vec<_>>();
+    if values.len() > 1 {
+        return Err(ProxyRuntimeError::InvalidWebSocketHandshake(format!(
+            "duplicate {name} header"
+        )));
+    }
+    values
+        .first()
+        .map(|value| {
+            std::str::from_utf8(value)
+                .map(str::trim)
+                .map(str::to_owned)
+                .map_err(|_| {
+                    ProxyRuntimeError::InvalidWebSocketHandshake(format!(
+                        "{name} is not valid ASCII/UTF-8"
+                    ))
+                })
+        })
+        .transpose()
+}
+
+fn required_single_header(headers: &HeaderBlock, name: &str) -> Result<String, ProxyRuntimeError> {
+    optional_single_header(headers, name)?.ok_or_else(|| {
+        ProxyRuntimeError::InvalidWebSocketHandshake(format!("missing {name} header"))
+    })
+}
+
+fn websocket_request_has_body(headers: &HeaderBlock) -> Result<bool, ProxyRuntimeError> {
+    if headers.values("transfer-encoding").next().is_some() {
+        return Ok(true);
+    }
+    for value in headers.values("content-length") {
+        let value = std::str::from_utf8(value)
+            .map_err(|_| {
+                ProxyRuntimeError::InvalidWebSocketHandshake(
+                    "invalid content-length header".to_owned(),
+                )
+            })?
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| {
+                ProxyRuntimeError::InvalidWebSocketHandshake(
+                    "invalid content-length header".to_owned(),
+                )
+            })?;
+        if value != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn target_from_tunnel(request: &Request<Incoming>, tunnel: &ConnectAuthority) -> Target {
     let path_and_query = request.uri().path_and_query();
     Target {
@@ -3057,13 +3620,16 @@ fn target_from_tunnel(request: &Request<Incoming>, tunnel: &ConnectAuthority) ->
 }
 
 fn target_from_absolute_uri(request: &Request<Incoming>) -> Result<Target, ProxyRuntimeError> {
-    let scheme = request
+    let source_scheme = request
         .uri()
         .scheme_str()
         .ok_or(ProxyRuntimeError::AbsoluteFormRequired)?;
-    if scheme != "http" {
-        return Err(ProxyRuntimeError::ConnectRequiredForHttps);
-    }
+    let scheme = match source_scheme {
+        "http" | "ws" => "http",
+        _ => {
+            return Err(ProxyRuntimeError::ConnectRequiredForHttps);
+        }
+    };
     let authority = request
         .uri()
         .authority()
@@ -3161,6 +3727,10 @@ fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBod
         | ProxyRuntimeError::ConnectRequiredForHttps
         | ProxyRuntimeError::TunnelAuthorityMismatch
         | ProxyRuntimeError::NestedConnectUnsupported
+        | ProxyRuntimeError::WebSocketHandshake(_)
+        | ProxyRuntimeError::InvalidWebSocketHandshake(_)
+        | ProxyRuntimeError::WebSocketRequiresHttp1
+        | ProxyRuntimeError::WebSocketApplicationUpstreamUnsupported
         | ProxyRuntimeError::ConnectAuthority(_)
         | ProxyRuntimeError::Identity(_) => StatusCode::BAD_REQUEST,
         _ => StatusCode::BAD_GATEWAY,
@@ -3358,6 +3928,27 @@ pub enum ProxyRuntimeError {
     /// HTTP/1.1 or HTTP/2 origin adapter failed.
     #[error(transparent)]
     HyperOrigin(#[from] HyperOriginError),
+    /// WebSocket opening handshake was invalid or unauthenticated.
+    #[error(transparent)]
+    WebSocketHandshake(#[from] WebSocketHandshakeError),
+    /// WebSocket relay configuration or execution failed.
+    #[error(transparent)]
+    WebSocketRelay(#[from] RelayError),
+    /// WebSocket hook initialization or execution failed.
+    #[error(transparent)]
+    WebSocketHook(#[from] WebSocketHookError),
+    /// Negotiated WebSocket compression cannot be inspected safely.
+    #[error(transparent)]
+    WebSocketCompression(#[from] WebSocketCompressionError),
+    /// Handshake fields could not be interpreted safely.
+    #[error("invalid WebSocket handshake: {0}")]
+    InvalidWebSocketHandshake(String),
+    /// WebSocket upgrade routing is constrained to HTTP/1.1.
+    #[error("WebSocket upgrades require HTTP/1.1 origin routing")]
+    WebSocketRequiresHttp1,
+    /// Application-owned HTTP services cannot provide an upgraded byte stream.
+    #[error("application-owned upstream services do not support WebSocket byte streams")]
+    WebSocketApplicationUpstreamUnsupported,
     /// HTTP/3 origin adapter failed.
     #[error(transparent)]
     H3Origin(#[from] H3OriginError),
@@ -3440,6 +4031,12 @@ mod tests {
         DownstreamTlsContextFactory, DownstreamTlsPolicy, LoadedTrust, ProxyCa, SystemTrustSource,
         TrustError, TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
     };
+    use rustymiddle_websocket::{
+        BoxWebSocketFuture, CloseFrame, DataKind, Direction, Frame as WebSocketFrame, FrameLimits,
+        MessageAction, MessageDecoder, MessageEvent, MessageEventHook, WebSocketHookLimits,
+        WebSocketHookRegistration, WebSocketInterceptor, WebSocketInterceptorFactory,
+        encode_frame as encode_websocket_frame,
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream, UdpSocket},
@@ -3501,6 +4098,29 @@ mod tests {
     }
 
     struct StaticTrust(Vec<Vec<u8>>);
+
+    #[derive(Debug)]
+    struct AppendWebSocketFactory;
+
+    #[derive(Debug)]
+    struct AppendWebSocketHook;
+
+    impl WebSocketInterceptorFactory for AppendWebSocketFactory {
+        fn create(
+            &self,
+            _metadata: &WebSocketSessionMetadata,
+        ) -> Result<Arc<dyn WebSocketInterceptor>, String> {
+            Ok(Arc::new(AppendWebSocketHook))
+        }
+    }
+
+    impl WebSocketInterceptor for AppendWebSocketHook {
+        fn on_message(&self, event: MessageEventHook) -> BoxWebSocketFuture<'_, MessageAction> {
+            let mut payload = event.message.payload.to_vec();
+            payload.extend_from_slice(b"-hook");
+            Box::pin(async move { MessageAction::Replace(Bytes::from(payload)) })
+        }
+    }
 
     impl TrustSource for StaticTrust {
         fn load(&self) -> Result<LoadedTrust, TrustError> {
@@ -4478,6 +5098,307 @@ mod tests {
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
         origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_without_hooks_is_a_byte_transparent_upgrade() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let request = String::from_utf8(read_http_head(&mut stream).await).unwrap();
+            assert!(request.to_ascii_lowercase().contains("upgrade: websocket"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut bytes = [0_u8; 22];
+            stream.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(&bytes, b"not websocket framing!");
+            stream.write_all(&bytes).await.unwrap();
+            stream.shutdown().await.unwrap();
+        });
+
+        let proxy_ca = ProxyCa::generate("rustymiddle transparent websocket test", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
+                61,
+            )
+            .unwrap(),
+        );
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                route_policy: RoutePolicy::Http1Only,
+                ..ProxyConfig::default()
+            },
+            proxy_ca,
+            trust,
+            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client
+            .write_all(
+                format!(
+                    "GET ws://{origin_addr}/socket HTTP/1.1\r\nHost: {origin_addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let response = String::from_utf8(read_http_head(&mut client).await).unwrap();
+        assert!(response.starts_with("HTTP/1.1 101"));
+        client.write_all(b"not websocket framing!").await.unwrap();
+        let mut echoed = [0_u8; 22];
+        client.read_exact(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"not websocket framing!");
+
+        shutdown_tx.send(()).unwrap();
+        proxy_task.await.unwrap().unwrap();
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn websocket_hooks_modify_both_live_directions() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let _request = read_http_head(&mut stream).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let mut decoder =
+                MessageDecoder::new(Direction::ClientToServer, FrameLimits::default(), None)
+                    .unwrap();
+            let mut buffer = [0_u8; 256];
+            let request_message = loop {
+                let read = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_ne!(read, 0);
+                if let Some(message) =
+                    decoder
+                        .push(&buffer[..read])
+                        .unwrap()
+                        .into_iter()
+                        .find_map(|event| match event {
+                            MessageEvent::Message(message) => Some(message),
+                            MessageEvent::Control(_) => None,
+                        })
+                {
+                    break message;
+                }
+            };
+            assert_eq!(request_message.payload, "client-hook");
+            let response = encode_websocket_frame(
+                &WebSocketFrame {
+                    fin: true,
+                    compressed: false,
+                    opcode: 1,
+                    payload: Bytes::from_static(b"server"),
+                },
+                Direction::ServerToClient,
+                None,
+            )
+            .unwrap();
+            let close = encode_websocket_frame(
+                &WebSocketFrame {
+                    fin: true,
+                    compressed: false,
+                    opcode: 8,
+                    payload: CloseFrame {
+                        code: Some(1000),
+                        reason: String::new(),
+                    }
+                    .encode()
+                    .unwrap(),
+                },
+                Direction::ServerToClient,
+                None,
+            )
+            .unwrap();
+            stream.write_all(&response).await.unwrap();
+            stream.write_all(&close).await.unwrap();
+            loop {
+                let read = timeout(Duration::from_secs(2), stream.read(&mut buffer))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_ne!(read, 0);
+                if decoder
+                    .push(&buffer[..read])
+                    .unwrap()
+                    .into_iter()
+                    .any(|event| matches!(event, MessageEvent::Control(_)))
+                {
+                    break;
+                }
+            }
+        });
+
+        let config = ProxyConfig {
+            route_policy: RoutePolicy::Http1Only,
+            ..ProxyConfig::default()
+        };
+        let proxy_ca = ProxyCa::generate("rustymiddle inspected websocket test", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
+                62,
+            )
+            .unwrap(),
+        );
+        let certificates = Arc::new(
+            CachedMitmCertificateResolver::new(
+                proxy_ca,
+                config.limits.leaf_cache_capacity,
+                config.limits.leaf_validity_days,
+            )
+            .unwrap(),
+        );
+        let websocket_hooks = WebSocketHookFactory::new(
+            vec![
+                WebSocketHookRegistration::new(
+                    "append",
+                    "append marker",
+                    Arc::new(AppendWebSocketFactory),
+                )
+                .unwrap(),
+            ],
+            WebSocketHookLimits::default(),
+        )
+        .unwrap();
+        let http_hooks = InterceptorChainFactory::new(
+            vec![InterceptorRegistration::new(
+                "application",
+                Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+                InterceptorRequirement::Required,
+            )],
+            config.limits.hooks,
+        );
+        let proxy = ProxyServer::bind_with_components(
+            config,
+            trust,
+            ProxyComponents::new(http_hooks, certificates).with_websocket_hooks(websocket_hooks),
+        )
+        .await
+        .unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        let mut websocket_evidence = proxy.subscribe_websocket_evidence();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client
+            .write_all(
+                format!(
+                    "GET ws://{origin_addr}/socket HTTP/1.1\r\nHost: {origin_addr}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let response = String::from_utf8(read_http_head(&mut client).await).unwrap();
+        assert!(response.starts_with("HTTP/1.1 101"));
+        let request = encode_websocket_frame(
+            &WebSocketFrame {
+                fin: true,
+                compressed: false,
+                opcode: 1,
+                payload: Bytes::from_static(b"client"),
+            },
+            Direction::ClientToServer,
+            Some([1, 2, 3, 4]),
+        )
+        .unwrap();
+        client.write_all(&request).await.unwrap();
+
+        let mut decoder =
+            MessageDecoder::new(Direction::ServerToClient, FrameLimits::default(), None).unwrap();
+        let mut buffer = [0_u8; 256];
+        let mut saw_message = false;
+        loop {
+            let read = timeout(Duration::from_secs(2), client.read(&mut buffer))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_ne!(read, 0);
+            let events = decoder.push(&buffer[..read]).unwrap();
+            for event in events {
+                match event {
+                    MessageEvent::Message(message) => {
+                        assert_eq!(message.kind, DataKind::Text);
+                        assert_eq!(message.payload, "server-hook");
+                        saw_message = true;
+                    }
+                    MessageEvent::Control(rustymiddle_websocket::ControlFrame::Close(close)) => {
+                        assert!(saw_message);
+                        let reply = encode_websocket_frame(
+                            &WebSocketFrame {
+                                fin: true,
+                                compressed: false,
+                                opcode: 8,
+                                payload: close.encode().unwrap(),
+                            },
+                            Direction::ClientToServer,
+                            Some([5, 6, 7, 8]),
+                        )
+                        .unwrap();
+                        client.write_all(&reply).await.unwrap();
+                        let evidence = timeout(Duration::from_secs(2), websocket_evidence.recv())
+                            .await
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(evidence.target, format!("ws://{origin_addr}/socket"));
+                        let WebSocketSessionOutcome::Completed(report) = evidence.outcome else {
+                            panic!("expected completed WebSocket evidence");
+                        };
+                        assert!(report.clean_close);
+                        assert_eq!(report.messages, 2);
+                        assert_eq!(report.effects.len(), 4);
+                        assert!(
+                            report
+                                .effects
+                                .iter()
+                                .all(|effect| effect.hook.id.as_str() == "append")
+                        );
+                        assert_eq!(
+                            report
+                                .effects
+                                .iter()
+                                .filter(|effect| {
+                                    effect.action == rustymiddle_websocket::HookActionKind::Replace
+                                })
+                                .count(),
+                            2
+                        );
+                        shutdown_tx.send(()).unwrap();
+                        proxy_task.await.unwrap().unwrap();
+                        origin_task.await.unwrap();
+                        return;
+                    }
+                    MessageEvent::Control(_) => {}
+                }
+            }
+        }
     }
 
     #[tokio::test]

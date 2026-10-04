@@ -20,6 +20,10 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
   transform, header/trailer repair, optional modification, and identity or
   preserve-original output. Re-decoding preserved output must produce the
   expected modified representation.
+- `websocket_frames` combines raw hostile streams with synthesized valid
+  client/server frames, both mask roles, arbitrary transport chunking, text and
+  binary messages, and `permessage-deflate`. Successful events must remain
+  within their declared allocation bounds and preserve UTF-8 invariants.
 
 All campaigns disable libFuzzer's gradual length ramp. This is important for
 short CI campaigns: configured maximum lengths and synthetic boundary classes
@@ -99,7 +103,8 @@ bundled zstd implementation, and `verify-native-sanitizers.sh` rejects builds
 where sanitizer symbols appear only in the Rust wrapper.
 
 The normal workspace suite separately runs deterministic malformed-stream,
-decompression-bomb, chunk-boundary, and cancellation cases on every platform.
+decompression-bomb, WebSocket masking/fragmentation/close, chunk-boundary, and
+cancellation cases on every platform.
 The fuzz-only lockfile has its own `cargo-deny` policy, including the NCSA
 license used by LLVM's libFuzzer runtime. Fuzz-only components are deliberately
 excluded from distribution notices and the shipping SBOM.

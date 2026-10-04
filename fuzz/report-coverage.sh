@@ -3,7 +3,7 @@ set -euo pipefail
 
 target_dir="fuzz/target/coverage"
 summary="fuzz/coverage-summary.txt"
-targets=(content_encoding decode_stream codec_roundtrip content_pipeline)
+targets=(content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames)
 
 for target in "${targets[@]}"; do
     replay_log="$(mktemp)"
@@ -69,6 +69,13 @@ fi
                     "$PWD/crates/proxy-core/src/intercept/context.rs"
                     "$PWD/crates/proxy-core/src/intercept/mod.rs"
                     "$PWD/crates/proxy-core/src/task.rs"
+                )
+                ;;
+            websocket_frames)
+                minimum_lines=50
+                sources=(
+                    "$PWD/crates/proxy-websocket/src/compression.rs"
+                    "$PWD/crates/proxy-websocket/src/frame.rs"
                 )
                 ;;
         esac

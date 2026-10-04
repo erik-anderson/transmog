@@ -28,9 +28,15 @@ explicit H1 listener / CONNECT TLS (H1 or H2)
                     |
        bounded response body pipeline
 
-Observers receive redacted immutable events beside this path through finite
-queues; they cannot mutate traffic.
+HTTP/1.1 101 upgrade
+        |
+        +-- no WebSocket hooks --> byte-transparent bidirectional copy
+        |
+        +-- hooks installed ----> bounded frame/message/compression relay
 ```
+
+Observers receive redacted immutable events beside the HTTP path through finite
+queues; they cannot mutate traffic.
 
 ## Hooks v2
 
@@ -73,6 +79,7 @@ generation, TLS policy, and connector policy.
 - a bounded `ObserverHub`;
 - an optional custom `RouteSelector`;
 - an optional canonical streaming `UpstreamService`;
+- an optional protocol-neutral `WebSocketHookFactory` (empty by default);
 - a downstream `DownstreamCertificateResolver`;
 - clock and ID providers for deterministic tests or host integration.
 
@@ -108,6 +115,11 @@ behind panic, timeout, cancellation, and drop containment. Dropping a boundary
 future aborts its spawned task. A failing observer never changes traffic.
 Traffic-affecting failures are typed and fail closed; trust or certificate
 errors are never converted to success by a hook default.
+
+WebSocket inspection uses a separate session-local hook chain. Its two traffic
+directions are independently scheduled and backpressured. Disabling those
+hooks selects an exact byte-copy path, so merely linking the WebSocket crate
+does not reinterpret upgraded traffic.
 
 Automatic routing streams directly when no HTTP/3 alternative is cached. With
 a cached alternative it uses an explicitly bounded replay buffer. Fallback is
