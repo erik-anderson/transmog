@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/desktop",
     "crates/proxy-core",
     "crates/proxy-content",
     "crates/proxy-tls",

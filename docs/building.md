@@ -76,6 +76,76 @@ If CMake selects a Visual Studio generator, ensure `CMAKE_GENERATOR=Ninja` is se
 If BoringSSL cannot assemble x86-64 files, ensure `nasm -v` succeeds in the same
 shell.
 
+### Windows desktop shell
+
+The product shell additionally requires the Microsoft Edge WebView2 Evergreen
+Runtime and Node.js 24 or newer with npm. Current Windows 11 installations
+normally receive WebView2 with Microsoft Edge, but it is a runtime prerequisite
+rather than a bundled browser. A clean-machine release gate must verify it or
+install Microsoft's Evergreen bootstrapper before starting the app.
+
+The desktop dependency toolchain is pinned in both lockfiles:
+
+- Tauri Rust crates and npm API/CLI 2.12.1;
+- Microsoft WebUI Rust and browser packages 0.0.30;
+- TypeScript 7.0.2 and esbuild 0.28.2.
+
+Install build-time packages and reproduce the checked-in ESM bundle and WebUI
+projection manifest:
+
+```powershell
+Push-Location ./apps/desktop/ui
+npm ci
+npm run build
+npm run check
+Pop-Location
+```
+
+`ui/dist/app.js` and `ui/dist/webui-projection.json` are checked in. This lets
+ordinary Cargo builds consume reviewed assets without npm or network access.
+`npm run check` rebuilds both files and fails if either checked-in output was
+stale. WebUI's Rust build compiles `protocol.bin` and hashed CSS into Cargo's
+output directory on every desktop build.
+
+Build, test, and run through the repository's LLVM/Ninja environment:
+
+```powershell
+. ./scripts/dev-env.ps1
+cargo test --locked -p rustymiddle-desktop
+cargo run --locked -p rustymiddle-desktop
+```
+
+Create the Windows installer from `apps/desktop`:
+
+```powershell
+Push-Location ./apps/desktop
+. ../../scripts/dev-env.ps1
+./ui/node_modules/.bin/tauri.cmd build --bundles nsis --ci
+Pop-Location
+```
+
+The first packaging run downloads Tauri's hash-verified NSIS 3.11 toolchain and
+`nsis_tauri_utils` into its user cache. After that cache and all Cargo/npm
+dependencies exist, the same command succeeds with Cargo offline and network
+access blocked. Node and the Tauri CLI are build tools only; neither the
+optimized executable nor the NSIS-installed application starts a Node process
+or a development server.
+
+For the local WebView2 delivery smoke test, launch the debug or release binary
+with a loopback DevTools port and, while it is running, execute:
+
+```powershell
+Push-Location ./apps/desktop/ui
+npm run smoke:webview -- --port 9333
+Pop-Location
+```
+
+The script reloads the real WebView, activates the TypeScript island, and fails
+on a custom-protocol fetch, WebUI hydration, typed Tauri command, bounded
+channel notification, missing module/CSS asset, CSP violation, or browser
+error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
+test-only and must not be set for production launches.
+
 ## Linux
 
 Install Rust 1.97.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard

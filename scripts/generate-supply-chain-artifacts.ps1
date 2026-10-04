@@ -31,10 +31,34 @@ $thirdParty = @($metadata.packages |
     Where-Object { $null -ne $_.source } |
     Sort-Object @{ Expression = { Get-OrdinalSortKey $_.name } },
                 @{ Expression = { Get-OrdinalSortKey $_.version } })
+$npmLockPath = Join-Path $repositoryRoot 'apps\desktop\ui\package-lock.json'
+$npmProduction = @()
+if (Test-Path -LiteralPath $npmLockPath) {
+    $npmLock = Get-Content -Raw -LiteralPath $npmLockPath | ConvertFrom-Json -AsHashtable
+    $npmProduction = @($npmLock.packages.GetEnumerator() | ForEach-Object {
+        $packagePath = [string]$_.Key
+        $package = $_.Value
+        if (-not $packagePath -or $package.dev -eq $true -or -not $package.version) {
+            return
+        }
+        $marker = 'node_modules/'
+        $markerIndex = $packagePath.LastIndexOf($marker, [StringComparison]::Ordinal)
+        if ($markerIndex -lt 0) {
+            throw "Unexpected npm lockfile package path: $packagePath"
+        }
+        [pscustomobject]@{
+            name = $packagePath.Substring($markerIndex + $marker.Length)
+            version = [string]$package.version
+            license = [string]$package.license
+            source = [string]$package.resolved
+        }
+    } | Sort-Object @{ Expression = { Get-OrdinalSortKey $_.name } },
+                    @{ Expression = { Get-OrdinalSortKey $_.version } })
+}
 $noticeLines = @(
     '# Third-party notices',
     '',
-    'Generated from the locked Cargo graph by `scripts/generate-supply-chain-artifacts.ps1`.',
+    'Generated from the locked Cargo graph and desktop npm production graph by `scripts/generate-supply-chain-artifacts.ps1`.',
     'Distributions must retain the license texts shipped by their dependencies and bundled native sources.',
     '',
     '| Package | Version | License expression | Source |',
@@ -43,6 +67,16 @@ $noticeLines = @(
 foreach ($package in $thirdParty) {
     $repository = if ($package.repository) { $package.repository } else { $package.source }
     $noticeLines += "| $($package.name) | $($package.version) | $($package.license) | $repository |"
+}
+$noticeLines += @(
+    '',
+    '## Desktop npm production packages',
+    '',
+    '| Package | Version | License expression | Source |',
+    '|---|---:|---|---|'
+)
+foreach ($package in $npmProduction) {
+    $noticeLines += "| $($package.name) | $($package.version) | $($package.license) | $($package.source) |"
 }
 $noticeLines += @(
     '',
@@ -74,6 +108,23 @@ $components = @($metadata.packages |
         $component.externalReferences = @(@{ type = 'vcs'; url = $_.repository })
     }
     [pscustomobject]$component
+})
+$components += @($npmProduction | ForEach-Object {
+    $purlName = if ($_.name.StartsWith('@')) {
+        $segments = $_.name.Substring(1).Split('/', 2)
+        "%40$([Uri]::EscapeDataString($segments[0]))/$([Uri]::EscapeDataString($segments[1]))"
+    } else {
+        [Uri]::EscapeDataString($_.name)
+    }
+    [pscustomobject][ordered]@{
+        type = 'library'
+        'bom-ref' = "npm:$($_.name)@$($_.version)"
+        name = $_.name
+        version = $_.version
+        licenses = @(@{ license = @{ expression = $_.license } })
+        purl = "pkg:npm/$purlName@$([Uri]::EscapeDataString($_.version))"
+        externalReferences = @(@{ type = 'distribution'; url = $_.source })
+    }
 })
 $dependencies = @($metadata.resolve.nodes | ForEach-Object {
     [pscustomobject]@{

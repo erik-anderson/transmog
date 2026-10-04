@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window has only the explicitly registered application command.",
+  "windows": ["main"],
+  "permissions": []
+}

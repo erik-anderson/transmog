@@ -8,12 +8,18 @@ targets = [
 
 [advisories]
 yanked = "deny"
+# Tauri's metadata includes GTK 0.18 target dependencies even though the
+# desktop crate selects Tauri only on Windows. No configured rustymiddle target
+# can reach proc-macro-error (verified with target-specific cargo tree checks).
+# Remove this exception before enabling the Linux desktop target.
+ignore = ["RUSTSEC-2024-0370"]
 
 [licenses]
 confidence-threshold = 0.93
 allow = [
     "0BSD",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
@@ -21,6 +27,7 @@ allow = [
     "ISC",
     "MIT",
     "MIT-0",
+    "MPL-2.0",
     "Unicode-3.0",
     "Zlib",
 ]

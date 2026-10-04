@@ -20,6 +20,8 @@ resource semantics are documented in
 [WebSocket inspection](docs/websocket-inspection.md).
 The UI-independent composition boundary is documented in the
 [application/session service guide](docs/application-session-service.md).
+The Windows-first Tauri/WebUI product shell spike and its local verification
+commands are documented in [the desktop app guide](apps/desktop/README.md).
 
 ## Local verification
 

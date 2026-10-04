@@ -1,0 +1,24 @@
+{
+  "name": "@rustymiddle/desktop-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build-client.mjs",
+    "check": "tsc --noEmit && node build-client.mjs --check",
+    "smoke:webview": "node scripts/smoke-webview.mjs"
+  },
+  "dependencies": {
+    "@microsoft/webui-framework": "0.0.30",
+    "@tauri-apps/api": "2.12.1"
+  },
+  "devDependencies": {
+    "@microsoft/webui": "0.0.30",
+    "@tauri-apps/cli": "2.12.1",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

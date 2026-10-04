@@ -224,7 +224,7 @@ cannot stall or silently weaken proxy traffic.
 
 ### 10. Product shell
 
-Status: planned; implementation has not started.
+Status: active; dependency and delivery spike complete.
 
 Build the Windows-first desktop shell with Tauri, the operating-system WebView,
 Rust-rendered Microsoft WebUI templates, and TypeScript only for authored
@@ -291,11 +291,10 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Complete Phase 0 of the
-   [Tauri and WebUI product shell plan](tauri-webui-product-shell-plan.md),
-   proving packaged WebView2 delivery, Rust SSR, TypeScript island hydration,
-   CSP, narrow Tauri commands, and bounded notifications before building the
-   full shell.
+1. Complete Phase 1 of the
+   [Tauri and WebUI product shell plan](tauri-webui-product-shell-plan.md): add
+   the UI-neutral application facade and independent WebUI renderer crate,
+   then establish the shell/status/diagnostics foundation and graceful close.
 2. Keep the standalone interoperability, live Chromium, and local Linux gates
    passing. When a human explicitly enables hosted automation, activate and
    observe the parked Linux/macOS templates and close platform-specific

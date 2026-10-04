@@ -1,6 +1,6 @@
 # Plan: Tauri and WebUI product shell
 
-Status: proposed; implementation has not started
+Status: active; Phase 0 completed on 2026-10-04
 Audience: maintainers, product-shell authors, security reviewers, and release
 engineers
 Depends on: the completed application/session service, native capture, SAZ
@@ -257,6 +257,14 @@ fail-closed contract; it never leaves traffic suspended indefinitely.
 
 ### Phase 0: Dependency and delivery spike
 
+Status: complete. ADR 0007 records the delivery decision and the checked-in
+spike lives under `apps/desktop`. The WebView2 debug and optimized release
+smoke tests exercised WebUI SSR and hydration, custom-protocol module/CSS/JSON
+delivery, Trusted Types, CSP, a typed Tauri command, and one channel hint with
+no browser errors or CSP violations. The NSIS package was reproduced with
+Cargo offline and network access blocked after Tauri's hash-verified packaging
+tools had been cached.
+
 Create the smallest Tauri/WebUI application described in the custom-protocol
 proof above. Record exact versions, licenses, transitive dependency changes,
 WebView2 runtime expectations, and the result of custom-protocol fetch,
@@ -437,12 +445,12 @@ validation stays enabled.
 
 ## Definition of done
 
-- [ ] Tauri/WebUI delivery ADR and offline packaged spike pass on WebView2.
+- [x] Tauri/WebUI delivery ADR and offline packaged spike pass on WebView2.
 - [ ] Layering prevents Tauri, WebUI, and platform APIs from entering proxy
       libraries or `rustymiddle-session`.
 - [ ] Rust owns authoritative state, validation, rendering, and product
       operations; authored browser code is TypeScript-only and minimal.
-- [ ] Custom protocol, CSP, Trusted Types decision, navigation, and Tauri
+- [x] Custom protocol, CSP, Trusted Types decision, navigation, and Tauri
       capabilities pass a security review.
 - [ ] Proxy lifecycle and exact Windows host restoration survive normal exit,
       failed stop, restart, and crash recovery.

@@ -1,0 +1,38 @@
+[package]
+name = "rustymiddle-desktop"
+description = "Windows Tauri product shell for rustymiddle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[lib]
+name = "rustymiddle_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustymiddle-desktop"
+path = "src/main.rs"
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+microsoft-webui = "=0.0.30"
+microsoft-webui-handler = "=0.0.30"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
+
+[build-dependencies]
+microsoft-webui = "=0.0.30"
+
+[target.'cfg(windows)'.build-dependencies]
+tauri-build = { version = "=2.7.1", features = [] }
+
+[lints]
+workspace = true

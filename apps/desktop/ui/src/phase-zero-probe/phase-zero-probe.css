@@ -1,0 +1,109 @@
+:host {
+  display: block;
+  color: #e9edf5;
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.5rem 2rem;
+  align-items: center;
+  max-width: 52rem;
+  margin: 0 auto 4rem;
+  padding: 2rem;
+  border: 1px solid #2c3749;
+  border-radius: 1rem;
+  background: #151c28;
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 24%);
+}
+
+.eyebrow {
+  margin: 0 0 0.45rem;
+  color: #68d4b5;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.45rem;
+}
+
+p {
+  max-width: 39rem;
+  margin: 0.7rem 0 0;
+  color: #abb5c7;
+  line-height: 1.55;
+}
+
+button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid #69dfbd;
+  border-radius: 0.55rem;
+  background: #68d4b5;
+  color: #07120f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #87e4c9;
+}
+
+button:focus-visible {
+  outline: 3px solid #f4c960;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+output {
+  grid-column: 1 / -1;
+  min-height: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #2c3749;
+  color: #c6cfdd;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.9rem;
+}
+
+output[data-status="passed"] {
+  color: #7fe3c5;
+}
+
+output[data-status="failed"] {
+  color: #ff9e9e;
+}
+
+@media (max-width: 46rem) {
+  section {
+    grid-template-columns: 1fr;
+    margin-inline: 1rem;
+  }
+
+  button {
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button {
+    transition: background-color 120ms ease, opacity 120ms ease;
+  }
+}
+
+@media (forced-colors: active) {
+  section,
+  button,
+  output {
+    border-color: CanvasText;
+  }
+}
