@@ -3,7 +3,7 @@
 Status: active; Hooks v2, the deterministic content protocol matrix, local
 content hardening, cooperative codec work/deadline bounds, and end-to-end
 content benchmarks are complete on Windows and the local Linux Docker/WSL2
-matrix; hosted Linux/macOS observation remains
+matrix; hosted Linux/macOS automation is intentionally deferred
 Audience: maintainers, implementation agents, and reviewers  
 Scope: the initial rustymiddle monorepo and the future repository boundaries it
 must preserve
@@ -97,14 +97,16 @@ contract.
 
 ### 0. Proxy core and Hooks v2
 
-Status: locally complete; Linux and macOS CI observation remains.
+Status: locally complete; hosted Linux and macOS CI observation is explicitly
+deferred.
 
 The result is the typed exchange engine, body plans, observers, routing and
 upstream seams, provider interfaces, bounded decision bridge, embedding
 example, and H1/H2/H3 compatibility matrix described by the Hooks v2 plan.
 
-Exit gate: every checked Hooks v2 definition-of-done item passes and the
-cross-platform matrix is observed rather than inferred.
+Exit gate: every local Hooks v2 definition-of-done item passes. Hosted
+Linux/macOS observation remains a deferred acceptance gate after automation is
+explicitly enabled.
 
 ### 1. Content processing
 
@@ -224,9 +226,10 @@ separately triggers stabilization.
 
 ## Immediate sequence
 
-1. Publish and observe the Hooks v2/content and fuzz-smoke hosted Linux/macOS
-   gates; close any platform-specific findings.
-2. Keep the live Chromium gate passing with content processing disabled by
-   default.
-3. Design experimental control v0 using actual content/capture needs rather
+1. Keep the live Chromium and local Linux gates passing with content processing
+   disabled by default.
+2. Design experimental control v0 using actual content/capture needs rather
    than stabilizing speculative messages.
+3. When a human explicitly enables hosted automation, activate and observe the
+   parked Hooks v2/content and fuzz-smoke Linux/macOS templates and close any
+   platform-specific findings.

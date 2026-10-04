@@ -3,7 +3,7 @@
 Status: active; Phases 1-5, local Phase 6 hardening, cooperative codec work
 bounds, fuzz-target, end-to-end performance, and dependency gates are
 implemented on Windows and the local Linux Docker/WSL2 matrix; hosted
-Linux/macOS observation remains
+Linux/macOS automation is intentionally deferred
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -280,7 +280,9 @@ gate proves no regression in normal verified browser traffic.
 - Document interoperability choices and remaining limitations.
 
 Exit gate: the full workspace gate, optimized Clang/Ninja/Windows SDK build,
-cross-platform CI, and live browser suite pass from a clean checkout.
+local Linux Docker matrix, and live browser suite pass from a clean checkout.
+Hosted Linux/macOS observation remains a deferred acceptance gate after a
+human explicitly enables hosted automation.
 
 Implementation note: checked-in Linux libFuzzer targets cover coding-header
 parsing and bounded corrupt/chunked decoder input. The normal suite owns
@@ -289,12 +291,13 @@ release harness records pass-through, decode-only, and decode/re-encode
 baselines for every codec. Shipping and fuzz-only dependency graphs remain
 separate. Codec operations now have configurable byte quanta, cooperative
 executor yields, per-operation deadlines, cumulative per-layer body deadlines,
-and typed terminal timeouts. Cross-platform CI observation remains open.
+and typed terminal timeouts. Hosted CI observation remains open and is
+explicitly deferred until a human decides to enable it.
 
 Local Linux sanitizer validation on 2026-10-03 used the checked-in
 Docker Desktop/WSL2 environment and completed 10,000 mutation runs for each
 target without a finding. Hosted Linux CI observation and macOS codec
-observation remain separate exit gates.
+observation remain separate, intentionally deferred exit gates.
 
 ## Dependency acceptance criteria
 
@@ -333,7 +336,8 @@ are regenerated in the same change that accepts a dependency.
 - [x] Windows LLVM/Ninja/Windows SDK release build passes.
 - [x] The read-only Linux Docker/WSL2 Clang/LLVM/Ninja workspace matrix and
       sanitizer-backed fuzz smoke pass.
-- [ ] Hosted Linux and macOS CI pass on a published commit.
+- [ ] Hosted Linux and macOS CI pass after a human explicitly enables hosted
+      automation; inactive templates are parked under `ci/github-actions/`.
 - [x] Live Chromium verification passes without certificate bypass or route
       interception.
 - [x] Header and codec fuzz targets, deterministic decompression-bomb and
@@ -345,9 +349,10 @@ are regenerated in the same change that accepts a dependency.
 
 ## Next implementation slice
 
-Publish and observe the hosted Linux fuzz-smoke plus Linux/macOS codec matrix,
-then close any platform-specific findings while keeping the live Chromium gate
-passing. After those hosted results exist, begin the experimental control-v0
-boundary based on the content and capture needs now demonstrated. Preserve the
+Begin the experimental control-v0 boundary based on the content and capture
+needs now demonstrated while keeping the local Linux matrix and live Chromium
+gate passing. Hosted automation remains deferred indefinitely until a human
+decides enabling it is appropriate; at that point activate and observe the
+parked Linux fuzz-smoke and Linux/macOS codec templates. Preserve the
 deterministic protocol matrix and finite limits as behavioral baselines; do not
 move content policy into transport adapters to improve a benchmark.

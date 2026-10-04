@@ -78,9 +78,10 @@ The report is written to the ignored
 revision, dirty-tree state, OS, architecture, workload dimensions, active work
 limits, and the memory sampling interval and ceiling. Override the output path,
 sampling interval, or ceiling explicitly through script parameters rather than
-changing production limits. The scheduled and manually dispatchable
-`content-performance` workflow runs the same Windows LLVM/Ninja gate weekly and
-uploads this report without committing machine-specific results.
+changing production limits. A proposed `content-performance` hosted workflow
+is parked under `ci/github-actions/` while hosted automation is intentionally
+deferred. It is design material for a future explicit CI-enablement decision;
+the local Windows LLVM/Ninja gate is authoritative in the meantime.
 
 The initial Windows LLVM/Ninja baseline recorded on 2026-10-03 was:
 

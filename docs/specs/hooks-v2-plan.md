@@ -1,6 +1,7 @@
 # Plan: Production-grade Hooks v2 interception API
 
-Status: local implementation and hardening complete; cross-platform CI pending
+Status: local implementation and hardening complete; hosted CI intentionally
+deferred until a human enables it
 Audience: implementation agent and reviewers
 Baseline: commit `8045959`
 Primary scope: `rustymiddle-core` and the exchange orchestration in `rustymiddle-runtime`
@@ -868,9 +869,9 @@ verification, create unbounded buffers, or expose remote listeners by default.
    difficult to change.
 10. Run focused tests during development and the complete gates before every
     milestone handoff.
-11. Do not claim cross-platform success from a Windows-only run; rely on the
-    checked-in CI matrix for platforms not locally available and report its
-    status accurately.
+11. Do not claim cross-platform success from a Windows-only run; use the local
+    Linux Docker matrix where available, leave macOS unverified, and report the
+    intentionally deferred hosted-automation status accurately.
 12. Before completion, review the final public API as an embedding application
     author, a rule-engine author, and an external-control-bridge author.
 
@@ -927,9 +928,9 @@ route interception.
 - [x] The final working tree contains no temporary adapters, ignored failures,
       debug credential/body logging, or undocumented feature flags.
 
-The remaining unchecked item is a deliberate gate, not a presumed success: the
-checked-in Linux/macOS CI jobs have not been observed for this change set from
-the local Windows run.
+The remaining unchecked item is a deliberate, deferred gate, not a presumed
+success: hosted Linux/macOS definitions are parked under `ci/github-actions/`
+and cannot run until a human explicitly enables hosted automation.
 
 ## Expected risks and mitigations
 
