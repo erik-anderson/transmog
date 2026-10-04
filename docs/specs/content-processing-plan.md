@@ -1,7 +1,8 @@
 # Plan: Production-grade content processing
 
-Status: active; Phases 1-5 are implemented and deterministically validated on
-Windows; Phase 6 hardening and cross-platform codec validation remain
+Status: active; Phases 1-5 and the local Phase 6 deterministic hardening,
+fuzz-target, benchmark, and dependency gates are implemented on Windows;
+cross-platform fuzz/codec observation and preemptible codec CPU deadlines remain
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
 Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
@@ -280,6 +281,14 @@ gate proves no regression in normal verified browser traffic.
 Exit gate: the full workspace gate, optimized Clang/Ninja/Windows SDK build,
 cross-platform CI, and live browser suite pass from a clean checkout.
 
+Implementation note: checked-in Linux libFuzzer targets cover coding-header
+parsing and bounded corrupt/chunked decoder input. The normal suite owns
+deterministic decompression-bomb and cancellation stress, while the content
+release harness records pass-through, decode-only, and decode/re-encode
+baselines for every codec. Shipping and fuzz-only dependency graphs remain
+separate. Cross-platform CI observation and a preemptible per-codec work/deadline
+mechanism are still open.
+
 ## Dependency acceptance criteria
 
 Codec dependencies are accepted only after checking:
@@ -318,11 +327,15 @@ are regenerated in the same change that accepts a dependency.
 - [ ] Linux and macOS CI pass.
 - [x] Live Chromium verification passes without certificate bypass or route
       interception.
+- [x] Header and codec fuzz targets, deterministic decompression-bomb and
+      cancellation stress, and per-codec release benchmarks are checked in.
+- [x] Shipping dependency licenses, advisories, duplicate graph, notices, SBOM,
+      and native-code ownership are reviewed by the automated gate.
 
 ## Next implementation slice
 
-Continue with Phase 6. Preserve the now-complete deterministic protocol matrix
-as the behavioral baseline while adding fuzzing, adversarial stress, codec
-benchmarks, dependency review, and cross-platform observation. Do not weaken
-finite limits or move content policy into transport adapters to improve a
-benchmark.
+Observe the new Linux fuzz smoke job and the existing Linux/macOS codec matrix,
+then add a preemptible codec work-quantum/deadline design before checking the
+remaining all-bounds item. Preserve the deterministic protocol matrix as the
+behavioral baseline; do not weaken finite limits or move content policy into
+transport adapters to improve a benchmark.

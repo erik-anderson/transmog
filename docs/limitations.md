@@ -12,6 +12,16 @@
   multi-layer Hooks v2 composition. Runtime decoding is disabled by default;
   embedding applications must choose identity output or restoration of the
   original coding stack with an explicit finite `ContentPolicy`.
+- Content byte, expansion, stack-depth, and decoder-window bounds are enforced
+  inside codec calls. There is not yet a separately preemptible CPU-time budget
+  inside one synchronous decoder poll; runtime idle and hook deadlines apply at
+  the surrounding asynchronous boundaries. Applications handling hostile
+  traffic should keep content limits conservative until work-quantum/deadline
+  enforcement is added.
+- Content processing does not transcode character sets, parse semantic media
+  formats, negotiate dictionaries, or support WebSocket per-message
+  compression. Raw-DEFLATE compatibility is opt-in and selected only from the
+  initial zlib-header probe; it never retries after releasing decoded bytes.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over HTTP/2.
   Forced-protocol routes and Auto without a cached HTTP/3 alternative stream.

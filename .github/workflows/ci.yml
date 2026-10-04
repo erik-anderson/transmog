@@ -84,6 +84,11 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: fuzz/Cargo.toml
+          command: check
+          arguments: --config fuzz/deny.toml --locked --all-features
       - name: Generate notices and CycloneDX SBOM
         shell: pwsh
         run: ./scripts/generate-supply-chain-artifacts.ps1
@@ -94,6 +99,26 @@ jobs:
           path: |
             THIRD_PARTY_NOTICES.md
             artifacts/sbom.cdx.json
+
+  content-fuzz-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-10-01
+      - uses: llvm/actions/setup-clang@v1
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz Content-Encoding parsing
+        run: >-
+          cargo fuzz run content_encoding fuzz/corpus/content_encoding --
+          -dict=fuzz/dictionaries/content_encoding.dict -max_len=16384 -runs=1000
+      - name: Fuzz bounded codec streams
+        run: >-
+          cargo fuzz run decode_stream fuzz/corpus/decode_stream --
+          -max_len=8192 -runs=1000
 
   browser-live:
     runs-on: windows-latest

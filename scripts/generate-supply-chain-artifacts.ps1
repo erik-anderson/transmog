@@ -19,9 +19,18 @@ foreach ($package in $metadata.packages) {
     $packagesById[$package.id] = $package
 }
 
+function Get-OrdinalSortKey([string]$Value) {
+    return -join @($Value.ToCharArray() | ForEach-Object {
+        # Keep the established underscore-before-hyphen notice ordering.
+        $codePoint = if ($_ -eq '_') { 44 } else { [int]$_ }
+        '{0:X4}' -f $codePoint
+    })
+}
+
 $thirdParty = @($metadata.packages |
     Where-Object { $null -ne $_.source } |
-    Sort-Object name, version)
+    Sort-Object @{ Expression = { Get-OrdinalSortKey $_.name } },
+                @{ Expression = { Get-OrdinalSortKey $_.version } })
 $noticeLines = @(
     '# Third-party notices',
     '',
@@ -43,9 +52,16 @@ $noticeLines += @(
 )
 $noticeDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($NoticePath))
 New-Item -ItemType Directory -Force -Path $noticeDirectory | Out-Null
-Set-Content -LiteralPath $NoticePath -Value ($noticeLines -join "`n") -Encoding utf8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText(
+    [System.IO.Path]::GetFullPath($NoticePath),
+    (($noticeLines -join "`n") + "`n"),
+    $utf8NoBom)
 
-$components = @($metadata.packages | Sort-Object name, version | ForEach-Object {
+$components = @($metadata.packages |
+    Sort-Object @{ Expression = { Get-OrdinalSortKey $_.name } },
+                @{ Expression = { Get-OrdinalSortKey $_.version } } |
+    ForEach-Object {
     $component = [ordered]@{
         type = if ($null -eq $_.source) { 'application' } else { 'library' }
         'bom-ref' = $_.id
@@ -83,7 +99,10 @@ $sbom = [ordered]@{
 }
 $sbomDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($SbomPath))
 New-Item -ItemType Directory -Force -Path $sbomDirectory | Out-Null
-$sbom | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $SbomPath -Encoding utf8
+[System.IO.File]::WriteAllText(
+    [System.IO.Path]::GetFullPath($SbomPath),
+    (($sbom | ConvertTo-Json -Depth 20) + "`n"),
+    $utf8NoBom)
 
 Write-Output "NOTICE_PATH=$([System.IO.Path]::GetFullPath($NoticePath))"
 Write-Output "SBOM_PATH=$([System.IO.Path]::GetFullPath($SbomPath))"

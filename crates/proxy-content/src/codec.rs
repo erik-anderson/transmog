@@ -796,7 +796,14 @@ const fn is_zlib_header(compression_method: u8, flags: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
+    use std::{
+        num::NonZeroUsize,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use rustymiddle_core::HeaderField;
 
@@ -1229,6 +1236,97 @@ mod tests {
                 attempted: 5
             }))
         ));
+    }
+
+    #[tokio::test]
+    async fn deterministic_decompression_bombs_stop_at_the_decoded_limit() {
+        const DECODED_LIMIT: usize = 64 * 1024;
+        let source = vec![b'z'; 512 * 1024];
+        for coding in enabled_codings() {
+            let encoded = encode_with_chunks(coding, &source, 4096).await;
+            assert!(
+                encoded.len().saturating_mul(100) < source.len(),
+                "fixture is not highly compressible for {coding:?}"
+            );
+            for chunk_size in [1, 7, encoded.len()] {
+                let codec_limits = limits(
+                    encoded.len(),
+                    DECODED_LIMIT,
+                    DECODED_LIMIT,
+                    10_000,
+                    source.len(),
+                );
+                let mut decoder = ContentDecoder::new(coding, codec_limits).unwrap();
+                let mut released = Vec::new();
+                let mut error = None;
+                for chunk in encoded.chunks(chunk_size.max(1)) {
+                    match decoder.on_frame(BodyFrame::Data(Bytes::copy_from_slice(chunk))) {
+                        Ok(frames) => {
+                            assert!(append_frames(&mut released, frames).is_none());
+                        }
+                        Err(failure) => {
+                            error = Some(failure);
+                            break;
+                        }
+                    }
+                }
+                let error = error.unwrap_or_else(|| decoder.finish().unwrap_err());
+                assert!(
+                    matches!(
+                        error,
+                        ContentCodecError::Limit(ContentLimitError::DecodedBytes {
+                            limit: DECODED_LIMIT,
+                            ..
+                        })
+                    ),
+                    "{coding:?} with {chunk_size}-byte chunks returned {error:?}"
+                );
+                assert!(released.len() <= DECODED_LIMIT);
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_many_owned_codec_tasks_leaves_other_codecs_independent() {
+        const TASKS: usize = 64;
+        let ready = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::with_capacity(TASKS);
+        for index in 0..TASKS {
+            let ready = Arc::clone(&ready);
+            tasks.push(tokio::spawn(async move {
+                let coding = enabled_codings()[index % enabled_codings().len()];
+                let mut encoder = ContentEncoder::new(coding, generous_limits()).unwrap();
+                let _ = encoder
+                    .on_frame(BodyFrame::Data(Bytes::from(vec![b'x'; 64 * 1024])))
+                    .await
+                    .unwrap();
+                ready.fetch_add(1, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }));
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while ready.load(Ordering::SeqCst) != TASKS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("codec tasks did not reach their cancellation point");
+
+        for coding in enabled_codings() {
+            let encoded = encode_with_chunks(coding, b"unrelated", 2).await;
+            assert_eq!(
+                decode_with_chunks(coding, &encoded, 1, generous_limits()).unwrap(),
+                b"unrelated"
+            );
+        }
+
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            assert!(task.await.unwrap_err().is_cancelled());
+        }
     }
 
     #[tokio::test]

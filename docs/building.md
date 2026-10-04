@@ -86,6 +86,11 @@ export CC=clang CXX=clang++ CMAKE_GENERATOR=Ninja
 cargo test --workspace --all-features --locked
 ```
 
+Content fuzzing is an optional maintainer workflow, not a build prerequisite.
+It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
+LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal
+deterministic bomb and cancellation tests still run on Windows and macOS.
+
 ## macOS
 
 Install Rust 1.97.1+, Xcode Command Line Tools, CMake, Ninja, and NASM. Apple

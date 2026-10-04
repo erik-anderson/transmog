@@ -68,6 +68,22 @@ a paused decoder does not block another stream on the same H2 or H3 connection,
 an actual decoded-size overflow terminates the upstream body, and Auto fallback
 replays the already processed coded request exactly once before response start.
 The existing declared-size rejection test complements the in-stream limit test.
+Phase 6 adds deterministic highly compressible inputs for every codec and
+asserts that no bytes beyond the decoded limit escape, regardless of one-byte,
+seven-byte, or whole-body input framing. A 64-task cancellation stress case
+drops independently owned live encoders, verifies every task is cancelled, and
+proves unrelated round trips still complete. These tests stay in the ordinary
+cross-platform workspace gate.
+
+Coverage-guided targets live in the independent, non-published `fuzz/`
+workspace. `content_encoding` mutates duplicate field boundaries and coding
+syntax while checking canonical reparse invariants. `decode_stream` mutates
+coding selection, frame boundaries, corrupt bytes, and valid seeded vectors
+under fixed encoded, decoded, ratio, window, output, and stack-depth limits.
+The separate workspace keeps `libfuzzer-sys` out of the shipping dependency
+graph and SBOM. Linux CI installs the pinned `cargo-fuzz` driver and runs bounded
+smoke sessions; longer local campaigns and corpus handling are documented in
+`fuzz/README.md`.
 
 The final compatibility gate uses Playwright-managed Chromium with a fresh
 profile, browser QUIC disabled, no certificate-error bypass, and no Playwright
@@ -109,8 +125,9 @@ cargo test --locked -p rustymiddle-core --all-features
 # Compile every example and benchmark harness.
 cargo test --locked --workspace --all-features --all-targets
 
-# Dependency-free fixed-input microbenchmark; run on an otherwise idle host.
+# Dependency-free fixed-input microbenchmarks; run on an otherwise idle host.
 cargo run --locked --release -p rustymiddle-core --example hooks_benchmark
+cargo run --locked --release -p rustymiddle-content --example content_benchmark
 ```
 
 The transport-neutral core is intended to remain Miri-compatible. On a host
