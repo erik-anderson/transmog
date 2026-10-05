@@ -1,0 +1,41 @@
+<template shadowrootmode="open">
+  <div class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">Transmog</p>
+        <h1>{{heading}}</h1>
+        <p class="lede">{{summary}}</p>
+      </div>
+      <div class="status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span w-ref="{statusLabel}">{{lifecycleLabel}}</span>
+      </div>
+    </header>
+
+    <nav aria-label="Primary">
+      <a href="#traffic" aria-current="page">Traffic</a>
+      <a href="#breakpoints">Breakpoints</a>
+      <a href="#composer">Composer</a>
+      <a href="#captures">Captures</a>
+    </nav>
+
+    <main>
+      <section id="traffic" class="workspace" aria-labelledby="traffic-heading">
+        <div>
+          <p class="section-label">Live workspace</p>
+          <h2 id="traffic-heading">Sessions</h2>
+          <p>Authoritative session queries will appear here as the proxy starts.</p>
+        </div>
+        <dl>
+          <div><dt>Listener</dt><dd w-ref="{listenerValue}">{{listener}}</dd></div>
+          <div><dt>Retention</dt><dd>Metadata only</dd></div>
+        </dl>
+      </section>
+      <section class="diagnostics" aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostics</h2>
+        <output w-ref="{diagnostics}" aria-live="polite">Application facade ready.</output>
+        <button type="button" @click="{refreshStatus()}">Refresh status</button>
+      </section>
+    </main>
+  </div>
+</template>

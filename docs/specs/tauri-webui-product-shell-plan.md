@@ -1,6 +1,6 @@
 # Plan: Tauri and WebUI product shell
 
-Status: active; Phase 0 completed on 2026-10-04
+Status: active; Phases 0-1 completed on 2026-10-04
 Audience: maintainers, product-shell authors, security reviewers, and release
 engineers
 Depends on: the completed application/session service, native capture, SAZ
@@ -276,6 +276,13 @@ or bounded Tauri query commands. The packaged Windows spike runs offline and
 contains no development server.
 
 ### Phase 1: Application facade and render foundation
+
+Status: complete. `transmog-app` owns the UI-neutral facade and bounded status
+contract, `transmog-app-webui` owns the loaded protocol and secure renderer,
+and the Tauri binary is limited to custom-origin delivery and allowlisted
+commands. The checked-in asset task rejects stale TypeScript output, renderer
+tests run without Tauri, and window close performs bounded service shutdown
+before destroying the main window.
 
 Add `transmog-app`, `transmog-app-webui`, and the thin desktop binary.
 Define bounded presentation DTOs with opaque IDs/cursors and stable error

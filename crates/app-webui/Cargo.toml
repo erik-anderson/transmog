@@ -1,0 +1,25 @@
+[package]
+name = "transmog-app-webui"
+description = "WebUI rendering adapter for the Transmog application facade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+build = "build.rs"
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+microsoft-webui = "=0.0.30"
+microsoft-webui-handler = "=0.0.30"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+transmog-app = { version = "=0.1.0", path = "../app" }
+
+[build-dependencies]
+microsoft-webui = "=0.0.30"
+
+[lints]
+workspace = true

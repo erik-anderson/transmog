@@ -104,8 +104,13 @@ Pop-Location
 `ui/dist/app.js` and `ui/dist/webui-projection.json` are checked in. This lets
 ordinary Cargo builds consume reviewed assets without npm or network access.
 `npm run check` rebuilds both files and fails if either checked-in output was
-stale. WebUI's Rust build compiles `protocol.bin` and hashed CSS into Cargo's
-output directory on every desktop build.
+stale. `transmog-app-webui` compiles `protocol.bin` and hashed CSS into Cargo's
+output directory on every desktop build. The repository build task performs
+the asset check before Cargo consumes them:
+
+```powershell
+pwsh ./scripts/build-desktop.ps1 -Configuration Debug -LockedDependencies
+```
 
 Build, test, and run through the repository's LLVM/Ninja environment:
 
@@ -141,9 +146,8 @@ Pop-Location
 ```
 
 The script reloads the real WebView, activates the TypeScript island, and fails
-on a custom-protocol fetch, WebUI hydration, typed Tauri command, bounded
-channel notification, missing module/CSS asset, CSP violation, or browser
-error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
+on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
+violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
 test-only and must not be set for production launches.
 
 ## Linux

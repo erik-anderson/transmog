@@ -1,1 +1,1 @@
-import './phase-zero-probe/phase-zero-probe.js';
+import './transmog-app-shell/transmog-app-shell.js';

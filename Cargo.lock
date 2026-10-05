@@ -4250,6 +4250,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-app"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "transmog-session",
+]
+
+[[package]]
+name = "transmog-app-webui"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.4.3",
+ "microsoft-webui",
+ "microsoft-webui-handler",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "transmog-app",
+]
+
+[[package]]
 name = "transmog-automation"
 version = "0.1.0"
 dependencies = [
@@ -4317,15 +4342,10 @@ dependencies = [
 name = "transmog-desktop"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
- "getrandom 0.4.3",
- "microsoft-webui",
- "microsoft-webui-handler",
- "serde",
- "serde_json",
  "tauri",
  "tauri-build",
- "thiserror 2.0.21",
+ "transmog-app",
+ "transmog-app-webui",
 ]
 
 [[package]]

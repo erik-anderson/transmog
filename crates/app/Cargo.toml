@@ -1,0 +1,18 @@
+[package]
+name = "transmog-app"
+description = "UI-neutral product application facade for Transmog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+transmog-session = { version = "=0.1.0", path = "../proxy-session" }
+
+[lints]
+workspace = true

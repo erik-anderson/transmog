@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "apps/desktop",
+    "crates/app",
+    "crates/app-webui",
     "crates/proxy-core",
     "crates/proxy-content",
     "crates/proxy-tls",

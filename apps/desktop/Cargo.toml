@@ -17,19 +17,11 @@ name = "transmog-desktop"
 path = "src/main.rs"
 
 [dependencies]
-base64.workspace = true
-getrandom.workspace = true
-microsoft-webui = "=0.0.30"
-microsoft-webui-handler = "=0.0.30"
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
+transmog-app = { version = "=0.1.0", path = "../../crates/app" }
+transmog-app-webui = { version = "=0.1.0", path = "../../crates/app-webui" }
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
-
-[build-dependencies]
-microsoft-webui = "=0.0.30"
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }

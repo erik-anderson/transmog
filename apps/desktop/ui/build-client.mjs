@@ -19,7 +19,7 @@ const expected = check
 
 await esbuild.build({
   absWorkingDir: workingDirectory,
-  entryPoints: ['src/index.ts'],
+  entryPoints: [join(workingDirectory, 'src/index.ts')],
   outfile: join(outputDirectory, 'app.js'),
   bundle: true,
   format: 'esm',

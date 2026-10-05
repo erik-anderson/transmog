@@ -13,7 +13,7 @@ const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response
   return response.json();
 });
 const candidates = targets.filter((target) =>
-  target.type === 'page' && target.title === 'Transmog delivery spike'
+  target.type === 'page' && target.title === 'Transmog'
 );
 if (candidates.length !== 1) {
   throw new Error(`expected one Transmog page, found ${candidates.length}`);
@@ -80,23 +80,22 @@ try {
 
   const result = await evaluate(`
     (async () => {
-      await customElements.whenDefined('phase-zero-probe');
-      const element = document.querySelector('phase-zero-probe');
+      await customElements.whenDefined('transmog-app-shell');
+      const element = document.querySelector('transmog-app-shell');
       const button = element?.shadowRoot?.querySelector('button');
       const output = element?.shadowRoot?.querySelector('output');
       if (!(button instanceof HTMLButtonElement) || !(output instanceof HTMLOutputElement)) {
-        throw new Error('hydrated WebUI probe controls were not found');
+        throw new Error('hydrated application controls were not found');
       }
       button.click();
       const deadline = performance.now() + 10_000;
-      while (output.dataset.status !== 'passed' && output.dataset.status !== 'failed') {
+      while (output.textContent === 'Application facade ready.') {
         if (performance.now() >= deadline) {
-          throw new Error('probe timed out');
+          throw new Error('status command timed out');
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       return {
-        status: output.dataset.status,
         text: output.textContent,
         title: document.title,
         url: location.href,
@@ -107,10 +106,7 @@ try {
     })()
   `);
 
-  assert(result.status === 'passed', result.text ?? 'probe failed without a message');
-  assert(result.text.includes('fetch=custom-protocol'), 'same-origin custom-protocol fetch did not pass');
-  assert(result.text.includes('command=WebView2'), 'typed Tauri command did not pass');
-  assert(result.text.includes('hint=1'), 'bounded Tauri channel notification did not pass');
+  assert(result.text === 'Proxy stopped', `typed status command failed: ${result.text}`);
   assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
   assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
