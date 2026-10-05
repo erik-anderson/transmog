@@ -56,6 +56,14 @@
           <section class="inspector" aria-labelledby="inspector-heading">
             <h3 id="inspector-heading">Inspector</h3>
             <pre w-ref="{inspectorOutput}" tabindex="0">Select a session to inspect bounded evidence.</pre>
+            <div class="filters" aria-label="Response body representation">
+              <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><option value="">Select a session first</option></select></label>
+              <label>View <select w-ref="{bodyRepresentation}"><option value="auto">Auto</option><option value="original-text">Original text</option><option value="formatted">Formatted</option><option value="bytes">Bytes</option><option value="metadata">Metadata only</option><option value="image">Image</option></select></label>
+              <label>Preview bytes <input w-ref="{bodyMaxBytes}" type="number" min="1" max="16777216" value="262144"></label>
+              <label><input w-ref="{bodyDecoded}" type="checkbox"> Decode content coding</label>
+              <button type="button" class="secondary" @click="{inspectBody()}">Inspect body</button>
+            </div>
+            <pre w-ref="{bodyPreviewOutput}" tabindex="0">No body selected.</pre>
           </section>
         </div>
         <dl>

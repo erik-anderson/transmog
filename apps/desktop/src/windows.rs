@@ -15,11 +15,12 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, ArtifactKind, BodyStoreConfig, BreakpointDecision,
-    BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel,
-    CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot,
-    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest, ProductState,
-    ProxyRoute, ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint, SessionPage,
+    AppConfig, AppError, AppStatus, Application, ArtifactKind, BodyInspection,
+    BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
+    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticsReport,
+    ExportFormat, ExportRequest, ExportResult, ImportRequest, ProductState, ProxyRoute,
+    ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint, SessionPage,
     SessionQueryInput, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
     WindowState,
 };
@@ -199,6 +200,14 @@ fn query_sessions(
 #[tauri::command]
 fn session_detail(id: String, state: State<'_, DesktopState>) -> Result<SessionDetail, AppError> {
     state.application.session_detail(&id)
+}
+
+#[tauri::command]
+async fn inspect_body(
+    request: BodyInspectionRequest,
+    state: State<'_, DesktopState>,
+) -> Result<BodyInspection, AppError> {
+    state.application.inspect_body(request).await
 }
 
 #[tauri::command]
@@ -395,6 +404,7 @@ pub fn run() {
             create_ca,
             query_sessions,
             session_detail,
+            inspect_body,
             watch_sessions,
             enable_breakpoints,
             breakpoint_status,

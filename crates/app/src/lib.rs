@@ -36,7 +36,9 @@ pub use diagnostics::{
     DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
     SupportBundleResult,
 };
-pub use inspector::{BodyView, HeaderView, SessionDetail};
+pub use inspector::{
+    BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView, HeaderView, SessionDetail,
+};
 pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
@@ -444,7 +446,19 @@ impl Application {
     /// # Errors
     /// Returns an invalid identifier or unavailable/evicted session error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
-        inspector::session_detail(&self.service, id)
+        inspector::session_detail(&self.service, self.body_store.as_ref(), id)
+    }
+
+    /// Returns one bounded safe representation of a retained body boundary.
+    ///
+    /// # Errors
+    /// Returns typed identifier, boundary, availability, decoding, or limit
+    /// failures without exposing filesystem paths.
+    pub async fn inspect_body(
+        &self,
+        request: BodyInspectionRequest,
+    ) -> Result<BodyInspection, AppError> {
+        inspector::inspect_body(self.body_store.as_ref(), request).await
     }
 
     /// Attaches the exclusive same-build breakpoint controller.

@@ -1,10 +1,16 @@
-use std::fmt::Write as _;
+use std::{fmt::Write as _, num::NonZeroUsize};
 
-use serde::Serialize;
-use transmog_core::{HeaderBlock, observe::ExchangeBoundary};
+use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use transmog_content::{ContentCodingStack, ContentDecoder, ContentLimits};
+use transmog_core::{BodyFrame, HeaderBlock, HeaderField, observe::ExchangeBoundary};
 use transmog_session::{ApplicationSessionService, BodySnapshot, SessionTerminal};
 
-use crate::{AppError, ErrorCategory};
+use crate::body_store::MAX_BODY_READ_BYTES;
+use crate::{
+    AppError, BodyAvailability, BodyStore, DEFAULT_BODY_READ_BYTES, ErrorCategory,
+    StoredBodyMetadata,
+};
 
 const MAX_DISPLAY_BYTES: usize = 64 * 1024;
 const MAX_FIELD_CHARS: usize = 2 * 1024;
@@ -72,6 +78,8 @@ pub struct SessionDetail {
     pub responses: Vec<HeadView>,
     /// Retained body evidence.
     pub bodies: Vec<BodyView>,
+    /// Product body-store metadata at original and effective boundaries.
+    pub stored_bodies: Vec<StoredBodyMetadata>,
     /// Redaction-safe initialization diagnostics.
     pub diagnostics: Vec<String>,
     /// Centrally attributed hook effects.
@@ -88,25 +96,77 @@ pub struct SessionDetail {
     pub sequence_loss: u64,
 }
 
+/// Requested safe representation of retained body bytes.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BodyRepresentation {
+    /// Choose formatted JSON, presentable text, or a bounded byte view.
+    #[default]
+    Auto,
+    /// Preserve decoded Unicode text without reformatting.
+    OriginalText,
+    /// Apply a reviewed structured formatter, currently JSON only.
+    Formatted,
+    /// Render offset, hexadecimal, and ASCII columns.
+    Bytes,
+    /// Return metadata without body content.
+    Metadata,
+    /// Request a safe image preview token.
+    Image,
+}
+
+/// Bounded body-inspection request accepted from presentation layers.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BodyInspectionRequest {
+    /// Opaque session identifier returned by session queries.
+    pub session_id: String,
+    /// `upstream-response` or `client-response` by default; request boundaries
+    /// are accepted only when request retention was explicitly enabled.
+    pub boundary: String,
+    /// Requested safe representation.
+    #[serde(default)]
+    pub representation: BodyRepresentation,
+    /// Whether content codings should be decoded before presentation.
+    #[serde(default)]
+    pub decode_content: bool,
+    /// Retained-byte offset for byte views.
+    #[serde(default)]
+    pub offset: u64,
+    /// Maximum bytes to read, capped by the store's hard limit.
+    pub max_bytes: Option<usize>,
+}
+
+/// Safe bounded body representation returned to a presentation layer.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyInspection {
+    /// Authoritative storage and representation metadata.
+    pub metadata: StoredBodyMetadata,
+    /// Representation actually returned.
+    pub representation: &'static str,
+    /// Whether content codings were decoded before rendering.
+    pub decoded: bool,
+    /// Safe text or byte-dump content. Presentation layers must assign this to
+    /// `textContent`, never HTML.
+    pub display: String,
+    /// Source bytes consumed to produce this view.
+    pub display_bytes: usize,
+    /// Whether additional bytes or representation detail were omitted.
+    pub truncated: bool,
+    /// Next retained-byte offset for a paged raw-byte view.
+    pub next_offset: Option<u64>,
+    /// Redaction-safe explanation of fallback or unavailability.
+    pub warning: Option<String>,
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn session_detail(
     service: &ApplicationSessionService,
+    body_store: Option<&BodyStore>,
     id: &str,
 ) -> Result<SessionDetail, AppError> {
-    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(AppError::new(
-            ErrorCategory::InvalidInput,
-            "session identifier is invalid",
-            false,
-        ));
-    }
-    let numeric = u128::from_str_radix(id, 16).map_err(|_| {
-        AppError::new(
-            ErrorCategory::InvalidInput,
-            "session identifier is invalid",
-            false,
-        )
-    })?;
+    let numeric = parse_session_id(id)?;
     let snapshot = service
         .catalog()
         .get(transmog_core::intercept::ExchangeId(numeric))
@@ -157,6 +217,9 @@ pub(crate) fn session_detail(
         })
         .collect();
     let bodies = snapshot.bodies.iter().map(body).collect();
+    let stored_bodies = body_store.map_or_else(Vec::new, |store| {
+        store.metadata(transmog_core::intercept::ExchangeId(numeric))
+    });
     let diagnostics = snapshot
         .initialization_diagnostics
         .iter()
@@ -212,6 +275,7 @@ pub(crate) fn session_detail(
         requests,
         responses,
         bodies,
+        stored_bodies,
         diagnostics,
         hook_effects,
         route_selection,
@@ -220,6 +284,382 @@ pub(crate) fn session_detail(
         websocket: snapshot.websocket.as_ref().map(bounded_debug),
         sequence_loss: snapshot.sequence_loss,
     })
+}
+
+pub(crate) async fn inspect_body(
+    body_store: Option<&BodyStore>,
+    request: BodyInspectionRequest,
+) -> Result<BodyInspection, AppError> {
+    let store = body_store.ok_or_else(|| {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "response body retention is not configured",
+            false,
+        )
+    })?;
+    let exchange_id = transmog_core::intercept::ExchangeId(parse_session_id(&request.session_id)?);
+    let boundary = parse_boundary(&request.boundary)?;
+    let metadata = store
+        .metadata(exchange_id)
+        .into_iter()
+        .find(|candidate| candidate.boundary == boundary_name(boundary))
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "body boundary is unavailable",
+                false,
+            )
+        })?;
+    if request.representation == BodyRepresentation::Metadata {
+        return Ok(BodyInspection {
+            metadata,
+            representation: "metadata",
+            decoded: false,
+            display: String::new(),
+            display_bytes: 0,
+            truncated: false,
+            next_offset: None,
+            warning: None,
+        });
+    }
+    if request.representation == BodyRepresentation::Image {
+        return Ok(BodyInspection {
+            metadata,
+            representation: "unavailable",
+            decoded: false,
+            display: String::new(),
+            display_bytes: 0,
+            truncated: false,
+            next_offset: None,
+            warning: Some("safe image preview is unavailable for this body".to_owned()),
+        });
+    }
+    if matches!(
+        metadata.availability,
+        BodyAvailability::Disabled | BodyAvailability::Evicted | BodyAvailability::QuotaOmitted
+    ) || metadata.retained_bytes == 0
+    {
+        return Ok(BodyInspection {
+            metadata,
+            representation: "unavailable",
+            decoded: false,
+            display: String::new(),
+            display_bytes: 0,
+            truncated: false,
+            next_offset: None,
+            warning: Some("retained body bytes are unavailable".to_owned()),
+        });
+    }
+    let max_bytes = request.max_bytes.unwrap_or(DEFAULT_BODY_READ_BYTES);
+    if max_bytes == 0 || max_bytes > crate::body_store::MAX_BODY_READ_BYTES {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "body preview exceeds the 16 MiB hard limit",
+            false,
+        ));
+    }
+    if request.decode_content && request.offset != 0 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "decoded body views must begin at offset zero",
+            false,
+        ));
+    }
+    let read_length = if request.decode_content {
+        usize::try_from(metadata.retained_bytes)
+            .ok()
+            .filter(|length| *length <= crate::body_store::MAX_BODY_READ_BYTES)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Limit,
+                    "encoded body is too large for bounded preview decoding",
+                    false,
+                )
+            })?
+    } else {
+        max_bytes
+    };
+    let range = store
+        .read_range(exchange_id, boundary, request.offset, read_length)
+        .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
+    let mut bytes = range.bytes;
+    let mut decoded = false;
+    if request.decode_content && !metadata.content_codings.is_empty() {
+        if metadata.availability != BodyAvailability::Complete {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "content decoding requires a complete retained body",
+                false,
+            ));
+        }
+        bytes = decode_content(&metadata.content_codings, bytes).await?;
+        decoded = true;
+    }
+    let decoded_truncated = decoded && bytes.len() > max_bytes;
+    if decoded_truncated {
+        bytes.truncate(max_bytes);
+    }
+    let (representation, display, warning) = render_body(
+        request.representation,
+        &bytes,
+        metadata.charset.as_deref(),
+        metadata.media_type.as_deref(),
+        request.offset,
+    );
+    let consumed = bytes.len();
+    let next_offset = (!request.decode_content
+        && request.offset.saturating_add(consumed as u64) < metadata.retained_bytes)
+        .then_some(request.offset.saturating_add(consumed as u64));
+    Ok(BodyInspection {
+        metadata,
+        representation,
+        decoded,
+        display,
+        display_bytes: consumed,
+        truncated: next_offset.is_some() || decoded_truncated,
+        next_offset,
+        warning,
+    })
+}
+
+fn parse_session_id(id: &str) -> Result<u128, AppError> {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "session identifier is invalid",
+            false,
+        ));
+    }
+    u128::from_str_radix(id, 16).map_err(|_| {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "session identifier is invalid",
+            false,
+        )
+    })
+}
+
+fn parse_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
+    match value {
+        "client-request" => Ok(ExchangeBoundary::ClientRequest),
+        "upstream-request" => Ok(ExchangeBoundary::UpstreamRequest),
+        "upstream-response" => Ok(ExchangeBoundary::UpstreamResponse),
+        "client-response" => Ok(ExchangeBoundary::ClientResponse),
+        _ => Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "body boundary is invalid",
+            false,
+        )),
+    }
+}
+
+const fn boundary_name(value: ExchangeBoundary) -> &'static str {
+    match value {
+        ExchangeBoundary::ClientRequest => "client-request",
+        ExchangeBoundary::UpstreamRequest => "upstream-request",
+        ExchangeBoundary::UpstreamResponse => "upstream-response",
+        ExchangeBoundary::ClientResponse => "client-response",
+    }
+}
+
+async fn decode_content(codings: &[String], encoded: Vec<u8>) -> Result<Vec<u8>, AppError> {
+    let field = HeaderField::try_new("content-encoding", codings.join(", ")).map_err(|_| {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "stored content-coding metadata is invalid",
+            false,
+        )
+    })?;
+    let headers = HeaderBlock::from_fields(vec![field]);
+    let default_limits = ContentLimits::default();
+    let preview_limit =
+        NonZeroUsize::new(MAX_BODY_READ_BYTES).expect("the inspector hard limit is nonzero");
+    let limits = ContentLimits::new(
+        preview_limit,
+        preview_limit,
+        preview_limit,
+        default_limits.max_decoder_window_bytes(),
+        default_limits.max_expansion_ratio(),
+        default_limits.expansion_slack_bytes(),
+        default_limits.max_coding_layers(),
+    )
+    .with_work_limits(default_limits.work_limits());
+    let stack = ContentCodingStack::from_headers(&headers, limits.max_coding_layers())
+        .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))?;
+    let mut current = encoded;
+    for coding in stack.decode_order() {
+        let mut decoder = ContentDecoder::new(coding, limits)
+            .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
+        let mut frames = decoder
+            .on_frame(BodyFrame::Data(Bytes::from(current)))
+            .await
+            .map_err(content_decode_error)?;
+        frames.extend(decoder.finish().await.map_err(content_decode_error)?);
+        let mut decoded = Vec::new();
+        for frame in frames {
+            if let BodyFrame::Data(bytes) = frame {
+                decoded.extend_from_slice(&bytes);
+            }
+        }
+        current = decoded;
+    }
+    Ok(current)
+}
+
+fn content_decode_error(error: transmog_content::ContentCodecError) -> AppError {
+    AppError::new(
+        ErrorCategory::InvalidInput,
+        format!("content decoding failed: {error}"),
+        false,
+    )
+}
+
+fn render_body(
+    requested: BodyRepresentation,
+    bytes: &[u8],
+    charset: Option<&str>,
+    media_type: Option<&str>,
+    offset: u64,
+) -> (&'static str, String, Option<String>) {
+    let text = decode_unicode(bytes, charset);
+    match requested {
+        BodyRepresentation::Bytes => ("bytes", hex_dump(bytes, offset), None),
+        BodyRepresentation::OriginalText => text.map_or_else(
+            || {
+                (
+                    "unavailable",
+                    String::new(),
+                    Some("body is not valid presentable Unicode text".to_owned()),
+                )
+            },
+            |text| ("original-text", text, None),
+        ),
+        BodyRepresentation::Formatted => format_json(text.as_deref()).map_or_else(
+            || {
+                (
+                    "unavailable",
+                    String::new(),
+                    Some("no reviewed formatter accepts this body".to_owned()),
+                )
+            },
+            |formatted| ("formatted-json", formatted, None),
+        ),
+        BodyRepresentation::Auto => {
+            if media_type.is_some_and(is_json_media_type)
+                && let Some(formatted) = format_json(text.as_deref())
+            {
+                ("formatted-json", formatted, None)
+            } else if let Some(text) = text {
+                ("original-text", text, None)
+            } else {
+                ("bytes", hex_dump(bytes, offset), None)
+            }
+        }
+        BodyRepresentation::Metadata | BodyRepresentation::Image => unreachable!(),
+    }
+}
+
+fn is_json_media_type(media_type: &str) -> bool {
+    media_type.eq_ignore_ascii_case("application/json")
+        || media_type.to_ascii_lowercase().ends_with("+json")
+}
+
+fn format_json(text: Option<&str>) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text?).ok()?;
+    serde_json::to_string_pretty(&value).ok()
+}
+
+fn decode_unicode(bytes: &[u8], declared: Option<&str>) -> Option<String> {
+    let normalized = declared.map(|value| value.trim().to_ascii_lowercase());
+    let text = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        String::from_utf8(bytes[3..].to_vec()).ok()?
+    } else if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        decode_utf32(&bytes[4..], true)?
+    } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        decode_utf32(&bytes[4..], false)?
+    } else if bytes.starts_with(&[0xff, 0xfe]) {
+        decode_utf16(&bytes[2..], true)?
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        decode_utf16(&bytes[2..], false)?
+    } else {
+        match normalized.as_deref() {
+            Some("utf-16") | Some("utf-16le") => decode_utf16(bytes, true)?,
+            Some("utf-16be") => decode_utf16(bytes, false)?,
+            Some("utf-32") | Some("utf-32le") => decode_utf32(bytes, true)?,
+            Some("utf-32be") => decode_utf32(bytes, false)?,
+            Some("us-ascii") if bytes.iter().all(u8::is_ascii) => {
+                String::from_utf8(bytes.to_vec()).ok()?
+            }
+            Some("utf-8") | None => String::from_utf8(bytes.to_vec()).ok()?,
+            Some(_) => return None,
+        }
+    };
+    text.chars()
+        .all(|character| {
+            !character.is_control() || matches!(character, '\r' | '\n' | '\t' | '\u{000c}')
+        })
+        .then_some(text)
+}
+
+fn decode_utf16(bytes: &[u8], little_endian: bool) -> Option<String> {
+    if !bytes.len().is_multiple_of(2) {
+        return None;
+    }
+    let units = bytes.chunks_exact(2).map(|chunk| {
+        if little_endian {
+            u16::from_le_bytes([chunk[0], chunk[1]])
+        } else {
+            u16::from_be_bytes([chunk[0], chunk[1]])
+        }
+    });
+    char::decode_utf16(units)
+        .collect::<Result<String, _>>()
+        .ok()
+}
+
+fn decode_utf32(bytes: &[u8], little_endian: bool) -> Option<String> {
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| {
+            let value = if little_endian {
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            } else {
+                u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            };
+            char::from_u32(value)
+        })
+        .collect()
+}
+
+fn hex_dump(bytes: &[u8], offset: u64) -> String {
+    let mut output = String::with_capacity(bytes.len().saturating_mul(4));
+    for (line, chunk) in bytes.chunks(16).enumerate() {
+        let line_offset = offset.saturating_add((line * 16) as u64);
+        let _ = write!(output, "{line_offset:08x}  ");
+        for index in 0..16 {
+            if let Some(byte) = chunk.get(index) {
+                let _ = write!(output, "{byte:02x} ");
+            } else {
+                output.push_str("   ");
+            }
+            if index == 7 {
+                output.push(' ');
+            }
+        }
+        output.push_str(" |");
+        for byte in chunk {
+            output.push(if byte.is_ascii_graphic() || *byte == b' ' {
+                char::from(*byte)
+            } else {
+                '.'
+            });
+        }
+        output.push_str("|\n");
+    }
+    output
 }
 
 fn headers(block: &HeaderBlock) -> Vec<HeaderView> {
@@ -304,6 +744,7 @@ fn boundary(value: ExchangeBoundary) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transmog_content::{ContentCoding, ContentEncoder};
     use transmog_core::HeaderField;
 
     #[test]
@@ -325,5 +766,62 @@ mod tests {
         let view = headers(&block);
         assert_eq!(view.len(), 2);
         assert!(view.iter().all(|field| field.sensitive));
+    }
+
+    #[test]
+    fn utf_variants_json_and_byte_dump_are_explicit() {
+        assert_eq!(
+            decode_unicode(b"plain ASCII", None).as_deref(),
+            Some("plain ASCII")
+        );
+        assert_eq!(
+            decode_unicode(&[0xff, 0xfe, b'h', 0, b'i', 0], None).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            decode_unicode(&[0, 0, 0xfe, 0xff, 0, 0, 0, b'Z'], None).as_deref(),
+            Some("Z")
+        );
+        let rendered = render_body(
+            BodyRepresentation::Auto,
+            br#"{"a":1}"#,
+            Some("utf-8"),
+            Some("application/json"),
+            0,
+        );
+        assert_eq!(rendered.0, "formatted-json");
+        assert!(rendered.1.contains("\n"));
+        assert!(hex_dump(&[0, b'A', 0xff], 16).starts_with("00000010"));
+    }
+
+    #[tokio::test]
+    async fn preview_decoder_supports_every_content_coding() {
+        for coding in [
+            ContentCoding::Gzip,
+            ContentCoding::Deflate,
+            ContentCoding::Brotli,
+            ContentCoding::Zstd,
+        ] {
+            let mut encoder = ContentEncoder::new(coding, ContentLimits::default()).unwrap();
+            let mut frames = encoder
+                .on_frame(BodyFrame::Data(Bytes::from_static(b"encoded preview")))
+                .await
+                .unwrap();
+            frames.extend(encoder.finish().await.unwrap());
+            let encoded = frames
+                .into_iter()
+                .filter_map(|frame| match frame {
+                    BodyFrame::Data(bytes) => Some(bytes),
+                    BodyFrame::Trailers(_) => None,
+                })
+                .flatten()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                decode_content(&[coding.as_str().to_owned()], encoded)
+                    .await
+                    .unwrap(),
+                b"encoded preview"
+            );
+        }
     }
 }

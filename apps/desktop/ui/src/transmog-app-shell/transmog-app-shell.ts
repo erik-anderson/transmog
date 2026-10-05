@@ -40,6 +40,7 @@ interface SessionDetail {
   requests: unknown[];
   responses: unknown[];
   bodies: unknown[];
+  storedBodies: StoredBodyMetadata[];
   diagnostics: string[];
   hookEffects: string[];
   routeSelection: string | null;
@@ -47,6 +48,28 @@ interface SessionDetail {
   terminal: string;
   websocket: string | null;
   sequenceLoss: number;
+}
+interface StoredBodyMetadata {
+  exchangeId: string;
+  boundary: string;
+  observedBytes: number;
+  retainedBytes: number;
+  availability: string;
+  mediaType: string | null;
+  charset: string | null;
+  contentCodings: string[];
+  sha256: string | null;
+  reason: string | null;
+}
+interface BodyInspection {
+  metadata: StoredBodyMetadata;
+  representation: string;
+  decoded: boolean;
+  display: string;
+  displayBytes: number;
+  truncated: boolean;
+  nextOffset: number | null;
+  warning: string | null;
 }
 type BreakpointPhase = 'request-head' | 'request-body' | 'response-head' | 'response-body';
 interface PausedExchange {
@@ -87,6 +110,11 @@ export class TransmogAppShell extends WebUIElement {
   sessionRows!: HTMLTableSectionElement;
   nextButton!: HTMLButtonElement;
   inspectorOutput!: HTMLPreElement;
+  bodyBoundary!: HTMLSelectElement;
+  bodyRepresentation!: HTMLSelectElement;
+  bodyDecoded!: HTMLInputElement;
+  bodyMaxBytes!: HTMLInputElement;
+  bodyPreviewOutput!: HTMLPreElement;
   pausedList!: HTMLDivElement;
   breakpointForm!: HTMLFormElement;
   composerForm!: HTMLFormElement;
@@ -99,6 +127,7 @@ export class TransmogAppShell extends WebUIElement {
   supportOutput!: HTMLPreElement;
   private nextCursor: string | null = null;
   private watching = false;
+  private selectedSessionId: string | null = null;
 
   async startProxy(event: Event): Promise<void> {
     event.preventDefault();
@@ -263,9 +292,44 @@ export class TransmogAppShell extends WebUIElement {
     this.inspectorOutput.textContent = 'Loading bounded evidence…';
     try {
       const detail = await invoke<SessionDetail>('session_detail', { id });
+      this.selectedSessionId = id;
       this.inspectorOutput.textContent = JSON.stringify(detail, null, 2);
+      this.bodyBoundary.replaceChildren();
+      for (const body of detail.storedBodies) {
+        const option = document.createElement('option');
+        option.value = body.boundary;
+        option.textContent = `${body.boundary} · ${body.availability} · ${body.retainedBytes} retained`;
+        this.bodyBoundary.append(option);
+      }
+      this.bodyPreviewOutput.textContent = detail.storedBodies.length === 0
+        ? 'No retained body boundaries are available.'
+        : 'Choose a representation and inspect the selected boundary.';
     } catch (error: unknown) {
       this.inspectorOutput.textContent = `Inspector unavailable: ${describeError(error)}`;
+    }
+  }
+
+  async inspectBody(): Promise<void> {
+    if (this.selectedSessionId === null || this.bodyBoundary.value.length === 0) {
+      this.bodyPreviewOutput.textContent = 'Select a session with retained body metadata first.';
+      return;
+    }
+    this.bodyPreviewOutput.textContent = 'Loading bounded body representation…';
+    try {
+      const inspection = await invoke<BodyInspection>('inspect_body', {
+        request: {
+          sessionId: this.selectedSessionId,
+          boundary: this.bodyBoundary.value,
+          representation: this.bodyRepresentation.value,
+          decodeContent: this.bodyDecoded.checked,
+          offset: 0,
+          maxBytes: Number(this.bodyMaxBytes.value),
+        },
+      });
+      const summary = `${inspection.metadata.boundary} · ${inspection.representation} · ${inspection.displayBytes} bytes${inspection.decoded ? ' · decoded' : ' · encoded'}${inspection.truncated ? ' · truncated' : ''}`;
+      this.bodyPreviewOutput.textContent = `${summary}${inspection.warning ? `\n${inspection.warning}` : ''}\n\n${inspection.display}`;
+    } catch (error: unknown) {
+      this.bodyPreviewOutput.textContent = `Body inspector unavailable: ${describeError(error)}`;
     }
   }
 
