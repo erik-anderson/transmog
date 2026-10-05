@@ -195,6 +195,15 @@ pub struct ControlController {
     negotiated: Arc<NegotiatedSession>,
 }
 
+/// Next item received by a controller without starving either finite queue.
+#[derive(Debug)]
+pub enum ControllerMessage {
+    /// Sequenced observation event.
+    Event(ControlEvent),
+    /// Phase-typed request awaiting a single decision.
+    Decision(PendingDecision),
+}
+
 impl std::fmt::Debug for ControlController {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -221,6 +230,21 @@ impl ControlController {
             reply: envelope.reply,
             max_body_edit_bytes: envelope.max_body_edit_bytes,
         })
+    }
+
+    /// Receives whichever bounded controller queue becomes ready first.
+    pub async fn recv(&mut self) -> Option<ControllerMessage> {
+        tokio::select! {
+            biased;
+            decision = self.decisions.recv() => decision.map(|envelope| {
+                ControllerMessage::Decision(PendingDecision {
+                    request: envelope.request,
+                    reply: envelope.reply,
+                    max_body_edit_bytes: envelope.max_body_edit_bytes,
+                })
+            }),
+            event = self.events.recv() => event.map(ControllerMessage::Event),
+        }
     }
 }
 

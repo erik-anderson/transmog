@@ -32,3 +32,4 @@ pub use replay::{
     execute_replay,
 };
 pub use service::{ApplicationSessionService, ServiceConfig, ServiceError, ServiceStatus};
+pub use transmog_control_transport::{ControllerMessage, PendingDecision};

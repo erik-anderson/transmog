@@ -16,8 +16,8 @@ use transmog_control_model::{
     RequestHead as ControlRequestHead, ResponseHead as ControlResponseHead,
 };
 use transmog_control_transport::{
-    ControlController, ControlProducer, HandshakeError, NegotiatedSession, PendingDecision,
-    RequestCancellation, TransportConfig, connect,
+    ControlController, ControlProducer, ControllerMessage, HandshakeError, NegotiatedSession,
+    PendingDecision, RequestCancellation, TransportConfig, connect,
 };
 use transmog_core::{
     HeaderBlock, HeaderField, RequestHead, ResponseHead,
@@ -292,6 +292,11 @@ impl AttachedController {
     /// Receives one pending phase-typed breakpoint decision.
     pub async fn recv_decision(&mut self) -> Option<PendingDecision> {
         self.controller.recv_decision().await
+    }
+
+    /// Receives the next lifecycle event or pending decision without starving either queue.
+    pub async fn recv(&mut self) -> Option<ControllerMessage> {
+        self.controller.recv().await
     }
 }
 
