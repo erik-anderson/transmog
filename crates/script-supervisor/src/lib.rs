@@ -282,9 +282,18 @@ fn worker(
             }
             _ => Err(protocol("script host reply was invalid")),
         };
-        let stop = result
-            .as_ref()
-            .is_err_and(|error| error.category == ScriptFailureCategory::Protocol);
+        let stop = result.as_ref().is_err_and(|error| {
+            matches!(
+                error.category,
+                ScriptFailureCategory::Protocol | ScriptFailureCategory::ResourceLimit
+            )
+        });
+        if stop {
+            // Publish the fail-closed state before waking the invocation. This
+            // prevents callers from briefly observing a reusable host after a
+            // protocol violation or a potentially corrupted resource limit.
+            failed.store(true, Ordering::Release);
+        }
         let _ = work.reply.send(result);
         if stop {
             return;
