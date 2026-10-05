@@ -27,6 +27,8 @@ transmog-core = { version = "=0.1.0", path = "../proxy-core" }
 transmog-http = { version = "=0.1.0", path = "../proxy-http" }
 transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
 transmog-saz = { version = "=0.1.0", path = "../proxy-saz" }
+transmog-script = { version = "=0.1.0", path = "../proxy-script" }
+transmog-script-supervisor = { version = "=0.1.0", path = "../script-supervisor" }
 transmog-session = { version = "=0.1.0", path = "../proxy-session" }
 transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 

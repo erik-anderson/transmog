@@ -16,6 +16,7 @@ mod inspector;
 mod lifecycle;
 mod product_state;
 mod response_assets;
+mod scripts;
 mod sessions;
 
 use std::{path::PathBuf, sync::Arc};
@@ -51,6 +52,7 @@ pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetProvenance,
     SessionResponseAsset,
 };
+pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
 use serde::Serialize;
 pub use sessions::{
     SessionHint, SessionPage, SessionQueryInput, SessionSummary, SessionUpdateSubscription,
@@ -170,6 +172,10 @@ pub struct AppConfig {
     pub automation_path: Option<PathBuf>,
     /// Optional durable content-addressed response asset directory.
     pub response_asset_root: Option<PathBuf>,
+    /// Optional crash-safe script workspace prefix.
+    pub script_workspace_path: Option<PathBuf>,
+    /// Exact packaged isolated script-host executable.
+    pub script_host_executable: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -183,6 +189,8 @@ impl std::fmt::Debug for AppConfig {
             .field("body_store", &self.body_store)
             .field("automation_path", &self.automation_path)
             .field("response_asset_root", &self.response_asset_root)
+            .field("script_workspace_path", &self.script_workspace_path)
+            .field("script_host_executable", &self.script_host_executable)
             .finish()
     }
 }
@@ -199,6 +207,7 @@ pub struct Application {
     body_store: Option<BodyStore>,
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
+    scripts: scripts::ScriptRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -226,6 +235,11 @@ impl Application {
             response_assets::ResponseAssetStore::load(config.response_asset_root)?;
         let automation = automation::AutomationRegistry::load(
             config.automation_path,
+            Arc::new(response_assets.clone()),
+        )?;
+        let scripts = scripts::ScriptRegistry::load(
+            config.script_workspace_path,
+            config.script_host_executable,
             Arc::new(response_assets.clone()),
         )?;
         let build_id = Arc::clone(&config.service.control_build_id);
@@ -258,6 +272,7 @@ impl Application {
             body_store,
             automation,
             response_assets,
+            scripts,
         })
     }
 
@@ -353,6 +368,35 @@ impl Application {
     /// Returns a stale-token or durable persistence failure.
     pub fn activate_automation(&self, candidate_id: &str) -> Result<AutomationStatus, AppError> {
         self.automation.activate(candidate_id)
+    }
+
+    /// Returns active script revisions and candidate/history counts.
+    pub fn script_status(&self) -> ScriptStatus {
+        self.scripts.status()
+    }
+
+    /// Authoritatively compiles a script draft without changing traffic.
+    ///
+    /// # Errors
+    /// Returns bounded manifest, TypeScript, capability, or resource errors.
+    pub fn validate_script(&self, draft: ScriptDraft) -> Result<ScriptCandidate, AppError> {
+        self.scripts.validate(draft)
+    }
+
+    /// Starts a sandboxed host and atomically activates a validated revision.
+    ///
+    /// # Errors
+    /// Returns a stale candidate, sandbox startup, or persistence failure.
+    pub fn activate_script(&self, candidate_id: &str) -> Result<ScriptStatus, AppError> {
+        self.scripts.activate(candidate_id)
+    }
+
+    /// Disables one active script for newly admitted exchanges.
+    ///
+    /// # Errors
+    /// Returns a persistence error without changing the active snapshot.
+    pub fn disable_script(&self, script_id: &str) -> Result<ScriptStatus, AppError> {
+        self.scripts.disable(script_id)
     }
 
     /// Lists durable immutable response assets.
@@ -479,6 +523,7 @@ impl Application {
             &self.service,
             self.body_store.as_ref(),
             self.automation.clone(),
+            self.scripts.clone(),
             request,
             host,
         )

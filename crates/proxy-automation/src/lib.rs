@@ -370,6 +370,7 @@ pub fn compile(
 ///
 /// # Errors
 /// Returns the same deterministic validation failures as [`compile`].
+#[allow(clippy::needless_pass_by_value)]
 pub fn compile_with_assets(
     mut rules: Vec<Rule>,
     limits: AutomationLimits,
@@ -426,6 +427,7 @@ fn validate_limits(limits: AutomationLimits) -> Result<(), CompileError> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileError> {
     if rule.id.is_empty()
         || rule.id.len() > 128
@@ -496,10 +498,7 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     .into_iter()
     .flatten()
     {
-        if reason.is_empty()
-            || reason.len() > 256
-            || reason.chars().any(|character| character.is_control())
-        {
+        if reason.is_empty() || reason.len() > 256 || reason.chars().any(char::is_control) {
             return Err(CompileError::InvalidAbortReason(rule.id.clone()));
         }
     }
@@ -563,10 +562,10 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     for predicate in predicates {
         HeaderField::try_new(predicate.name.as_bytes(), Vec::new())
             .map_err(|_| CompileError::InvalidHeaderPredicate(rule.id.clone()))?;
-        if let HeaderCondition::Regex(pattern) = &predicate.condition {
-            if pattern.len() > limits.max_regex_bytes || compile_regex(pattern).is_err() {
-                return Err(CompileError::InvalidRegex(rule.id.clone()));
-            }
+        if let HeaderCondition::Regex(pattern) = &predicate.condition
+            && (pattern.len() > limits.max_regex_bytes || compile_regex(pattern).is_err())
+        {
+            return Err(CompileError::InvalidRegex(rule.id.clone()));
         }
     }
     Ok(())
@@ -801,15 +800,10 @@ impl ExchangeInterceptor for RuleInterceptor {
             && (self.rule.request.allow_non_idempotent_body_replacement
                 || method_is_idempotent(&event.head.method)))
         .then(|| {
-            self.rule
-                .request
-                .replace_body
-                .as_ref()
-                .cloned()
-                .map_or_else(
-                    || self.rule.request.discard_body.then_some(None),
-                    |body| Some(Some(body)),
-                )
+            self.rule.request.replace_body.clone().map_or_else(
+                || self.rule.request.discard_body.then_some(None),
+                |body| Some(Some(body)),
+            )
         })
         .flatten();
         Box::pin(async move {
@@ -862,15 +856,10 @@ impl ExchangeInterceptor for RuleInterceptor {
                 &self.response_regexes,
             ))
         .then(|| {
-            self.rule
-                .response
-                .replace_body
-                .as_ref()
-                .cloned()
-                .map_or_else(
-                    || self.rule.response.discard_body.then_some(None),
-                    |body| Some(Some(body)),
-                )
+            self.rule.response.replace_body.clone().map_or_else(
+                || self.rule.response.discard_body.then_some(None),
+                |body| Some(Some(body)),
+            )
         })
         .flatten();
         Box::pin(async move {

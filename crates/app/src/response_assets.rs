@@ -16,6 +16,7 @@ use transmog_core::{
     HttpLegVersion, LocalStreamingResponse, ResponseHead, intercept::ExchangeId,
     observe::ExchangeBoundary,
 };
+use transmog_script::{ScriptResolvedResponse, ScriptResponseAssetResolver};
 
 use crate::{AppError, BodyStore, ErrorCategory};
 
@@ -398,6 +399,23 @@ impl ResponseAssetResolver for ResponseAssetStore {
     }
 }
 
+impl ScriptResponseAssetResolver for ResponseAssetStore {
+    fn validate(&self, asset_ref: &str) -> Result<(), String> {
+        ResponseAssetResolver::validate(self, asset_ref)
+    }
+
+    fn resolve(&self, asset_ref: &str) -> Result<ScriptResolvedResponse, String> {
+        match ResponseAssetResolver::resolve(self, asset_ref)? {
+            AutomationResponse::Buffered(response) => {
+                Ok(ScriptResolvedResponse::Buffered(response))
+            }
+            AutomationResponse::Streaming(response) => {
+                Ok(ScriptResolvedResponse::Streaming(response))
+            }
+        }
+    }
+}
+
 fn stream_file(path: PathBuf, expected: u64, sender: transmog_core::BodyStreamSender) {
     let result = (|| -> Result<(), BodyStreamError> {
         let mut file = File::open(path)
@@ -686,10 +704,10 @@ mod tests {
             Some(&b"5"[..])
         );
         assert!(matches!(
-            store.resolve("saved@3").unwrap(),
+            ResponseAssetResolver::resolve(&store, "saved@3").unwrap(),
             AutomationResponse::Buffered(_)
         ));
-        assert!(store.resolve("saved@2").is_err());
+        assert!(ResponseAssetResolver::resolve(&store, "saved@2").is_err());
         drop(store);
         assert_eq!(
             ResponseAssetStore::load(Some(root.clone())).unwrap().list(),
@@ -717,7 +735,7 @@ mod tests {
             .unwrap();
         assert_eq!(asset.body_bytes, BUFFERED_RESPONSE_BYTES + 1);
         assert!(matches!(
-            store.resolve("large@1").unwrap(),
+            ResponseAssetResolver::resolve(&store, "large@1").unwrap(),
             AutomationResponse::Streaming(_)
         ));
         let _ = std::fs::remove_dir_all(root);

@@ -1,0 +1,19 @@
+[package]
+name = "transmog-script-supervisor"
+description = "Bounded out-of-process supervisor for Transmog traffic scripts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+tokio.workspace = true
+transmog-script = { version = "=0.1.0", path = "../proxy-script" }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

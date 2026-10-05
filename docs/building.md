@@ -103,7 +103,24 @@ The desktop dependency toolchain is pinned in both lockfiles:
 - Tauri single-instance plugin 2.4.5 (the last reviewed line compatible with
   the workspace's Rust 1.88 minimum; 2.5 requires Rust 1.90);
 - Microsoft WebUI Rust and browser packages 0.0.30;
+- `deno_core` 0.412.0 and V8 150.4.0 for the isolated script host;
 - TypeScript 7.0.2 and esbuild 0.28.2.
+
+The reviewed Windows V8 archive is pinned by both URL and SHA-256 in
+`scripts/cache-v8.ps1`. Prime Cargo's documented `.rusty_v8` cache before an
+offline build:
+
+```powershell
+pwsh ./scripts/cache-v8.ps1
+# Or verify and cache an internally mirrored/downloaded copy:
+pwsh ./scripts/cache-v8.ps1 -ArchivePath C:\staging\rusty_v8.lib.gz
+```
+
+The script refuses any archive other than SHA-256
+`F231F82CBACB9AEFE6D9AF57E6DF2E8959A40E001F79306485133E3C075B98F0`.
+Release packaging builds `transmog-script-host` beside the desktop executable.
+Production activation requires the host's Windows AppContainer plus Job Object;
+there is no production fallback to an unsandboxed process.
 
 Install build-time packages and reproduce the checked-in ESM bundle and WebUI
 projection manifest:

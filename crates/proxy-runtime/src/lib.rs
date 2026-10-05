@@ -33,6 +33,8 @@ pub struct RuntimeLimits {
     pub max_request_body_bytes: usize,
     /// Maximum response-body bytes accepted by streaming and buffered adapters.
     pub max_response_body_bytes: usize,
+    /// Maximum bytes accepted from an application-owned streaming local response.
+    pub max_local_response_body_bytes: usize,
     /// Maximum body frames queued between independently scheduled adapters.
     pub body_channel_capacity: usize,
     /// Maximum simultaneous downstream TCP connections.
@@ -68,6 +70,7 @@ impl Default for RuntimeLimits {
         Self {
             max_request_body_bytes: 4 * 1024 * 1024,
             max_response_body_bytes: 16 * 1024 * 1024,
+            max_local_response_body_bytes: 1024 * 1024 * 1024,
             body_channel_capacity: 8,
             max_connections: 1_024,
             max_h2_streams: 128,

@@ -1,0 +1,20 @@
+[package]
+name = "transmog-script-host"
+description = "Capability-free isolated V8 host for one Transmog traffic script"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+deno_core.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+transmog-script = { version = "=0.1.0", path = "../proxy-script" }
+
+[dev-dependencies]
+transmog-script-supervisor = { version = "=0.1.0", path = "../script-supervisor" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

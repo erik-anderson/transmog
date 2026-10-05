@@ -29,6 +29,12 @@ can still contain mistakes or compromised dependencies.
    AppContainer policy form the operating-system containment boundary. The
    supervisor owns authenticated bounded IPC, deadlines, termination, and
    fail-closed recovery.
+   The implemented Windows boundary uses an ephemeral, zero-capability
+   AppContainer per host plus a kill-on-close Job Object with one-process,
+   memory, and UI limits. A trusted bootstrap creates the child suspended,
+   assigns the Job Object, clears the environment to the structural Windows
+   variables required by `CreateProcessW`, and only then resumes it. The child
+   verifies both boundaries before reading the authenticated pipe.
 6. A script error aborts the affected exchange. An invalid saved revision never
    replaces the last valid active revision. Diagnostics identify the script,
    revision, phase, source location, and resource failure without including
@@ -52,6 +58,11 @@ can still contain mistakes or compromised dependencies.
 - The V8 binary and Monaco assets increase build and package size and therefore
   require exact pins, reproducible caching, license evidence, and offline build
   tests.
+- `deno_core` is exactly pinned to 0.412.0 and V8 to 150.4.0. The reviewed
+  Windows V8 archive has an independently checked SHA-256 and a cache-priming
+  script for offline release builds. A custom product startup snapshot is not
+  used yet: the measured host initialization is already small relative to one
+  process per active script, while each user module is necessarily dynamic.
 
 ## Rejected alternatives
 
@@ -68,4 +79,3 @@ can still contain mistakes or compromised dependencies.
 - Persisting decoded duplicates of every body was rejected because it doubles
   sensitive storage and quota pressure; decoded representations are derived on
   demand under content-processing limits.
-

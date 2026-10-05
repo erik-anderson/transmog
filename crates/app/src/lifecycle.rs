@@ -14,7 +14,9 @@ use transmog_runtime::{ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer
 use transmog_session::{ApplicationSessionService, HostIntegration, HostIntegrationPlan};
 use transmog_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
-use crate::{AppError, BodyStore, ErrorCategory, automation::AutomationRegistry};
+use crate::{
+    AppError, BodyStore, ErrorCategory, automation::AutomationRegistry, scripts::ScriptRegistry,
+};
 
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -91,6 +93,7 @@ pub(crate) async fn start_proxy(
     service: &ApplicationSessionService,
     body_store: Option<&BodyStore>,
     automation: AutomationRegistry,
+    scripts: ScriptRegistry,
     request: ProxyStartRequest,
     host: Option<Arc<dyn HostIntegration>>,
 ) -> Result<(), AppError> {
@@ -137,6 +140,11 @@ pub(crate) async fn start_proxy(
             "active Transmog automation",
             Arc::new(automation),
             NonZeroUsize::new(2_048).expect("automation provider limit is nonzero"),
+        )
+        .with_registration_provider(
+            "active Transmog scripts",
+            Arc::new(scripts),
+            NonZeroUsize::new(64).expect("script provider limit is nonzero"),
         );
     let certificates = Arc::new(
         CachedMitmCertificateResolver::new(
@@ -302,14 +310,12 @@ mod tests {
             listen: "192.0.2.1:0".parse().unwrap(),
             ..ProxyStartRequest::default()
         };
+        let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
         let error = start_proxy(
             &service,
             None,
-            AutomationRegistry::load(
-                None,
-                Arc::new(crate::response_assets::ResponseAssetStore::load(None).unwrap()),
-            )
-            .unwrap(),
+            AutomationRegistry::load(None, Arc::new(assets.clone())).unwrap(),
+            ScriptRegistry::load(None, None, Arc::new(assets)).unwrap(),
             request,
             None,
         )

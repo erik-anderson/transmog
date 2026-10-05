@@ -397,6 +397,7 @@ impl ProxyServer {
         if config.limits.max_connections == 0
             || config.limits.max_request_body_bytes == 0
             || config.limits.max_response_body_bytes == 0
+            || config.limits.max_local_response_body_bytes == 0
             || config.limits.body_channel_capacity == 0
             || config.limits.max_h2_streams == 0
             || config.limits.max_header_count == 0
@@ -691,7 +692,7 @@ impl ProxyState {
         context: ConnectionContext,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         if request.method() != Method::CONNECT {
-            return self.handle_intercepted_request(request, context).await;
+            return Box::pin(self.handle_intercepted_request(request, context)).await;
         }
         let authority_text = request
             .uri()
@@ -2373,6 +2374,7 @@ impl ProxyState {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn finish_local_streaming_response(
         &self,
         response: transmog_core::LocalStreamingResponse,
@@ -2440,7 +2442,7 @@ impl ProxyState {
                 let (sender, downstream_body) = BodyStream::channel(capacity);
                 let response_head = head.clone();
                 let request_head = request.clone();
-                let body_limit = self.config.limits.max_response_body_bytes;
+                let body_limit = self.config.limits.max_local_response_body_bytes;
                 let body_idle_timeout = self.config.limits.body_idle_timeout;
                 tokio::spawn(async move {
                     stream_local_response_through_hooks(
@@ -5570,6 +5572,11 @@ mod tests {
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
+                limits: RuntimeLimits {
+                    max_response_body_bytes: 4,
+                    max_local_response_body_bytes: 16,
+                    ..RuntimeLimits::default()
+                },
                 ..ProxyConfig::default()
             },
             proxy_ca,
