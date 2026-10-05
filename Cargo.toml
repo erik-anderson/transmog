@@ -16,6 +16,7 @@ members = [
     "crates/proxy-capture",
     "crates/proxy-saz",
     "crates/proxy-automation",
+    "crates/proxy-script",
     "crates/proxy-websocket",
     "crates/proxy-session",
     "crates/proxy-cli",
@@ -33,6 +34,7 @@ async-compression = { version = "=0.4.50", default-features = false, features = 
 base64 = "0.22.1"
 boring = "=5.2.0"
 bytes = { version = "1.11.1", features = ["serde"] }
+deno_ast = { version = "=0.53.3", features = ["transpiling"] }
 crc32fast = "1.5.2"
 flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

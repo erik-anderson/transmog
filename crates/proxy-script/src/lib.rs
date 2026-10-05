@@ -1,0 +1,1238 @@
+#![deny(missing_docs)]
+
+//! Versioned, runtime-neutral Transmog traffic script contract.
+//!
+//! This crate owns no V8 isolate. It validates manifests and actions,
+//! authoritatively transpiles TypeScript, generates the editor API surface,
+//! and adapts any bounded runner into an identified Hooks v2 interceptor.
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+    future::Future,
+    num::NonZeroUsize,
+    pin::Pin,
+    sync::Arc,
+};
+
+use bytes::Bytes;
+use deno_ast::{
+    EmitOptions, MediaType, ParseParams, SourceMapOption, TranspileModuleOptions, TranspileOptions,
+    parse_module,
+    swc::{
+        ast::{CallExpr, Callee, Decl, Expr, ModuleDecl, ModuleItem, NewExpr},
+        ecma_visit::{Visit, VisitWith},
+    },
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use transmog_core::{
+    HeaderBlock, HeaderField, RequestHead, ResponseHead,
+    intercept::{
+        BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody, BufferedBodyHandler,
+        ExchangeInterceptor, ExchangeMetadata, HookAbort, HookInitError, InterceptorFactory,
+        InterceptorRegistration, InterceptorRequirement, RequestBodyAction, RequestBodyEvent,
+        RequestHeadAction, RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent,
+        ResponseHeadAction, ResponseHeadEvent,
+    },
+};
+
+/// Initial unstable script API revision.
+pub const SCRIPT_API_REVISION: u32 = 1;
+/// Maximum accepted source length.
+pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
+
+/// Named synchronous traffic handler.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub enum ScriptHandler {
+    /// Request head before upstream routing.
+    #[serde(rename = "onRequestHead")]
+    RequestHead,
+    /// Complete bounded request body.
+    #[serde(rename = "onRequestBody")]
+    RequestBody,
+    /// Response head before client commitment.
+    #[serde(rename = "onResponseHead")]
+    ResponseHead,
+    /// Complete bounded response body.
+    #[serde(rename = "onResponseBody")]
+    ResponseBody,
+}
+
+impl ScriptHandler {
+    /// JavaScript export name for this handler.
+    pub const fn export_name(self) -> &'static str {
+        match self {
+            Self::RequestHead => "onRequestHead",
+            Self::RequestBody => "onRequestBody",
+            Self::ResponseHead => "onResponseHead",
+            Self::ResponseBody => "onResponseBody",
+        }
+    }
+}
+
+/// Native prefilter that prevents unrelated traffic from reaching a script host.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptPrefilter {
+    /// Optional exact ASCII-insensitive method.
+    pub method: Option<String>,
+    /// Optional exact ASCII-insensitive host.
+    pub host: Option<String>,
+    /// Optional path prefix.
+    pub path_prefix: Option<String>,
+}
+
+impl ScriptPrefilter {
+    fn matches(&self, request: &RequestHead) -> bool {
+        self.method
+            .as_ref()
+            .is_none_or(|method| request.method.eq_ignore_ascii_case(method))
+            && self
+                .host
+                .as_ref()
+                .is_none_or(|host| request.target.host.eq_ignore_ascii_case(host))
+            && self
+                .path_prefix
+                .as_ref()
+                .is_none_or(|prefix| request.target.path.starts_with(prefix))
+    }
+}
+
+/// Explicit script read and write capabilities.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct ScriptCapabilities {
+    /// Supply credential-bearing header values rather than redacted markers.
+    #[serde(default)]
+    pub read_sensitive_headers: bool,
+    /// Supply bounded body bytes to body handlers.
+    #[serde(default)]
+    pub read_bodies: bool,
+    /// Header names the script may set, append, or remove.
+    #[serde(default)]
+    pub write_headers: BTreeSet<String>,
+    /// Permit body replacement or discard.
+    #[serde(default)]
+    pub write_body: bool,
+    /// Permit selecting an exact response asset revision.
+    #[serde(default)]
+    pub respond: bool,
+    /// Permit explicit abort actions.
+    #[serde(default)]
+    pub abort: bool,
+}
+
+/// Finite per-invocation and per-process resource declarations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptLimits {
+    /// Maximum body input bytes supplied to a handler.
+    pub max_input_body_bytes: usize,
+    /// Maximum body/action output bytes.
+    pub max_output_bytes: usize,
+    /// Maximum diagnostic log bytes.
+    pub max_log_bytes: usize,
+    /// Maximum V8 heap bytes requested from a host.
+    pub max_heap_bytes: usize,
+    /// Hard invocation wall-time in milliseconds.
+    pub max_duration_ms: u64,
+}
+
+impl Default for ScriptLimits {
+    fn default() -> Self {
+        Self {
+            max_input_body_bytes: 1024 * 1024,
+            max_output_bytes: 1024 * 1024,
+            max_log_bytes: 16 * 1024,
+            max_heap_bytes: 64 * 1024 * 1024,
+            max_duration_ms: 100,
+        }
+    }
+}
+
+/// Persisted immutable script revision manifest.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptManifest {
+    /// Stable script ID.
+    pub id: String,
+    /// Monotonic script revision.
+    pub revision: u64,
+    /// Required API revision.
+    pub api_revision: u32,
+    /// Lowercase SHA-256 of exact source bytes.
+    pub source_hash: String,
+    /// Explicit synchronous handlers exported by the module.
+    pub handlers: BTreeSet<ScriptHandler>,
+    /// Native traffic prefilter.
+    pub prefilter: ScriptPrefilter,
+    /// Explicit data and action capabilities.
+    pub capabilities: ScriptCapabilities,
+    /// Finite resource limits.
+    pub limits: ScriptLimits,
+    /// Native/script ordering priority.
+    pub priority: i32,
+}
+
+/// Authoritative TypeScript compilation output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompiledScript {
+    /// Validated immutable manifest.
+    pub manifest: ScriptManifest,
+    /// Transpiled ECMAScript module.
+    pub javascript: String,
+    /// Separate source map emitted with inline original source.
+    pub source_map: Vec<u8>,
+}
+
+/// Compiles and validates one TypeScript ES module.
+///
+/// This strips types but deliberately does not claim full semantic TypeScript
+/// type checking. Rust remains authoritative for the manifest and every action.
+///
+/// # Errors
+/// Returns bounded source, manifest, parse, export, or transpilation errors.
+pub fn compile_typescript(
+    manifest: ScriptManifest,
+    source: &str,
+) -> Result<CompiledScript, ScriptCompileError> {
+    validate_manifest(&manifest)?;
+    if source.len() > MAX_SCRIPT_SOURCE_BYTES {
+        return Err(ScriptCompileError::SourceLimitExceeded);
+    }
+    let actual_hash = source_hash(source.as_bytes());
+    if manifest.source_hash != actual_hash {
+        return Err(ScriptCompileError::SourceHashMismatch);
+    }
+    let specifier = deno_ast::ModuleSpecifier::parse(&format!(
+        "file:///transmog-scripts/{}/main.ts",
+        manifest.id
+    ))
+    .map_err(|_| ScriptCompileError::InvalidManifest("script module identity is invalid"))?;
+    let parsed = parse_module(ParseParams {
+        specifier,
+        text: Arc::<str>::from(source),
+        media_type: MediaType::TypeScript,
+        capture_tokens: false,
+        scope_analysis: false,
+        maybe_syntax: None,
+    })
+    .map_err(|error| ScriptCompileError::Parse(bounded(&error.to_string(), 512)))?;
+    let mut exports = BTreeMap::new();
+    for item in &parsed.program_ref().unwrap_module().body {
+        match item {
+            ModuleItem::ModuleDecl(
+                ModuleDecl::Import(_) | ModuleDecl::ExportAll(_) | ModuleDecl::ExportNamed(_),
+            ) => return Err(ScriptCompileError::ImportsForbidden),
+            ModuleItem::ModuleDecl(
+                ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_),
+            ) => {
+                return Err(ScriptCompileError::DefaultExportForbidden);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Fn(function) = &export.decl {
+                    exports.insert(
+                        function.ident.sym.to_string(),
+                        (function.function.is_async, function.function.is_generator),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut forbidden = ForbiddenSyntax::default();
+    parsed.program_ref().visit_with(&mut forbidden);
+    if forbidden.dynamic_import || forbidden.string_codegen {
+        return Err(ScriptCompileError::ForbiddenCapability);
+    }
+    for handler in &manifest.handlers {
+        let Some((is_async, is_generator)) = exports.get(handler.export_name()) else {
+            return Err(ScriptCompileError::MissingHandler(*handler));
+        };
+        if *is_async || *is_generator {
+            return Err(ScriptCompileError::HandlerMustBeSynchronous(*handler));
+        }
+    }
+    for handler in [
+        ScriptHandler::RequestHead,
+        ScriptHandler::RequestBody,
+        ScriptHandler::ResponseHead,
+        ScriptHandler::ResponseBody,
+    ] {
+        if exports.contains_key(handler.export_name()) && !manifest.handlers.contains(&handler) {
+            return Err(ScriptCompileError::UndeclaredHandler(handler));
+        }
+    }
+    let output = parsed
+        .transpile(
+            &TranspileOptions::default(),
+            &TranspileModuleOptions { module_kind: None },
+            &EmitOptions {
+                source_map: SourceMapOption::Separate,
+                inline_sources: true,
+                remove_comments: false,
+                ..EmitOptions::default()
+            },
+        )
+        .map_err(|error| ScriptCompileError::Transpile(bounded(&error.to_string(), 512)))?
+        .into_source();
+    Ok(CompiledScript {
+        manifest,
+        javascript: output.text,
+        source_map: output.source_map.unwrap_or_default().into_bytes(),
+    })
+}
+
+#[derive(Default)]
+struct ForbiddenSyntax {
+    dynamic_import: bool,
+    string_codegen: bool,
+}
+
+impl Visit for ForbiddenSyntax {
+    fn visit_call_expr(&mut self, expression: &CallExpr) {
+        match &expression.callee {
+            Callee::Import(_) => self.dynamic_import = true,
+            Callee::Expr(callee) if matches!(callee.as_ref(), Expr::Ident(identifier) if identifier.sym == "eval") =>
+            {
+                self.string_codegen = true;
+            }
+            _ => {}
+        }
+        expression.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, expression: &NewExpr) {
+        if matches!(expression.callee.as_ref(), Expr::Ident(identifier) if identifier.sym == "Function")
+        {
+            self.string_codegen = true;
+        }
+        expression.visit_children_with(self);
+    }
+}
+
+/// Computes a lowercase source SHA-256 for a manifest.
+pub fn source_hash(source: &[u8]) -> String {
+    Sha256::digest(source)
+        .iter()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            let _ = write!(output, "{byte:02x}");
+            output
+        })
+}
+
+/// Locally packaged declaration source supplied to Monaco and other editors.
+pub fn typescript_declarations() -> &'static str {
+    include_str!("../generated/transmog-script.d.ts")
+}
+
+/// One immutable header visible to a script.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptHeader {
+    /// Field name.
+    pub name: String,
+    /// Exact bytes, empty when a sensitive value was withheld.
+    pub value: Vec<u8>,
+    /// Whether the field carries credentials and may have been withheld.
+    pub sensitive: bool,
+}
+
+/// Bounded immutable request value object.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptRequest {
+    /// Method token.
+    pub method: String,
+    /// URI scheme.
+    pub scheme: String,
+    /// Host without port.
+    pub host: String,
+    /// Explicit destination port.
+    pub port: u16,
+    /// Origin-form path.
+    pub path: String,
+    /// Optional query without `?`.
+    pub query: Option<String>,
+    /// Ordered duplicate-preserving fields.
+    pub headers: Vec<ScriptHeader>,
+}
+
+/// Bounded immutable response value object.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptResponse {
+    /// HTTP status.
+    pub status: u16,
+    /// Ordered duplicate-preserving fields.
+    pub headers: Vec<ScriptHeader>,
+}
+
+/// Bounded body value object.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptBody {
+    /// Exact decoded bytes supplied under manifest limits.
+    pub bytes: Vec<u8>,
+    /// Whether source bytes exceeded the supplied limit.
+    pub truncated: bool,
+}
+
+/// Deterministic per-invocation context.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptContext {
+    /// Exchange identity.
+    pub exchange_id: String,
+    /// Controlled clock value supplied by the supervisor.
+    pub now_unix_ms: u64,
+    /// Handler being invoked.
+    pub handler: ScriptHandler,
+}
+
+/// One complete bounded host invocation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptInvocation {
+    /// Deterministic invocation context.
+    pub context: ScriptContext,
+    /// Final/effective request data.
+    pub request: ScriptRequest,
+    /// Response data for response handlers.
+    pub response: Option<ScriptResponse>,
+    /// Body data for body handlers.
+    pub body: Option<ScriptBody>,
+}
+
+/// Header change requested by a script.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ScriptHeaderOperation {
+    /// Replace every field with the same name.
+    Set {
+        /// Field name.
+        name: String,
+        /// Field value.
+        value: String,
+    },
+    /// Append one ordered field.
+    Append {
+        /// Field name.
+        name: String,
+        /// Field value.
+        value: String,
+    },
+    /// Remove every field with the same name.
+    Remove {
+        /// Field name.
+        name: String,
+    },
+}
+
+impl ScriptHeaderOperation {
+    fn name(&self) -> &str {
+        match self {
+            Self::Set { name, .. } | Self::Append { name, .. } | Self::Remove { name } => name,
+        }
+    }
+}
+
+/// Complete action vocabulary returned by every script runner.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ScriptAction {
+    /// Do not modify the current phase.
+    Continue,
+    /// Apply ordered header operations at a head phase.
+    Headers {
+        /// Ordered operations.
+        operations: Vec<ScriptHeaderOperation>,
+    },
+    /// Replace a complete decoded body.
+    ReplaceBody {
+        /// Replacement bytes.
+        bytes: Vec<u8>,
+    },
+    /// Consume a body without output.
+    DiscardBody,
+    /// Serve an exact response asset revision.
+    Respond {
+        /// `id@revision` asset reference.
+        asset_ref: String,
+    },
+    /// Abort with a redaction-safe operator reason.
+    Abort {
+        /// Bounded reason.
+        reason: String,
+    },
+}
+
+/// Safe script runtime failure category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptFailureCategory {
+    /// Handler threw an exception.
+    Exception,
+    /// Supervisor deadline elapsed.
+    Timeout,
+    /// Heap/resource limit fired.
+    ResourceLimit,
+    /// Host process or isolate crashed.
+    Crash,
+    /// IPC message was invalid or truncated.
+    Protocol,
+    /// Returned action was invalid or undeclared.
+    InvalidAction,
+    /// Required host was unavailable.
+    Unavailable,
+}
+
+/// Redacted source-mappable script failure.
+#[derive(Clone, Debug, Eq, Error, PartialEq, Serialize, Deserialize)]
+#[error("{message}")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptFailure {
+    /// Stable category.
+    pub category: ScriptFailureCategory,
+    /// Operator-safe bounded message.
+    pub message: String,
+    /// Source line when mapped.
+    pub line: Option<u32>,
+    /// Source column when mapped.
+    pub column: Option<u32>,
+}
+
+impl ScriptFailure {
+    fn invalid(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self {
+            category: ScriptFailureCategory::InvalidAction,
+            message: bounded(&message, 512),
+            line: None,
+            column: None,
+        }
+    }
+}
+
+/// Boxed asynchronous runner result.
+pub type BoxScriptFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ScriptAction, ScriptFailure>> + Send + 'a>>;
+
+/// Runtime-neutral execution boundary implemented by fake and V8 runners.
+pub trait ScriptRunner: Send + Sync {
+    /// Executes one already-bounded invocation.
+    fn invoke(&self, invocation: ScriptInvocation) -> BoxScriptFuture<'_>;
+}
+
+/// Deterministic closure-backed runner for conformance tests and embedders.
+pub struct FakeScriptRunner<F>(pub F);
+
+impl<F> ScriptRunner for FakeScriptRunner<F>
+where
+    F: Fn(ScriptInvocation) -> Result<ScriptAction, ScriptFailure> + Send + Sync,
+{
+    fn invoke(&self, invocation: ScriptInvocation) -> BoxScriptFuture<'_> {
+        let result = (self.0)(invocation);
+        Box::pin(async move { result })
+    }
+}
+
+/// Creates one required, exactly attributed Hooks v2 script registration.
+///
+/// # Errors
+/// Returns a manifest validation error before traffic can reference the script.
+pub fn registration(
+    manifest: ScriptManifest,
+    runner: Arc<dyn ScriptRunner>,
+) -> Result<InterceptorRegistration, ScriptCompileError> {
+    validate_manifest(&manifest)?;
+    Ok(InterceptorRegistration::named(
+        format!("script/{}@{}", manifest.id, manifest.revision),
+        format!("script {} revision {}", manifest.id, manifest.revision),
+        Arc::new(ScriptFactory {
+            manifest: Arc::new(manifest),
+            runner,
+        }),
+        InterceptorRequirement::Required,
+    ))
+}
+
+struct ScriptFactory {
+    manifest: Arc<ScriptManifest>,
+    runner: Arc<dyn ScriptRunner>,
+}
+
+impl InterceptorFactory for ScriptFactory {
+    fn create(
+        &self,
+        _metadata: &ExchangeMetadata,
+    ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+        Ok(Arc::new(ScriptInterceptor {
+            manifest: Arc::clone(&self.manifest),
+            runner: Arc::clone(&self.runner),
+        }))
+    }
+}
+
+struct ScriptInterceptor {
+    manifest: Arc<ScriptManifest>,
+    runner: Arc<dyn ScriptRunner>,
+}
+
+impl ExchangeInterceptor for ScriptInterceptor {
+    fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
+        if !self.manifest.handlers.contains(&ScriptHandler::RequestHead)
+            || !self.manifest.prefilter.matches(&event.head)
+        {
+            return Box::pin(async { RequestHeadAction::Continue });
+        }
+        let invocation = invocation(
+            &self.manifest,
+            &format!("{:032x}", event.context.metadata().exchange_id.0),
+            ScriptHandler::RequestHead,
+            &event.head,
+            None,
+            None,
+        );
+        Box::pin(async move {
+            match self.runner.invoke(invocation).await.and_then(|action| {
+                validate_action(&self.manifest, ScriptHandler::RequestHead, action)
+            }) {
+                Ok(ScriptAction::Continue) => RequestHeadAction::Continue,
+                Ok(ScriptAction::Headers { operations }) => {
+                    let mut head = event.head;
+                    if apply_header_operations(&mut head.headers, &operations).is_err() {
+                        return RequestHeadAction::Abort(script_abort("invalid header action"));
+                    }
+                    RequestHeadAction::Replace(head)
+                }
+                Ok(ScriptAction::Abort { reason }) => {
+                    RequestHeadAction::Abort(HookAbort::Policy(reason))
+                }
+                Ok(ScriptAction::Respond { asset_ref }) => RequestHeadAction::Abort(script_abort(
+                    &format!("response asset {asset_ref} requires the product resolver"),
+                )),
+                Ok(_) => RequestHeadAction::Abort(script_abort("invalid request-head action")),
+                Err(error) => {
+                    RequestHeadAction::Abort(script_failure_abort(&self.manifest, &error))
+                }
+            }
+        })
+    }
+
+    fn on_request_body(&self, event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
+        if !self.manifest.handlers.contains(&ScriptHandler::RequestBody)
+            || !self.manifest.prefilter.matches(&event.head)
+        {
+            return Box::pin(async { RequestBodyAction::pass_through() });
+        }
+        let handler = ScriptBodyHandler {
+            manifest: Arc::clone(&self.manifest),
+            runner: Arc::clone(&self.runner),
+            exchange_id: format!("{:032x}", event.context.metadata().exchange_id.0),
+            handler: ScriptHandler::RequestBody,
+            request: event.head,
+            response: None,
+        };
+        let limit = NonZeroUsize::new(self.manifest.limits.max_input_body_bytes)
+            .expect("validated script body limit is nonzero");
+        Box::pin(async move {
+            RequestBodyAction::decoded(BodyPlan::Buffer {
+                limit,
+                handler: Box::new(handler),
+            })
+        })
+    }
+
+    fn on_response_head(&self, event: ResponseHeadEvent) -> BoxHookFuture<'_, ResponseHeadAction> {
+        if !self
+            .manifest
+            .handlers
+            .contains(&ScriptHandler::ResponseHead)
+            || !self.manifest.prefilter.matches(&event.request_head)
+        {
+            return Box::pin(async { ResponseHeadAction::Continue });
+        }
+        let invocation = invocation(
+            &self.manifest,
+            &format!("{:032x}", event.context.metadata().exchange_id.0),
+            ScriptHandler::ResponseHead,
+            &event.request_head,
+            Some(&event.head),
+            None,
+        );
+        Box::pin(async move {
+            match self.runner.invoke(invocation).await.and_then(|action| {
+                validate_action(&self.manifest, ScriptHandler::ResponseHead, action)
+            }) {
+                Ok(ScriptAction::Continue) => ResponseHeadAction::Continue,
+                Ok(ScriptAction::Headers { operations }) => {
+                    let mut head = event.head;
+                    if apply_header_operations(&mut head.headers, &operations).is_err() {
+                        return ResponseHeadAction::Abort(script_abort("invalid header action"));
+                    }
+                    ResponseHeadAction::Replace(head)
+                }
+                Ok(ScriptAction::Abort { reason }) => {
+                    ResponseHeadAction::Abort(HookAbort::Policy(reason))
+                }
+                Ok(_) => ResponseHeadAction::Abort(script_abort("invalid response-head action")),
+                Err(error) => {
+                    ResponseHeadAction::Abort(script_failure_abort(&self.manifest, &error))
+                }
+            }
+        })
+    }
+
+    fn on_response_body(&self, event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
+        if !self
+            .manifest
+            .handlers
+            .contains(&ScriptHandler::ResponseBody)
+            || !self.manifest.prefilter.matches(&event.request_head)
+        {
+            return Box::pin(async { ResponseBodyAction::pass_through() });
+        }
+        let handler = ScriptBodyHandler {
+            manifest: Arc::clone(&self.manifest),
+            runner: Arc::clone(&self.runner),
+            exchange_id: format!("{:032x}", event.context.metadata().exchange_id.0),
+            handler: ScriptHandler::ResponseBody,
+            request: event.request_head,
+            response: Some(event.response_head),
+        };
+        let limit = NonZeroUsize::new(self.manifest.limits.max_input_body_bytes)
+            .expect("validated script body limit is nonzero");
+        Box::pin(async move {
+            ResponseBodyAction::decoded(BodyPlan::Buffer {
+                limit,
+                handler: Box::new(handler),
+            })
+        })
+    }
+}
+
+struct ScriptBodyHandler {
+    manifest: Arc<ScriptManifest>,
+    runner: Arc<dyn ScriptRunner>,
+    exchange_id: String,
+    handler: ScriptHandler,
+    request: RequestHead,
+    response: Option<ResponseHead>,
+}
+
+impl BufferedBodyHandler for ScriptBodyHandler {
+    fn on_body(
+        &mut self,
+        body: BufferedBody,
+    ) -> BoxBodyFuture<'_, Result<BufferedBody, BodyHookError>> {
+        let invocation = invocation(
+            &self.manifest,
+            &self.exchange_id,
+            self.handler,
+            &self.request,
+            self.response.as_ref(),
+            Some(body.data()),
+        );
+        let original = body.clone();
+        Box::pin(async move {
+            let action = self
+                .runner
+                .invoke(invocation)
+                .await
+                .and_then(|action| validate_action(&self.manifest, self.handler, action))
+                .map_err(|error| {
+                    BodyHookError::Abort(script_failure_abort(&self.manifest, &error))
+                })?;
+            match action {
+                ScriptAction::Continue => Ok(original),
+                ScriptAction::ReplaceBody { bytes } => BufferedBody::try_new(
+                    self.manifest.limits.max_output_bytes,
+                    Bytes::from(bytes),
+                    body.trailers().cloned(),
+                )
+                .map_err(BodyHookError::from),
+                ScriptAction::DiscardBody => {
+                    BufferedBody::try_new(self.manifest.limits.max_output_bytes, Bytes::new(), None)
+                        .map_err(BodyHookError::from)
+                }
+                ScriptAction::Abort { reason } => {
+                    Err(BodyHookError::Abort(HookAbort::Policy(reason)))
+                }
+                _ => Err(BodyHookError::Abort(script_abort("invalid body action"))),
+            }
+        })
+    }
+}
+
+fn invocation(
+    manifest: &ScriptManifest,
+    exchange_id: &str,
+    handler: ScriptHandler,
+    request: &RequestHead,
+    response: Option<&ResponseHead>,
+    body: Option<&Bytes>,
+) -> ScriptInvocation {
+    ScriptInvocation {
+        context: ScriptContext {
+            exchange_id: exchange_id.to_owned(),
+            now_unix_ms: 0,
+            handler,
+        },
+        request: script_request(request, manifest.capabilities.read_sensitive_headers),
+        response: response.map(|response| ScriptResponse {
+            status: response.status,
+            headers: script_headers(
+                &response.headers,
+                manifest.capabilities.read_sensitive_headers,
+            ),
+        }),
+        body: body.map(|bytes| ScriptBody {
+            bytes: bytes.to_vec(),
+            truncated: false,
+        }),
+    }
+}
+
+fn script_request(request: &RequestHead, sensitive: bool) -> ScriptRequest {
+    ScriptRequest {
+        method: request.method.clone(),
+        scheme: request.target.scheme.clone(),
+        host: request.target.host.clone(),
+        port: request.target.port,
+        path: request.target.path.clone(),
+        query: request.target.query.clone(),
+        headers: script_headers(&request.headers, sensitive),
+    }
+}
+
+fn script_headers(headers: &HeaderBlock, permit_sensitive: bool) -> Vec<ScriptHeader> {
+    headers
+        .iter()
+        .map(|field| {
+            let name = String::from_utf8_lossy(field.name()).into_owned();
+            let sensitive = matches!(
+                name.to_ascii_lowercase().as_str(),
+                "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+            );
+            ScriptHeader {
+                name,
+                value: if sensitive && !permit_sensitive {
+                    Vec::new()
+                } else {
+                    field.value().to_vec()
+                },
+                sensitive,
+            }
+        })
+        .collect()
+}
+
+fn validate_action(
+    manifest: &ScriptManifest,
+    handler: ScriptHandler,
+    action: ScriptAction,
+) -> Result<ScriptAction, ScriptFailure> {
+    match &action {
+        ScriptAction::Continue => {}
+        ScriptAction::Headers { operations } => {
+            if !matches!(
+                handler,
+                ScriptHandler::RequestHead | ScriptHandler::ResponseHead
+            ) || operations.len() > 256
+            {
+                return Err(ScriptFailure::invalid(
+                    "header action is invalid for this phase",
+                ));
+            }
+            for operation in operations {
+                let name = operation.name().to_ascii_lowercase();
+                if !manifest
+                    .capabilities
+                    .write_headers
+                    .iter()
+                    .any(|allowed| allowed.eq_ignore_ascii_case(&name))
+                {
+                    return Err(ScriptFailure::invalid(format!(
+                        "header mutation was not declared: {name}"
+                    )));
+                }
+            }
+        }
+        ScriptAction::ReplaceBody { bytes } => {
+            if !matches!(
+                handler,
+                ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+            ) || !manifest.capabilities.write_body
+                || bytes.len() > manifest.limits.max_output_bytes
+            {
+                return Err(ScriptFailure::invalid("body replacement is not permitted"));
+            }
+        }
+        ScriptAction::DiscardBody => {
+            if !matches!(
+                handler,
+                ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+            ) || !manifest.capabilities.write_body
+            {
+                return Err(ScriptFailure::invalid("body discard is not permitted"));
+            }
+        }
+        ScriptAction::Respond { asset_ref } => {
+            if handler != ScriptHandler::RequestHead
+                || !manifest.capabilities.respond
+                || !valid_asset_ref(asset_ref)
+            {
+                return Err(ScriptFailure::invalid(
+                    "response asset action is not permitted",
+                ));
+            }
+        }
+        ScriptAction::Abort { reason } => {
+            if !manifest.capabilities.abort
+                || reason.is_empty()
+                || reason.len() > 256
+                || reason.chars().any(char::is_control)
+            {
+                return Err(ScriptFailure::invalid("abort action is not permitted"));
+            }
+        }
+    }
+    Ok(action)
+}
+
+fn apply_header_operations(
+    headers: &mut HeaderBlock,
+    operations: &[ScriptHeaderOperation],
+) -> Result<(), ()> {
+    for operation in operations {
+        match operation {
+            ScriptHeaderOperation::Set { name, value } => headers
+                .replace_all(HeaderField::try_new(name.as_str(), value.as_str()).map_err(|_| ())?),
+            ScriptHeaderOperation::Append { name, value } => {
+                headers.push(HeaderField::try_new(name.as_str(), value.as_str()).map_err(|_| ())?);
+            }
+            ScriptHeaderOperation::Remove { name } => {
+                HeaderField::try_new(name.as_str(), Vec::new()).map_err(|_| ())?;
+                headers.remove_all(name);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_manifest(manifest: &ScriptManifest) -> Result<(), ScriptCompileError> {
+    if manifest.id.is_empty()
+        || manifest.id.len() > 128
+        || !manifest
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        || manifest.revision == 0
+        || manifest.api_revision != SCRIPT_API_REVISION
+        || manifest.handlers.is_empty()
+    {
+        return Err(ScriptCompileError::InvalidManifest(
+            "script identity, revision, API, or handlers are invalid",
+        ));
+    }
+    let limits = manifest.limits;
+    if limits.max_input_body_bytes == 0
+        || limits.max_input_body_bytes > 16 * 1024 * 1024
+        || limits.max_output_bytes == 0
+        || limits.max_output_bytes > 16 * 1024 * 1024
+        || limits.max_log_bytes == 0
+        || limits.max_log_bytes > 1024 * 1024
+        || !(8 * 1024 * 1024..=256 * 1024 * 1024).contains(&limits.max_heap_bytes)
+        || !(1..=5_000).contains(&limits.max_duration_ms)
+    {
+        return Err(ScriptCompileError::InvalidManifest(
+            "script resource limits are invalid",
+        ));
+    }
+    if manifest.handlers.iter().any(|handler| {
+        matches!(
+            handler,
+            ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+        )
+    }) && !manifest.capabilities.read_bodies
+    {
+        return Err(ScriptCompileError::InvalidManifest(
+            "body handlers require the body-read capability",
+        ));
+    }
+    if manifest
+        .prefilter
+        .path_prefix
+        .as_ref()
+        .is_some_and(|path| !path.starts_with('/') || path.len() > 2_048)
+        || manifest
+            .prefilter
+            .host
+            .as_ref()
+            .is_some_and(|host| host.is_empty() || host.len() > 255 || !host.is_ascii())
+    {
+        return Err(ScriptCompileError::InvalidManifest(
+            "script native prefilter is invalid",
+        ));
+    }
+    for header in &manifest.capabilities.write_headers {
+        HeaderField::try_new(header.as_bytes(), Vec::new()).map_err(|_| {
+            ScriptCompileError::InvalidManifest("script write-header capability is invalid")
+        })?;
+    }
+    Ok(())
+}
+
+fn valid_asset_ref(value: &str) -> bool {
+    let Some((id, revision)) = value.rsplit_once('@') else {
+        return false;
+    };
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && revision.parse::<u64>().is_ok_and(|revision| revision > 0)
+}
+
+fn script_abort(message: &str) -> HookAbort {
+    HookAbort::Policy(bounded(&format!("script-error: {message}"), 512))
+}
+
+fn script_failure_abort(manifest: &ScriptManifest, failure: &ScriptFailure) -> HookAbort {
+    script_abort(&format!(
+        "{}@{} {:?}: {}",
+        manifest.id, manifest.revision, failure.category, failure.message
+    ))
+}
+
+fn bounded(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+/// Script compilation or contract validation failure.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum ScriptCompileError {
+    /// Manifest identity, capabilities, prefilter, or limits were invalid.
+    #[error("invalid script manifest: {0}")]
+    InvalidManifest(&'static str),
+    /// Source exceeded one MiB.
+    #[error("script source exceeds its one MiB limit")]
+    SourceLimitExceeded,
+    /// Manifest hash did not identify the exact source.
+    #[error("script source hash does not match the manifest")]
+    SourceHashMismatch,
+    /// TypeScript parse failure.
+    #[error("script parse failed: {0}")]
+    Parse(String),
+    /// Static or re-exported modules are not permitted.
+    #[error("script imports and re-exports are not permitted")]
+    ImportsForbidden,
+    /// Default exports do not participate in the stable handler contract.
+    #[error("script default exports are not permitted")]
+    DefaultExportForbidden,
+    /// Dynamic imports and source-string code generation are unavailable.
+    #[error("script uses a forbidden dynamic import or string-code capability")]
+    ForbiddenCapability,
+    /// Declared handler was not exported.
+    #[error("declared script handler is missing: {0:?}")]
+    MissingHandler(ScriptHandler),
+    /// Handler must return synchronously.
+    #[error("script handler must be synchronous: {0:?}")]
+    HandlerMustBeSynchronous(ScriptHandler),
+    /// Source exported a handler absent from the manifest.
+    #[error("script handler is exported but undeclared: {0:?}")]
+    UndeclaredHandler(ScriptHandler),
+    /// TypeScript transpilation failed.
+    #[error("script transpilation failed: {0}")]
+    Transpile(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use transmog_core::{
+        ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
+        intercept::{HookLimits, InterceptorChainFactory, RequestHeadOutcome},
+    };
+
+    use super::*;
+
+    fn manifest(source: &str, handlers: &[ScriptHandler]) -> ScriptManifest {
+        ScriptManifest {
+            id: "example".to_owned(),
+            revision: 3,
+            api_revision: SCRIPT_API_REVISION,
+            source_hash: source_hash(source.as_bytes()),
+            handlers: handlers.iter().copied().collect(),
+            prefilter: ScriptPrefilter {
+                host: Some("example.test".to_owned()),
+                ..ScriptPrefilter::default()
+            },
+            capabilities: ScriptCapabilities {
+                write_headers: ["user-agent".to_owned()].into_iter().collect(),
+                abort: true,
+                ..ScriptCapabilities::default()
+            },
+            limits: ScriptLimits::default(),
+            priority: 0,
+        }
+    }
+
+    fn request() -> RequestHead {
+        RequestHead {
+            method: "GET".to_owned(),
+            target: Target {
+                scheme: "https".to_owned(),
+                authority: "example.test".to_owned(),
+                host: "example.test".to_owned(),
+                port: 443,
+                path: "/".to_owned(),
+                query: None,
+            },
+            headers: HeaderBlock::new(),
+            source_version: HttpLegVersion::Http2,
+        }
+    }
+
+    fn metadata() -> ExchangeMetadata {
+        ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(1),
+                downstream_connection_id: ConnectionId(2),
+                stream_id: StreamId(3),
+                client_addr: "127.0.0.1:1".parse().unwrap(),
+                proxy_addr: "127.0.0.1:2".parse().unwrap(),
+                ingress_version: HttpLegVersion::Http2,
+                egress_version: None,
+            },
+            request().target,
+        )
+    }
+
+    #[test]
+    fn typescript_compilation_emits_js_source_map_and_checks_sync_exports() {
+        let source = "export function onRequestHead(_context: unknown, request: { host: string }) { const host: string = request.host; return { action: 'continue', host }; }";
+        let compiled =
+            compile_typescript(manifest(source, &[ScriptHandler::RequestHead]), source).unwrap();
+        assert!(compiled.javascript.contains("function onRequestHead"));
+        assert!(!compiled.javascript.contains(": string"));
+        assert!(!compiled.source_map.is_empty());
+
+        let async_source =
+            "export async function onRequestHead() { return { action: 'continue' }; }";
+        assert_eq!(
+            compile_typescript(
+                manifest(async_source, &[ScriptHandler::RequestHead]),
+                async_source,
+            )
+            .unwrap_err(),
+            ScriptCompileError::HandlerMustBeSynchronous(ScriptHandler::RequestHead)
+        );
+    }
+
+    #[test]
+    fn imports_hash_drift_and_undeclared_handlers_fail_closed() {
+        let imported =
+            "import value from './other.ts'; export function onRequestHead() { return value; }";
+        assert_eq!(
+            compile_typescript(manifest(imported, &[ScriptHandler::RequestHead]), imported)
+                .unwrap_err(),
+            ScriptCompileError::ImportsForbidden
+        );
+        let source = "export function onRequestHead() {}";
+        let mut wrong = manifest(source, &[ScriptHandler::RequestHead]);
+        wrong.source_hash = "00".repeat(32);
+        assert_eq!(
+            compile_typescript(wrong, source).unwrap_err(),
+            ScriptCompileError::SourceHashMismatch
+        );
+        for forbidden in [
+            "export function onRequestHead() { return import('https://example.test/x.js'); }",
+            "export function onRequestHead() { return eval('1 + 1'); }",
+            "export function onRequestHead() { return new Function('return 1'); }",
+        ] {
+            assert_eq!(
+                compile_typescript(
+                    manifest(forbidden, &[ScriptHandler::RequestHead]),
+                    forbidden,
+                )
+                .unwrap_err(),
+                ScriptCompileError::ForbiddenCapability
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_runner_and_hook_adapter_enforce_capabilities_and_audit_revision() {
+        let source = "export function onRequestHead() { return { action: 'continue' }; }";
+        let manifest = manifest(source, &[ScriptHandler::RequestHead]);
+        let runner = Arc::new(FakeScriptRunner(|_invocation| {
+            Ok(ScriptAction::Headers {
+                operations: vec![ScriptHeaderOperation::Set {
+                    name: "user-agent".to_owned(),
+                    value: "Transmog-Script/3".to_owned(),
+                }],
+            })
+        }));
+        let registration = registration(manifest, runner).unwrap();
+        let factory = InterceptorChainFactory::new(vec![registration], HookLimits::default());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        let RequestHeadOutcome::Continue { head, .. } =
+            chain.request_head(request()).await.unwrap()
+        else {
+            panic!("script unexpectedly stopped traffic");
+        };
+        assert_eq!(
+            head.headers.values("user-agent").next(),
+            Some(&b"Transmog-Script/3"[..])
+        );
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "script/example@3"
+        );
+    }
+
+    #[tokio::test]
+    async fn script_error_or_undeclared_mutation_aborts_the_exchange() {
+        let source = "export function onRequestHead() { return { action: 'continue' }; }";
+        let runner = Arc::new(FakeScriptRunner(|_invocation| {
+            Ok(ScriptAction::Headers {
+                operations: vec![ScriptHeaderOperation::Set {
+                    name: "authorization".to_owned(),
+                    value: "secret".to_owned(),
+                }],
+            })
+        }));
+        let registration =
+            registration(manifest(source, &[ScriptHandler::RequestHead]), runner).unwrap();
+        let mut chain = InterceptorChainFactory::new(
+            vec![registration],
+            HookLimits {
+                callback_timeout: Duration::from_secs(1),
+                terminal_timeout: Duration::from_secs(1),
+                max_paused_exchanges: NonZeroUsize::new(1).unwrap(),
+            },
+        )
+        .create_exchange(metadata())
+        .unwrap();
+        assert!(matches!(
+            chain.request_head(request()).await.unwrap(),
+            RequestHeadOutcome::Abort(HookAbort::Policy(reason)) if reason.contains("script-error")
+        ));
+    }
+
+    #[test]
+    fn checked_in_types_are_versioned_and_match_the_public_contract() {
+        let declarations = typescript_declarations();
+        assert!(declarations.contains("transmog:api/v1"));
+        assert!(declarations.contains("onRequestHead"));
+        assert!(declarations.contains("replace-body"));
+        assert!(!declarations.contains("Deno"));
+    }
+}
