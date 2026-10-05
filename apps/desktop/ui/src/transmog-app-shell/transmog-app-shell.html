@@ -28,8 +28,12 @@
           <form w-ref="{proxyForm}" @submit="{startProxy(event)}">
             <label>CA certificate <input name="certificate" value="transmog-ca.pem" required></label>
             <label>CA private key <input name="privateKey" value="transmog-ca.key" required></label>
+            <label>CA SHA-256 <input w-ref="{caThumbprint}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
             <label><input name="systemProxy" type="checkbox"> Configure the current-user system proxy</label>
             <div class="actions">
+              <button type="button" class="secondary" @click="{createCa()}">Create durable CA</button>
+              <button type="button" class="secondary" @click="{installCa()}">Trust public CA</button>
+              <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
               <button type="submit">Start proxy</button>
               <button type="button" class="secondary" @click="{stopProxy()}">Stop</button>
               <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>

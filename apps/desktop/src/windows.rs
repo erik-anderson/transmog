@@ -16,13 +16,15 @@ use tauri::{
 };
 use transmog_app::{
     AppConfig, AppError, AppStatus, Application, BreakpointDecision, BreakpointSettings,
-    BreakpointStatus, CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ComposerRequest,
-    ComposerResult, ComposerSnapshot, ExportRequest, ExportResult, ImportRequest, ProxyRoute,
-    ProxyStartRequest, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
-    SystemReplayExecutor,
+    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, ExportRequest,
+    ExportResult, ImportRequest, ProxyRoute, ProxyStartRequest, SessionDetail, SessionHint,
+    SessionPage, SessionQueryInput, SystemReplayExecutor,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
-use transmog_host_windows::{CurrentUserCertificateStore, WindowsProxyIntegration};
+use transmog_host_windows::{
+    CurrentUserCertificateStore, CurrentUserKeyProtection, WindowsProxyIntegration,
+};
 
 const UI_HOST: &str = "transmog-ui.localhost";
 
@@ -89,6 +91,23 @@ fn remove_certificate(sha256: String) -> Result<(), String> {
         .remove(&sha256)
         .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn create_ca(
+    request: CaCreateRequest,
+    state: State<'_, DesktopState>,
+) -> Result<CaIdentity, String> {
+    let private_key_path = request.private_key_path.clone();
+    let identity = state
+        .application
+        .create_ca(request)
+        .await
+        .map_err(|error| error.to_string())?;
+    CurrentUserKeyProtection
+        .protect(&private_key_path)
+        .map_err(|error| format!("CA was created but private-key protection failed: {error}"))?;
+    Ok(identity)
 }
 
 #[tauri::command]
@@ -254,6 +273,7 @@ pub fn run() {
             certificate_is_trusted,
             install_certificate,
             remove_certificate,
+            create_ca,
             query_sessions,
             session_detail,
             watch_sessions,

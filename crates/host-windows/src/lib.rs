@@ -245,6 +245,22 @@ impl CurrentUserCertificateStore {
     }
 }
 
+/// Applies a current-user-only Windows ACL to app-owned private key files.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CurrentUserKeyProtection;
+
+impl CurrentUserKeyProtection {
+    /// Removes inherited access and grants full control only to the current
+    /// user for one existing private-key file.
+    ///
+    /// # Errors
+    /// Returns a path, ACL, or Windows command failure.
+    pub fn protect(&self, private_key_path: &Path) -> Result<(), WindowsHostError> {
+        let payload = serde_json::json!({ "path": private_key_path });
+        run_script(KEY_PROTECTION_SCRIPT, Some(&payload.to_string())).map(|_| ())
+    }
+}
+
 /// Bounded Windows adapter failure.
 #[derive(Debug, Error)]
 pub enum WindowsHostError {
@@ -393,6 +409,18 @@ $store.Close()
 if ($null -eq $found) { 'false' } else { 'true' }
 ";
 
+const KEY_PROTECTION_SCRIPT: &str = r"
+$i = $env:TRANSMOG_INPUT | ConvertFrom-Json
+$path = [System.IO.Path]::GetFullPath([string]$i.path)
+if (-not [System.IO.File]::Exists($path)) { throw 'private key does not exist' }
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = [System.Security.AccessControl.FileSecurity]::new()
+$acl.SetAccessRuleProtection($true, $false)
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow)
+$acl.AddAccessRule($rule)
+[System.IO.File]::SetAccessControl($path, $acl)
+";
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -509,5 +537,19 @@ mod tests {
             validate_thumbprint("ABCD"),
             Err(WindowsHostError::InvalidThumbprint)
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_key_acl_can_be_applied_to_an_owned_test_file() {
+        let path = std::env::temp_dir().join(format!(
+            "transmog-key-protection-{}.key",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, b"test-only-key-material").unwrap();
+        CurrentUserKeyProtection.protect(&path).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"test-only-key-material");
+        fs::remove_file(path).unwrap();
     }
 }

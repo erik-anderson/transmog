@@ -9,6 +9,7 @@ interface AppStatus {
   summary: string;
   hostRestorePending: boolean;
 }
+interface CaIdentity { sha256: string; certificatePath: string; }
 
 interface SessionSummary {
   id: string;
@@ -74,6 +75,7 @@ export class TransmogAppShell extends WebUIElement {
   listenerValue!: HTMLElement;
   diagnostics!: HTMLOutputElement;
   proxyForm!: HTMLFormElement;
+  caThumbprint!: HTMLInputElement;
   filterForm!: HTMLFormElement;
   sessionRows!: HTMLTableSectionElement;
   nextButton!: HTMLButtonElement;
@@ -106,6 +108,47 @@ export class TransmogAppShell extends WebUIElement {
       await this.refreshStatus();
     } catch (error: unknown) {
       this.diagnostics.textContent = `Start failed: ${describeError(error)}`;
+    }
+  }
+
+  async createCa(): Promise<void> {
+    const data = new FormData(this.proxyForm);
+    try {
+      const identity = await invoke<CaIdentity>('create_ca', {
+        request: {
+          certificatePath: String(data.get('certificate') ?? ''),
+          privateKeyPath: String(data.get('privateKey') ?? ''),
+          commonName: 'Transmog local interception CA',
+          validityDays: 3650,
+        },
+      });
+      this.caThumbprint.value = identity.sha256;
+      this.diagnostics.textContent = `CA created with a current-user-only private-key ACL. SHA-256 ${identity.sha256}`;
+    } catch (error: unknown) {
+      this.diagnostics.textContent = `CA creation failed: ${describeError(error)}`;
+    }
+  }
+
+  async installCa(): Promise<void> {
+    const data = new FormData(this.proxyForm);
+    try {
+      await invoke<void>('install_certificate', {
+        path: String(data.get('certificate') ?? ''),
+        sha256: String(data.get('thumbprint') ?? ''),
+      });
+      this.diagnostics.textContent = 'The exact public CA is trusted for the current user.';
+    } catch (error: unknown) {
+      this.diagnostics.textContent = `CA installation failed: ${describeError(error)}`;
+    }
+  }
+
+  async removeCa(): Promise<void> {
+    const data = new FormData(this.proxyForm);
+    try {
+      await invoke<void>('remove_certificate', { sha256: String(data.get('thumbprint') ?? '') });
+      this.diagnostics.textContent = 'The exact public CA was removed from current-user trust.';
+    } catch (error: unknown) {
+      this.diagnostics.textContent = `CA removal failed: ${describeError(error)}`;
     }
   }
 

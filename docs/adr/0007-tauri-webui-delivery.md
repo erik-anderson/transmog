@@ -58,13 +58,13 @@ local adapter.
 
 ## Capability and data boundary
 
-The main window capability contains no Tauri core/plugin permissions. The only
-native application operation is the explicitly registered
-`phase_zero_probe` command. It accepts a deny-unknown-fields DTO, validates
-bounded input in Rust, returns a stable result, and sends exactly one typed
-channel notification. Later commands must follow the same allowlist and
-validation pattern; broad filesystem, shell, HTTP-client, or remote-domain IPC
-permissions are prohibited.
+The main window capability contains no broad Tauri core/plugin permissions.
+The Phase 0 `phase_zero_probe` established the pattern now used by the product
+commands: each operation is explicitly registered, accepts a bounded typed
+DTO, revalidates in Rust, and returns a stable bounded result. Live session
+notifications are hint-only typed channels. Filesystem paths are accepted only
+by narrow create-new capture/CA/import/export operations; there is no generic
+filesystem, shell, WebView HTTP-client, or remote-domain IPC permission.
 
 The custom protocol has no filesystem fallback. Unknown and traversal-shaped
 paths return 404, methods other than GET/HEAD return 405, dynamic pages are

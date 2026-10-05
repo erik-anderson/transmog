@@ -92,7 +92,9 @@ CA installation/removal uses the current-user Root certificate store and can
 display an operating-system consent dialog; it is never part of an unattended
 build or test. Automated tests use an in-memory host backend. A development or
 production CA must be created separately, and its private key must be protected
-by a user-only ACL before use.
+by a user-only ACL before use. The Windows desktop's **Create durable CA**
+action applies that ACL automatically; embedders and the headless CLI remain
+responsible for applying an equivalent platform policy.
 
 The desktop dependency toolchain is pinned in both lockfiles:
 
