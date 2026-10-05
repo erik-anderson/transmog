@@ -1,5 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#111824"/>
-  <path d="M128 166h256M128 256h164M128 346h256" fill="none" stroke="#68d4b5" stroke-linecap="round" stroke-width="44"/>
-  <circle cx="350" cy="256" r="30" fill="#f4c960"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Transmog</title>
+  <desc id="desc">An isometric shaping engine with a hand crank, mint and ivory faces, and two recessed openings. A thin ivory outline separates the crank from the top rim and continues to the center of its mounting circle.</desc>
+  <!-- Square, transparent app icon. The machine is centered with 31 units of vertical padding. -->
+  <g transform="translate(256 256) scale(1.36) translate(-258.5 -232.75)">
+    <g stroke="#182D38" stroke-width="14" stroke-linejoin="round">
+      <path d="m149 192 107-62 112 64-109 64z" fill="#FFF6E7"/>
+      <path d="m149 192 110 66v133l-110-64z" fill="#5ED9BD"/>
+      <path d="m259 258 109-64v133l-109 64z" fill="#FFF6E7"/>
+    </g>
+    <!-- The outlined shaft meets the center of the mounting circle. -->
+    <ellipse cx="258" cy="192" rx="34" ry="19" fill="#182D38"/>
+    <path d="M258 192v-60l40-23" stroke="#FFF6E7" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M258 192v-60l40-23" stroke="#182D38" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M299 112V80" stroke="#182D38" stroke-width="25" stroke-linecap="round"/>
+    <path d="M299 106V82" stroke="#FFB454" stroke-width="11" stroke-linecap="round"/>
+    <!-- Recessed inlet and outlet mouths. -->
+    <path d="m168 241 67 39v58l-67-39zM282 279l64-38v58l-64 37z" fill="#182D38"/>
+  </g>
 </svg>

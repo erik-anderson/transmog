@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Transmog — Shaping engine</title>
+  <desc id="desc">An isometric crank-driven machine takes in a moving mint cube and produces an amber circle. Motion trails show the direction of travel. A thin ivory outline separates the crank from the continuous top rim, and its shaft reaches the center of the mounting circle.</desc>
+  <!-- A faceted machine, with the packet path visible on both sides. -->
+  <g stroke="#182D38" stroke-width="14" stroke-linejoin="round">
+    <path d="m149 192 107-62 112 64-109 64z" fill="#FFF6E7"/>
+    <path d="m149 192 110 66v133l-110-64z" fill="#5ED9BD"/>
+    <path d="m259 258 109-64v133l-109 64z" fill="#FFF6E7"/>
+  </g>
+  <!-- Crank mounted on the top of the casting. -->
+  <ellipse cx="258" cy="192" rx="34" ry="19" fill="#182D38"/>
+  <!-- A three-unit ivory outline follows the arm all the way to the hub center. -->
+  <path d="M258 192v-60l40-23" stroke="#FFF6E7" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M258 192v-60l40-23" stroke="#182D38" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M299 112V80" stroke="#182D38" stroke-width="25" stroke-linecap="round"/>
+  <path d="M299 106V82" stroke="#FFB454" stroke-width="11" stroke-linecap="round"/>
+  <!-- Recessed inlet and outlet mouths. -->
+  <path d="m168 241 67 39v58l-67-39zM282 279l64-38v58l-64 37z" fill="#182D38"/>
+  <!-- Short, parallel motion trails replace the solid connecting bars. -->
+  <g stroke="#182D38" stroke-width="7" stroke-linecap="round">
+    <path d="m39 199 25 14m-50 8 20 12m-22 13 16 9"/>
+    <path d="m380 280 22-13m-19-11 13-8m4 44 18-10"/>
+  </g>
+  <!-- The incoming cube travels down and right toward the inlet. -->
+  <g transform="translate(12 10)" stroke="#182D38" stroke-width="10" stroke-linejoin="round">
+    <path d="m40 229 38-22 40 23-38 23z" fill="#FFF6E7"/>
+    <path d="m40 229 40 24v46l-40-23z" fill="#5ED9BD"/>
+    <path d="m80 253 38-23v46l-38 23z" fill="#5ED9BD"/>
+  </g>
+  <!-- The transformed packet travels up and right from the outlet. -->
+  <circle cx="441" cy="239" r="32" fill="#FFB454" stroke="#182D38" stroke-width="12"/>
+</svg>
