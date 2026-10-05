@@ -16,10 +16,9 @@ Developer-facing identifiers follow their ecosystem conventions:
   WebView2 to `http://transmog-ui.localhost`;
 - the Tauri application identifier is `com.erikanderson.transmog`.
 
-New native captures use the `.tmcap` extension and `TMCAP01` preamble. Readers
-continue to accept the pre-rebrand capture preamble so existing development
-captures remain recoverable. Extended SAZ exports use
-`transmog/manifest.json` and the `transmog-saz-extension-v1` format marker.
+Native captures use the `.tmcap` extension and `TMCAP01` preamble. Extended SAZ
+exports use `transmog/manifest.json` and the `transmog-saz-extension-v1` format
+marker. Pre-Transmog development formats are intentionally unsupported.
 
 The source repository retains its existing GitHub URL until the remote
 repository is renamed. Package metadata must continue to point at a real URL;

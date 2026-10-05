@@ -21,7 +21,6 @@ use transmog_core::{
 };
 
 const MAGIC: [u8; 8] = *b"TMCAP01\0";
-const LEGACY_MAGIC: [u8; 8] = *b"RMCAP01\0";
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Native capture format revision.
@@ -589,7 +588,7 @@ pub fn recover<R: Read>(
             CaptureError::Io(error)
         }
     })?;
-    if magic != MAGIC && magic != LEGACY_MAGIC {
+    if magic != MAGIC {
         return Err(CaptureError::InvalidMagic);
     }
     let mut records = Vec::new();
@@ -1215,16 +1214,6 @@ mod tests {
         .unwrap();
         assert!(recovered.sealed);
         assert!(!recovered.truncated_tail);
-        assert_eq!(recovered.records.len(), 2);
-    }
-
-    #[test]
-    fn pre_rebrand_capture_magic_remains_readable() {
-        let mut bytes = artifact(&[completed(1)], true);
-        bytes[..LEGACY_MAGIC.len()].copy_from_slice(&LEGACY_MAGIC);
-
-        let recovered = recover(&bytes[..], CaptureLimits::default()).unwrap();
-        assert!(recovered.sealed);
         assert_eq!(recovered.records.len(), 2);
     }
 
