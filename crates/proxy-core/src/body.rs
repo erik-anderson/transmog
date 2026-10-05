@@ -90,6 +90,20 @@ impl BodyStreamSender {
         self.sender.send(frame).await.map_err(|_| BodyChannelClosed)
     }
 
+    /// Sends one frame from a dedicated blocking producer while retaining the
+    /// same finite channel backpressure.
+    ///
+    /// # Errors
+    /// Returns [`BodyChannelClosed`] when the receiving transport was dropped.
+    pub fn blocking_send(
+        &self,
+        frame: Result<BodyFrame, BodyStreamError>,
+    ) -> Result<(), BodyChannelClosed> {
+        self.sender
+            .blocking_send(frame)
+            .map_err(|_| BodyChannelClosed)
+    }
+
     /// Attempts to send without waiting for channel capacity.
     ///
     /// # Errors

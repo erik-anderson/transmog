@@ -26,8 +26,8 @@ pub use body::{
 pub use extensions::ExchangeExtensions;
 pub use header::{HeaderBlock, HeaderError, HeaderField};
 pub use message::{
-    CanonicalRequest, CanonicalResponse, RequestHead, ResponseHead, StreamingRequest,
-    StreamingResponse, Target,
+    CanonicalRequest, CanonicalResponse, LocalStreamingResponse, RequestHead, ResponseHead,
+    StreamingRequest, StreamingResponse, Target,
 };
 pub use policy::{FallbackDecision, Replayability, RoutePolicy};
 pub use protocol::{HttpLegVersion, TlsSummary, VerificationResult};

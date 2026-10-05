@@ -134,6 +134,50 @@ pub struct BodyRange {
     pub availability: BodyAvailability,
 }
 
+/// File-backed read lease that prevents circular eviction until dropped.
+pub struct BodyReadLease {
+    file: std::fs::File,
+    key: BodyKey,
+    inner: Arc<BodyStoreInner>,
+    metadata: StoredBodyMetadata,
+}
+
+impl std::fmt::Debug for BodyReadLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BodyReadLease")
+            .field("metadata", &self.metadata)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BodyReadLease {
+    /// Immutable complete-body metadata captured when the lease opened.
+    pub fn metadata(&self) -> &StoredBodyMetadata {
+        &self.metadata
+    }
+}
+
+impl Read for BodyReadLease {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.file.read(buffer)
+    }
+}
+
+impl Drop for BodyReadLease {
+    fn drop(&mut self) {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(record) = state.records.get_mut(&self.key) {
+            record.leases = record.leases.saturating_sub(1);
+        }
+        enforce_quota(&self.inner, &mut state);
+    }
+}
+
 /// Aggregate body-store pressure and loss state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -459,6 +503,50 @@ impl BodyStore {
         }
         enforce_quota(&self.inner, &mut state);
         result
+    }
+
+    /// Opens a complete retained body while preventing circular eviction.
+    ///
+    /// # Errors
+    /// Returns an unavailable error unless the exact body is terminal,
+    /// complete, and readable.
+    pub fn open_complete(
+        &self,
+        exchange_id: ExchangeId,
+        boundary: ExchangeBoundary,
+    ) -> Result<BodyReadLease, BodyStoreError> {
+        let key = BodyKey {
+            exchange_id,
+            boundary: BoundaryKey::from_boundary(boundary),
+        };
+        let (path, metadata) = {
+            let mut state = self.lock_state();
+            let record = state
+                .records
+                .get_mut(&key)
+                .ok_or(BodyStoreError::UnknownBody)?;
+            if record.availability != BodyAvailability::Complete || !record.terminal {
+                return Err(BodyStoreError::ReadUnavailable);
+            }
+            let path = record.path.clone().ok_or(BodyStoreError::ReadUnavailable)?;
+            record.leases = record.leases.saturating_add(1);
+            (path, record.metadata(key))
+        };
+        match std::fs::File::open(path) {
+            Ok(file) => Ok(BodyReadLease {
+                file,
+                key,
+                inner: Arc::clone(&self.inner),
+                metadata,
+            }),
+            Err(_) => {
+                let mut state = self.lock_state();
+                if let Some(record) = state.records.get_mut(&key) {
+                    record.leases = record.leases.saturating_sub(1);
+                }
+                Err(BodyStoreError::ReadUnavailable)
+            }
+        }
     }
 
     /// Waits until all observer events accepted before this call have reached

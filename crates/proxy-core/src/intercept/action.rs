@@ -1,4 +1,4 @@
-use crate::{CanonicalResponse, RequestHead, ResponseHead, Target};
+use crate::{CanonicalResponse, LocalStreamingResponse, RequestHead, ResponseHead, Target};
 
 use super::{BodyPlan, BodyPlanSelection, BodyRepresentation, HookAbort, HookContext};
 
@@ -62,6 +62,8 @@ pub enum RequestHeadAction {
     },
     /// Complete without contacting an upstream.
     Respond(CanonicalResponse),
+    /// Complete without contacting an upstream and stream the local body.
+    RespondStreaming(LocalStreamingResponse),
     /// Abort the exchange.
     Abort(HookAbort),
 }
@@ -77,6 +79,10 @@ impl std::fmt::Debug for RequestHeadAction {
                 .field("target", target)
                 .finish(),
             Self::Respond(response) => formatter.debug_tuple("Respond").field(response).finish(),
+            Self::RespondStreaming(response) => formatter
+                .debug_tuple("RespondStreaming")
+                .field(response)
+                .finish(),
             Self::Abort(reason) => formatter.debug_tuple("Abort").field(reason).finish(),
         }
     }

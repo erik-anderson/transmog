@@ -13,7 +13,7 @@ use regex::bytes::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use transmog_core::{
-    HeaderError, HeaderField, RequestHead, ResponseHead,
+    CanonicalResponse, HeaderError, HeaderField, LocalStreamingResponse, RequestHead, ResponseHead,
     intercept::{
         BodyPlan, BoxHookFuture, BufferedBody, ExchangeInterceptor, ExchangeMetadata,
         HookInitError, InterceptorFactory, InterceptorRegistration, InterceptorRequirement,
@@ -254,6 +254,8 @@ pub struct RequestActions {
     pub discard_body: bool,
     /// Abort a matching request with this operator-safe reason.
     pub abort_reason: Option<String>,
+    /// Stable saved/authored response asset selected for matching requests.
+    pub response_asset: Option<String>,
     /// Permit replacement for methods not known to be idempotent.
     pub allow_non_idempotent_body_replacement: bool,
 }
@@ -264,6 +266,7 @@ impl RequestActions {
             && self.replace_body.is_none()
             && !self.discard_body
             && self.abort_reason.is_none()
+            && self.response_asset.is_none()
     }
 }
 
@@ -315,6 +318,30 @@ pub struct CompiledAutomation {
     registrations: Vec<InterceptorRegistration>,
 }
 
+/// Resolved local response returned by a product-owned asset store.
+#[derive(Debug)]
+pub enum AutomationResponse {
+    /// Small response represented by bounded in-memory frames.
+    Buffered(CanonicalResponse),
+    /// Large response represented by a backpressured stream.
+    Streaming(LocalStreamingResponse),
+}
+
+/// Product-owned response asset resolver used by native automation.
+pub trait ResponseAssetResolver: Send + Sync {
+    /// Validates that an exact immutable asset revision is complete and servable.
+    ///
+    /// # Errors
+    /// Returns a bounded reason when the reference cannot be activated.
+    fn validate(&self, asset_id: &str) -> Result<(), String>;
+
+    /// Opens a fresh response instance for one matching exchange.
+    ///
+    /// # Errors
+    /// Returns a bounded, operator-safe reason when an active asset cannot be served.
+    fn resolve(&self, asset_id: &str) -> Result<AutomationResponse, String>;
+}
+
 impl CompiledAutomation {
     /// Hook registrations to compose with application-owned registrations.
     pub fn registrations(&self) -> Vec<InterceptorRegistration> {
@@ -333,8 +360,20 @@ impl CompiledAutomation {
 /// Returns a typed error for invalid limits, IDs, duplicate IDs, oversized
 /// actions, or ambiguous equal-priority overlapping writes.
 pub fn compile(
+    rules: Vec<Rule>,
+    limits: AutomationLimits,
+) -> Result<CompiledAutomation, CompileError> {
+    compile_with_assets(rules, limits, None)
+}
+
+/// Compiles rules with a product-owned response-asset resolver.
+///
+/// # Errors
+/// Returns the same deterministic validation failures as [`compile`].
+pub fn compile_with_assets(
     mut rules: Vec<Rule>,
     limits: AutomationLimits,
+    resolver: Option<Arc<dyn ResponseAssetResolver>>,
 ) -> Result<CompiledAutomation, CompileError> {
     validate_limits(limits)?;
     if rules.len() > limits.max_rules {
@@ -348,6 +387,13 @@ pub fn compile(
     let mut ids = BTreeSet::new();
     for rule in &rules {
         validate_rule(rule, limits)?;
+        if let Some(asset_id) = &rule.request.response_asset {
+            resolver
+                .as_ref()
+                .ok_or_else(|| CompileError::ResponseAssetUnavailable(rule.id.clone()))?
+                .validate(asset_id)
+                .map_err(|_| CompileError::ResponseAssetUnavailable(rule.id.clone()))?;
+        }
         if !ids.insert(rule.id.clone()) {
             return Err(CompileError::DuplicateId(rule.id.clone()));
         }
@@ -356,10 +402,14 @@ pub fn compile(
 
     let mut registrations = Vec::new();
     for rule in rules.iter().filter(|rule| !rule.request.is_empty()) {
-        registrations.push(registration(rule, RuleDirection::Request));
+        registrations.push(registration(rule, RuleDirection::Request, resolver.clone()));
     }
     for rule in rules.iter().rev().filter(|rule| !rule.response.is_empty()) {
-        registrations.push(registration(rule, RuleDirection::Response));
+        registrations.push(registration(
+            rule,
+            RuleDirection::Response,
+            resolver.clone(),
+        ));
     }
     Ok(CompiledAutomation { registrations })
 }
@@ -421,6 +471,23 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
         || rule.response.replace_body.is_some() && rule.response.discard_body
     {
         return Err(CompileError::ConflictingBodyActions(rule.id.clone()));
+    }
+    if let Some(asset) = &rule.request.response_asset {
+        if asset.is_empty()
+            || asset.len() > 128
+            || !asset.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'@')
+            })
+        {
+            return Err(CompileError::InvalidResponseAsset(rule.id.clone()));
+        }
+        if !rule.request.headers.is_empty()
+            || rule.request.replace_body.is_some()
+            || rule.request.discard_body
+            || rule.request.abort_reason.is_some()
+        {
+            return Err(CompileError::ConflictingResponseAsset(rule.id.clone()));
+        }
     }
     for reason in [
         rule.request.abort_reason.as_deref(),
@@ -525,11 +592,13 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
                         &left.request.headers,
                         left.request.replace_body.is_some() || left.request.discard_body,
                         left.request.abort_reason.is_some(),
+                        left.request.response_asset.is_some(),
                     ),
                     action_targets(
                         &right.request.headers,
                         right.request.replace_body.is_some() || right.request.discard_body,
                         right.request.abort_reason.is_some(),
+                        right.request.response_asset.is_some(),
                     ),
                 ),
                 (
@@ -538,11 +607,13 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
                         &left.response.headers,
                         left.response.replace_body.is_some() || left.response.discard_body,
                         left.response.abort_reason.is_some(),
+                        false,
                     ),
                     action_targets(
                         &right.response.headers,
                         right.response.replace_body.is_some() || right.response.discard_body,
                         right.response.abort_reason.is_some(),
+                        false,
                     ),
                 ),
             ] {
@@ -560,7 +631,12 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
     Ok(())
 }
 
-fn action_targets(headers: &[HeaderOperation], body: bool, abort: bool) -> BTreeSet<String> {
+fn action_targets(
+    headers: &[HeaderOperation],
+    body: bool,
+    abort: bool,
+    response_asset: bool,
+) -> BTreeSet<String> {
     let mut targets = headers
         .iter()
         .map(HeaderOperation::target)
@@ -570,6 +646,9 @@ fn action_targets(headers: &[HeaderOperation], body: bool, abort: bool) -> BTree
     }
     if abort {
         targets.insert("$abort".to_owned());
+    }
+    if response_asset {
+        targets.insert("$respond".to_owned());
     }
     targets
 }
@@ -590,13 +669,25 @@ enum RuleDirection {
     Response,
 }
 
-fn registration(rule: &Rule, direction: RuleDirection) -> InterceptorRegistration {
+fn registration(
+    rule: &Rule,
+    direction: RuleDirection,
+    resolver: Option<Arc<dyn ResponseAssetResolver>>,
+) -> InterceptorRegistration {
     let suffix = match direction {
         RuleDirection::Request => "request",
         RuleDirection::Response => "response",
     };
+    let asset_suffix = rule
+        .request
+        .response_asset
+        .as_ref()
+        .map_or_else(String::new, |asset| format!("/asset/{asset}"));
     InterceptorRegistration::named(
-        format!("automation/{}@{}/{suffix}", rule.id, rule.revision),
+        format!(
+            "automation/{}@{}/{suffix}{asset_suffix}",
+            rule.id, rule.revision
+        ),
         format!(
             "automation rule {} revision {} ({suffix})",
             rule.id, rule.revision
@@ -605,6 +696,7 @@ fn registration(rule: &Rule, direction: RuleDirection) -> InterceptorRegistratio
             rule: Arc::new(rule.clone()),
             request_regexes: compile_predicates(&rule.matcher.request_headers),
             response_regexes: compile_predicates(&rule.matcher.response_headers),
+            resolver,
             direction,
         }),
         InterceptorRequirement::Required,
@@ -624,11 +716,11 @@ fn compile_predicates(predicates: &[HeaderPredicate]) -> Arc<[Option<Regex>]> {
         .into()
 }
 
-#[derive(Debug)]
 struct RuleFactory {
     rule: Arc<Rule>,
     request_regexes: Arc<[Option<Regex>]>,
     response_regexes: Arc<[Option<Regex>]>,
+    resolver: Option<Arc<dyn ResponseAssetResolver>>,
     direction: RuleDirection,
 }
 
@@ -641,16 +733,17 @@ impl InterceptorFactory for RuleFactory {
             rule: Arc::clone(&self.rule),
             request_regexes: Arc::clone(&self.request_regexes),
             response_regexes: Arc::clone(&self.response_regexes),
+            resolver: self.resolver.clone(),
             direction: self.direction,
         }))
     }
 }
 
-#[derive(Debug)]
 struct RuleInterceptor {
     rule: Arc<Rule>,
     request_regexes: Arc<[Option<Regex>]>,
     response_regexes: Arc<[Option<Regex>]>,
+    resolver: Option<Arc<dyn ResponseAssetResolver>>,
     direction: RuleDirection,
 }
 
@@ -668,6 +761,26 @@ impl ExchangeInterceptor for RuleInterceptor {
             let reason = reason.clone();
             return Box::pin(async move {
                 RequestHeadAction::Abort(transmog_core::intercept::HookAbort::Policy(reason))
+            });
+        }
+        if let Some(asset_id) = &self.rule.request.response_asset {
+            let response = self
+                .resolver
+                .as_ref()
+                .ok_or_else(|| "response asset resolver is unavailable".to_owned())
+                .and_then(|resolver| resolver.resolve(asset_id));
+            return Box::pin(async move {
+                match response {
+                    Ok(AutomationResponse::Buffered(response)) => {
+                        RequestHeadAction::Respond(response)
+                    }
+                    Ok(AutomationResponse::Streaming(response)) => {
+                        RequestHeadAction::RespondStreaming(response)
+                    }
+                    Err(reason) => RequestHeadAction::Abort(
+                        transmog_core::intercept::HookAbort::Policy(reason),
+                    ),
+                }
             });
         }
         let mut head = event.head;
@@ -843,6 +956,15 @@ pub enum CompileError {
     /// Abort reason was empty, oversized, or contained control characters.
     #[error("automation rule has an invalid abort reason: {0}")]
     InvalidAbortReason(String),
+    /// Response asset identifier was invalid.
+    #[error("automation rule has an invalid response asset: {0}")]
+    InvalidResponseAsset(String),
+    /// A response asset action was combined with incompatible request actions.
+    #[error("automation rule has conflicting response asset actions: {0}")]
+    ConflictingResponseAsset(String),
+    /// Referenced immutable response asset was absent or incomplete.
+    #[error("automation rule references an unavailable response asset: {0}")]
+    ResponseAssetUnavailable(String),
     /// Equal-priority overlapping rules could mutate the same target.
     #[error("automation rules {first} and {second} have an ambiguous conflict")]
     AmbiguousConflict {
@@ -866,6 +988,25 @@ mod tests {
     };
 
     use super::*;
+
+    struct StaticAssetResolver;
+
+    impl ResponseAssetResolver for StaticAssetResolver {
+        fn validate(&self, asset_id: &str) -> Result<(), String> {
+            (asset_id == "saved@3")
+                .then_some(())
+                .ok_or_else(|| "missing".to_owned())
+        }
+
+        fn resolve(&self, asset_id: &str) -> Result<AutomationResponse, String> {
+            self.validate(asset_id)?;
+            Ok(AutomationResponse::Buffered(CanonicalResponse::local(
+                218,
+                HeaderBlock::new(),
+                Bytes::from_static(b"asset"),
+            )))
+        }
+    }
 
     fn request(method: &str) -> RequestHead {
         RequestHead {
@@ -1096,6 +1237,39 @@ mod tests {
         assert_eq!(
             chain.hook_effects()[0].interceptor.id.as_str(),
             "automation/conditional-ua@42/request"
+        );
+    }
+
+    #[tokio::test]
+    async fn autoresponse_uses_an_exact_validated_asset_revision_without_an_origin() {
+        let asset_rule = Rule {
+            id: "auto-response".to_owned(),
+            revision: 9,
+            priority: 0,
+            matcher: RuleMatcher::default(),
+            request: RequestActions {
+                response_asset: Some("saved@3".to_owned()),
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        let compiled = compile_with_assets(
+            vec![asset_rule],
+            AutomationLimits::default(),
+            Some(Arc::new(StaticAssetResolver)),
+        )
+        .unwrap();
+        let factory = InterceptorChainFactory::new(compiled.registrations(), HookLimits::default());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        let RequestHeadOutcome::Respond { response, .. } =
+            chain.request_head(request("GET")).await.unwrap()
+        else {
+            panic!("expected exact saved response");
+        };
+        assert_eq!(response.head.status, 218);
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "automation/auto-response@9/request/asset/saved@3"
         );
     }
 

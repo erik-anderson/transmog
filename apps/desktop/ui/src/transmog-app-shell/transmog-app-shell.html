@@ -103,6 +103,23 @@
             <button type="submit">Validate and activate</button>
             <button type="button" class="secondary" @click="{refreshAutomation()}">Refresh active rules</button>
           </form>
+          <h3>Saved and authored responses</h3>
+          <form w-ref="{responseAssetForm}" @submit="{createResponseAsset(event)}" class="composer-form">
+            <label>Asset ID <input name="assetId" value="saved-response" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
+            <label>Revision <input name="assetRevision" type="number" min="1" value="1" required></label>
+            <label>Status <input name="status" type="number" min="200" max="599" value="200" required></label>
+            <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
+            <label>Body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
+            <button type="submit">Create immutable asset</button>
+          </form>
+          <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(event)}" class="composer-form">
+            <label>Rule ID <input name="ruleId" value="auto-response" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
+            <label>Rule revision <input name="revision" type="number" min="1" value="1" required></label>
+            <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+            <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
+            <label>Exact asset reference <input name="assetRef" value="saved-response@1" maxlength="258" required></label>
+            <button type="submit">Activate autoresponse</button>
+          </form>
           <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
         </div>
       </section>

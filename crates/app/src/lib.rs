@@ -15,6 +15,7 @@ mod diagnostics;
 mod inspector;
 mod lifecycle;
 mod product_state;
+mod response_assets;
 mod sessions;
 
 use std::{path::PathBuf, sync::Arc};
@@ -25,8 +26,8 @@ pub use artifacts::{
 };
 pub use automation::{AutomationCandidate, AutomationRuleSet, AutomationStatus};
 pub use body_store::{
-    BodyAvailability, BodyRange, BodyStore, BodyStoreConfig, BodyStoreCounters, BodyStoreError,
-    DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
+    BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
+    BodyStoreError, DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
 };
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
@@ -45,6 +46,10 @@ pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
     ThemePreference, WindowState,
+};
+pub use response_assets::{
+    AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetProvenance,
+    SessionResponseAsset,
 };
 use serde::Serialize;
 pub use sessions::{
@@ -163,6 +168,8 @@ pub struct AppConfig {
     pub body_store: Option<BodyStoreConfig>,
     /// Optional crash-recoverable built-in automation workspace prefix.
     pub automation_path: Option<PathBuf>,
+    /// Optional durable content-addressed response asset directory.
+    pub response_asset_root: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -175,6 +182,7 @@ impl std::fmt::Debug for AppConfig {
             .field("diagnostics_log_path", &self.diagnostics_log_path)
             .field("body_store", &self.body_store)
             .field("automation_path", &self.automation_path)
+            .field("response_asset_root", &self.response_asset_root)
             .finish()
     }
 }
@@ -190,6 +198,7 @@ pub struct Application {
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
     automation: automation::AutomationRegistry,
+    response_assets: response_assets::ResponseAssetStore,
 }
 
 impl std::fmt::Debug for Application {
@@ -213,7 +222,12 @@ impl Application {
             .map(BodyStore::new)
             .transpose()
             .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), true))?;
-        let automation = automation::AutomationRegistry::load(config.automation_path)?;
+        let response_assets =
+            response_assets::ResponseAssetStore::load(config.response_asset_root)?;
+        let automation = automation::AutomationRegistry::load(
+            config.automation_path,
+            Arc::new(response_assets.clone()),
+        )?;
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
@@ -243,6 +257,7 @@ impl Application {
             diagnostics,
             body_store,
             automation,
+            response_assets,
         })
     }
 
@@ -338,6 +353,52 @@ impl Application {
     /// Returns a stale-token or durable persistence failure.
     pub fn activate_automation(&self, candidate_id: &str) -> Result<AutomationStatus, AppError> {
         self.automation.activate(candidate_id)
+    }
+
+    /// Lists durable immutable response assets.
+    pub fn response_assets(&self) -> Vec<ResponseAsset> {
+        self.response_assets.list()
+    }
+
+    /// Creates a bounded authored response asset.
+    ///
+    /// # Errors
+    /// Returns validation, collision, quota, or persistence errors.
+    pub fn create_response_asset(
+        &self,
+        input: AuthoredResponseAsset,
+    ) -> Result<ResponseAsset, AppError> {
+        self.response_assets.create_authored(input)
+    }
+
+    /// Imports a potentially large response asset without buffering it fully.
+    ///
+    /// # Errors
+    /// Returns validation, source, quota, collision, or persistence errors.
+    pub fn import_response_asset(
+        &self,
+        input: ImportResponseAsset,
+    ) -> Result<ResponseAsset, AppError> {
+        self.response_assets.import_file(input)
+    }
+
+    /// Copies a complete retained response boundary into durable asset storage.
+    ///
+    /// # Errors
+    /// Incomplete, truncated, lossy, evicted, disabled, invalid, or unavailable
+    /// bodies are rejected.
+    pub fn create_response_asset_from_session(
+        &self,
+        input: SessionResponseAsset,
+    ) -> Result<ResponseAsset, AppError> {
+        let body_store = self.body_store.as_ref().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "response body retention is not configured",
+                false,
+            )
+        })?;
+        self.response_assets.create_from_session(body_store, input)
     }
 
     /// Returns a bounded point-in-time lifecycle read model.

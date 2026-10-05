@@ -305,7 +305,11 @@ mod tests {
         let error = start_proxy(
             &service,
             None,
-            AutomationRegistry::load(None).unwrap(),
+            AutomationRegistry::load(
+                None,
+                Arc::new(crate::response_assets::ResponseAssetStore::load(None).unwrap()),
+            )
+            .unwrap(),
             request,
             None,
         )

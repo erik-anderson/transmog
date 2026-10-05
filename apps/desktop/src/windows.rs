@@ -15,14 +15,15 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, ArtifactKind, AutomationCandidate,
-    AutomationRuleSet, AutomationStatus, BodyInspection, BodyInspectionRequest, BodyStoreConfig,
-    BreakpointDecision, BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity,
-    CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult,
-    ComposerSnapshot, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
-    ProductState, ProxyRoute, ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint,
-    SessionPage, SessionQueryInput, SupportBundleRequest, SupportBundleResult,
-    SystemReplayExecutor, WindowState,
+    AppConfig, AppError, AppStatus, Application, ArtifactKind, AuthoredResponseAsset,
+    AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
+    BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
+    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticsReport,
+    ExportFormat, ExportRequest, ExportResult, ImportRequest, ImportResponseAsset, ProductState,
+    ProxyRoute, ProxyStartRequest, ResponseAsset, RuntimeDiagnostics, SessionDetail, SessionHint,
+    SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
+    SupportBundleResult, SystemReplayExecutor, WindowState,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -77,6 +78,35 @@ fn activate_automation(
     state: State<'_, DesktopState>,
 ) -> Result<AutomationStatus, AppError> {
     state.application.activate_automation(&candidate_id)
+}
+
+#[tauri::command]
+fn response_assets(state: State<'_, DesktopState>) -> Vec<ResponseAsset> {
+    state.application.response_assets()
+}
+
+#[tauri::command]
+fn create_response_asset(
+    input: AuthoredResponseAsset,
+    state: State<'_, DesktopState>,
+) -> Result<ResponseAsset, AppError> {
+    state.application.create_response_asset(input)
+}
+
+#[tauri::command]
+fn import_response_asset(
+    input: ImportResponseAsset,
+    state: State<'_, DesktopState>,
+) -> Result<ResponseAsset, AppError> {
+    state.application.import_response_asset(input)
+}
+
+#[tauri::command]
+fn create_response_asset_from_session(
+    input: SessionResponseAsset,
+    state: State<'_, DesktopState>,
+) -> Result<ResponseAsset, AppError> {
+    state.application.create_response_asset_from_session(input)
 }
 
 #[tauri::command]
@@ -367,6 +397,7 @@ pub fn run() {
         replay_executor: Some(Arc::new(replay)),
         product_state_path: Some(state_root.join("preferences")),
         automation_path: Some(state_root.join("automation-v1")),
+        response_asset_root: Some(state_root.join("response-assets-v1")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
         body_store: Some(BodyStoreConfig::product_default(
             state_root.join("body-cache-v1"),
@@ -416,6 +447,10 @@ pub fn run() {
             automation_status,
             validate_automation,
             activate_automation,
+            response_assets,
+            create_response_asset,
+            import_response_asset,
+            create_response_asset_from_session,
             diagnostics_report,
             create_support_bundle,
             prepare_update_handoff,
@@ -522,7 +557,11 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) && entry.file_name() == "body-cache-v1"
+        if entry.file_type().is_ok_and(|kind| kind.is_dir())
+            && matches!(
+                entry.file_name().to_string_lossy().as_ref(),
+                "body-cache-v1" | "response-assets-v1"
+            )
         {
             std::fs::remove_dir_all(path).map_err(|_| ())?;
             continue;

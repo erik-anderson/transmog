@@ -949,6 +949,20 @@ impl ProxyState {
                     .finish_local_response(response, &session, &effective_request, chain)
                     .await;
             }
+            RequestHeadOutcome::RespondStreaming {
+                request_head: effective_request,
+                response,
+            } => {
+                observer
+                    .emit(ObserverEventKind::RequestHeadFinalized(
+                        effective_request.clone(),
+                    ))
+                    .await;
+                let chain = Arc::new(chain);
+                return self
+                    .finish_local_streaming_response(response, &session, &effective_request, chain)
+                    .await;
+            }
             RequestHeadOutcome::Abort(reason) => {
                 self.fail_chain(
                     &chain,
@@ -2359,6 +2373,119 @@ impl ProxyState {
         }
     }
 
+    async fn finish_local_streaming_response(
+        &self,
+        response: transmog_core::LocalStreamingResponse,
+        session: &SessionMetadata,
+        request: &RequestHead,
+        chain: Arc<ExchangeChain>,
+    ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        let transmog_core::LocalStreamingResponse {
+            head,
+            body,
+            body_length: _,
+        } = response;
+        let outcome = chain.response_head(request, head, None, true).await;
+        observe_hook_effects(&chain).await;
+        match outcome {
+            Ok(ResponseHeadOutcome::Continue {
+                head,
+                replacement_body: Some(replacement_body),
+                local_response,
+            }) => {
+                drop(body);
+                self.finish_prepared_local_response(
+                    CanonicalResponse {
+                        head,
+                        body: replacement_body,
+                    },
+                    session,
+                    request,
+                    chain,
+                    local_response,
+                )
+                .await
+            }
+            Ok(ResponseHeadOutcome::Continue {
+                mut head,
+                replacement_body: None,
+                local_response,
+            }) => {
+                if body_semantics(&request.method, head.status) == BodySemantics::Forbidden {
+                    drop(body);
+                    return self
+                        .finish_prepared_local_response(
+                            CanonicalResponse {
+                                head,
+                                body: Vec::new(),
+                            },
+                            session,
+                            request,
+                            chain,
+                            local_response,
+                        )
+                        .await;
+                }
+                let pipeline = self
+                    .prepare_streaming_response_pipeline(
+                        &chain,
+                        request,
+                        &mut head,
+                        local_response,
+                        session.ingress_version,
+                    )
+                    .await?;
+                let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
+                    .expect("validated body channel capacity is nonzero");
+                let (sender, downstream_body) = BodyStream::channel(capacity);
+                let response_head = head.clone();
+                let request_head = request.clone();
+                let body_limit = self.config.limits.max_response_body_bytes;
+                let body_idle_timeout = self.config.limits.body_idle_timeout;
+                tokio::spawn(async move {
+                    stream_local_response_through_hooks(
+                        body,
+                        sender,
+                        pipeline,
+                        chain,
+                        request_head,
+                        response_head,
+                        body_limit,
+                        body_idle_timeout,
+                    )
+                    .await;
+                });
+                response_stream_to_hyper(&head, downstream_body)
+            }
+            Ok(ResponseHeadOutcome::Abort(reason)) => {
+                drop(body);
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    ExchangeFailureKind::HookAborted(reason.clone()),
+                    format!("hook aborted streaming local response: {reason:?}"),
+                    false,
+                    false,
+                )
+                .await;
+                Err(reason.into())
+            }
+            Err(error) => {
+                drop(body);
+                self.fail_chain(
+                    &chain,
+                    ExchangeStage::ResponseHead,
+                    hook_failure_kind(&error),
+                    error.to_string(),
+                    false,
+                    false,
+                )
+                .await;
+                Err(error.into())
+            }
+        }
+    }
+
     async fn finish_prepared_local_response(
         &self,
         mut response: CanonicalResponse,
@@ -3465,6 +3592,103 @@ async fn stream_response_through_hooks(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn stream_local_response_through_hooks(
+    mut body: BodyStream,
+    sender: BodyStreamSender,
+    mut pipeline: ContentBodyPipeline,
+    chain: Arc<ExchangeChain>,
+    request_head: RequestHead,
+    response_head: ResponseHead,
+    limit: usize,
+    body_idle_timeout: Duration,
+) {
+    let mut input = StreamingBodyTracker::new(limit);
+    let mut output = StreamingBodyTracker::new(limit);
+    loop {
+        let frame = match timeout(body_idle_timeout, body.recv()).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => break,
+            Err(_) => {
+                fail_hook_stream(
+                    &sender,
+                    &chain,
+                    ExchangeStage::ResponseBody,
+                    BodyStreamError::IdleTimeout,
+                )
+                .await;
+                return;
+            }
+        };
+        let canonical = match frame {
+            Ok(frame) => frame,
+            Err(error) => {
+                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                return;
+            }
+        };
+        if let Err(error) = input.accept(&canonical) {
+            fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+            return;
+        }
+        let frames = match pipeline.process(canonical).await {
+            Ok(frames) => frames,
+            Err(error) => {
+                fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                return;
+            }
+        };
+        observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+        if send_streaming_frames(&sender, &mut output, frames)
+            .await
+            .is_err()
+        {
+            emit_hook_failure(
+                &chain,
+                ExchangeStage::ResponseBody,
+                ExchangeFailureKind::Body,
+                "downstream local response-body consumer closed".to_owned(),
+            )
+            .await;
+            return;
+        }
+    }
+    let frames = match pipeline.finish().await {
+        Ok(frames) => frames,
+        Err(error) => {
+            fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+            return;
+        }
+    };
+    observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+    if send_streaming_frames(&sender, &mut output, frames)
+        .await
+        .is_err()
+    {
+        emit_hook_failure(
+            &chain,
+            ExchangeStage::ResponseBody,
+            ExchangeFailureKind::Body,
+            "downstream local response-body consumer closed".to_owned(),
+        )
+        .await;
+        return;
+    }
+    observe_hook_effects(&chain).await;
+    let outcome = CompletedExchange {
+        metadata: Arc::clone(chain.context().metadata()),
+        request_head,
+        response_head,
+    };
+    let report = chain.completed(outcome.clone()).await;
+    for error in report.errors() {
+        warn!(%error, "terminal hook cleanup failed");
+    }
+    if let Some(observer) = runtime_observer(&chain) {
+        observer.completed(outcome).await;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn complete_hook_streaming_exchange(
     chain: &ExchangeChain,
     session: &SessionMetadata,
@@ -4221,6 +4445,9 @@ mod tests {
     #[derive(Clone, Copy)]
     struct LocalResponseHandler;
 
+    #[derive(Clone, Copy)]
+    struct StreamingLocalResponseHandler;
+
     #[derive(Clone, Default)]
     struct RejectingLifecycleHandler {
         phases: Arc<StdMutex<Vec<&'static str>>>,
@@ -4456,6 +4683,48 @@ mod tests {
                     ]),
                     Bytes::from_static(b"synthetic"),
                 ))
+            })
+        }
+    }
+
+    impl InterceptorFactory for StreamingLocalResponseHandler {
+        fn create(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+            Ok(Arc::new(*self))
+        }
+    }
+
+    impl ExchangeInterceptor for StreamingLocalResponseHandler {
+        fn on_request_head(
+            &self,
+            _event: RequestHeadEvent,
+        ) -> BoxHookFuture<'_, RequestHeadAction> {
+            let (sender, body) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+            tokio::spawn(async move {
+                sender
+                    .send(Ok(BodyFrame::Data(Bytes::from_static(b"stream-"))))
+                    .await
+                    .unwrap();
+                sender
+                    .send(Ok(BodyFrame::Data(Bytes::from_static(b"asset"))))
+                    .await
+                    .unwrap();
+            });
+            Box::pin(async move {
+                RequestHeadAction::RespondStreaming(transmog_core::LocalStreamingResponse {
+                    head: ResponseHead {
+                        status: 203,
+                        headers: HeaderBlock::from_fields(vec![
+                            HeaderField::try_new("content-length", "12").unwrap(),
+                            HeaderField::try_new("x-streaming-local", "yes").unwrap(),
+                        ]),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                    body,
+                    body_length: Some(12),
+                })
             })
         }
     }
@@ -6094,6 +6363,43 @@ mod tests {
             .unwrap()
             + 4;
         assert!(head_response[body_offset..].is_empty());
+
+        shutdown_tx.send(()).unwrap();
+        proxy_task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn handler_can_stream_a_local_response_without_contacting_an_origin() {
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 115).unwrap());
+        let ca = ProxyCa::generate("Transmog streaming response test", 2).unwrap();
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                route_policy: RoutePolicy::Http1Only,
+                ..ProxyConfig::default()
+            },
+            ca,
+            trust,
+            Arc::new(StreamingLocalResponseHandler),
+        )
+        .await
+        .unwrap();
+        let proxy_addr = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
+        client
+            .write_all(
+                b"GET http://127.0.0.1:9/local-stream HTTP/1.1\r\nHost: 127.0.0.1:9\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 203"));
+        assert_eq!(http1_response_body(&response), b"stream-asset");
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();

@@ -3,7 +3,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{CanonicalResponse, HeaderBlock, RequestHead, ResponseHead, Target};
+use crate::{
+    CanonicalResponse, HeaderBlock, LocalStreamingResponse, RequestHead, ResponseHead, Target,
+};
 
 use super::{BodyPlan, BodyRepresentation, HookAbort};
 
@@ -253,6 +255,17 @@ pub(crate) fn response_summary(response: &CanonicalResponse) -> HookEffectAction
         status: response.head.status,
         body_frames: response.body.len(),
         body_bytes,
+    }
+}
+
+pub(crate) fn streaming_response_summary(response: &LocalStreamingResponse) -> HookEffectAction {
+    HookEffectAction::Respond {
+        status: response.head.status,
+        body_frames: 0,
+        body_bytes: response
+            .body_length
+            .and_then(|length| usize::try_from(length).ok())
+            .unwrap_or(0),
     }
 }
 

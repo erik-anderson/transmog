@@ -15,7 +15,10 @@ use tokio::{
     time::timeout,
 };
 
-use crate::{BodyFrame, CanonicalResponse, RequestHead, ResponseHead, Target, task::AbortOnDrop};
+use crate::{
+    BodyFrame, CanonicalResponse, LocalStreamingResponse, RequestHead, ResponseHead, Target,
+    task::AbortOnDrop,
+};
 
 use super::{
     BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlanSelection, CompletedExchange,
@@ -373,6 +376,13 @@ pub enum RequestHeadOutcome {
         /// Locally generated response.
         response: CanonicalResponse,
     },
+    /// Complete locally with a backpressured body stream.
+    RespondStreaming {
+        /// Effective request at the short-circuit point.
+        request_head: RequestHead,
+        /// Locally generated streaming response.
+        response: LocalStreamingResponse,
+    },
     /// Terminate before contacting an upstream.
     Abort(super::HookAbort),
 }
@@ -524,6 +534,18 @@ impl ExchangeChain {
                         true,
                     );
                     return Ok(RequestHeadOutcome::Respond {
+                        request_head: head,
+                        response,
+                    });
+                }
+                RequestHeadAction::RespondStreaming(response) => {
+                    self.context.audit().record(
+                        entry.identity,
+                        HookPhase::RequestHead,
+                        super::audit::streaming_response_summary(&response),
+                        true,
+                    );
+                    return Ok(RequestHeadOutcome::RespondStreaming {
                         request_head: head,
                         response,
                     });

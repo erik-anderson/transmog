@@ -80,6 +80,17 @@ pub struct StreamingResponse {
     pub body: BodyStream,
 }
 
+/// Locally generated response whose body remains backpressured and unbuffered.
+#[derive(Debug)]
+pub struct LocalStreamingResponse {
+    /// Validated response head.
+    pub head: ResponseHead,
+    /// Backpressured body frames.
+    pub body: BodyStream,
+    /// Exact body length when known before streaming begins.
+    pub body_length: Option<u64>,
+}
+
 impl CanonicalResponse {
     /// Creates a small local response without silently buffering caller data.
     pub fn local(status: u16, headers: HeaderBlock, body: Bytes) -> Self {

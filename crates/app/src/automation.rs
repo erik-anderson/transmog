@@ -8,7 +8,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use transmog_automation::{AutomationLimits, CompiledAutomation, Rule, compile};
+use transmog_automation::{
+    AutomationLimits, CompiledAutomation, ResponseAssetResolver, Rule, compile_with_assets,
+};
 use transmog_core::intercept::{
     ExchangeMetadata, HookInitError, InterceptorRegistration, InterceptorRegistrationProvider,
 };
@@ -82,26 +84,31 @@ struct CandidateEntry {
 }
 
 /// Thread-safe validate-then-activate registry and core registration provider.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AutomationRegistry {
     active: Arc<RwLock<Arc<ActiveAutomation>>>,
     candidates: Arc<Mutex<VecDeque<CandidateEntry>>>,
     history: Arc<Mutex<VecDeque<Arc<ActiveAutomation>>>>,
     path: Option<Arc<PathBuf>>,
     limits: AutomationLimits,
+    assets: Arc<dyn ResponseAssetResolver>,
 }
 
 impl AutomationRegistry {
-    pub(crate) fn load(path: Option<PathBuf>) -> Result<Self, AppError> {
+    pub(crate) fn load(
+        path: Option<PathBuf>,
+        assets: Arc<dyn ResponseAssetResolver>,
+    ) -> Result<Self, AppError> {
         let limits = AutomationLimits::default();
         let document = path
             .as_deref()
-            .map(load_latest)
+            .map(|path| load_latest(path, assets.clone()))
             .transpose()?
             .flatten()
             .unwrap_or_default();
         validate_document(&document)?;
-        let compiled = compile(document.rules.clone(), limits).map_err(compile_error)?;
+        let compiled = compile_with_assets(document.rules.clone(), limits, Some(assets.clone()))
+            .map_err(compile_error)?;
         Ok(Self {
             active: Arc::new(RwLock::new(Arc::new(ActiveAutomation {
                 document,
@@ -111,6 +118,7 @@ impl AutomationRegistry {
             history: Arc::new(Mutex::new(VecDeque::new())),
             path: path.map(Arc::new),
             limits,
+            assets,
         })
     }
 
@@ -137,7 +145,12 @@ impl AutomationRegistry {
                     false,
                 )
             })?;
-        let compiled = compile(document.rules.clone(), self.limits).map_err(compile_error)?;
+        let compiled = compile_with_assets(
+            document.rules.clone(),
+            self.limits,
+            Some(self.assets.clone()),
+        )
+        .map_err(compile_error)?;
         let encoded = serde_json::to_vec(&document).map_err(|_| {
             AppError::new(
                 ErrorCategory::Internal,
@@ -286,7 +299,10 @@ fn slot_path(path: &Path, slot: u64) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn load_latest(path: &Path) -> Result<Option<AutomationRuleSet>, AppError> {
+fn load_latest(
+    path: &Path,
+    assets: Arc<dyn ResponseAssetResolver>,
+) -> Result<Option<AutomationRuleSet>, AppError> {
     let mut candidates = Vec::new();
     for slot in 0..=1 {
         let candidate = slot_path(path, slot);
@@ -301,7 +317,12 @@ fn load_latest(path: &Path) -> Result<Option<AutomationRuleSet>, AppError> {
         };
         if let Ok(document) = serde_json::from_slice::<AutomationRuleSet>(&bytes) {
             if validate_document(&document).is_ok()
-                && compile(document.rules.clone(), AutomationLimits::default()).is_ok()
+                && compile_with_assets(
+                    document.rules.clone(),
+                    AutomationLimits::default(),
+                    Some(assets.clone()),
+                )
+                .is_ok()
             {
                 candidates.push(document);
             }
@@ -396,7 +417,8 @@ mod tests {
 
     #[test]
     fn validation_is_non_mutating_and_activation_is_explicit() {
-        let registry = AutomationRegistry::load(None).unwrap();
+        let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
+        let registry = AutomationRegistry::load(None, Arc::new(assets)).unwrap();
         let candidate = registry.validate(document("Transmog/1")).unwrap();
         assert_eq!(registry.status().generation, 0);
         assert_eq!(registry.status().candidate_count, 1);
@@ -414,14 +436,16 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("rules");
-        let registry = AutomationRegistry::load(Some(path.clone())).unwrap();
+        let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
+        let registry =
+            AutomationRegistry::load(Some(path.clone()), Arc::new(assets.clone())).unwrap();
         let first = registry.validate(document("one")).unwrap();
         registry.activate(&first.candidate_id).unwrap();
         let second = registry.validate(document("two")).unwrap();
         registry.activate(&second.candidate_id).unwrap();
         std::fs::write(slot_path(&path, 0), b"not-json").unwrap();
 
-        let recovered = AutomationRegistry::load(Some(path)).unwrap();
+        let recovered = AutomationRegistry::load(Some(path), Arc::new(assets)).unwrap();
         assert_eq!(recovered.status().generation, 1);
         let _ = std::fs::remove_dir_all(root);
     }

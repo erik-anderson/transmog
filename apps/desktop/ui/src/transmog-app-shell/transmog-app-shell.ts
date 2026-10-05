@@ -106,6 +106,7 @@ interface AutomationStatus {
   candidateCount: number;
   historyCount: number;
 }
+interface ResponseAsset { id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null; }
 
 export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
@@ -125,6 +126,8 @@ export class TransmogAppShell extends WebUIElement {
   pausedList!: HTMLDivElement;
   breakpointForm!: HTMLFormElement;
   automationForm!: HTMLFormElement;
+  responseAssetForm!: HTMLFormElement;
+  autoResponseForm!: HTMLFormElement;
   automationOutput!: HTMLPreElement;
   composerForm!: HTMLFormElement;
   composerOutput!: HTMLPreElement;
@@ -476,6 +479,7 @@ export class TransmogAppShell extends WebUIElement {
           replaceBody: null,
           discardBody: false,
           abortReason: null,
+          responseAsset: null,
           allowNonIdempotentBodyReplacement: false,
         },
         response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
@@ -496,6 +500,70 @@ export class TransmogAppShell extends WebUIElement {
       this.renderAutomation(await invoke<AutomationStatus>('automation_status'));
     } catch (error: unknown) {
       this.automationOutput.textContent = `Automation query failed: ${describeError(error)}`;
+    }
+  }
+
+  async createResponseAsset(event: Event): Promise<void> {
+    event.preventDefault();
+    const data = new FormData(this.responseAssetForm);
+    try {
+      const asset = await invoke<ResponseAsset>('create_response_asset', {
+        input: {
+          id: String(data.get('assetId') ?? ''),
+          revision: Number(data.get('assetRevision') ?? 1),
+          status: Number(data.get('status') ?? 200),
+          headers: [],
+          body: Array.from(new TextEncoder().encode(String(data.get('body') ?? ''))),
+          mediaType: optionalText(data.get('mediaType')),
+        },
+      });
+      this.automationOutput.textContent = JSON.stringify(asset, null, 2);
+      this.diagnostics.textContent = `Created immutable response asset ${asset.id}@${asset.revision}.`;
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Asset creation failed: ${describeError(error)}`;
+    }
+  }
+
+  async activateAutoResponseRule(event: Event): Promise<void> {
+    event.preventDefault();
+    const data = new FormData(this.autoResponseForm);
+    const document = {
+      schemaVersion: 1,
+      generation: 0,
+      rules: [{
+        id: String(data.get('ruleId') ?? ''),
+        revision: Number(data.get('revision') ?? 1),
+        priority: 0,
+        matcher: {
+          method: null,
+          scheme: null,
+          host: optionalText(data.get('host')),
+          port: null,
+          pathPrefix: optionalText(data.get('path')),
+          query: null,
+          requestHeaders: [],
+          responseHeaders: [],
+          responseStatus: null,
+          responseStatusClass: null,
+        },
+        request: {
+          headers: [],
+          replaceBody: null,
+          discardBody: false,
+          abortReason: null,
+          responseAsset: String(data.get('assetRef') ?? ''),
+          allowNonIdempotentBodyReplacement: false,
+        },
+        response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
+      }],
+    };
+    try {
+      const candidate = await invoke<AutomationCandidate>('validate_automation', { document });
+      const status = await invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
+      this.renderAutomation(status);
+      this.diagnostics.textContent = 'Activated head-based autoresponse; matching traffic will not contact the origin.';
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Autoresponse activation failed: ${describeError(error)}`;
     }
   }
 
