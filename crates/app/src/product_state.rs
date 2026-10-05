@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 2;
+const CURRENT_SCHEMA: u32 = 3;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -79,15 +79,36 @@ impl Default for ProductPreferences {
 }
 
 /// Explicit persisted privacy choices.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrivacySettings {
+    /// Retain response bodies in the product cache for inspection.
+    #[serde(default = "default_true")]
+    pub retain_response_bodies: bool,
     /// Default to retaining bounded body samples in new captures.
+    #[serde(default)]
     pub retain_body_samples: bool,
     /// Permit recent artifact paths to be retained locally.
+    #[serde(default)]
     pub remember_recent_artifacts: bool,
     /// Permit paths in manually-created support bundles.
+    #[serde(default)]
     pub include_paths_in_support_bundles: bool,
+}
+
+impl Default for PrivacySettings {
+    fn default() -> Self {
+        Self {
+            retain_response_bodies: true,
+            retain_body_samples: false,
+            remember_recent_artifacts: false,
+            include_paths_in_support_bundles: false,
+        }
+    }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 /// Type of a recent user-selected artifact.
@@ -321,7 +342,12 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
                 ..ProductState::default()
             }
         }
-        2 => serde_json::from_value(value).map_err(|_| ())?,
+        2 => {
+            let mut state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
+            state.schema_version = CURRENT_SCHEMA;
+            state
+        }
+        3 => serde_json::from_value(value).map_err(|_| ())?,
         _ => return Err(()),
     };
     validate(state).map_err(|_| ())
@@ -466,6 +492,7 @@ mod tests {
     #[test]
     fn validates_bounds_and_privacy() {
         let store = ProductStateManager::memory(ProductState::default());
+        assert!(store.snapshot().privacy.retain_response_bodies);
         let mut invalid = store.snapshot();
         invalid.window.width = 1;
         assert!(store.save(invalid).is_err());

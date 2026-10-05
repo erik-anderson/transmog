@@ -13,7 +13,7 @@ use transmog_runtime::{ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer
 use transmog_session::{ApplicationSessionService, HostIntegration, HostIntegrationPlan};
 use transmog_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
-use crate::{AppError, ErrorCategory};
+use crate::{AppError, BodyStore, ErrorCategory};
 
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -88,6 +88,7 @@ pub struct CaIdentity {
 
 pub(crate) async fn start_proxy(
     service: &ApplicationSessionService,
+    body_store: Option<&BodyStore>,
     request: ProxyStartRequest,
     host: Option<Arc<dyn HostIntegration>>,
 ) -> Result<(), AppError> {
@@ -144,11 +145,15 @@ pub(crate) async fn start_proxy(
             )
         })?,
     );
-    let components = service.prepare_components(
+    let mut components = service.prepare_components(
         ProxyComponents::new(hooks, certificates).with_content_policy(
             ContentPolicy::preserve_original_output(ContentLimits::default()),
         ),
     );
+    if let Some(body_store) = body_store {
+        components =
+            components.with_observer(Arc::new(body_store.clone()), body_store.observer_config());
+    }
     let server = ProxyServer::bind_with_components(config, trust, components)
         .await
         .map_err(|_| {
@@ -290,7 +295,9 @@ mod tests {
             listen: "192.0.2.1:0".parse().unwrap(),
             ..ProxyStartRequest::default()
         };
-        let error = start_proxy(&service, request, None).await.unwrap_err();
+        let error = start_proxy(&service, None, request, None)
+            .await
+            .unwrap_err();
         assert_eq!(error.category, ErrorCategory::InvalidInput);
     }
 

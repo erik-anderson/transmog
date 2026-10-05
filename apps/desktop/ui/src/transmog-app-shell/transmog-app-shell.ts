@@ -72,7 +72,7 @@ type CaptureReadModel = Record<string, unknown>;
 interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };
-  privacy: { retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
+  privacy: { retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
 }
@@ -458,7 +458,7 @@ export class TransmogAppShell extends WebUIElement {
       (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
       (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
       (elements.namedItem('defaultSystemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
-      (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainBodySamples;
+      (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
       (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
       (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
       this.supportOutput.textContent = `Loaded schema ${state.schemaVersion}; ${state.recentArtifacts.length} recent artifact reference(s).`;
@@ -475,7 +475,7 @@ export class TransmogAppShell extends WebUIElement {
       state.preferences.theme = String(data.get('theme')) as ProductState['preferences']['theme'];
       state.preferences.sessionPageSize = Number(data.get('pageSize'));
       state.preferences.configureSystemProxy = data.get('defaultSystemProxy') === 'on';
-      state.privacy.retainBodySamples = data.get('defaultBodies') === 'on';
+      state.privacy.retainResponseBodies = data.get('defaultBodies') === 'on';
       state.privacy.rememberRecentArtifacts = data.get('rememberArtifacts') === 'on';
       state.privacy.includePathsInSupportBundles = data.get('supportPaths') === 'on';
       const saved = await invoke<ProductState>('save_product_state', { productState: state });

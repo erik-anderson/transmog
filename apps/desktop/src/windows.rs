@@ -15,7 +15,7 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, ArtifactKind, BreakpointDecision,
+    AppConfig, AppError, AppStatus, Application, ArtifactKind, BodyStoreConfig, BreakpointDecision,
     BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel,
     CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot,
     DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest, ProductState,
@@ -337,6 +337,9 @@ pub fn run() {
         replay_executor: Some(Arc::new(replay)),
         product_state_path: Some(state_root.join("preferences")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
+        body_store: Some(BodyStoreConfig::product_default(
+            state_root.join("body-cache-v1"),
+        )),
         ..AppConfig::default()
     })
     .expect("application must initialize");
@@ -484,6 +487,11 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) && entry.file_name() == "body-cache-v1"
+        {
+            std::fs::remove_dir_all(path).map_err(|_| ())?;
+            continue;
+        }
         if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }

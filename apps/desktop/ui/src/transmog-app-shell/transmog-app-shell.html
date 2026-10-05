@@ -60,7 +60,7 @@
         </div>
         <dl>
           <div><dt>Listener</dt><dd w-ref="{listenerValue}">{{listener}}</dd></div>
-          <div><dt>Retention</dt><dd>Metadata only</dd></div>
+          <div><dt>Retention</dt><dd>Responses · circular · 1 GiB</dd></div>
         </dl>
       </section>
       <section id="breakpoints" class="workspace full" aria-labelledby="breakpoints-heading">
@@ -132,7 +132,7 @@
             <label>Theme <select name="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
             <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
             <label><input name="defaultSystemProxy" type="checkbox"> Configure the system proxy by default</label>
-            <label><input name="defaultBodies" type="checkbox"> Retain bounded body samples by default</label>
+            <label><input name="defaultBodies" type="checkbox" checked> Retain response bodies in the one-GiB circular cache</label>
             <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
             <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
             <div class="actions">

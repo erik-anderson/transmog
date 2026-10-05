@@ -7,6 +7,7 @@
 //! `WebView`, or operating-system dependency.
 
 mod artifacts;
+mod body_store;
 mod breakpoints;
 mod composer;
 mod diagnostics;
@@ -20,6 +21,10 @@ use std::{path::PathBuf, sync::Arc};
 pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
+};
+pub use body_store::{
+    BodyAvailability, BodyRange, BodyStore, BodyStoreConfig, BodyStoreCounters, BodyStoreError,
+    DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
 };
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
@@ -150,6 +155,8 @@ pub struct AppConfig {
     pub product_state_path: Option<PathBuf>,
     /// Optional bounded JSON-lines operational log.
     pub diagnostics_log_path: Option<PathBuf>,
+    /// Optional product-layer on-disk response-body cache.
+    pub body_store: Option<BodyStoreConfig>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -160,6 +167,7 @@ impl std::fmt::Debug for AppConfig {
             .field("replay_executor", &self.replay_executor.is_some())
             .field("product_state_path", &self.product_state_path)
             .field("diagnostics_log_path", &self.diagnostics_log_path)
+            .field("body_store", &self.body_store)
             .finish()
     }
 }
@@ -173,6 +181,7 @@ pub struct Application {
     composer: composer::ComposerManager,
     product_state: product_state::ProductStateManager,
     diagnostics: diagnostics::DiagnosticLog,
+    body_store: Option<BodyStore>,
 }
 
 impl std::fmt::Debug for Application {
@@ -191,11 +200,23 @@ impl Application {
     ///
     /// Returns a bounded application error if the owned service cannot start.
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let body_store = config
+            .body_store
+            .map(BodyStore::new)
+            .transpose()
+            .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), true))?;
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
+        if let Some(store) = &body_store {
+            store.set_mode(if product_state.snapshot().privacy.retain_response_bodies {
+                RetentionMode::Circular
+            } else {
+                RetentionMode::Off
+            });
+        }
         if let Some(warning) = warning {
             diagnostics.record(
                 diagnostics::DiagnosticLevel::Warning,
@@ -211,6 +232,7 @@ impl Application {
             composer: composer::ComposerManager::new(config.replay_executor),
             product_state,
             diagnostics,
+            body_store,
         })
     }
 
@@ -226,6 +248,13 @@ impl Application {
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
         let result = self.product_state.save(state);
+        if let (Ok(state), Some(store)) = (&result, &self.body_store) {
+            store.set_mode(if state.privacy.retain_response_bodies {
+                RetentionMode::Circular
+            } else {
+                RetentionMode::Off
+            });
+        }
         match &result {
             Ok(_) => self.diagnostics.record(
                 DiagnosticLevel::Info,
@@ -270,6 +299,11 @@ impl Application {
     /// Returns the authoritative session service for product use-case modules.
     pub fn session_service(&self) -> &ApplicationSessionService {
         &self.service
+    }
+
+    /// Returns the optional product-layer response-body cache.
+    pub fn body_store(&self) -> Option<&BodyStore> {
+        self.body_store.as_ref()
     }
 
     /// Returns a bounded point-in-time lifecycle read model.
@@ -346,7 +380,8 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
-        let result = lifecycle::start_proxy(&self.service, request, host).await;
+        let result =
+            lifecycle::start_proxy(&self.service, self.body_store.as_ref(), request, host).await;
         self.diagnostics.record(
             if result.is_ok() {
                 DiagnosticLevel::Info
