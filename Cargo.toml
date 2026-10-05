@@ -19,6 +19,7 @@ members = [
     "crates/proxy-script",
     "crates/script-host",
     "crates/script-supervisor",
+    "crates/preview-worker",
     "crates/proxy-websocket",
     "crates/proxy-session",
     "crates/proxy-cli",
@@ -45,6 +46,7 @@ getrandom = "0.4.3"
 http = "1.3.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
+image = { version = "=0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 hyper = { version = "1.11.1", features = ["client", "http1", "http2", "server"] }
 hyper-boring = "=5.2.0"
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
@@ -55,8 +57,9 @@ serde_json = "1.0.145"
 regex = "1.13.1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
+sourcemap = "=9.3.2"
 thiserror = "2.0.17"
-tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-boring = "=5.2.0"
 tower-service = "0.3.3"
 tracing = "0.1.41"

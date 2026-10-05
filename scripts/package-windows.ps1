@@ -34,26 +34,40 @@ try {
     Pop-Location
 }
 
-$cargoArguments = @('test', '--locked', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-desktop')
+$cargoArguments = @('test', '--locked', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
 if ($Offline) { $cargoArguments += '--offline' }
 & cargo @cargoArguments
 if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
 
+$hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+if ($Offline) { $hostBuildArguments += '--offline' }
+& cargo @hostBuildArguments
+if ($LASTEXITCODE -ne 0) { throw "Script host release build failed with exit code $LASTEXITCODE" }
+
+$binaryDirectory = Join-Path $desktopRoot 'binaries'
+$bundledHost = Join-Path $binaryDirectory 'transmog-script-host-x86_64-pc-windows-msvc.exe'
+$bundledPreview = Join-Path $binaryDirectory 'transmog-preview-worker-x86_64-pc-windows-msvc.exe'
+New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-script-host.exe') -Destination $bundledHost -Force
+Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-preview-worker.exe') -Destination $bundledPreview -Force
+
 $tauriArguments = @('build', '--bundles', 'nsis', '--ci')
 $overridePath = Join-Path $artifactRoot 'signing-config.json'
-if (-not $UnsignedDevelopment) {
-    @{
-        bundle = @{
-            windows = @{
-                certificateThumbprint = $SigningCertificateThumbprint.ToUpperInvariant()
-                digestAlgorithm = 'sha256'
-                timestampUrl = $TimestampUrl
-                tsp = $false
-            }
-        }
-    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $overridePath -Encoding utf8NoBOM
-    $tauriArguments += @('--config', $overridePath)
+$override = @{
+    bundle = @{
+        externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker')
+    }
 }
+if (-not $UnsignedDevelopment) {
+    $override.bundle.windows = @{
+        certificateThumbprint = $SigningCertificateThumbprint.ToUpperInvariant()
+        digestAlgorithm = 'sha256'
+        timestampUrl = $TimestampUrl
+        tsp = $false
+    }
+}
+$override | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $overridePath -Encoding utf8NoBOM
+$tauriArguments += @('--config', $overridePath)
 
 Push-Location $desktopRoot
 $priorCargoOffline = $env:CARGO_NET_OFFLINE
@@ -67,6 +81,8 @@ try {
     $env:CARGO_NET_OFFLINE = $priorCargoOffline
     Pop-Location
     Remove-Item -LiteralPath $overridePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $bundledHost -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $bundledPreview -Force -ErrorAction SilentlyContinue
 }
 
 $installer = Get-ChildItem (Join-Path $repositoryRoot 'target\release\bundle\nsis\Transmog_*-setup.exe') |

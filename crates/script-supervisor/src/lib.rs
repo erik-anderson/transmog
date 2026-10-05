@@ -218,6 +218,7 @@ fn worker(
     failed: &AtomicBool,
 ) {
     let mut stdout = BufReader::new(stdout);
+    let source_map = sourcemap::decode_slice(&compiled.source_map).ok();
     let initialize = ScriptHostRequest::Initialize {
         protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
         token,
@@ -236,7 +237,7 @@ fn worker(
             let _ = ready.send(Ok(()));
         }
         Ok(ScriptHostReply::Fatal { failure, .. }) => {
-            let _ = ready.send(Err(failure));
+            let _ = ready.send(Err(map_failure(failure, source_map.as_ref())));
             return;
         }
         _ => {
@@ -277,7 +278,7 @@ fn worker(
                 && echoed == token
                 && request_id == work.request_id =>
             {
-                result
+                result.map_err(|failure| map_failure(failure, source_map.as_ref()))
             }
             _ => Err(protocol("script host reply was invalid")),
         };
@@ -296,6 +297,24 @@ fn worker(
             token,
         },
     );
+}
+
+fn map_failure(
+    mut failure: ScriptFailure,
+    source_map: Option<&sourcemap::DecodedMap>,
+) -> ScriptFailure {
+    let Some((line, column, source_map)) = failure
+        .line
+        .zip(failure.column)
+        .and_then(|(line, column)| source_map.map(|map| (line, column, map)))
+    else {
+        return failure;
+    };
+    if let Some(token) = source_map.lookup_token(line.saturating_sub(1), column.saturating_sub(1)) {
+        failure.line = Some(token.get_src_line() + 1);
+        failure.column = Some(token.get_src_col() + 1);
+    }
+    failure
 }
 
 fn launch(config: &ScriptHostConfig, max_heap_bytes: usize) -> Result<Child, ScriptFailure> {

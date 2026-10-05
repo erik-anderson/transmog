@@ -26,6 +26,7 @@ const SCRIPT_WORKSPACE_SCHEMA_VERSION: u32 = 1;
 const MAX_SCRIPT_WORKSPACE_BYTES: u64 = 40 * 1024 * 1024;
 const MAX_CANDIDATES: usize = 16;
 const MAX_HISTORY: usize = 32;
+const MAX_SAVED_DRAFTS: usize = 64;
 
 /// Editable source and explicit authority for one script revision.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +82,8 @@ pub struct ScriptStatus {
     pub generation: u64,
     /// Exact active revisions.
     pub active: Vec<ScriptRevision>,
+    /// Saved drafts, including drafts that have not validated yet.
+    pub saved: Vec<ScriptDraft>,
     /// Validated candidates awaiting activation.
     pub candidate_count: usize,
     /// Retained prior active snapshots.
@@ -93,8 +96,11 @@ struct ScriptWorkspace {
     schema_version: u32,
     generation: u64,
     active: Vec<ScriptRevision>,
+    #[serde(default)]
+    saved: Vec<ScriptDraft>,
 }
 
+#[derive(Clone)]
 struct ActiveScript {
     registration: InterceptorRegistration,
 }
@@ -159,6 +165,7 @@ impl ScriptRegistry {
     }
 
     pub(crate) fn validate(&self, draft: ScriptDraft) -> Result<ScriptCandidate, AppError> {
+        validate_draft_shape(&draft)?;
         let manifest = ScriptManifest {
             id: draft.id,
             revision: draft.revision,
@@ -199,6 +206,95 @@ impl ScriptRegistry {
             candidates.pop_front();
         }
         Ok(result)
+    }
+
+    pub(crate) fn save(&self, draft: ScriptDraft) -> Result<ScriptStatus, AppError> {
+        validate_draft_shape(&draft)?;
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut workspace = active.workspace.clone();
+        let scripts = active.scripts.clone();
+        drop(active);
+        workspace
+            .saved
+            .retain(|saved| saved.id != draft.id || saved.revision != draft.revision);
+        workspace.saved.push(draft);
+        workspace.saved.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.revision.cmp(&right.revision))
+        });
+        if workspace.saved.len() > MAX_SAVED_DRAFTS {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "saved script draft limit exceeded",
+                false,
+            ));
+        }
+        workspace.generation = workspace.generation.checked_add(1).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Limit,
+                "script generation is exhausted",
+                false,
+            )
+        })?;
+        if let Some(path) = self.path.as_deref() {
+            persist(path, &workspace)?;
+        }
+        *self
+            .active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Arc::new(ActiveSnapshot { workspace, scripts });
+        Ok(self.status())
+    }
+
+    pub(crate) async fn test(
+        &self,
+        candidate_id: &str,
+        invocation: ScriptInvocation,
+    ) -> Result<transmog_script::ScriptAction, AppError> {
+        let revision = self
+            .candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|candidate| candidate.id == candidate_id)
+            .map(|candidate| candidate.revision.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "script candidate is unknown or expired",
+                    false,
+                )
+            })?;
+        let compiled = compile_typescript(revision.manifest, &revision.source)
+            .map_err(script_compile_error)?;
+        let runner = self.start_runner(compiled)?;
+        runner.invoke(invocation).await.map_err(|failure| {
+            let location = failure
+                .line
+                .map(|line| format!(":{line}:{}", failure.column.unwrap_or(1)))
+                .unwrap_or_default();
+            AppError::new(
+                match failure.category {
+                    transmog_script::ScriptFailureCategory::InvalidAction
+                    | transmog_script::ScriptFailureCategory::Exception
+                    | transmog_script::ScriptFailureCategory::Protocol => {
+                        ErrorCategory::InvalidInput
+                    }
+                    _ => ErrorCategory::Unavailable,
+                },
+                format!("script test failed{location}: {}", failure.message),
+                matches!(
+                    failure.category,
+                    transmog_script::ScriptFailureCategory::Crash
+                        | transmog_script::ScriptFailureCategory::Unavailable
+                ),
+            )
+        })
     }
 
     pub(crate) fn activate(&self, candidate_id: &str) -> Result<ScriptStatus, AppError> {
@@ -340,6 +436,7 @@ impl ScriptRegistry {
         ScriptStatus {
             generation: active.workspace.generation,
             active: active.workspace.active.clone(),
+            saved: active.workspace.saved.clone(),
             candidate_count: self
                 .candidates
                 .lock()
@@ -431,10 +528,36 @@ impl ScriptRunner for UnavailableRunner {
 fn validate_workspace(workspace: &ScriptWorkspace) -> Result<(), AppError> {
     if workspace.schema_version != SCRIPT_WORKSPACE_SCHEMA_VERSION
         || workspace.active.len() > MAX_ACTIVE_SCRIPT_HOSTS
+        || workspace.saved.len() > MAX_SAVED_DRAFTS
     {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
             "script workspace is unsupported",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_draft_shape(draft: &ScriptDraft) -> Result<(), AppError> {
+    if draft.id.is_empty()
+        || draft.id.len() > 128
+        || !draft
+            .id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        || draft.revision == 0
+    {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "script draft identity or revision is invalid",
+            false,
+        ));
+    }
+    if draft.source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "script source exceeds one MiB",
             false,
         ));
     }

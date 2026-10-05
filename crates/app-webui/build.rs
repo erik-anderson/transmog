@@ -19,6 +19,12 @@ fn main() {
         "cargo:rerun-if-changed={}",
         ui_dir.join("dist/app.js").display()
     );
+    for asset in ["app.css", "monaco-editor.worker.js", "monaco-ts.worker.js"] {
+        println!(
+            "cargo:rerun-if-changed={}",
+            ui_dir.join("dist").join(asset).display()
+        );
+    }
     println!(
         "cargo:rerun-if-changed={}",
         ui_dir.join("dist/webui-projection.json").display()

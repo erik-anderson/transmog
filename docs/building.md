@@ -118,7 +118,8 @@ pwsh ./scripts/cache-v8.ps1 -ArchivePath C:\staging\rusty_v8.lib.gz
 
 The script refuses any archive other than SHA-256
 `F231F82CBACB9AEFE6D9AF57E6DF2E8959A40E001F79306485133E3C075B98F0`.
-Release packaging builds `transmog-script-host` beside the desktop executable.
+Release packaging builds `transmog-script-host` and the isolated
+`transmog-preview-worker` beside the desktop executable.
 Production activation requires the host's Windows AppContainer plus Job Object;
 there is no production fallback to an unsandboxed process.
 
@@ -133,7 +134,8 @@ npm run check
 Pop-Location
 ```
 
-`ui/dist/app.js` and `ui/dist/webui-projection.json` are checked in. This lets
+`ui/dist/app.js`, `ui/dist/app.css`, both local Monaco worker bundles, and
+`ui/dist/webui-projection.json` are checked in. This lets
 ordinary Cargo builds consume reviewed assets without npm or network access.
 `npm run check` rebuilds both files and fails if either checked-in output was
 stale. `transmog-app-webui` compiles `protocol.bin` and hashed CSS into Cargo's
@@ -149,8 +151,17 @@ Build, test, and run through the repository's LLVM/Ninja environment:
 ```powershell
 . ./scripts/dev-env.ps1
 cargo test --locked -p transmog-desktop
+cargo build --locked -p transmog-script-host
+cargo build --locked -p transmog-preview-worker
 cargo run --locked -p transmog-desktop
 ```
+
+The desktop locates `transmog-script-host.exe` beside its own executable. The
+repository build script builds both binaries into the same Cargo profile
+directory. Release packaging copies the exact release host to Tauri's
+target-qualified `externalBin` inputs and removes those staging copies
+afterward; the NSIS bundle therefore always installs both AppContainer helpers
+beside Transmog.
 
 Create an unsigned development installer from the repository root:
 

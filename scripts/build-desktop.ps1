@@ -15,7 +15,7 @@ try {
     Pop-Location
 }
 
-$arguments = @('build', '-p', 'transmog-desktop')
+$arguments = @('build', '-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
 if ($Configuration -eq 'Release') {
     $arguments += '--release'
 }

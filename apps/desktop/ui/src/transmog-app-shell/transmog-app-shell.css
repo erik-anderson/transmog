@@ -54,13 +54,24 @@ td:nth-child(3) { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; }
 th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
 .inspector { margin-top: 1.25rem; }
 .inspector pre { max-height: 30rem; padding: 1rem; overflow: auto; border: 1px solid var(--line); border-radius: .5rem; color: var(--muted); background: var(--canvas); white-space: pre-wrap; overflow-wrap: anywhere; }
+.body-image-preview { display: block; max-width: 100%; max-height: 40rem; margin-top: .8rem; border: 1px solid var(--line); border-radius: .5rem; background: repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 50% / 1rem 1rem; object-fit: contain; }
 .session-link { min-height: 0; padding: .15rem .35rem; color: var(--accent); background: transparent; border: 0; text-align: left; }
 .paused-list { display: grid; gap: .8rem; margin-top: 1rem; }
 .paused-card { padding: 1rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--canvas); }
-.paused-card textarea { width: 100%; min-height: 8rem; margin: .6rem 0; font-family: "Cascadia Mono", Consolas, monospace; }
+.paused-card .monaco-editor-host { min-height: 12rem; margin: .6rem 0; }
 .phase-form { display: flex; flex-wrap: wrap; align-items: end; max-width: none; }
 .composer-form { max-width: 55rem; }
 .composer-form textarea { min-height: 6rem; font-family: "Cascadia Mono", Consolas, monospace; }
+.script-workspace { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid var(--line); }
+.script-form { max-width: none; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.script-form fieldset { display: flex; flex-wrap: wrap; gap: .75rem; grid-column: 1 / -1; padding: .75rem; border: 1px solid var(--line); border-radius: .5rem; }
+.script-form fieldset label { display: flex; align-items: center; }
+.script-actions { grid-column: 1 / -1; }
+.editor-label { display: flex; justify-content: space-between; gap: 1rem; margin: 1rem 0 .45rem; color: var(--muted); font-size: .85rem; }
+.monaco-editor-host { width: 100%; height: 28rem; border: 1px solid var(--line); border-radius: .5rem; overflow: hidden; }
+.diff-editor { margin-top: 1rem; }
+.script-workspace pre { max-height: 18rem; padding: 1rem; overflow: auto; border: 1px solid var(--line); border-radius: .5rem; background: var(--canvas); white-space: pre-wrap; }
+kbd { padding: .08rem .3rem; border: 1px solid var(--line); border-radius: .25rem; background: var(--panel-raised); }
 #composer pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 #captures pre, #settings pre { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 a:focus-visible, button:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }

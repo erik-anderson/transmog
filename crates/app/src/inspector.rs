@@ -158,6 +158,10 @@ pub struct BodyInspection {
     pub next_offset: Option<u64>,
     /// Redaction-safe explanation of fallback or unavailability.
     pub warning: Option<String>,
+    /// Opaque handle on the isolated preview origin, when available.
+    pub preview_handle: Option<String>,
+    /// Normalized preview MIME type, when available.
+    pub preview_mime_type: Option<&'static str>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -320,6 +324,8 @@ pub(crate) async fn inspect_body(
             truncated: false,
             next_offset: None,
             warning: None,
+            preview_handle: None,
+            preview_mime_type: None,
         });
     }
     if request.representation == BodyRepresentation::Image {
@@ -332,6 +338,8 @@ pub(crate) async fn inspect_body(
             truncated: false,
             next_offset: None,
             warning: Some("safe image preview is unavailable for this body".to_owned()),
+            preview_handle: None,
+            preview_mime_type: None,
         });
     }
     if matches!(
@@ -348,6 +356,8 @@ pub(crate) async fn inspect_body(
             truncated: false,
             next_offset: None,
             warning: Some("retained body bytes are unavailable".to_owned()),
+            preview_handle: None,
+            preview_mime_type: None,
         });
     }
     let max_bytes = request.max_bytes.unwrap_or(DEFAULT_BODY_READ_BYTES);
@@ -419,7 +429,83 @@ pub(crate) async fn inspect_body(
         truncated: next_offset.is_some() || decoded_truncated,
         next_offset,
         warning,
+        preview_handle: None,
+        preview_mime_type: None,
     })
+}
+
+pub(crate) async fn image_source(
+    body_store: Option<&BodyStore>,
+    request: &BodyInspectionRequest,
+) -> Result<(StoredBodyMetadata, Vec<u8>, bool), AppError> {
+    if request.offset != 0 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "image previews must begin at offset zero",
+            false,
+        ));
+    }
+    let store = body_store.ok_or_else(|| {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "response body retention is not configured",
+            false,
+        )
+    })?;
+    let exchange_id = transmog_core::intercept::ExchangeId(parse_session_id(&request.session_id)?);
+    let boundary = parse_boundary(&request.boundary)?;
+    let metadata = store
+        .metadata(exchange_id)
+        .into_iter()
+        .find(|candidate| candidate.boundary == boundary_name(boundary))
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "body boundary is unavailable",
+                false,
+            )
+        })?;
+    if metadata.availability != BodyAvailability::Complete {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "image preview requires a complete retained body",
+            false,
+        ));
+    }
+    let length = usize::try_from(metadata.retained_bytes)
+        .ok()
+        .filter(|length| *length <= transmog_preview_worker::MAX_SOURCE_BYTES)
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Limit,
+                "encoded image exceeds the sixteen MiB preview limit",
+                false,
+            )
+        })?;
+    let range = store
+        .read_range(exchange_id, boundary, 0, length)
+        .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
+    if range.bytes.len() != length {
+        return Err(AppError::new(
+            ErrorCategory::Unavailable,
+            "complete image bytes are unavailable",
+            false,
+        ));
+    }
+    let decoded = !metadata.content_codings.is_empty();
+    let bytes = if decoded {
+        decode_content(&metadata.content_codings, range.bytes).await?
+    } else {
+        range.bytes
+    };
+    if bytes.len() > transmog_preview_worker::MAX_SOURCE_BYTES {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "decoded image exceeds the sixteen MiB preview limit",
+            false,
+        ));
+    }
+    Ok((metadata, bytes, decoded))
 }
 
 fn parse_session_id(id: &str) -> Result<u128, AppError> {

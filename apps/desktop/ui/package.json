@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@microsoft/webui-framework": "0.0.30",
-    "@tauri-apps/api": "2.12.1"
+    "@tauri-apps/api": "2.12.1",
+    "monaco-editor": "0.57.0"
   },
   "devDependencies": {
     "@microsoft/webui": "0.0.30",

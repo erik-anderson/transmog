@@ -9,7 +9,7 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": null,
+      "csp": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost",
       "capabilities": ["main"]
     }
   },

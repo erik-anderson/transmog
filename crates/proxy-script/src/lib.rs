@@ -357,6 +357,8 @@ pub fn compile_typescript(
     let mut exports = BTreeMap::new();
     for item in &parsed.program_ref().unwrap_module().body {
         match item {
+            ModuleItem::ModuleDecl(ModuleDecl::Import(import))
+                if import.type_only && import.src.value == *"transmog:api/v1" => {}
             ModuleItem::ModuleDecl(
                 ModuleDecl::Import(_) | ModuleDecl::ExportAll(_) | ModuleDecl::ExportNamed(_),
             ) => return Err(ScriptCompileError::ImportsForbidden),
@@ -1355,6 +1357,13 @@ mod tests {
                 .unwrap_err(),
             ScriptCompileError::ImportsForbidden
         );
+        let type_import = "import type { Action } from 'transmog:api/v1'; export function onRequestHead(): Action { return { action: 'continue' }; }";
+        let compiled = compile_typescript(
+            manifest(type_import, &[ScriptHandler::RequestHead]),
+            type_import,
+        )
+        .unwrap();
+        assert!(!compiled.javascript.contains("transmog:api/v1"));
         let source = "export function onRequestHead() {}";
         let mut wrong = manifest(source, &[ScriptHandler::RequestHead]);
         wrong.source_hash = "00".repeat(32);

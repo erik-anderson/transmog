@@ -14,6 +14,7 @@ mod composer;
 mod diagnostics;
 mod inspector;
 mod lifecycle;
+mod preview;
 mod product_state;
 mod response_assets;
 mod scripts;
@@ -58,6 +59,7 @@ pub use sessions::{
     SessionHint, SessionPage, SessionQueryInput, SessionSummary, SessionUpdateSubscription,
 };
 use thiserror::Error;
+pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
     ServiceStatus,
@@ -176,6 +178,8 @@ pub struct AppConfig {
     pub script_workspace_path: Option<PathBuf>,
     /// Exact packaged isolated script-host executable.
     pub script_host_executable: Option<PathBuf>,
+    /// Exact packaged isolated raster preview worker executable.
+    pub preview_worker_executable: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -191,6 +195,7 @@ impl std::fmt::Debug for AppConfig {
             .field("response_asset_root", &self.response_asset_root)
             .field("script_workspace_path", &self.script_workspace_path)
             .field("script_host_executable", &self.script_host_executable)
+            .field("preview_worker_executable", &self.preview_worker_executable)
             .finish()
     }
 }
@@ -208,6 +213,7 @@ pub struct Application {
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
     scripts: scripts::ScriptRegistry,
+    previews: preview::PreviewService,
 }
 
 impl std::fmt::Debug for Application {
@@ -242,6 +248,7 @@ impl Application {
             config.script_host_executable,
             Arc::new(response_assets.clone()),
         )?;
+        let previews = preview::PreviewService::new(config.preview_worker_executable);
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
@@ -273,6 +280,7 @@ impl Application {
             automation,
             response_assets,
             scripts,
+            previews,
         })
     }
 
@@ -381,6 +389,31 @@ impl Application {
     /// Returns bounded manifest, TypeScript, capability, or resource errors.
     pub fn validate_script(&self, draft: ScriptDraft) -> Result<ScriptCandidate, AppError> {
         self.scripts.validate(draft)
+    }
+
+    /// Saves a bounded script draft without compiling or activating it.
+    ///
+    /// # Errors
+    /// Returns a shape, resource, or crash-safe persistence error.
+    pub fn save_script(&self, draft: ScriptDraft) -> Result<ScriptStatus, AppError> {
+        self.scripts.save(draft)
+    }
+
+    /// Executes one synthetic invocation in a fresh production sandbox.
+    ///
+    /// # Errors
+    /// Returns candidate, sandbox, runtime, or action errors without activation.
+    pub async fn test_script(
+        &self,
+        candidate_id: &str,
+        invocation: ScriptInvocation,
+    ) -> Result<ScriptAction, AppError> {
+        self.scripts.test(candidate_id, invocation).await
+    }
+
+    /// Returns the exact versioned TypeScript API declarations bundled in Rust.
+    pub fn script_declarations(&self) -> &'static str {
+        transmog_script::typescript_declarations()
     }
 
     /// Starts a sandboxed host and atomically activates a validated revision.
@@ -602,7 +635,30 @@ impl Application {
         &self,
         request: BodyInspectionRequest,
     ) -> Result<BodyInspection, AppError> {
+        if request.representation == BodyRepresentation::Image {
+            let (metadata, source, decoded) =
+                inspector::image_source(self.body_store.as_ref(), &request).await?;
+            let display_bytes = source.len();
+            let preview_handle = self.previews.create(source).await?;
+            return Ok(BodyInspection {
+                metadata,
+                representation: "image",
+                decoded,
+                display: String::new(),
+                display_bytes,
+                truncated: false,
+                next_offset: None,
+                warning: None,
+                preview_handle: Some(preview_handle),
+                preview_mime_type: Some("image/png"),
+            });
+        }
         inspector::inspect_body(self.body_store.as_ref(), request).await
+    }
+
+    /// Resolves one opaque, short-lived normalized preview handle.
+    pub fn image_preview(&self, handle: &str) -> Option<Arc<Vec<u8>>> {
+        self.previews.get(handle)
     }
 
     /// Attaches the exclusive same-build breakpoint controller.

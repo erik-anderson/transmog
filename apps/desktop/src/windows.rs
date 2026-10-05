@@ -21,7 +21,8 @@ use transmog_app::{
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
     CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticsReport,
     ExportFormat, ExportRequest, ExportResult, ImportRequest, ImportResponseAsset, ProductState,
-    ProxyRoute, ProxyStartRequest, ResponseAsset, RuntimeDiagnostics, SessionDetail, SessionHint,
+    ProxyRoute, ProxyStartRequest, ResponseAsset, RuntimeDiagnostics, ScriptAction,
+    ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus, SessionDetail, SessionHint,
     SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
     SupportBundleResult, SystemReplayExecutor, WindowState,
 };
@@ -78,6 +79,60 @@ fn activate_automation(
     state: State<'_, DesktopState>,
 ) -> Result<AutomationStatus, AppError> {
     state.application.activate_automation(&candidate_id)
+}
+
+#[tauri::command]
+fn script_status(state: State<'_, DesktopState>) -> ScriptStatus {
+    state.application.script_status()
+}
+
+#[tauri::command]
+fn script_declarations(state: State<'_, DesktopState>) -> String {
+    state.application.script_declarations().to_owned()
+}
+
+#[tauri::command]
+fn save_script(
+    draft: ScriptDraft,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptStatus, AppError> {
+    state.application.save_script(draft)
+}
+
+#[tauri::command]
+fn validate_script(
+    draft: ScriptDraft,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptCandidate, AppError> {
+    state.application.validate_script(draft)
+}
+
+#[tauri::command]
+async fn test_script(
+    candidate_id: String,
+    invocation: ScriptInvocation,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptAction, AppError> {
+    state
+        .application
+        .test_script(&candidate_id, invocation)
+        .await
+}
+
+#[tauri::command]
+fn activate_script(
+    candidate_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptStatus, AppError> {
+    state.application.activate_script(&candidate_id)
+}
+
+#[tauri::command]
+fn disable_script(
+    script_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptStatus, AppError> {
+    state.application.disable_script(&script_id)
 }
 
 #[tauri::command]
@@ -397,6 +452,9 @@ pub fn run() {
         replay_executor: Some(Arc::new(replay)),
         product_state_path: Some(state_root.join("preferences")),
         automation_path: Some(state_root.join("automation-v1")),
+        script_workspace_path: Some(state_root.join("scripts-v1")),
+        script_host_executable: packaged_script_host(),
+        preview_worker_executable: packaged_preview_worker(),
         response_asset_root: Some(state_root.join("response-assets-v1")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
         body_store: Some(BodyStoreConfig::product_default(
@@ -413,6 +471,7 @@ pub fn run() {
     let owned_certificate =
         OwnedCertificateRegistry::new(state_root.join("certificate-ownership-v1.json"));
     let protocol_application = application.clone();
+    let preview_application = application.clone();
     let close_application = application.clone();
     let close_started = Arc::new(AtomicBool::new(false));
     let close_guard = Arc::clone(&close_started);
@@ -440,6 +499,12 @@ pub fn run() {
                 &view,
             ))
         })
+        .register_uri_scheme_protocol(
+            "transmog-preview",
+            move |_context, request: Request<Vec<u8>>| {
+                preview_response(&preview_application, &request)
+            },
+        )
         .invoke_handler(tauri::generate_handler![
             app_status,
             product_state,
@@ -447,6 +512,13 @@ pub fn run() {
             automation_status,
             validate_automation,
             activate_automation,
+            script_status,
+            script_declarations,
+            save_script,
+            validate_script,
+            test_script,
+            activate_script,
+            disable_script,
             response_assets,
             create_response_asset,
             import_response_asset,
@@ -500,6 +572,48 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Tauri desktop host failed");
+}
+
+fn packaged_script_host() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let host = executable.with_file_name("transmog-script-host.exe");
+    host.is_file().then_some(host)
+}
+
+fn packaged_preview_worker() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let worker = executable.with_file_name("transmog-preview-worker.exe");
+    worker.is_file().then_some(worker)
+}
+
+fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+    let handle = request.uri().path().strip_prefix("/preview/");
+    let preview = (request.method() == tauri::http::Method::GET)
+        .then(|| handle.and_then(|handle| application.image_preview(handle)))
+        .flatten();
+    let (status, content_type, body) = preview.map_or_else(
+        || {
+            (
+                StatusCode::NOT_FOUND,
+                "text/plain; charset=utf-8",
+                b"preview unavailable".to_vec(),
+            )
+        },
+        |png| (StatusCode::OK, "image/png", png.as_ref().clone()),
+    );
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; sandbox",
+        )
+        .header(header::REFERRER_POLICY, "no-referrer")
+        .header("cross-origin-resource-policy", "cross-origin")
+        .body(body)
+        .expect("fixed preview response headers must be valid")
 }
 
 fn exit_for_maintenance_if_requested() {
@@ -580,7 +694,10 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
         ) || is_owned_preference_generation(&name)
             || matches!(
                 name.as_ref(),
-                "automation-v1.0.json" | "automation-v1.1.json"
+                "automation-v1.0.json"
+                    | "automation-v1.1.json"
+                    | "scripts-v1.0.json"
+                    | "scripts-v1.1.json"
             )
             || name.starts_with("certificate-ownership-v1.tmp-")
             || (name.starts_with(".transmog-state-") && name.ends_with(".tmp"));

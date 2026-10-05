@@ -17,4 +17,5 @@ e2e/playwright/test-results/
 e2e/playwright/playwright-report/
 apps/desktop/ui/node_modules/
 apps/desktop/gen/schemas/
+apps/desktop/binaries/*.exe
 verification/private/

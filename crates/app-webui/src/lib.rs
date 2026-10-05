@@ -14,9 +14,14 @@ use webui_handler::plugin::webui::WebUIHydrationPlugin;
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
 const CLIENT_BUNDLE: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/app.js");
+const CLIENT_STYLES: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/app.css");
+const MONACO_EDITOR_WORKER: &[u8] =
+    include_bytes!("../../../apps/desktop/ui/dist/monaco-editor.worker.js");
+const MONACO_TYPESCRIPT_WORKER: &[u8] =
+    include_bytes!("../../../apps/desktop/ui/dist/monaco-ts.worker.js");
 const APP_ICON: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.ico");
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
-const DOCUMENT_CSP_SUFFIX: &str = "'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui";
+const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self'; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui";
 
 /// Complete bounded state used to render the application shell.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -151,6 +156,17 @@ impl AppRenderer {
                 "text/javascript; charset=utf-8",
                 CLIENT_BUNDLE.to_vec(),
             ),
+            "/app.css" => UiResponse::asset(200, "text/css; charset=utf-8", CLIENT_STYLES.to_vec()),
+            "/monaco-editor.worker.js" => UiResponse::asset(
+                200,
+                "text/javascript; charset=utf-8",
+                MONACO_EDITOR_WORKER.to_vec(),
+            ),
+            "/monaco-ts.worker.js" => UiResponse::asset(
+                200,
+                "text/javascript; charset=utf-8",
+                MONACO_TYPESCRIPT_WORKER.to_vec(),
+            ),
             "/favicon.ico" => UiResponse::asset(200, "image/x-icon", APP_ICON.to_vec()),
             css_path => CSS_ASSETS
                 .iter()
@@ -241,6 +257,20 @@ mod tests {
         assert!(csp.contains("require-trusted-types-for 'script'"));
         assert!(!csp.contains("unsafe-inline"));
         assert!(!csp.contains("unsafe-eval"));
+        assert!(csp.contains("worker-src 'self'"));
+        for path in [
+            "/app.css",
+            "/monaco-editor.worker.js",
+            "/monaco-ts.worker.js",
+        ] {
+            assert_eq!(
+                renderer
+                    .respond("GET", path, &ShellView::from(&status()))
+                    .unwrap()
+                    .status,
+                200
+            );
+        }
     }
 
     #[test]

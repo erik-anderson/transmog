@@ -65,6 +65,7 @@
               <button type="button" class="secondary" @click="{inspectBody()}">Inspect body</button>
             </div>
             <pre w-ref="{bodyPreviewOutput}" tabindex="0">No body selected.</pre>
+            <img w-ref="{bodyImagePreview}" class="body-image-preview" alt="Normalized response image preview" hidden>
           </section>
         </div>
         <dl>
@@ -121,6 +122,39 @@
             <button type="submit">Activate autoresponse</button>
           </form>
           <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
+          <section class="script-workspace" aria-labelledby="script-heading">
+            <p class="section-label">Sandboxed TypeScript</p>
+            <h3 id="script-heading">Traffic scripts</h3>
+            <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Activate atomically applies the exact validated revision to newly admitted exchanges.</p>
+            <form w-ref="{scriptForm}" @submit="{validateScript(event)}" class="script-form">
+              <label>Script ID <input name="scriptId" value="conditional-user-agent-script" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
+              <label>Revision <input name="scriptRevision" type="number" min="1" value="1" required></label>
+              <label>Host prefilter <input name="scriptHost" value="example.test" maxlength="255"></label>
+              <label>Path prefix <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
+              <label>Priority <input name="scriptPriority" type="number" value="0" required></label>
+              <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096"></label>
+              <fieldset>
+                <legend>Capabilities</legend>
+                <label><input name="readBodies" type="checkbox"> Read bounded bodies</label>
+                <label><input name="writeBody" type="checkbox"> Replace bodies</label>
+                <label><input name="respond" type="checkbox"> Select response assets</label>
+                <label><input name="abort" type="checkbox" checked> Abort requests</label>
+                <label><input name="sensitive" type="checkbox"> Read sensitive headers</label>
+              </fieldset>
+              <div class="script-actions actions">
+                <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
+                <button type="submit">Validate</button>
+                <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
+                <button type="button" class="secondary" @click="{activateScript()}">Activate</button>
+                <button type="button" class="secondary" @click="{disableScript()}">Disable active</button>
+                <button type="button" class="secondary" @click="{compareActiveScript()}">Compare active</button>
+              </div>
+            </form>
+            <div class="editor-label">TypeScript source <span>Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement</span></div>
+            <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
+            <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison" hidden></div>
+            <pre w-ref="{scriptOutput}" tabindex="0" aria-live="polite">Script editor is loading…</pre>
+          </section>
         </div>
       </section>
       <section id="composer" class="workspace full" aria-labelledby="composer-heading">

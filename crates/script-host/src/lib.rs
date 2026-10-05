@@ -220,11 +220,36 @@ impl ScriptRuntime {
 }
 
 fn failure(category: ScriptFailureCategory, message: &str) -> ScriptFailure {
+    let (line, column) = generated_location(message).unwrap_or((None, None));
     ScriptFailure {
         category,
         message: message.chars().take(512).collect(),
-        line: None,
-        column: None,
+        line,
+        column,
+    }
+}
+
+fn generated_location(message: &str) -> Option<(Option<u32>, Option<u32>)> {
+    let suffix = message.split("main.js:").nth(1)?;
+    let mut parts = suffix.split(|character: char| !character.is_ascii_digit());
+    let line = parts.next()?.parse::<u32>().ok()?;
+    let column = parts.next()?.parse::<u32>().ok()?;
+    Some((Some(line), Some(column)))
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::generated_location;
+
+    #[test]
+    fn extracts_v8_module_stack_location() {
+        assert_eq!(
+            generated_location(
+                "Error: failed\n    at onRequestHead (file:///transmog-script/main.js:17:9)"
+            ),
+            Some((Some(17), Some(9)))
+        );
+        assert_eq!(generated_location("bounded failure"), None);
     }
 }
 

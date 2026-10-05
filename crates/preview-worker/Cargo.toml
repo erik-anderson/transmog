@@ -1,0 +1,15 @@
+[package]
+name = "transmog-preview-worker"
+description = "Isolated bounded raster preview decoder for Transmog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+image.workspace = true
+transmog-script-host = { version = "=0.1.0", path = "../script-host" }
+
+[lints]
+workspace = true

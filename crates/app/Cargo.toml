@@ -25,6 +25,7 @@ transmog-control-transport = { version = "=0.1.0", path = "../proxy-control-tran
 transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
 transmog-core = { version = "=0.1.0", path = "../proxy-core" }
 transmog-http = { version = "=0.1.0", path = "../proxy-http" }
+transmog-preview-worker = { version = "=0.1.0", path = "../preview-worker" }
 transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
 transmog-saz = { version = "=0.1.0", path = "../proxy-saz" }
 transmog-script = { version = "=0.1.0", path = "../proxy-script" }

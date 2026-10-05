@@ -1,5 +1,6 @@
 import { WebUIElement } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { ModuleKind, ModuleResolutionKind, ScriptTarget, monaco, typescriptDefaults } from '../monaco.js';
 
 type Lifecycle = 'stopped' | 'running' | 'stopping' | 'failed';
 
@@ -70,6 +71,8 @@ interface BodyInspection {
   truncated: boolean;
   nextOffset: number | null;
   warning: string | null;
+  previewHandle: string | null;
+  previewMimeType: string | null;
 }
 type BreakpointPhase = 'request-head' | 'request-body' | 'response-head' | 'response-body';
 interface PausedExchange {
@@ -107,6 +110,52 @@ interface AutomationStatus {
   historyCount: number;
 }
 interface ResponseAsset { id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null; }
+type ScriptHandler = 'onRequestHead' | 'onRequestBody' | 'onResponseHead' | 'onResponseBody';
+interface ScriptDraft {
+  id: string;
+  revision: number;
+  source: string;
+  handlers: ScriptHandler[];
+  prefilter: { method: string | null; host: string | null; pathPrefix: string | null };
+  capabilities: {
+    readSensitiveHeaders: boolean;
+    readBodies: boolean;
+    writeHeaders: string[];
+    writeBody: boolean;
+    respond: boolean;
+    abort: boolean;
+  };
+  limits: {
+    maxInputBodyBytes: number;
+    maxOutputBytes: number;
+    maxLogBytes: number;
+    maxHeapBytes: number;
+    maxDurationMs: number;
+  };
+  priority: number;
+}
+interface ScriptRevision { manifest: { id: string; revision: number; sourceHash: string }; source: string; }
+interface ScriptStatus {
+  generation: number;
+  active: ScriptRevision[];
+  saved: ScriptDraft[];
+  candidateCount: number;
+  historyCount: number;
+}
+interface ScriptCandidate { candidateId: string; scriptId: string; revision: number; sourceHash: string; }
+
+const SCRIPT_TEMPLATE = `import type { Action, Context, Request } from "transmog:api/v1";
+
+export function onRequestHead(_context: Context, request: Request): Action {
+  if (request.host === "example.test") {
+    return {
+      action: "headers",
+      operations: [{ operation: "set", name: "User-Agent", value: "Transmog/1.0" }],
+    };
+  }
+  return { action: "continue" };
+}
+`;
 
 export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
@@ -123,12 +172,17 @@ export class TransmogAppShell extends WebUIElement {
   bodyDecoded!: HTMLInputElement;
   bodyMaxBytes!: HTMLInputElement;
   bodyPreviewOutput!: HTMLPreElement;
+  bodyImagePreview!: HTMLImageElement;
   pausedList!: HTMLDivElement;
   breakpointForm!: HTMLFormElement;
   automationForm!: HTMLFormElement;
   responseAssetForm!: HTMLFormElement;
   autoResponseForm!: HTMLFormElement;
   automationOutput!: HTMLPreElement;
+  scriptForm!: HTMLFormElement;
+  scriptEditor!: HTMLDivElement;
+  scriptDiffEditor!: HTMLDivElement;
+  scriptOutput!: HTMLPreElement;
   composerForm!: HTMLFormElement;
   composerOutput!: HTMLPreElement;
   captureForm!: HTMLFormElement;
@@ -140,6 +194,70 @@ export class TransmogAppShell extends WebUIElement {
   private nextCursor: string | null = null;
   private watching = false;
   private selectedSessionId: string | null = null;
+  private sourceEditor: monaco.editor.IStandaloneCodeEditor | null = null;
+  private revisionDiff: monaco.editor.IStandaloneDiffEditor | null = null;
+  private diffModels: monaco.editor.ITextModel[] = [];
+  private breakpointEditors: monaco.editor.IStandaloneCodeEditor[] = [];
+  private candidate: ScriptCandidate | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    queueMicrotask(() => { void this.initializeScriptEditor(); });
+  }
+
+  disconnectedCallback(): void {
+    for (const editor of this.breakpointEditors) editor.dispose();
+    this.breakpointEditors = [];
+    this.revisionDiff?.dispose();
+    this.sourceEditor?.dispose();
+    for (const model of this.diffModels) model.dispose();
+    this.diffModels = [];
+    super.disconnectedCallback();
+  }
+
+  private async initializeScriptEditor(): Promise<void> {
+    if (this.sourceEditor !== null || this.scriptEditor === undefined) return;
+    const declarations = await invoke<string>('script_declarations');
+    typescriptDefaults.setCompilerOptions({
+      allowNonTsExtensions: true,
+      module: ModuleKind.ESNext,
+      moduleResolution: ModuleResolutionKind.NodeJs,
+      noEmit: true,
+      strict: true,
+      target: ScriptTarget.ESNext,
+    });
+    typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: false,
+      noSyntaxValidation: false,
+    });
+    typescriptDefaults.addExtraLib(
+      declarations,
+      'file:///transmog-script-api/v1.d.ts',
+    );
+    this.ensureMonacoStyles();
+    const model = monaco.editor.createModel(SCRIPT_TEMPLATE, 'typescript', monaco.Uri.parse('file:///transmog-scripts/draft/main.ts'));
+    this.sourceEditor = monaco.editor.create(this.scriptEditor, {
+      model,
+      automaticLayout: true,
+      accessibilitySupport: 'on',
+      ariaLabel: 'Traffic script TypeScript source',
+      minimap: { enabled: false },
+      tabFocusMode: true,
+      theme: 'vs-dark',
+    });
+    this.sourceEditor.onDidChangeModelContent(() => { this.candidate = null; });
+    this.scriptOutput.textContent = 'Ready. Monaco diagnostics are advisory; Rust validation is authoritative.';
+    await this.refreshScripts();
+  }
+
+  private ensureMonacoStyles(): void {
+    if (this.shadowRoot?.querySelector('link[data-monaco]') !== null) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/app.css';
+    link.dataset.monaco = 'true';
+    this.shadowRoot?.append(link);
+  }
 
   async startProxy(event: Event): Promise<void> {
     event.preventDefault();
@@ -327,6 +445,8 @@ export class TransmogAppShell extends WebUIElement {
       return;
     }
     this.bodyPreviewOutput.textContent = 'Loading bounded body representation…';
+    this.bodyImagePreview.hidden = true;
+    this.bodyImagePreview.removeAttribute('src');
     try {
       const inspection = await invoke<BodyInspection>('inspect_body', {
         request: {
@@ -339,7 +459,13 @@ export class TransmogAppShell extends WebUIElement {
         },
       });
       const summary = `${inspection.metadata.boundary} · ${inspection.representation} · ${inspection.displayBytes} bytes${inspection.decoded ? ' · decoded' : ' · encoded'}${inspection.truncated ? ' · truncated' : ''}`;
-      this.bodyPreviewOutput.textContent = `${summary}${inspection.warning ? `\n${inspection.warning}` : ''}\n\n${inspection.display}`;
+      if (inspection.previewHandle !== null) {
+        this.bodyImagePreview.src = `transmog-preview://localhost/preview/${encodeURIComponent(inspection.previewHandle)}`;
+        this.bodyImagePreview.hidden = false;
+        this.bodyPreviewOutput.textContent = `${summary}\nNormalized in an isolated decoder as ${inspection.previewMimeType ?? 'image/png'}. Active document content and metadata were discarded.`;
+      } else {
+        this.bodyPreviewOutput.textContent = `${summary}${inspection.warning ? `\n${inspection.warning}` : ''}\n\n${inspection.display}`;
+      }
     } catch (error: unknown) {
       this.bodyPreviewOutput.textContent = `Body inspector unavailable: ${describeError(error)}`;
     }
@@ -382,6 +508,8 @@ export class TransmogAppShell extends WebUIElement {
   }
 
   private renderBreakpoints(status: BreakpointStatus): void {
+    for (const editor of this.breakpointEditors) editor.dispose();
+    this.breakpointEditors = [];
     this.pausedList.replaceChildren();
     if (status.paused.length === 0) {
       this.pausedList.textContent = status.enabled
@@ -394,9 +522,20 @@ export class TransmogAppShell extends WebUIElement {
       card.className = 'paused-card';
       const title = document.createElement('strong');
       title.textContent = `${paused.phase} · ${paused.exchangeId}`;
-      const editor = document.createElement('textarea');
-      editor.setAttribute('aria-label', `Edit ${paused.phase}`);
-      editor.value = paused.bodyHex ?? JSON.stringify(paused.requestHead ?? paused.responseHead, null, 2);
+      const editorHost = document.createElement('div');
+      editorHost.className = 'monaco-editor-host';
+      editorHost.setAttribute('aria-label', `Edit ${paused.phase}`);
+      const editor = monaco.editor.create(editorHost, {
+        value: paused.bodyHex ?? JSON.stringify(paused.requestHead ?? paused.responseHead, null, 2),
+        language: paused.phase.endsWith('body') ? 'plaintext' : 'json',
+        automaticLayout: true,
+        accessibilitySupport: 'on',
+        ariaLabel: `Edit paused ${paused.phase}`,
+        minimap: { enabled: false },
+        tabFocusMode: true,
+        theme: 'vs-dark',
+      });
+      this.breakpointEditors.push(editor);
       const actions = document.createElement('div');
       actions.className = 'actions';
       const continueButton = document.createElement('button');
@@ -419,18 +558,189 @@ export class TransmogAppShell extends WebUIElement {
       replace.addEventListener('click', () => {
         try {
           const action = paused.phase.endsWith('body')
-            ? { action: 'replace-body', body: parseHex(editor.value) }
+            ? { action: 'replace-body', body: parseHex(editor.getValue()) }
             : paused.phase === 'request-head'
-              ? { action: 'replace-request-head', head: JSON.parse(editor.value) as unknown }
-              : { action: 'replace-response-head', head: JSON.parse(editor.value) as unknown };
+              ? { action: 'replace-request-head', head: JSON.parse(editor.getValue()) as unknown }
+              : { action: 'replace-response-head', head: JSON.parse(editor.getValue()) as unknown };
           void this.submitBreakpoint(paused, action);
         } catch (error: unknown) {
           this.diagnostics.textContent = `Invalid replacement draft: ${describeError(error)}`;
         }
       });
       actions.append(continueButton, abortButton, replace);
-      card.append(title, editor, actions);
+      card.append(title, editorHost, actions);
       this.pausedList.append(card);
+    }
+  }
+
+  async saveScript(): Promise<void> {
+    try {
+      const status = await invoke<ScriptStatus>('save_script', { draft: this.scriptDraft() });
+      this.renderScriptStatus('Draft saved without activation.', status);
+    } catch (error: unknown) {
+      this.scriptFailure('Save failed', error);
+    }
+  }
+
+  async validateScript(event?: Event): Promise<void> {
+    event?.preventDefault();
+    try {
+      this.candidate = await invoke<ScriptCandidate>('validate_script', { draft: this.scriptDraft() });
+      const model = this.sourceEditor?.getModel();
+      if (model !== null && model !== undefined) {
+        monaco.editor.setModelMarkers(model, 'transmog-rust', []);
+      }
+      this.scriptOutput.textContent = `Validated ${this.candidate.scriptId}@${this.candidate.revision}\nSHA-256 ${this.candidate.sourceHash}\nCandidate ${this.candidate.candidateId}`;
+    } catch (error: unknown) {
+      this.candidate = null;
+      this.scriptFailure('Rust validation failed', error);
+    }
+  }
+
+  async testScript(): Promise<void> {
+    try {
+      if (this.candidate === null) await this.validateScript();
+      if (this.candidate === null) return;
+      const draft = this.scriptDraft();
+      const handler = draft.handlers[0];
+      if (handler === undefined) throw new Error('export at least one supported handler');
+      const responseHandler = handler.startsWith('onResponse');
+      const bodyHandler = handler.endsWith('Body');
+      const action = await invoke<Record<string, unknown>>('test_script', {
+        candidateId: this.candidate.candidateId,
+        invocation: {
+          context: { exchangeId: 'editor-test', nowUnixMs: 0, handler },
+          request: {
+            method: 'GET',
+            scheme: 'https',
+            host: draft.prefilter.host ?? 'example.test',
+            port: 443,
+            path: draft.prefilter.pathPrefix ?? '/',
+            query: null,
+            headers: [{ name: 'User-Agent', value: Array.from(new TextEncoder().encode('Transmog editor test')), sensitive: false }],
+          },
+          response: responseHandler ? { status: 200, headers: [] } : null,
+          body: bodyHandler ? { bytes: Array.from(new TextEncoder().encode('editor test body')), truncated: false } : null,
+        },
+      });
+      this.scriptOutput.textContent = `Sandbox test passed. No traffic was changed.\n${JSON.stringify(action, null, 2)}`;
+    } catch (error: unknown) {
+      this.scriptFailure('Sandbox test aborted', error);
+    }
+  }
+
+  async activateScript(): Promise<void> {
+    try {
+      if (this.candidate === null) await this.validateScript();
+      if (this.candidate === null) return;
+      const status = await invoke<ScriptStatus>('activate_script', { candidateId: this.candidate.candidateId });
+      this.candidate = null;
+      this.renderScriptStatus('Exact validated revision activated for new exchanges.', status);
+    } catch (error: unknown) {
+      this.scriptFailure('Activation failed', error);
+    }
+  }
+
+  async disableScript(): Promise<void> {
+    try {
+      const data = new FormData(this.scriptForm);
+      const status = await invoke<ScriptStatus>('disable_script', { scriptId: String(data.get('scriptId') ?? '') });
+      this.renderScriptStatus('Script disabled for new exchanges.', status);
+    } catch (error: unknown) {
+      this.scriptFailure('Disable failed', error);
+    }
+  }
+
+  async compareActiveScript(): Promise<void> {
+    try {
+      const status = await invoke<ScriptStatus>('script_status');
+      const draft = this.scriptDraft();
+      const active = status.active.find((revision) => revision.manifest.id === draft.id);
+      if (active === undefined) throw new Error('this script has no active revision to compare');
+      this.revisionDiff?.dispose();
+      for (const model of this.diffModels) model.dispose();
+      this.diffModels = [
+        monaco.editor.createModel(active.source, 'typescript'),
+        monaco.editor.createModel(draft.source, 'typescript'),
+      ];
+      this.scriptDiffEditor.hidden = false;
+      this.revisionDiff = monaco.editor.createDiffEditor(this.scriptDiffEditor, {
+        automaticLayout: true,
+        accessibilitySupport: 'on',
+        ariaLabel: 'Active revision and current draft comparison',
+        readOnly: true,
+        theme: 'vs-dark',
+      });
+      const [original, modified] = this.diffModels;
+      if (original === undefined || modified === undefined) throw new Error('revision comparison models were not created');
+      this.revisionDiff.setModel({ original, modified });
+      this.scriptOutput.textContent = `Comparing active ${active.manifest.id}@${active.manifest.revision} with the current draft.`;
+    } catch (error: unknown) {
+      this.scriptFailure('Revision comparison unavailable', error);
+    }
+  }
+
+  private async refreshScripts(): Promise<void> {
+    try {
+      this.renderScriptStatus('Script workspace loaded.', await invoke<ScriptStatus>('script_status'));
+    } catch (error: unknown) {
+      this.scriptFailure('Script workspace unavailable', error);
+    }
+  }
+
+  private scriptDraft(): ScriptDraft {
+    if (this.sourceEditor === null) throw new Error('script editor is still loading');
+    const data = new FormData(this.scriptForm);
+    const source = this.sourceEditor.getValue();
+    const handlers = (['onRequestHead', 'onRequestBody', 'onResponseHead', 'onResponseBody'] as const)
+      .filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
+    if (handlers.length === 0) throw new Error('source must export at least one supported synchronous handler');
+    const writeHeaders = String(data.get('scriptHeaders') ?? '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter((value) => value.length > 0);
+    return {
+      id: String(data.get('scriptId') ?? ''),
+      revision: Number(data.get('scriptRevision') ?? 1),
+      source,
+      handlers,
+      prefilter: { method: null, host: optionalText(data.get('scriptHost')), pathPrefix: optionalText(data.get('scriptPath')) },
+      capabilities: {
+        readSensitiveHeaders: data.get('sensitive') === 'on',
+        readBodies: data.get('readBodies') === 'on',
+        writeHeaders,
+        writeBody: data.get('writeBody') === 'on',
+        respond: data.get('respond') === 'on',
+        abort: data.get('abort') === 'on',
+      },
+      limits: {
+        maxInputBodyBytes: 1024 * 1024,
+        maxOutputBytes: 1024 * 1024,
+        maxLogBytes: 16 * 1024,
+        maxHeapBytes: 64 * 1024 * 1024,
+        maxDurationMs: 100,
+      },
+      priority: Number(data.get('scriptPriority') ?? 0),
+    };
+  }
+
+  private renderScriptStatus(message: string, status: ScriptStatus): void {
+    this.scriptOutput.textContent = `${message}\n\n${JSON.stringify(status, null, 2)}`;
+  }
+
+  private scriptFailure(prefix: string, error: unknown): void {
+    const message = describeError(error);
+    this.scriptOutput.textContent = `${prefix}: ${message}\n\nThe draft was not activated. Correct the source or capabilities, validate again, and rerun the sandbox test.`;
+    const model = this.sourceEditor?.getModel();
+    if (model !== null && model !== undefined) {
+      monaco.editor.setModelMarkers(model, 'transmog-rust', [{
+        severity: monaco.MarkerSeverity.Error,
+        message,
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: Math.max(2, model.getLineMaxColumn(1)),
+      }]);
     }
   }
 
