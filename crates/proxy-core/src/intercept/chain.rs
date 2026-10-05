@@ -127,10 +127,54 @@ impl InterceptorRegistration {
     }
 }
 
+/// Product- or embedder-owned source of immutable registrations for one
+/// admitted exchange.
+///
+/// Implementations must return a finite deterministic snapshot and must not
+/// retain a reference to `metadata`. The core owns no product configuration.
+pub trait InterceptorRegistrationProvider: Send + Sync {
+    /// Produces registrations for one exchange before any traffic callback.
+    ///
+    /// # Errors
+    /// Returns a redaction-safe initialization failure. Provider panics are
+    /// contained and converted to the same fail-closed result.
+    fn registrations(
+        &self,
+        metadata: &ExchangeMetadata,
+    ) -> Result<Vec<InterceptorRegistration>, HookInitError>;
+}
+
+#[derive(Clone)]
+enum RegistrationSource {
+    Static(InterceptorRegistration),
+    Dynamic {
+        name: Arc<str>,
+        provider: Arc<dyn InterceptorRegistrationProvider>,
+        max_registrations: NonZeroUsize,
+    },
+}
+
+impl std::fmt::Debug for RegistrationSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Static(registration) => registration.fmt(formatter),
+            Self::Dynamic {
+                name,
+                max_registrations,
+                ..
+            } => formatter
+                .debug_struct("DynamicRegistrationProvider")
+                .field("name", name)
+                .field("max_registrations", max_registrations)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 /// Immutable chain configuration shared by all exchanges.
 #[derive(Clone, Debug)]
 pub struct InterceptorChainFactory {
-    registrations: Arc<[InterceptorRegistration]>,
+    sources: Arc<[RegistrationSource]>,
     runner: CallbackGate,
 }
 
@@ -138,7 +182,11 @@ impl InterceptorChainFactory {
     /// Freezes registrations and resource limits for listener use.
     pub fn new(registrations: Vec<InterceptorRegistration>, limits: HookLimits) -> Self {
         Self {
-            registrations: registrations.into(),
+            sources: registrations
+                .into_iter()
+                .map(RegistrationSource::Static)
+                .collect::<Vec<_>>()
+                .into(),
             runner: CallbackGate::new(limits),
         }
     }
@@ -147,10 +195,31 @@ impl InterceptorChainFactory {
     /// chain's callback limits and shared pause-permit pool.
     #[must_use]
     pub fn with_registration(self, registration: InterceptorRegistration) -> Self {
-        let mut registrations = self.registrations.iter().cloned().collect::<Vec<_>>();
-        registrations.push(registration);
+        let mut sources = self.sources.iter().cloned().collect::<Vec<_>>();
+        sources.push(RegistrationSource::Static(registration));
         Self {
-            registrations: registrations.into(),
+            sources: sources.into(),
+            runner: self.runner,
+        }
+    }
+
+    /// Adds a bounded per-exchange registration snapshot at this exact chain
+    /// position.
+    #[must_use]
+    pub fn with_registration_provider(
+        self,
+        name: impl Into<Arc<str>>,
+        provider: Arc<dyn InterceptorRegistrationProvider>,
+        max_registrations: NonZeroUsize,
+    ) -> Self {
+        let mut sources = self.sources.iter().cloned().collect::<Vec<_>>();
+        sources.push(RegistrationSource::Dynamic {
+            name: name.into(),
+            provider,
+            max_registrations,
+        });
+        Self {
+            sources: sources.into(),
             runner: self.runner,
         }
     }
@@ -167,11 +236,44 @@ impl InterceptorChainFactory {
         &self,
         metadata: ExchangeMetadata,
     ) -> Result<ExchangeChain, ChainInitError> {
+        let mut registrations = Vec::new();
+        for source in self.sources.iter() {
+            match source {
+                RegistrationSource::Static(registration) => {
+                    registrations.push(registration.clone());
+                }
+                RegistrationSource::Dynamic {
+                    name,
+                    provider,
+                    max_registrations,
+                } => {
+                    let supplied =
+                        catch_unwind(AssertUnwindSafe(|| provider.registrations(&metadata)))
+                            .map_err(|_| ChainInitError {
+                                name: Arc::clone(name),
+                                source: HookInitError::new("registration provider panicked"),
+                            })?
+                            .map_err(|source| ChainInitError {
+                                name: Arc::clone(name),
+                                source,
+                            })?;
+                    if supplied.len() > max_registrations.get() {
+                        return Err(ChainInitError {
+                            name: Arc::clone(name),
+                            source: HookInitError::new(
+                                "registration provider exceeded its finite limit",
+                            ),
+                        });
+                    }
+                    registrations.extend(supplied);
+                }
+            }
+        }
         let context = HookContext::new(metadata, self.runner.callback_timeout());
-        let mut interceptors = Vec::with_capacity(self.registrations.len());
+        let mut interceptors = Vec::with_capacity(registrations.len());
         let mut diagnostics = Vec::new();
 
-        for (chain_position, registration) in self.registrations.iter().enumerate() {
+        for (chain_position, registration) in registrations.iter().enumerate() {
             let created = catch_unwind(AssertUnwindSafe(|| {
                 registration.factory.create(context.metadata())
             }));
@@ -983,6 +1085,35 @@ mod tests {
         panic: bool,
     }
 
+    struct FixedRegistrationProvider {
+        registrations: Mutex<Vec<InterceptorRegistration>>,
+        calls: AtomicUsize,
+    }
+
+    impl InterceptorRegistrationProvider for FixedRegistrationProvider {
+        fn registrations(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Vec<InterceptorRegistration>, HookInitError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.registrations.lock().unwrap().clone())
+        }
+    }
+
+    struct FailingRegistrationProvider {
+        panic: bool,
+    }
+
+    impl InterceptorRegistrationProvider for FailingRegistrationProvider {
+        fn registrations(
+            &self,
+            _metadata: &ExchangeMetadata,
+        ) -> Result<Vec<InterceptorRegistration>, HookInitError> {
+            assert!(!self.panic, "provider panic");
+            Err(HookInitError::new("provider unavailable"))
+        }
+    }
+
     struct DropTrackingFactory {
         entered: Arc<tokio::sync::Notify>,
         dropped: Arc<AtomicBool>,
@@ -1193,6 +1324,112 @@ mod tests {
                 "completed:B",
                 "completed:A",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_registrations_are_bounded_ordered_and_snapshotted_per_exchange() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(FixedRegistrationProvider {
+            registrations: Mutex::new(vec![InterceptorRegistration::named(
+                "rule/conditional-user-agent@7",
+                "Conditional User-Agent",
+                Arc::new(RecordingFactory {
+                    name: "B",
+                    behavior: Behavior::Reroute,
+                    log: Arc::clone(&log),
+                    created: Arc::clone(&created),
+                }),
+                InterceptorRequirement::Required,
+            )]),
+            calls: AtomicUsize::new(0),
+        });
+        let factory = InterceptorChainFactory::new(
+            vec![registration("A", Behavior::Continue, &log, &created)],
+            HookLimits::default(),
+        )
+        .with_registration_provider(
+            "active product snapshot",
+            provider.clone(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .with_registration(registration("C", Behavior::Continue, &log, &created));
+
+        let mut first = factory.create_exchange(metadata(1)).unwrap();
+        provider.registrations.lock().unwrap().clear();
+        let mut second = factory.create_exchange(metadata(2)).unwrap();
+
+        let RequestHeadOutcome::Continue { reroute, .. } =
+            first.request_head(request_head()).await.unwrap()
+        else {
+            panic!("expected the first exchange to continue");
+        };
+        assert_eq!(reroute.unwrap().host, "rerouted.test");
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["request-head:A", "request-head:B", "request-head:C"]
+        );
+        assert_eq!(first.hook_effects().len(), 1);
+        assert_eq!(
+            first.hook_effects()[0].interceptor.id.as_str(),
+            "rule/conditional-user-agent@7"
+        );
+        assert_eq!(first.hook_effects()[0].interceptor.chain_position, 1);
+
+        log.lock().unwrap().clear();
+        assert!(matches!(
+            second.request_head(request_head()).await.unwrap(),
+            RequestHeadOutcome::Continue { reroute: None, .. }
+        ));
+        assert_eq!(*log.lock().unwrap(), ["request-head:A", "request-head:C"]);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn dynamic_registration_provider_failures_are_fail_closed_and_contained() {
+        for panic in [false, true] {
+            let factory = InterceptorChainFactory::new(Vec::new(), HookLimits::default())
+                .with_registration_provider(
+                    "broken provider",
+                    Arc::new(FailingRegistrationProvider { panic }),
+                    NonZeroUsize::new(1).unwrap(),
+                );
+            let error = factory.create_exchange(metadata(1)).unwrap_err();
+            assert_eq!(&*error.name, "broken provider");
+            assert_eq!(
+                error.source.message,
+                if panic {
+                    "registration provider panicked"
+                } else {
+                    "provider unavailable"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_registration_provider_cannot_exceed_its_finite_limit() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let created = Arc::new(AtomicUsize::new(0));
+        let provider = Arc::new(FixedRegistrationProvider {
+            registrations: Mutex::new(vec![
+                registration("A", Behavior::Continue, &log, &created),
+                registration("B", Behavior::Continue, &log, &created),
+            ]),
+            calls: AtomicUsize::new(0),
+        });
+        let error = InterceptorChainFactory::new(Vec::new(), HookLimits::default())
+            .with_registration_provider(
+                "oversized provider",
+                provider,
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .create_exchange(metadata(1))
+            .unwrap_err();
+        assert_eq!(
+            error.source.message,
+            "registration provider exceeded its finite limit"
         );
     }
 

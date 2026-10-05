@@ -15,14 +15,14 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, ArtifactKind, BodyInspection,
-    BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
-    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticsReport,
-    ExportFormat, ExportRequest, ExportResult, ImportRequest, ProductState, ProxyRoute,
-    ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint, SessionPage,
-    SessionQueryInput, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
-    WindowState,
+    AppConfig, AppError, AppStatus, Application, ArtifactKind, AutomationCandidate,
+    AutomationRuleSet, AutomationStatus, BodyInspection, BodyInspectionRequest, BodyStoreConfig,
+    BreakpointDecision, BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity,
+    CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult,
+    ComposerSnapshot, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    ProductState, ProxyRoute, ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint,
+    SessionPage, SessionQueryInput, SupportBundleRequest, SupportBundleResult,
+    SystemReplayExecutor, WindowState,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -56,6 +56,27 @@ fn save_product_state(
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     state.application.save_product_state(product_state)
+}
+
+#[tauri::command]
+fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
+    state.application.automation_status()
+}
+
+#[tauri::command]
+fn validate_automation(
+    document: AutomationRuleSet,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationCandidate, AppError> {
+    state.application.validate_automation(document)
+}
+
+#[tauri::command]
+fn activate_automation(
+    candidate_id: String,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    state.application.activate_automation(&candidate_id)
 }
 
 #[tauri::command]
@@ -345,6 +366,7 @@ pub fn run() {
     let application = Application::new(AppConfig {
         replay_executor: Some(Arc::new(replay)),
         product_state_path: Some(state_root.join("preferences")),
+        automation_path: Some(state_root.join("automation-v1")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
         body_store: Some(BodyStoreConfig::product_default(
             state_root.join("body-cache-v1"),
@@ -391,6 +413,9 @@ pub fn run() {
             app_status,
             product_state,
             save_product_state,
+            automation_status,
+            validate_automation,
+            activate_automation,
             diagnostics_report,
             create_support_bundle,
             prepare_update_handoff,
@@ -514,6 +539,10 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                 | "certificate-ownership-v1.json"
                 | "proxy-recovery-v1.json"
         ) || is_owned_preference_generation(&name)
+            || matches!(
+                name.as_ref(),
+                "automation-v1.0.json" | "automation-v1.1.json"
+            )
             || name.starts_with("certificate-ownership-v1.tmp-")
             || (name.starts_with(".transmog-state-") && name.ends_with(".tmp"));
         if owned {

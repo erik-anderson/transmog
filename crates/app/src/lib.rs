@@ -7,6 +7,7 @@
 //! `WebView`, or operating-system dependency.
 
 mod artifacts;
+mod automation;
 mod body_store;
 mod breakpoints;
 mod composer;
@@ -22,6 +23,7 @@ pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
 };
+pub use automation::{AutomationCandidate, AutomationRuleSet, AutomationStatus};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyStore, BodyStoreConfig, BodyStoreCounters, BodyStoreError,
     DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
@@ -159,6 +161,8 @@ pub struct AppConfig {
     pub diagnostics_log_path: Option<PathBuf>,
     /// Optional product-layer on-disk response-body cache.
     pub body_store: Option<BodyStoreConfig>,
+    /// Optional crash-recoverable built-in automation workspace prefix.
+    pub automation_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -170,6 +174,7 @@ impl std::fmt::Debug for AppConfig {
             .field("product_state_path", &self.product_state_path)
             .field("diagnostics_log_path", &self.diagnostics_log_path)
             .field("body_store", &self.body_store)
+            .field("automation_path", &self.automation_path)
             .finish()
     }
 }
@@ -184,6 +189,7 @@ pub struct Application {
     product_state: product_state::ProductStateManager,
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
+    automation: automation::AutomationRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -207,6 +213,7 @@ impl Application {
             .map(BodyStore::new)
             .transpose()
             .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), true))?;
+        let automation = automation::AutomationRegistry::load(config.automation_path)?;
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
@@ -235,6 +242,7 @@ impl Application {
             product_state,
             diagnostics,
             body_store,
+            automation,
         })
     }
 
@@ -306,6 +314,30 @@ impl Application {
     /// Returns the optional product-layer response-body cache.
     pub fn body_store(&self) -> Option<&BodyStore> {
         self.body_store.as_ref()
+    }
+
+    /// Returns active native automation and candidate/history counts.
+    pub fn automation_status(&self) -> AutomationStatus {
+        self.automation.status()
+    }
+
+    /// Validates and compiles native automation without changing traffic.
+    ///
+    /// # Errors
+    /// Returns a bounded schema, syntax, conflict, or limit failure.
+    pub fn validate_automation(
+        &self,
+        document: AutomationRuleSet,
+    ) -> Result<AutomationCandidate, AppError> {
+        self.automation.validate(document)
+    }
+
+    /// Atomically activates a previously validated candidate for new exchanges.
+    ///
+    /// # Errors
+    /// Returns a stale-token or durable persistence failure.
+    pub fn activate_automation(&self, candidate_id: &str) -> Result<AutomationStatus, AppError> {
+        self.automation.activate(candidate_id)
     }
 
     /// Returns a bounded point-in-time lifecycle read model.
@@ -382,8 +414,14 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
-        let result =
-            lifecycle::start_proxy(&self.service, self.body_store.as_ref(), request, host).await;
+        let result = lifecycle::start_proxy(
+            &self.service,
+            self.body_store.as_ref(),
+            self.automation.clone(),
+            request,
+            host,
+        )
+        .await;
         self.diagnostics.record(
             if result.is_ok() {
                 DiagnosticLevel::Info

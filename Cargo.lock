@@ -4570,6 +4570,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
+ "transmog-automation",
  "transmog-capture",
  "transmog-content",
  "transmog-control-model",
@@ -4602,6 +4603,8 @@ name = "transmog-automation"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "regex",
+ "serde",
  "thiserror 2.0.21",
  "tokio",
  "transmog-core",

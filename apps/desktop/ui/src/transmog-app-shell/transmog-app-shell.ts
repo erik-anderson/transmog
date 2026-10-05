@@ -99,6 +99,13 @@ interface ProductState {
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
 }
+interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
+interface AutomationStatus {
+  generation: number;
+  rules: Array<{id: string; revision: number; priority: number}>;
+  candidateCount: number;
+  historyCount: number;
+}
 
 export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
@@ -117,6 +124,8 @@ export class TransmogAppShell extends WebUIElement {
   bodyPreviewOutput!: HTMLPreElement;
   pausedList!: HTMLDivElement;
   breakpointForm!: HTMLFormElement;
+  automationForm!: HTMLFormElement;
+  automationOutput!: HTMLPreElement;
   composerForm!: HTMLFormElement;
   composerOutput!: HTMLPreElement;
   captureForm!: HTMLFormElement;
@@ -432,6 +441,66 @@ export class TransmogAppShell extends WebUIElement {
       this.diagnostics.textContent = `Breakpoint decision failed: ${describeError(error)}`;
       await this.refreshBreakpoints();
     }
+  }
+
+  async activateUserAgentRule(event: Event): Promise<void> {
+    event.preventDefault();
+    const data = new FormData(this.automationForm);
+    const encode = (value: string): number[] => Array.from(new TextEncoder().encode(value));
+    const host = optionalText(data.get('host'));
+    const path = optionalText(data.get('path'));
+    const document = {
+      schemaVersion: 1,
+      generation: 0,
+      rules: [{
+        id: String(data.get('ruleId') ?? ''),
+        revision: Number(data.get('revision') ?? 1),
+        priority: 0,
+        matcher: {
+          method: null,
+          scheme: null,
+          host,
+          port: null,
+          pathPrefix: path,
+          query: null,
+          requestHeaders: [],
+          responseHeaders: [],
+          responseStatus: null,
+          responseStatusClass: null,
+        },
+        request: {
+          headers: [{
+            operation: 'set',
+            field: { name: encode('User-Agent'), value: encode(String(data.get('userAgent') ?? '')) },
+          }],
+          replaceBody: null,
+          discardBody: false,
+          abortReason: null,
+          allowNonIdempotentBodyReplacement: false,
+        },
+        response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
+      }],
+    };
+    try {
+      const candidate = await invoke<AutomationCandidate>('validate_automation', { document });
+      const status = await invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
+      this.renderAutomation(status);
+      this.diagnostics.textContent = `Activated ${candidate.ruleCount} native rule with ${candidate.registrationCount} attributed hook registration.`;
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Activation failed: ${describeError(error)}`;
+    }
+  }
+
+  async refreshAutomation(): Promise<void> {
+    try {
+      this.renderAutomation(await invoke<AutomationStatus>('automation_status'));
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Automation query failed: ${describeError(error)}`;
+    }
+  }
+
+  private renderAutomation(status: AutomationStatus): void {
+    this.automationOutput.textContent = JSON.stringify(status, null, 2);
   }
 
   async executeComposer(event: Event): Promise<void> {

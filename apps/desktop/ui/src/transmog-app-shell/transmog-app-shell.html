@@ -15,6 +15,7 @@
     <nav aria-label="Primary">
       <a href="#traffic" aria-current="page">Traffic</a>
       <a href="#breakpoints">Breakpoints</a>
+      <a href="#automation">Automation</a>
       <a href="#composer">Composer</a>
       <a href="#captures">Captures</a>
       <a href="#settings">Settings &amp; support</a>
@@ -86,6 +87,23 @@
             <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
           </form>
           <div w-ref="{pausedList}" class="paused-list" aria-live="polite">No paused exchanges.</div>
+        </div>
+      </section>
+      <section id="automation" class="workspace full" aria-labelledby="automation-heading">
+        <div>
+          <p class="section-label">Native Hooks v2 rules</p>
+          <h2 id="automation-heading">Conditional automation</h2>
+          <p>Validate first, then atomically activate for newly admitted exchanges. Active exchanges keep their original rule snapshot and audit IDs include the exact rule revision.</p>
+          <form w-ref="{automationForm}" @submit="{activateUserAgentRule(event)}" class="composer-form">
+            <label>Rule ID <input name="ruleId" value="conditional-user-agent" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
+            <label>Revision <input name="revision" type="number" min="1" value="1" required></label>
+            <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+            <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
+            <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
+            <button type="submit">Validate and activate</button>
+            <button type="button" class="secondary" @click="{refreshAutomation()}">Refresh active rules</button>
+          </form>
+          <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
         </div>
       </section>
       <section id="composer" class="workspace full" aria-labelledby="composer-heading">

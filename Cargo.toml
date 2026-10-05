@@ -47,6 +47,7 @@ quiche = { version = "=0.30.0", default-features = false, features = ["boringssl
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+regex = "1.13.1"
 sha1 = "0.10.6"
 sha2 = "0.10.9"
 thiserror = "2.0.17"

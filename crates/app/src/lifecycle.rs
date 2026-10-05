@@ -2,6 +2,7 @@ use std::{
     fs::OpenOptions,
     io::Write,
     net::SocketAddr,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -13,7 +14,7 @@ use transmog_runtime::{ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer
 use transmog_session::{ApplicationSessionService, HostIntegration, HostIntegrationPlan};
 use transmog_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
-use crate::{AppError, BodyStore, ErrorCategory};
+use crate::{AppError, BodyStore, ErrorCategory, automation::AutomationRegistry};
 
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -89,6 +90,7 @@ pub struct CaIdentity {
 pub(crate) async fn start_proxy(
     service: &ApplicationSessionService,
     body_store: Option<&BodyStore>,
+    automation: AutomationRegistry,
     request: ProxyStartRequest,
     host: Option<Arc<dyn HostIntegration>>,
 ) -> Result<(), AppError> {
@@ -130,7 +132,12 @@ pub(crate) async fn start_proxy(
             true,
         )
     })?);
-    let hooks = InterceptorChainFactory::new(Vec::new(), config.limits.hooks);
+    let hooks = InterceptorChainFactory::new(Vec::new(), config.limits.hooks)
+        .with_registration_provider(
+            "active Transmog automation",
+            Arc::new(automation),
+            NonZeroUsize::new(2_048).expect("automation provider limit is nonzero"),
+        );
     let certificates = Arc::new(
         CachedMitmCertificateResolver::new(
             ca,
@@ -295,9 +302,15 @@ mod tests {
             listen: "192.0.2.1:0".parse().unwrap(),
             ..ProxyStartRequest::default()
         };
-        let error = start_proxy(&service, None, request, None)
-            .await
-            .unwrap_err();
+        let error = start_proxy(
+            &service,
+            None,
+            AutomationRegistry::load(None).unwrap(),
+            request,
+            None,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error.category, ErrorCategory::InvalidInput);
     }
 

@@ -29,8 +29,8 @@ pub use bridge::{
 };
 pub use chain::{
     ChainExecutionError, ChainInitError, ExchangeChain, HookLimits, InitializationDiagnostic,
-    InterceptorChainFactory, InterceptorRegistration, InterceptorRequirement, RequestHeadOutcome,
-    ResponseHeadOutcome, TerminalReport,
+    InterceptorChainFactory, InterceptorRegistration, InterceptorRegistrationProvider,
+    InterceptorRequirement, RequestHeadOutcome, ResponseHeadOutcome, TerminalReport,
 };
 pub use context::{
     ExchangeCancellation, ExchangeId, ExchangeMetadata, HookContext, OriginalTarget,

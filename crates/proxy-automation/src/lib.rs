@@ -9,6 +9,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use bytes::Bytes;
+use regex::bytes::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use transmog_core::{
     HeaderError, HeaderField, RequestHead, ResponseHead,
@@ -29,6 +31,10 @@ pub struct AutomationLimits {
     pub max_header_operations_per_rule: usize,
     /// Maximum immediate replacement body.
     pub max_replacement_body_bytes: usize,
+    /// Maximum header predicates evaluated by one rule.
+    pub max_header_predicates_per_rule: usize,
+    /// Maximum UTF-8 bytes in one regular expression.
+    pub max_regex_bytes: usize,
 }
 
 impl Default for AutomationLimits {
@@ -37,61 +43,157 @@ impl Default for AutomationLimits {
             max_rules: 1_024,
             max_header_operations_per_rule: 256,
             max_replacement_body_bytes: 8 * 1024 * 1024,
+            max_header_predicates_per_rule: 64,
+            max_regex_bytes: 4 * 1024,
         }
     }
 }
 
-/// Conservative exact/prefix rule predicate.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// One bounded condition applied to every value of a named header.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeaderPredicate {
+    /// Case-insensitive HTTP field name.
+    pub name: String,
+    /// Required value condition.
+    pub condition: HeaderCondition,
+}
+
+/// Safe header predicate operations supported by native rules.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub enum HeaderCondition {
+    /// At least one field with the requested name exists.
+    Exists,
+    /// At least one field value is an exact byte match.
+    Exact(Vec<u8>),
+    /// At least one field value starts with these bytes.
+    Prefix(Vec<u8>),
+    /// At least one field value ends with these bytes.
+    Suffix(Vec<u8>),
+    /// At least one field value matches a bounded Rust byte regular expression.
+    Regex(String),
+}
+
+/// Conservative bounded rule predicate.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleMatcher {
     /// Optional ASCII case-insensitive exact method.
     pub method: Option<String>,
+    /// Optional ASCII case-insensitive exact URI scheme.
+    pub scheme: Option<String>,
     /// Optional ASCII case-insensitive exact host.
     pub host: Option<String>,
+    /// Optional exact destination port.
+    pub port: Option<u16>,
     /// Optional case-sensitive path prefix.
     pub path_prefix: Option<String>,
+    /// Optional exact query, excluding `?`.
+    pub query: Option<String>,
+    /// Request-header predicates, all of which must match.
+    #[serde(default)]
+    pub request_headers: Vec<HeaderPredicate>,
+    /// Response-header predicates, all of which must match.
+    #[serde(default)]
+    pub response_headers: Vec<HeaderPredicate>,
     /// Optional exact response status. Ignored for request phases.
     pub response_status: Option<u16>,
+    /// Optional response status class from 1 through 5.
+    pub response_status_class: Option<u16>,
 }
 
 impl RuleMatcher {
-    fn matches_request(&self, request: &RequestHead) -> bool {
+    fn matches_request(&self, request: &RequestHead, regexes: &[Option<Regex>]) -> bool {
         self.method
             .as_ref()
             .is_none_or(|method| request.method.eq_ignore_ascii_case(method))
             && self
+                .scheme
+                .as_ref()
+                .is_none_or(|scheme| request.target.scheme.eq_ignore_ascii_case(scheme))
+            && self
                 .host
                 .as_ref()
                 .is_none_or(|host| request.target.host.eq_ignore_ascii_case(host))
+            && self.port.is_none_or(|port| request.target.port == port)
             && self
                 .path_prefix
                 .as_ref()
                 .is_none_or(|prefix| request.target.path.starts_with(prefix))
+            && self
+                .query
+                .as_ref()
+                .is_none_or(|query| request.target.query.as_deref() == Some(query.as_str()))
+            && self
+                .request_headers
+                .iter()
+                .zip(regexes)
+                .all(|(predicate, regex)| predicate.matches(&request.headers, regex.as_ref()))
     }
 
-    fn matches_response(&self, request: &RequestHead, response: &ResponseHead) -> bool {
-        self.matches_request(request)
+    fn matches_response(
+        &self,
+        request: &RequestHead,
+        response: &ResponseHead,
+        request_regexes: &[Option<Regex>],
+        response_regexes: &[Option<Regex>],
+    ) -> bool {
+        self.matches_request(request, request_regexes)
             && self
                 .response_status
                 .is_none_or(|status| response.status == status)
+            && self
+                .response_status_class
+                .is_none_or(|class| response.status.checked_div(100) == Some(class))
+            && self
+                .response_headers
+                .iter()
+                .zip(response_regexes)
+                .all(|(predicate, regex)| predicate.matches(&response.headers, regex.as_ref()))
     }
 
     fn overlaps(&self, other: &Self, response: bool) -> bool {
         optional_ascii_values_overlap(self.method.as_deref(), other.method.as_deref())
+            && optional_ascii_values_overlap(self.scheme.as_deref(), other.scheme.as_deref())
             && optional_ascii_values_overlap(self.host.as_deref(), other.host.as_deref())
+            && (self.port.is_none() || other.port.is_none() || self.port == other.port)
             && prefixes_overlap(self.path_prefix.as_deref(), other.path_prefix.as_deref())
+            && (self.query.is_none() || other.query.is_none() || self.query == other.query)
             && (!response
                 || self.response_status.is_none()
                 || other.response_status.is_none()
                 || self.response_status == other.response_status)
+            && (!response
+                || self.response_status_class.is_none()
+                || other.response_status_class.is_none()
+                || self.response_status_class == other.response_status_class)
+    }
+}
+
+impl HeaderPredicate {
+    fn matches(&self, headers: &transmog_core::HeaderBlock, regex: Option<&Regex>) -> bool {
+        let mut values = headers.values(&self.name).peekable();
+        match &self.condition {
+            HeaderCondition::Exists => values.peek().is_some(),
+            HeaderCondition::Exact(expected) => values.any(|value| value == expected),
+            HeaderCondition::Prefix(expected) => values.any(|value| value.starts_with(expected)),
+            HeaderCondition::Suffix(expected) => values.any(|value| value.ends_with(expected)),
+            HeaderCondition::Regex(_) => {
+                regex.is_some_and(|regex| values.any(|value| regex.is_match(value)))
+            }
+        }
     }
 }
 
 /// Validated deterministic header mutation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "operation", content = "field", rename_all = "kebab-case")]
 pub enum HeaderOperation {
     /// Replace all occurrences while preserving the first position.
     Set(HeaderField),
+    /// Append a field after all existing fields.
+    Append(HeaderField),
     /// Remove all occurrences case-insensitively.
     Remove(String),
 }
@@ -118,51 +220,85 @@ impl HeaderOperation {
         ))
     }
 
+    /// Creates a validated append operation.
+    ///
+    /// # Errors
+    /// Returns [`HeaderError`] when name or value is invalid HTTP syntax.
+    pub fn append(
+        name: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, HeaderError> {
+        Ok(Self::Append(HeaderField::try_new(name, value)?))
+    }
+
     fn target(&self) -> String {
         match self {
-            Self::Set(field) => String::from_utf8_lossy(field.name()).to_ascii_lowercase(),
+            Self::Set(field) | Self::Append(field) => {
+                String::from_utf8_lossy(field.name()).to_ascii_lowercase()
+            }
             Self::Remove(name) => name.to_ascii_lowercase(),
         }
     }
 }
 
 /// Request-side rule actions.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestActions {
     /// Ordered header operations.
     pub headers: Vec<HeaderOperation>,
     /// Optional decoded replacement body.
     pub replace_body: Option<Vec<u8>>,
+    /// Discard the matching request body.
+    #[serde(default)]
+    pub discard_body: bool,
+    /// Abort a matching request with this operator-safe reason.
+    pub abort_reason: Option<String>,
     /// Permit replacement for methods not known to be idempotent.
     pub allow_non_idempotent_body_replacement: bool,
 }
 
 impl RequestActions {
     fn is_empty(&self) -> bool {
-        self.headers.is_empty() && self.replace_body.is_none()
+        self.headers.is_empty()
+            && self.replace_body.is_none()
+            && !self.discard_body
+            && self.abort_reason.is_none()
     }
 }
 
 /// Response-side rule actions.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResponseActions {
     /// Ordered header operations.
     pub headers: Vec<HeaderOperation>,
     /// Optional decoded replacement body.
     pub replace_body: Option<Vec<u8>>,
+    /// Discard the matching response body.
+    #[serde(default)]
+    pub discard_body: bool,
+    /// Abort a matching response before downstream commitment.
+    pub abort_reason: Option<String>,
 }
 
 impl ResponseActions {
     fn is_empty(&self) -> bool {
-        self.headers.is_empty() && self.replace_body.is_none()
+        self.headers.is_empty()
+            && self.replace_body.is_none()
+            && !self.discard_body
+            && self.abort_reason.is_none()
     }
 }
 
 /// One declarative rule.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Rule {
     /// Stable identifier used in interceptor audit IDs.
     pub id: String,
+    /// Monotonic revision included in hook audit identities.
+    pub revision: u64,
     /// Higher values take precedence over lower values.
     pub priority: i32,
     /// Immutable request/response predicate.
@@ -232,6 +368,8 @@ fn validate_limits(limits: AutomationLimits) -> Result<(), CompileError> {
     if limits.max_rules == 0
         || limits.max_header_operations_per_rule == 0
         || limits.max_replacement_body_bytes == 0
+        || limits.max_header_predicates_per_rule == 0
+        || limits.max_regex_bytes == 0
     {
         return Err(CompileError::InvalidLimits);
     }
@@ -240,6 +378,7 @@ fn validate_limits(limits: AutomationLimits) -> Result<(), CompileError> {
 
 fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileError> {
     if rule.id.is_empty()
+        || rule.id.len() > 128
         || !rule
             .id
             .bytes()
@@ -247,9 +386,24 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     {
         return Err(CompileError::InvalidId(rule.id.clone()));
     }
+    if rule.revision == 0 {
+        return Err(CompileError::InvalidRevision(rule.id.clone()));
+    }
     for operations in [&rule.request.headers, &rule.response.headers] {
         if operations.len() > limits.max_header_operations_per_rule {
             return Err(CompileError::HeaderOperationLimitExceeded(rule.id.clone()));
+        }
+        for operation in operations {
+            match operation {
+                HeaderOperation::Set(field) | HeaderOperation::Append(field) => {
+                    HeaderField::try_new(field.name().to_vec(), field.value().to_vec())
+                        .map_err(|_| CompileError::InvalidHeaderOperation(rule.id.clone()))?;
+                }
+                HeaderOperation::Remove(name) => {
+                    HeaderField::try_new(name.as_bytes(), Vec::new())
+                        .map_err(|_| CompileError::InvalidHeaderOperation(rule.id.clone()))?;
+                }
+            }
         }
     }
     for body in [
@@ -263,6 +417,25 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
             return Err(CompileError::BodyLimitExceeded(rule.id.clone()));
         }
     }
+    if rule.request.replace_body.is_some() && rule.request.discard_body
+        || rule.response.replace_body.is_some() && rule.response.discard_body
+    {
+        return Err(CompileError::ConflictingBodyActions(rule.id.clone()));
+    }
+    for reason in [
+        rule.request.abort_reason.as_deref(),
+        rule.response.abort_reason.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if reason.is_empty()
+            || reason.len() > 256
+            || reason.chars().any(|character| character.is_control())
+        {
+            return Err(CompileError::InvalidAbortReason(rule.id.clone()));
+        }
+    }
     if rule
         .matcher
         .path_prefix
@@ -271,7 +444,72 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     {
         return Err(CompileError::InvalidPathPrefix(rule.id.clone()));
     }
+    if rule.matcher.method.as_ref().is_some_and(|value| {
+        value.is_empty()
+            || value.len() > 32
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    }) || rule
+        .matcher
+        .scheme
+        .as_ref()
+        .is_some_and(|value| value.is_empty() || value.len() > 32 || !value.is_ascii())
+        || rule
+            .matcher
+            .host
+            .as_ref()
+            .is_some_and(|value| value.is_empty() || value.len() > 255 || !value.is_ascii())
+        || rule
+            .matcher
+            .path_prefix
+            .as_ref()
+            .is_some_and(|value| value.len() > 2_048)
+        || rule
+            .matcher
+            .query
+            .as_ref()
+            .is_some_and(|value| value.len() > 4_096)
+    {
+        return Err(CompileError::InvalidMatcher(rule.id.clone()));
+    }
+    if rule
+        .matcher
+        .response_status
+        .is_some_and(|status| !(100..=599).contains(&status))
+        || rule
+            .matcher
+            .response_status_class
+            .is_some_and(|class| !(1..=5).contains(&class))
+    {
+        return Err(CompileError::InvalidResponseStatus(rule.id.clone()));
+    }
+    let predicates = rule
+        .matcher
+        .request_headers
+        .iter()
+        .chain(&rule.matcher.response_headers)
+        .collect::<Vec<_>>();
+    if predicates.len() > limits.max_header_predicates_per_rule {
+        return Err(CompileError::HeaderPredicateLimitExceeded(rule.id.clone()));
+    }
+    for predicate in predicates {
+        HeaderField::try_new(predicate.name.as_bytes(), Vec::new())
+            .map_err(|_| CompileError::InvalidHeaderPredicate(rule.id.clone()))?;
+        if let HeaderCondition::Regex(pattern) = &predicate.condition {
+            if pattern.len() > limits.max_regex_bytes || compile_regex(pattern).is_err() {
+                return Err(CompileError::InvalidRegex(rule.id.clone()));
+            }
+        }
+    }
     Ok(())
+}
+
+fn compile_regex(pattern: &str) -> Result<Regex, regex::Error> {
+    RegexBuilder::new(pattern)
+        .size_limit(1024 * 1024)
+        .dfa_size_limit(1024 * 1024)
+        .build()
 }
 
 fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
@@ -283,15 +521,28 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
             for (response, left_targets, right_targets) in [
                 (
                     false,
-                    action_targets(&left.request.headers, left.request.replace_body.is_some()),
-                    action_targets(&right.request.headers, right.request.replace_body.is_some()),
+                    action_targets(
+                        &left.request.headers,
+                        left.request.replace_body.is_some() || left.request.discard_body,
+                        left.request.abort_reason.is_some(),
+                    ),
+                    action_targets(
+                        &right.request.headers,
+                        right.request.replace_body.is_some() || right.request.discard_body,
+                        right.request.abort_reason.is_some(),
+                    ),
                 ),
                 (
                     true,
-                    action_targets(&left.response.headers, left.response.replace_body.is_some()),
+                    action_targets(
+                        &left.response.headers,
+                        left.response.replace_body.is_some() || left.response.discard_body,
+                        left.response.abort_reason.is_some(),
+                    ),
                     action_targets(
                         &right.response.headers,
-                        right.response.replace_body.is_some(),
+                        right.response.replace_body.is_some() || right.response.discard_body,
+                        right.response.abort_reason.is_some(),
                     ),
                 ),
             ] {
@@ -309,13 +560,16 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
     Ok(())
 }
 
-fn action_targets(headers: &[HeaderOperation], body: bool) -> BTreeSet<String> {
+fn action_targets(headers: &[HeaderOperation], body: bool, abort: bool) -> BTreeSet<String> {
     let mut targets = headers
         .iter()
         .map(HeaderOperation::target)
         .collect::<BTreeSet<_>>();
     if body {
         targets.insert("$body".to_owned());
+    }
+    if abort {
+        targets.insert("$abort".to_owned());
     }
     targets
 }
@@ -342,19 +596,39 @@ fn registration(rule: &Rule, direction: RuleDirection) -> InterceptorRegistratio
         RuleDirection::Response => "response",
     };
     InterceptorRegistration::named(
-        format!("automation/{}/{suffix}", rule.id),
-        format!("automation rule {} ({suffix})", rule.id),
+        format!("automation/{}@{}/{suffix}", rule.id, rule.revision),
+        format!(
+            "automation rule {} revision {} ({suffix})",
+            rule.id, rule.revision
+        ),
         Arc::new(RuleFactory {
             rule: Arc::new(rule.clone()),
+            request_regexes: compile_predicates(&rule.matcher.request_headers),
+            response_regexes: compile_predicates(&rule.matcher.response_headers),
             direction,
         }),
         InterceptorRequirement::Required,
     )
 }
 
+fn compile_predicates(predicates: &[HeaderPredicate]) -> Arc<[Option<Regex>]> {
+    predicates
+        .iter()
+        .map(|predicate| match &predicate.condition {
+            HeaderCondition::Regex(pattern) => {
+                Some(compile_regex(pattern).expect("validated automation regular expression"))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
 #[derive(Debug)]
 struct RuleFactory {
     rule: Arc<Rule>,
+    request_regexes: Arc<[Option<Regex>]>,
+    response_regexes: Arc<[Option<Regex>]>,
     direction: RuleDirection,
 }
 
@@ -365,6 +639,8 @@ impl InterceptorFactory for RuleFactory {
     ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
         Ok(Arc::new(RuleInterceptor {
             rule: Arc::clone(&self.rule),
+            request_regexes: Arc::clone(&self.request_regexes),
+            response_regexes: Arc::clone(&self.response_regexes),
             direction: self.direction,
         }))
     }
@@ -373,68 +649,128 @@ impl InterceptorFactory for RuleFactory {
 #[derive(Debug)]
 struct RuleInterceptor {
     rule: Arc<Rule>,
+    request_regexes: Arc<[Option<Regex>]>,
+    response_regexes: Arc<[Option<Regex>]>,
     direction: RuleDirection,
 }
 
 impl ExchangeInterceptor for RuleInterceptor {
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         if self.direction != RuleDirection::Request
-            || !self.rule.matcher.matches_request(&event.head)
+            || !self
+                .rule
+                .matcher
+                .matches_request(&event.head, &self.request_regexes)
         {
             return Box::pin(async { RequestHeadAction::Continue });
         }
+        if let Some(reason) = &self.rule.request.abort_reason {
+            let reason = reason.clone();
+            return Box::pin(async move {
+                RequestHeadAction::Abort(transmog_core::intercept::HookAbort::Policy(reason))
+            });
+        }
         let mut head = event.head;
         apply_headers(&mut head.headers, &self.rule.request.headers);
-        Box::pin(async move { RequestHeadAction::Replace(head) })
+        if self.rule.request.headers.is_empty() {
+            Box::pin(async { RequestHeadAction::Continue })
+        } else {
+            Box::pin(async move { RequestHeadAction::Replace(head) })
+        }
     }
 
     fn on_request_body(&self, event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
-        let replacement = (self.direction == RuleDirection::Request
-            && self.rule.matcher.matches_request(&event.head)
+        let selected = (self.direction == RuleDirection::Request
+            && self
+                .rule
+                .matcher
+                .matches_request(&event.head, &self.request_regexes)
             && (self.rule.request.allow_non_idempotent_body_replacement
                 || method_is_idempotent(&event.head.method)))
-        .then(|| self.rule.request.replace_body.as_ref())
-        .flatten()
-        .cloned();
+        .then(|| {
+            self.rule
+                .request
+                .replace_body
+                .as_ref()
+                .cloned()
+                .map_or_else(
+                    || self.rule.request.discard_body.then_some(None),
+                    |body| Some(Some(body)),
+                )
+        })
+        .flatten();
         Box::pin(async move {
-            replacement.map_or_else(RequestBodyAction::pass_through, |bytes| {
-                RequestBodyAction::decoded(BodyPlan::Replace(
-                    BufferedBody::try_new(bytes.len(), Bytes::from(bytes), None)
-                        .expect("compiled replacement satisfies its exact bound"),
-                ))
+            selected.map_or_else(RequestBodyAction::pass_through, |replacement| {
+                replacement.map_or_else(
+                    || RequestBodyAction::decoded(BodyPlan::Discard),
+                    |bytes| {
+                        RequestBodyAction::decoded(BodyPlan::Replace(
+                            BufferedBody::try_new(bytes.len(), Bytes::from(bytes), None)
+                                .expect("compiled replacement satisfies its exact bound"),
+                        ))
+                    },
+                )
             })
         })
     }
 
     fn on_response_head(&self, event: ResponseHeadEvent) -> BoxHookFuture<'_, ResponseHeadAction> {
         if self.direction != RuleDirection::Response
-            || !self
-                .rule
-                .matcher
-                .matches_response(&event.request_head, &event.head)
+            || !self.rule.matcher.matches_response(
+                &event.request_head,
+                &event.head,
+                &self.request_regexes,
+                &self.response_regexes,
+            )
         {
             return Box::pin(async { ResponseHeadAction::Continue });
         }
+        if let Some(reason) = &self.rule.response.abort_reason {
+            let reason = reason.clone();
+            return Box::pin(async move {
+                ResponseHeadAction::Abort(transmog_core::intercept::HookAbort::Policy(reason))
+            });
+        }
         let mut head = event.head;
         apply_headers(&mut head.headers, &self.rule.response.headers);
-        Box::pin(async move { ResponseHeadAction::Replace(head) })
+        if self.rule.response.headers.is_empty() {
+            Box::pin(async { ResponseHeadAction::Continue })
+        } else {
+            Box::pin(async move { ResponseHeadAction::Replace(head) })
+        }
     }
 
     fn on_response_body(&self, event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
-        let replacement = (self.direction == RuleDirection::Response
-            && self
-                .rule
-                .matcher
-                .matches_response(&event.request_head, &event.response_head))
-        .then(|| self.rule.response.replace_body.as_ref())
-        .flatten()
-        .cloned();
+        let selected = (self.direction == RuleDirection::Response
+            && self.rule.matcher.matches_response(
+                &event.request_head,
+                &event.response_head,
+                &self.request_regexes,
+                &self.response_regexes,
+            ))
+        .then(|| {
+            self.rule
+                .response
+                .replace_body
+                .as_ref()
+                .cloned()
+                .map_or_else(
+                    || self.rule.response.discard_body.then_some(None),
+                    |body| Some(Some(body)),
+                )
+        })
+        .flatten();
         Box::pin(async move {
-            replacement.map_or_else(ResponseBodyAction::pass_through, |bytes| {
-                ResponseBodyAction::decoded(BodyPlan::Replace(
-                    BufferedBody::try_new(bytes.len(), Bytes::from(bytes), None)
-                        .expect("compiled replacement satisfies its exact bound"),
-                ))
+            selected.map_or_else(ResponseBodyAction::pass_through, |replacement| {
+                replacement.map_or_else(
+                    || ResponseBodyAction::decoded(BodyPlan::Discard),
+                    |bytes| {
+                        ResponseBodyAction::decoded(BodyPlan::Replace(
+                            BufferedBody::try_new(bytes.len(), Bytes::from(bytes), None)
+                                .expect("compiled replacement satisfies its exact bound"),
+                        ))
+                    },
+                )
             })
         })
     }
@@ -444,6 +780,7 @@ fn apply_headers(headers: &mut transmog_core::HeaderBlock, actions: &[HeaderOper
     for action in actions {
         match action {
             HeaderOperation::Set(field) => headers.replace_all(field.clone()),
+            HeaderOperation::Append(field) => headers.push(field.clone()),
             HeaderOperation::Remove(name) => headers.remove_all(name),
         }
     }
@@ -467,18 +804,45 @@ pub enum CompileError {
     /// Rule identifier was empty or contained unsupported characters.
     #[error("automation rule id is invalid: {0}")]
     InvalidId(String),
+    /// Rule revision was zero.
+    #[error("automation rule revision is invalid: {0}")]
+    InvalidRevision(String),
     /// Rule identifier appeared more than once.
     #[error("automation rule id is duplicated: {0}")]
     DuplicateId(String),
     /// Path prefix did not begin with `/`.
     #[error("automation rule has an invalid path prefix: {0}")]
     InvalidPathPrefix(String),
+    /// Matcher values were empty, oversized, or syntactically invalid.
+    #[error("automation rule has an invalid matcher: {0}")]
+    InvalidMatcher(String),
+    /// Response status or status class was invalid.
+    #[error("automation rule has an invalid response status: {0}")]
+    InvalidResponseStatus(String),
     /// Header-operation count exceeded its per-rule bound.
     #[error("automation rule exceeds its header-operation limit: {0}")]
     HeaderOperationLimitExceeded(String),
+    /// Persisted header operation bypassed HTTP field validation.
+    #[error("automation rule has an invalid header operation: {0}")]
+    InvalidHeaderOperation(String),
+    /// Header-predicate count exceeded its per-rule bound.
+    #[error("automation rule exceeds its header-predicate limit: {0}")]
+    HeaderPredicateLimitExceeded(String),
+    /// Header predicate used an invalid field name.
+    #[error("automation rule has an invalid header predicate: {0}")]
+    InvalidHeaderPredicate(String),
+    /// Header predicate used an invalid or oversized regular expression.
+    #[error("automation rule has an invalid regular expression: {0}")]
+    InvalidRegex(String),
     /// Immediate replacement body exceeded its bound.
     #[error("automation rule exceeds its replacement-body limit: {0}")]
     BodyLimitExceeded(String),
+    /// Body replacement and discard were both requested.
+    #[error("automation rule has conflicting body actions: {0}")]
+    ConflictingBodyActions(String),
+    /// Abort reason was empty, oversized, or contained control characters.
+    #[error("automation rule has an invalid abort reason: {0}")]
+    InvalidAbortReason(String),
     /// Equal-priority overlapping rules could mutate the same target.
     #[error("automation rules {first} and {second} have an ambiguous conflict")]
     AmbiguousConflict {
@@ -537,6 +901,7 @@ mod tests {
     fn rule(id: &str, priority: i32, value: &str) -> Rule {
         Rule {
             id: id.to_owned(),
+            revision: 1,
             priority,
             matcher: RuleMatcher {
                 host: Some("example.test".to_owned()),
@@ -568,10 +933,10 @@ mod tests {
                 .map(|registration| registration.id().as_str().to_owned())
                 .collect::<Vec<_>>(),
             [
-                "automation/low/request",
-                "automation/high/request",
-                "automation/high/response",
-                "automation/low/response"
+                "automation/low@1/request",
+                "automation/high@1/request",
+                "automation/high@1/response",
+                "automation/low@1/response"
             ]
         );
         let factory = InterceptorChainFactory::new(
@@ -616,18 +981,21 @@ mod tests {
         );
         let effects = chain.hook_effects();
         assert_eq!(effects.len(), 4);
-        assert_eq!(effects[0].interceptor.id.as_str(), "automation/low/request");
+        assert_eq!(
+            effects[0].interceptor.id.as_str(),
+            "automation/low@1/request"
+        );
         assert_eq!(
             effects[1].interceptor.id.as_str(),
-            "automation/high/request"
+            "automation/high@1/request"
         );
         assert_eq!(
             effects[2].interceptor.id.as_str(),
-            "automation/low/response"
+            "automation/low@1/response"
         );
         assert_eq!(
             effects[3].interceptor.id.as_str(),
-            "automation/high/response"
+            "automation/high@1/response"
         );
         assert!(effects.iter().all(|effect| matches!(
             effect.phase,
@@ -639,6 +1007,7 @@ mod tests {
     async fn request_body_replacement_defaults_to_idempotent_methods() {
         let body_rule = Rule {
             id: "body".to_owned(),
+            revision: 1,
             priority: 1,
             matcher: RuleMatcher::default(),
             request: RequestActions {
@@ -677,6 +1046,59 @@ mod tests {
         )));
     }
 
+    #[tokio::test]
+    async fn conditional_user_agent_rule_uses_bounded_header_regex_and_exact_revision_audit() {
+        let mut request = request("GET");
+        request.target.query = Some("debug=1".to_owned());
+        request
+            .headers
+            .push(HeaderField::try_new("x-environment", "production").unwrap());
+        let ua_rule = Rule {
+            id: "conditional-ua".to_owned(),
+            revision: 42,
+            priority: 10,
+            matcher: RuleMatcher {
+                scheme: Some("https".to_owned()),
+                host: Some("example.test".to_owned()),
+                port: Some(443),
+                path_prefix: Some("/api".to_owned()),
+                query: Some("debug=1".to_owned()),
+                request_headers: vec![HeaderPredicate {
+                    name: "x-environment".to_owned(),
+                    condition: HeaderCondition::Regex("^prod(?:uction)?$".to_owned()),
+                }],
+                ..RuleMatcher::default()
+            },
+            request: RequestActions {
+                headers: vec![
+                    HeaderOperation::set("user-agent", "Transmog-Test/42").unwrap(),
+                    HeaderOperation::append("x-automation", "conditional-ua").unwrap(),
+                ],
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        let compiled = compile(vec![ua_rule], AutomationLimits::default()).unwrap();
+        let factory = InterceptorChainFactory::new(compiled.registrations(), HookLimits::default());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        let RequestHeadOutcome::Continue { head, .. } = chain.request_head(request).await.unwrap()
+        else {
+            panic!("matching UA rule unexpectedly stopped the request");
+        };
+        assert_eq!(
+            head.headers.values("user-agent").next(),
+            Some(&b"Transmog-Test/42"[..])
+        );
+        assert_eq!(
+            head.headers.values("x-automation").next(),
+            Some(&b"conditional-ua"[..])
+        );
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "automation/conditional-ua@42/request"
+        );
+    }
+
     #[test]
     fn ambiguous_equal_priority_conflicts_are_rejected() {
         let error = compile(
@@ -703,6 +1125,7 @@ mod tests {
 
         let oversized = Rule {
             id: "oversized".to_owned(),
+            revision: 1,
             priority: 0,
             matcher: RuleMatcher::default(),
             request: RequestActions {
