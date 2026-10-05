@@ -38,7 +38,7 @@ export async function startProxy(options: ProxyOptions): Promise<ProxyHandle> {
   }
   const child = spawn(options.binary, arguments_, {
     cwd: options.repo,
-    env: { ...process.env, RUST_LOG: 'rustymiddle=debug' },
+    env: { ...process.env, RUST_LOG: 'transmog=debug' },
     stdio: ['ignore', 'pipe', 'pipe'],
   }) as ChildProcessWithoutNullStreams;
   const lines: string[] = [];

@@ -1,4 +1,4 @@
-//! Headless application/session composition for `rustymiddle`.
+//! Headless application/session composition for Transmog.
 //!
 //! The crate owns bounded live state and application lifecycle. It deliberately
 //! contains no UI types and performs no ambient operating-system mutation.

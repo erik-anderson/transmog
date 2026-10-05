@@ -1,4 +1,4 @@
-# Embedding rustymiddle
+# Embedding Transmog
 
 The [`embedded` example](../crates/proxy-runtime/examples/embedded.rs) constructs
 the proxy without CLI modules or global state. It supplies an interceptor that
@@ -8,7 +8,7 @@ application upstream:
 
 ```powershell
 . ./scripts/dev-env.ps1
-cargo run --locked -p rustymiddle-runtime --example embedded
+cargo run --locked -p transmog-runtime --example embedded
 ```
 
 `ProxyComponents` is consumed by bind and cannot be mutated after the listener
@@ -47,8 +47,8 @@ return another bounded stream. It must not create an unbounded queue or retry a
 request independently; route attempts and replay safety belong to the exchange
 engine.
 
-`rustymiddle-http::HyperUpstreamService` and
-`rustymiddle-h3::H3UpstreamService` adapt the built-in pooled clients to this
+`transmog-http::HyperUpstreamService` and
+`transmog-h3::H3UpstreamService` adapt the built-in pooled clients to this
 same contract. Both reject a plan whose authorized destination differs from
 the canonical scheme, authority, host, or port before network I/O. The HTTP/3
 adapter performs one H3 attempt; an embedding host that selects `Auto` remains
@@ -66,7 +66,7 @@ cancellation, stale replies, and duplicate replies explicit. It is an in-process
 contract adapter, not a stable IPC schema.
 
 Applications that want a composed headless lifecycle can instead use
-`rustymiddle-session`. Create `ApplicationSessionService`, pass existing
+`transmog-session`. Create `ApplicationSessionService`, pass existing
 `ProxyComponents` through `prepare_components` exactly once, bind the returned
 components, and give the bound `ProxyServer` to `start`. Caller hooks and
 observers are preserved. The service adds a finite authoritative catalog,

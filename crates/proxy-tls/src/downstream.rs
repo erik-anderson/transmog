@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn issued_leaf_builds_h1_h2_acceptor() {
-        let ca = ProxyCa::generate("rustymiddle downstream test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog downstream test", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("example.test").unwrap(), 1)
             .unwrap();

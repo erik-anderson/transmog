@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Hooks v2 owns protocol-neutral body plans while `rustymiddle-content` owns HTTP
+Hooks v2 owns protocol-neutral body plans while `transmog-content` owns HTTP
 content codings. Core must express whether a plan expects raw coded bytes or
 decoded representation bytes without depending on codec libraries. The content
 layer must compose multiple codings, preserve exact pass-through behavior, and
@@ -26,7 +26,7 @@ Core aggregates those requirements while constructing `BodyPipeline`:
 - optional decoded stages can be removed before processing when the coding is
   unsupported.
 
-`rustymiddle-content::ContentBodyPipeline` wraps the resulting core pipeline.
+`transmog-content::ContentBodyPipeline` wraps the resulting core pipeline.
 It decodes the declared coding stack in reverse sender order, applies Hooks v2,
 and re-encodes in forward sender order when policy preserves the original
 coding. It owns whole-stack byte and expansion accounting in addition to each
@@ -40,7 +40,7 @@ metadata when its body may change. A decoded replacement or discard can drain
 source bytes without constructing decoders when no stage before it inspects the
 source; output is still identity or explicitly re-encoded according to policy.
 
-Codec objects and dependency errors remain private behind rustymiddle-owned
+Codec objects and dependency errors remain private behind Transmog-owned
 types. Runtime policy and transport wiring remain a higher-layer concern.
 
 ## Consequences
@@ -57,7 +57,7 @@ types. Runtime policy and transport wiring remain a higher-layer concern.
 
 ## Alternatives considered
 
-- Put codec variants in `rustymiddle-core`. Rejected because it reverses the
+- Put codec variants in `transmog-core`. Rejected because it reverses the
   intended dependency direction and makes core responsible for content policy.
 - Infer decoded processing from `Content-Encoding` whenever any hook exists.
   Rejected because it destroys the raw fast path and makes raw tools ambiguous.

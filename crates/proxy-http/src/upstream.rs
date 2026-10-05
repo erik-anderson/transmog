@@ -1,6 +1,6 @@
 use hyper_boring::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
-use rustymiddle_tls::{TrustError, UpstreamTlsContextFactory};
+use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 /// Protocols advertised by one Hyper origin connector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,7 +43,7 @@ pub fn build_https_connector(
 mod tests {
     use std::sync::Arc;
 
-    use rustymiddle_tls::{
+    use transmog_tls::{
         SystemTrustSource, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
     };
 

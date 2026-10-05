@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle"
-description = "Runnable rustymiddle explicit proxy and CA operator tool"
+name = "transmog"
+description = "Runnable Transmog explicit proxy and CA operator tool"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,12 +9,12 @@ repository.workspace = true
 
 [dependencies]
 bytes.workspace = true
-rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
-rustymiddle-content = { version = "=0.1.0", path = "../proxy-content" }
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
-rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
-rustymiddle-saz = { version = "=0.1.0", path = "../proxy-saz" }
-rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
+transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
+transmog-content = { version = "=0.1.0", path = "../proxy-content" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.0", path = "../proxy-saz" }
+transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

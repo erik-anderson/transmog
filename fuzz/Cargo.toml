@@ -1,5 +1,5 @@
 [package]
-name = "rustymiddle-content-fuzz"
+name = "transmog-content-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -11,9 +11,9 @@ cargo-fuzz = true
 [dependencies]
 bytes = "1.11.1"
 libfuzzer-sys = "=0.4.13"
-rustymiddle-content = { version = "=0.1.0", path = "../crates/proxy-content" }
-rustymiddle-core = { version = "=0.1.0", path = "../crates/proxy-core" }
-rustymiddle-websocket = { version = "=0.1.0", path = "../crates/proxy-websocket" }
+transmog-content = { version = "=0.1.0", path = "../crates/proxy-content" }
+transmog-core = { version = "=0.1.0", path = "../crates/proxy-core" }
+transmog-websocket = { version = "=0.1.0", path = "../crates/proxy-websocket" }
 tokio = { version = "1.53.1", features = ["rt", "time"] }
 
 [workspace]

@@ -1,6 +1,6 @@
 # SAZ compatibility
 
-rustymiddle records live traffic in its own append-only `.rmcap` format and
+Transmog records live traffic in its own append-only `.tmcap` format and
 converts a sealed or crash-recovered artifact to SAZ afterward. SAZ requires a
 ZIP central directory, so it is not the streaming persistence format.
 
@@ -18,8 +18,8 @@ selected `zip` crate is built without optional compression, encryption, time,
 or native-code features.
 
 Strict mode deliberately exports the client-facing request and response. SAZ
-cannot represent all four rustymiddle boundaries or the complete attributed
-hook-effect trail. `saz-extended` adds `rustymiddle/manifest.json` with stable
+cannot represent all four Transmog boundaries or the complete attributed
+hook-effect trail. `saz-extended` adds `transmog/manifest.json` with stable
 native exchange IDs and completeness state; consumers expecting only classic
 members should use strict mode.
 
@@ -34,8 +34,8 @@ conversion rather than producing ambiguous wire text.
 Use the headless converter with a new destination path:
 
 ```powershell
-cargo run --locked -p rustymiddle -- capture export `
-  --input ./session.rmcap --format saz --output ./session.saz
+cargo run --locked -p transmog -- capture export `
+  --input ./session.tmcap --format saz --output ./session.saz
 ```
 
 The converter never overwrites an existing destination. Native capture remains

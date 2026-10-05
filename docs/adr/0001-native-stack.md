@@ -21,7 +21,7 @@ on duplicate Boring families or a second production TLS stack.
 Windows builders need LLVM, Ninja, CMake, NASM, and compatible Windows SDK/link
 libraries. quiche's HTTP/3 adapter can accept the same BoringSSL context policy.
 If an async wrapper hides a required verification, cancellation, or streaming
-hook, rustymiddle will maintain a thin Tokio driver over quiche rather than add
+hook, Transmog will maintain a thin Tokio driver over quiche rather than add
 another QUIC/TLS implementation.
 
 The reproducible Windows bootstrap pins LLVM 22.1.4, CMake 4.4.4, Ninja 1.13.2,

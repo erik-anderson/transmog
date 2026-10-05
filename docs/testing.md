@@ -199,14 +199,14 @@ Additional hardening commands are:
 ./scripts/test-linux-docker.ps1
 
 # Deterministic model/fuzz smoke and concurrency tests are part of this suite.
-cargo test --locked -p rustymiddle-core --all-features
+cargo test --locked -p transmog-core --all-features
 
 # Compile every example and benchmark harness.
 cargo test --locked --workspace --all-features --all-targets
 
 # Dependency-free fixed-input microbenchmarks; run on an otherwise idle host.
-cargo run --locked --release -p rustymiddle-core --example hooks_benchmark
-cargo run --locked --release -p rustymiddle-content --example content_benchmark
+cargo run --locked --release -p transmog-core --example hooks_benchmark
+cargo run --locked --release -p transmog-content --example content_benchmark
 
 # End-to-end decoded content throughput, first-byte, cancellation, and sampled
 # peak-working-set report. The JSON artifact is ignored by Git.
@@ -215,5 +215,5 @@ cargo run --locked --release -p rustymiddle-content --example content_benchmark
 
 The transport-neutral core is intended to remain Miri-compatible. On a host
 with the nightly component installed, run `cargo +nightly miri test -p
-rustymiddle-core --lib`. Miri is an additional diagnostic and is not installed
+transmog-core --lib`. Miri is an additional diagnostic and is not installed
 or silently skipped by `scripts/test.ps1`.

@@ -139,7 +139,7 @@ impl ProxyCa {
         }
         let private_key = generate_p256_key()?;
         let mut name = X509NameBuilder::new()?;
-        name.append_entry_by_text("O", "rustymiddle local interception")?;
+        name.append_entry_by_text("O", "Transmog local interception")?;
         name.append_entry_by_text("CN", common_name)?;
         let name = name.build();
 
@@ -250,7 +250,7 @@ impl ProxyCa {
         }
         let private_key = generate_p256_key()?;
         let mut name = X509NameBuilder::new()?;
-        name.append_entry_by_text("O", "rustymiddle intercepted origin")?;
+        name.append_entry_by_text("O", "Transmog intercepted origin")?;
         name.append_entry_by_text("CN", &identity.as_text())?;
         let name = name.build();
 
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn issued_leaf_has_exact_identity_and_cache_is_bounded() {
-        let ca = ProxyCa::generate("rustymiddle test CA", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog test CA", 2).unwrap();
         assert_eq!(ca.sha256_thumbprint().unwrap().len(), 64);
         let mut cache = LeafCache::new(ca, 1, 1).unwrap();
         let first = EndpointIdentity::parse("one.example").unwrap();

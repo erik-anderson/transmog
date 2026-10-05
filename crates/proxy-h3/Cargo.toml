@@ -1,5 +1,5 @@
 [package]
-name = "rustymiddle-h3"
+name = "transmog-h3"
 description = "quiche HTTP/3 egress and private Alt-Svc discovery"
 version.workspace = true
 edition.workspace = true
@@ -11,8 +11,8 @@ repository.workspace = true
 boring.workspace = true
 bytes.workspace = true
 quiche.workspace = true
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
-rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

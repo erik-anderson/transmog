@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use rustymiddle_core::{
+use transmog_core::{
     RoutePolicy, StreamingRequest,
     intercept::ExchangeCancellation,
     route::{UpstreamDestination, UpstreamPlan},
@@ -148,13 +148,13 @@ fn map_h3_error(error: &H3OriginError) -> UpstreamError {
 mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
-    use rustymiddle_core::{
+    use transmog_core::{
         BodyStream, HeaderBlock, HttpLegVersion, Replayability, RequestHead, Target,
         intercept::ExchangeCancellation,
         route::{UpstreamDestination, UpstreamPlan, UpstreamPoolKey},
         upstream::{UpstreamErrorKind, UpstreamService},
     };
-    use rustymiddle_tls::{
+    use transmog_tls::{
         SystemTrustSource, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
     };
 

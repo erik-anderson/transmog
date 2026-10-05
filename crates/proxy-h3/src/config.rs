@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use rustymiddle_tls::{TrustError, UpstreamTlsContextFactory};
 use thiserror::Error;
+use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 /// Bounded transport settings for an HTTP/3 client connection.
 #[derive(Clone, Copy, Debug)]
@@ -114,7 +114,7 @@ pub enum H3ConfigError {
 mod tests {
     use std::sync::Arc;
 
-    use rustymiddle_tls::{
+    use transmog_tls::{
         SystemTrustSource, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
     };
 

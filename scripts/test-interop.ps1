@@ -81,8 +81,8 @@ $playwrightProject = Join-Path $repoRoot 'e2e\playwright'
 $interopRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot '.local\interop'))
 $runId = [Guid]::NewGuid().ToString('N')
 $runRoot = [IO.Path]::GetFullPath((Join-Path $interopRoot $runId))
-$project = "rustymiddle-interop-$($runId.Substring(0, 12))"
-$binaryName = if ($IsWindows) { 'rustymiddle.exe' } else { 'rustymiddle' }
+$project = "transmog-interop-$($runId.Substring(0, 12))"
+$binaryName = if ($IsWindows) { 'transmog.exe' } else { 'transmog' }
 $binary = Join-Path $repoRoot "target\release\$binaryName"
 $caCertificate = Join-Path $runRoot 'ca.pem'
 $caPrivateKey = Join-Path $runRoot 'ca.key'
@@ -98,11 +98,11 @@ if (-not $runRoot.StartsWith($interopRoot + [IO.Path]::DirectorySeparatorChar)) 
 
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 try {
-    cargo build --release --locked -p rustymiddle
+    cargo build --release --locked -p transmog
     & $binary ca generate `
         --cert $caCertificate `
         --key $caPrivateKey `
-        --name "rustymiddle interop $($runId.Substring(0, 12))"
+        --name "Transmog interop $($runId.Substring(0, 12))"
     & $binary ca issue `
         --ca-cert $caCertificate `
         --ca-key $caPrivateKey `
@@ -113,9 +113,9 @@ try {
 
     node (Join-Path $repoRoot 'e2e\interop\generate-encoded-fixtures.mjs') $assetsDirectory
 
-    $env:RUSTYMIDDLE_INTEROP_ASSETS_DIR = $assetsDirectory
-    $env:RUSTYMIDDLE_INTEROP_TLS_DIR = $runRoot
-    $env:RUSTYMIDDLE_INTEROP_TLS_PORT = [string](Get-FreeTcpUdpPort)
+    $env:TRANSMOG_INTEROP_ASSETS_DIR = $assetsDirectory
+    $env:TRANSMOG_INTEROP_TLS_DIR = $runRoot
+    $env:TRANSMOG_INTEROP_TLS_PORT = [string](Get-FreeTcpUdpPort)
 
     $composeAttempted = $true
     & $dockerCli compose `
@@ -124,18 +124,18 @@ try {
         up --detach --pull missing --wait --wait-timeout 120
     $composeStarted = $true
 
-    $env:RUSTYMIDDLE_BIN = $binary
-    $env:RUSTYMIDDLE_TEST_CA_CERT = $caCertificate
-    $env:RUSTYMIDDLE_TEST_CA_KEY = $caPrivateKey
-    $env:RUSTYMIDDLE_CURL = $curlCli
-    $env:RUSTYMIDDLE_NGINX_URL = Get-PublishedUrl $dockerCli $composeFile $project 'nginx'
-    $env:RUSTYMIDDLE_APACHE_URL = Get-PublishedUrl $dockerCli $composeFile $project 'apache'
-    $env:RUSTYMIDDLE_CADDY_URL = "https://127.0.0.1:$($env:RUSTYMIDDLE_INTEROP_TLS_PORT)/"
-    $env:RUSTYMIDDLE_INTEROP = '1'
+    $env:TRANSMOG_BIN = $binary
+    $env:TRANSMOG_TEST_CA_CERT = $caCertificate
+    $env:TRANSMOG_TEST_CA_KEY = $caPrivateKey
+    $env:TRANSMOG_CURL = $curlCli
+    $env:TRANSMOG_NGINX_URL = Get-PublishedUrl $dockerCli $composeFile $project 'nginx'
+    $env:TRANSMOG_APACHE_URL = Get-PublishedUrl $dockerCli $composeFile $project 'apache'
+    $env:TRANSMOG_CADDY_URL = "https://127.0.0.1:$($env:TRANSMOG_INTEROP_TLS_PORT)/"
+    $env:TRANSMOG_INTEROP = '1'
 
-    Write-Output "NGINX_ORIGIN=$($env:RUSTYMIDDLE_NGINX_URL)"
-    Write-Output "APACHE_ORIGIN=$($env:RUSTYMIDDLE_APACHE_URL)"
-    Write-Output "CADDY_ORIGIN=$($env:RUSTYMIDDLE_CADDY_URL)"
+    Write-Output "NGINX_ORIGIN=$($env:TRANSMOG_NGINX_URL)"
+    Write-Output "APACHE_ORIGIN=$($env:TRANSMOG_APACHE_URL)"
+    Write-Output "CADDY_ORIGIN=$($env:TRANSMOG_CADDY_URL)"
     Write-Output "CURL=$curlCli"
     Write-Output "CURL_VERSION=$((& $curlCli --version | Select-Object -First 1).Trim())"
 

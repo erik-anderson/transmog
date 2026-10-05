@@ -8,7 +8,7 @@ services:
       - ./fixtures/nginx/index.html:/usr/share/nginx/html/index.html:ro
       - ./fixtures/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - type: bind
-        source: ${RUSTYMIDDLE_INTEROP_ASSETS_DIR:?set RUSTYMIDDLE_INTEROP_ASSETS_DIR}
+        source: ${TRANSMOG_INTEROP_ASSETS_DIR:?set TRANSMOG_INTEROP_ASSETS_DIR}
         target: /usr/share/nginx/html/encoding
         read_only: true
     healthcheck:
@@ -23,17 +23,17 @@ services:
     image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
     init: true
     ports:
-      - "127.0.0.1:${RUSTYMIDDLE_INTEROP_TLS_PORT:?set RUSTYMIDDLE_INTEROP_TLS_PORT}:443/tcp"
-      - "127.0.0.1:${RUSTYMIDDLE_INTEROP_TLS_PORT:?set RUSTYMIDDLE_INTEROP_TLS_PORT}:443/udp"
+      - "127.0.0.1:${TRANSMOG_INTEROP_TLS_PORT:?set TRANSMOG_INTEROP_TLS_PORT}:443/tcp"
+      - "127.0.0.1:${TRANSMOG_INTEROP_TLS_PORT:?set TRANSMOG_INTEROP_TLS_PORT}:443/udp"
     volumes:
       - ./fixtures/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./fixtures/caddy/index.html:/srv/index.html:ro
       - type: bind
-        source: ${RUSTYMIDDLE_INTEROP_TLS_DIR:?set RUSTYMIDDLE_INTEROP_TLS_DIR}/origin.pem
+        source: ${TRANSMOG_INTEROP_TLS_DIR:?set TRANSMOG_INTEROP_TLS_DIR}/origin.pem
         target: /certs/origin.pem
         read_only: true
       - type: bind
-        source: ${RUSTYMIDDLE_INTEROP_TLS_DIR:?set RUSTYMIDDLE_INTEROP_TLS_DIR}/origin.key
+        source: ${TRANSMOG_INTEROP_TLS_DIR:?set TRANSMOG_INTEROP_TLS_DIR}/origin.key
         target: /certs/origin.key
         read_only: true
     healthcheck:

@@ -340,30 +340,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "rustymiddle-content"
+name = "transmog-content"
 version = "0.1.0"
 dependencies = [
  "async-compression",
  "bytes",
- "rustymiddle-core",
+ "transmog-core",
  "thiserror",
  "tokio",
 ]
 
 [[package]]
-name = "rustymiddle-content-fuzz"
+name = "transmog-content-fuzz"
 version = "0.0.0"
 dependencies = [
  "bytes",
  "libfuzzer-sys",
- "rustymiddle-content",
- "rustymiddle-core",
- "rustymiddle-websocket",
+ "transmog-content",
+ "transmog-core",
+ "transmog-websocket",
  "tokio",
 ]
 
 [[package]]
-name = "rustymiddle-core"
+name = "transmog-core"
 version = "0.1.0"
 dependencies = [
  "bytes",
@@ -374,7 +374,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustymiddle-websocket"
+name = "transmog-websocket"
 version = "0.1.0"
 dependencies = [
  "base64",

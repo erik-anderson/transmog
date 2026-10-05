@@ -19,7 +19,7 @@ explicitly requests stabilization.
 
 ## Ownership and boundaries
 
-The new `rustymiddle-session` crate may depend on runtime, core, content,
+The new `transmog-session` crate may depend on runtime, core, content,
 control-model, control-transport, capture, and WebSocket public APIs. None of
 those lower layers may depend on it.
 

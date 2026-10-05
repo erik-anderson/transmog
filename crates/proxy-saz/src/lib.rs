@@ -12,12 +12,12 @@ use std::{
     io::{Seek, Write},
 };
 
-use rustymiddle_capture::{
-    CaptureExporter, CaptureRecordKind, CapturedHeader, ExportReport, RecoveredCapture,
-};
-use rustymiddle_core::observe::ExchangeBoundary;
 use serde::Serialize;
 use thiserror::Error;
+use transmog_capture::{
+    CaptureExporter, CaptureRecordKind, CapturedHeader, ExportReport, RecoveredCapture,
+};
+use transmog_core::observe::ExchangeBoundary;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 const CONTENT_TYPES: &str = concat!(
@@ -201,12 +201,12 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
                 return Err(SazError::EntryLimitExceeded);
             }
             let manifest = serde_json::to_vec_pretty(&Manifest {
-                format: "rustymiddle-saz-extension-v1",
+                format: "transmog-saz-extension-v1",
                 source_sealed: capture.sealed,
                 source_truncated_tail: capture.truncated_tail,
                 sessions: &manifest,
             })?;
-            write_member(&mut writer, "rustymiddle/manifest.json", &manifest, options)?;
+            write_member(&mut writer, "transmog/manifest.json", &manifest, options)?;
             report.entries = report.entries.saturating_add(1);
         }
         let mut output = writer.finish()?;
@@ -502,7 +502,7 @@ pub enum SazError {
 mod tests {
     use std::io::{Cursor, Read};
 
-    use rustymiddle_capture::CaptureRecord;
+    use transmog_capture::CaptureRecord;
 
     use super::*;
 
@@ -632,7 +632,7 @@ mod tests {
         let metadata = String::from_utf8(member(&mut archive, "raw/1_m.xml")).unwrap();
         assert!(!metadata.contains("log-drop-request-body"));
         assert!(!metadata.contains("log-drop-response-body"));
-        assert!(archive.by_name("rustymiddle/manifest.json").is_err());
+        assert!(archive.by_name("transmog/manifest.json").is_err());
     }
 
     #[test]
@@ -643,7 +643,7 @@ mod tests {
         let metadata = String::from_utf8(member(&mut archive, "raw/1_m.xml")).unwrap();
         assert!(metadata.contains("log-drop-request-body"));
         let manifest: serde_json::Value =
-            serde_json::from_slice(&member(&mut archive, "rustymiddle/manifest.json")).unwrap();
+            serde_json::from_slice(&member(&mut archive, "transmog/manifest.json")).unwrap();
         assert_eq!(manifest["sessions"][0]["native_exchange_id"], "42");
 
         let (_, report) = export(SazMode::Strict, &capture(false, true));

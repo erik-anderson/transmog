@@ -8,11 +8,11 @@ use std::{
     thread::JoinHandle,
 };
 
-use rustymiddle_capture::{
+use thiserror::Error;
+use transmog_capture::{
     CaptureLimits, CapturePolicy, CaptureWriter, loss_record, record_from_observer,
 };
-use rustymiddle_core::observe::ObserverEvent;
-use thiserror::Error;
+use transmog_core::observe::ObserverEvent;
 
 /// Settings for a new native capture artifact.
 #[derive(Clone, Debug)]
@@ -154,7 +154,7 @@ impl CaptureManager {
             worker: Mutex::new(None),
         });
         let worker = std::thread::Builder::new()
-            .name("rustymiddle-capture".into())
+            .name("transmog-capture".into())
             .spawn(move || capture_worker(&receiver, &status))
             .map_err(|_| CaptureServiceError::WorkerUnavailable)?;
         *inner
@@ -369,7 +369,7 @@ fn stop_capture(
 fn append_event(
     capture: &mut ActiveCapture,
     event: &ObserverEvent,
-) -> Result<(), rustymiddle_capture::CaptureError> {
+) -> Result<(), transmog_capture::CaptureError> {
     let exchange_id = event.exchange_id.0;
     let previous = capture
         .last_sequences
@@ -435,8 +435,8 @@ mod tests {
         time::SystemTime,
     };
 
-    use rustymiddle_capture::{CaptureRecordKind, recover};
-    use rustymiddle_core::{
+    use transmog_capture::{CaptureRecordKind, recover};
+    use transmog_core::{
         ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
         intercept::{ExchangeId, ExchangeMetadata},
         observe::ObserverEventKind,
@@ -448,7 +448,7 @@ mod tests {
 
     fn temp_path() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "rustymiddle-session-{}-{}.rmcap",
+            "transmog-session-{}-{}.tmcap",
             std::process::id(),
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ))

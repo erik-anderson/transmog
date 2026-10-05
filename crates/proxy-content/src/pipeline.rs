@@ -1,8 +1,8 @@
-use rustymiddle_core::{
+use thiserror::Error;
+use transmog_core::{
     BodyFrame, HeaderBlock,
     intercept::{BodyPipeline, BodyPipelineError, BodyRepresentation, BodyRepresentationError},
 };
-use thiserror::Error;
 
 use crate::{
     ContentBudget, ContentCodecError, ContentCodingError, ContentCodingStack, ContentDecoder,
@@ -458,7 +458,7 @@ mod tests {
     };
 
     use bytes::Bytes;
-    use rustymiddle_core::{
+    use transmog_core::{
         ConnectionId, HeaderField, HttpLegVersion, RequestHead, SessionId, SessionMetadata,
         StreamId, Target,
         intercept::{

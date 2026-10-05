@@ -5,7 +5,9 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use rustymiddle_core::{
+use thiserror::Error;
+use tokio::sync::broadcast;
+use transmog_core::{
     HeaderBlock, RequestHead, ResponseHead,
     intercept::{
         CompletedExchange, ExchangeFailure, ExchangeId, ExchangeMetadata, HookEffect,
@@ -16,9 +18,7 @@ use rustymiddle_core::{
         ObserverEvent, ObserverEventKind,
     },
 };
-use rustymiddle_runtime::WebSocketSessionEvidence;
-use thiserror::Error;
-use tokio::sync::broadcast;
+use transmog_runtime::WebSocketSessionEvidence;
 
 /// Finite memory and fan-out policy for one live catalog.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -748,7 +748,7 @@ fn matches_filter(session: &MutableSession, filter: &SessionFilter) -> bool {
 mod tests {
     use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 
-    use rustymiddle_core::{
+    use transmog_core::{
         ConnectionId, HeaderField, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
         intercept::{ExchangeFailureKind, ExchangeStage},
         observe::{BodyObservation, ObservationInterest, Observer, ObserverConfig, ObserverHub},
@@ -1009,10 +1009,7 @@ mod tests {
     struct CatalogObserver(SessionCatalog);
 
     impl Observer for CatalogObserver {
-        fn on_event(
-            &self,
-            event: ObserverEvent,
-        ) -> rustymiddle_core::observe::BoxObserverFuture<'_> {
+        fn on_event(&self, event: ObserverEvent) -> transmog_core::observe::BoxObserverFuture<'_> {
             self.0.apply(event);
             Box::pin(async { Ok(()) })
         }

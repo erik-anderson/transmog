@@ -8,18 +8,18 @@ use std::{
 use boring::{hash::MessageDigest, rand::rand_bytes, x509::X509};
 use bytes::Bytes;
 use quiche::h3::NameValue;
-use rustymiddle_core::{
-    BodyFrame, BodyStream, BodyStreamError, BodyStreamSender, CanonicalRequest, CanonicalResponse,
-    HeaderBlock, HeaderField, HttpLegVersion, MessageKind, ResponseHead, StreamingRequest,
-    StreamingResponse, TranslationOptions, prepare_headers,
-};
-use rustymiddle_tls::UpstreamTlsContextFactory;
 use thiserror::Error;
 use tokio::{
     net::UdpSocket,
     sync::{Mutex, mpsc, oneshot},
     time::sleep,
 };
+use transmog_core::{
+    BodyFrame, BodyStream, BodyStreamError, BodyStreamSender, CanonicalRequest, CanonicalResponse,
+    HeaderBlock, HeaderField, HttpLegVersion, MessageKind, ResponseHead, StreamingRequest,
+    StreamingResponse, TranslationOptions, prepare_headers,
+};
+use transmog_tls::UpstreamTlsContextFactory;
 
 use crate::{H3ConfigError, H3TransportLimits, build_quiche_config};
 
@@ -804,7 +804,7 @@ impl PreparedRequest {
 }
 
 fn prepare_request_headers(
-    head: rustymiddle_core::RequestHead,
+    head: transmog_core::RequestHead,
 ) -> Result<Vec<quiche::h3::Header>, H3OriginError> {
     let headers = prepare_headers(
         &head.headers,
@@ -1151,10 +1151,10 @@ pub enum H3OriginError {
     Boring(#[from] boring::error::ErrorStack),
     /// Canonical translation rejected unsafe framing.
     #[error(transparent)]
-    Translation(#[from] rustymiddle_core::TranslationError),
+    Translation(#[from] transmog_core::TranslationError),
     /// A canonical regular header was invalid.
     #[error(transparent)]
-    Header(#[from] rustymiddle_core::HeaderError),
+    Header(#[from] transmog_core::HeaderError),
     /// A streaming request body producer failed.
     #[error(transparent)]
     BodyStream(#[from] BodyStreamError),
@@ -1216,12 +1216,12 @@ mod tests {
     use std::sync::Arc;
 
     use boring::ssl::{SslContext, SslMethod};
-    use rustymiddle_core::{RequestHead, Target};
-    use rustymiddle_tls::{
+    use tokio::{task::JoinHandle, time::timeout};
+    use transmog_core::{RequestHead, Target};
+    use transmog_tls::{
         EndpointIdentity, LoadedTrust, ProxyCa, TrustError, TrustSnapshot, TrustSource,
         UpstreamTlsPolicy,
     };
-    use tokio::{task::JoinHandle, time::timeout};
 
     use super::*;
 
@@ -1249,7 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_h3_origin_uses_shared_verified_context() {
-        let ca = ProxyCa::generate("rustymiddle h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1304,7 +1304,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_h3_origin_with_unknown_root_fails_closed() {
-        let origin_ca = ProxyCa::generate("rustymiddle untrusted h3 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog untrusted h3 origin", 2).unwrap();
         let leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1352,7 +1352,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_h3_origin_with_wrong_hostname_fails_closed() {
-        let origin_ca = ProxyCa::generate("rustymiddle wrong-host h3 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog wrong-host h3 origin", 2).unwrap();
         let leaf = origin_ca
             .issue(EndpointIdentity::parse("wrong.example").unwrap(), 1)
             .unwrap();
@@ -1399,7 +1399,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_h3_origin_accepts_an_exact_ip_san() {
-        let ca = ProxyCa::generate("rustymiddle IP-SAN h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog IP-SAN h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("127.0.0.1").unwrap(), 1)
             .unwrap();
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplex_streaming_api_returns_backpressured_response_frames() {
-        let ca = ProxyCa::generate("rustymiddle streaming h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog streaming h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1496,7 +1496,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplex_response_arrives_before_the_h3_origin_finishes() {
-        let ca = ProxyCa::generate("rustymiddle slow streaming h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog slow streaming h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1563,7 +1563,7 @@ mod tests {
 
     #[tokio::test]
     async fn duplex_request_arrives_before_the_producer_finishes() {
-        let ca = ProxyCa::generate("rustymiddle request streaming h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog request streaming h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1631,7 +1631,7 @@ mod tests {
 
     #[tokio::test]
     async fn pooled_connection_multiplexes_concurrent_requests() {
-        let ca = ProxyCa::generate("rustymiddle pooled h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog pooled h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[tokio::test]
     async fn paused_h3_body_consumer_does_not_block_an_unrelated_stream() {
-        let ca = ProxyCa::generate("rustymiddle backpressured h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog backpressured h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1773,7 +1773,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_one_h3_response_body_does_not_close_an_unrelated_stream() {
-        let ca = ProxyCa::generate("rustymiddle cancelled h3 origin", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog cancelled h3 origin", 2).unwrap();
         let leaf = ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -1896,7 +1896,7 @@ mod tests {
     }
 
     async fn spawn_origin(
-        leaf: rustymiddle_tls::IssuedLeaf,
+        leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
     ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
@@ -1929,7 +1929,7 @@ mod tests {
     }
 
     async fn spawn_multiplex_origin(
-        leaf: rustymiddle_tls::IssuedLeaf,
+        leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
     ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
@@ -1959,7 +1959,7 @@ mod tests {
     }
 
     async fn spawn_slow_streaming_origin(
-        leaf: rustymiddle_tls::IssuedLeaf,
+        leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
         first_sent: Arc<tokio::sync::Notify>,
         release: Arc<tokio::sync::Notify>,
@@ -1997,7 +1997,7 @@ mod tests {
     }
 
     async fn spawn_request_streaming_origin(
-        leaf: rustymiddle_tls::IssuedLeaf,
+        leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
         first_seen: Arc<tokio::sync::Notify>,
     ) -> (SocketAddr, TestOrigin) {

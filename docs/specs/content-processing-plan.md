@@ -6,7 +6,7 @@ implemented on Windows and the local Linux Docker/WSL2 matrix; hosted
 Linux/macOS automation is intentionally deferred
 Audience: implementation agents and reviewers
 Depends on: Hooks v2 and the layered monorepo roadmap
-Primary scope: new `rustymiddle-content` crate and runtime body-pipeline
+Primary scope: new `transmog-content` crate and runtime body-pipeline
 composition
 
 ## Mission
@@ -36,7 +36,7 @@ This milestone does not implement:
 
 ## Placement and ownership
 
-`rustymiddle-content` depends on `rustymiddle-core` and owns:
+`transmog-content` depends on `transmog-core` and owns:
 
 - content-coding tokens and ordered coding stacks;
 - content-processing policy and resource limits;
@@ -44,9 +44,9 @@ This milestone does not implement:
 - representation header invalidation and repair;
 - codec conformance and decompression-bomb tests.
 
-`rustymiddle-core` continues to own canonical body frames, hook actions,
+`transmog-core` continues to own canonical body frames, hook actions,
 bounded body-pipeline contracts, cancellation, and terminal outcomes.
-`rustymiddle-runtime` decides whether content processing is enabled for a
+`transmog-runtime` decides whether content processing is enabled for a
 listener/exchange and composes content filters around hook body plans.
 Transport crates remain unaware of compression algorithms.
 
@@ -200,7 +200,7 @@ pre-1.0 and may make coordinated monorepo breaking changes.
 
 ### Phase 1: Semantics, plans, and budgets
 
-- Create `rustymiddle-content` with no codec dependency.
+- Create `transmog-content` with no codec dependency.
 - Parse duplicate/comma-separated `Content-Encoding` fields strictly.
 - Model encode/decode order and identity handling.
 - Add finite limit validation and incremental encoded/decoded/output counters.

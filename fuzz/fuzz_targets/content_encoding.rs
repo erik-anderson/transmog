@@ -3,8 +3,8 @@
 use std::num::NonZeroUsize;
 
 use libfuzzer_sys::fuzz_target;
-use rustymiddle_content::ContentCodingStack;
-use rustymiddle_core::{HeaderBlock, HeaderField};
+use transmog_content::ContentCodingStack;
+use transmog_core::{HeaderBlock, HeaderField};
 
 const MAX_INPUT: usize = 16 * 1024;
 const STRUCTURED_PREFIX: &[u8] = b"structured:";

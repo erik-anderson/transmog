@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
-use rustymiddle_websocket::{
+use transmog_websocket::{
     DataKind, Direction, Frame, FrameLimits, MessageDecoder, MessageEvent, PerMessageDeflate,
     PerMessageDeflateCodec, encode_frame,
 };
@@ -53,11 +53,11 @@ fn fuzz(data: &[u8]) {
                     }
                 }
                 MessageEvent::Control(control) => match control {
-                    rustymiddle_websocket::ControlFrame::Close(close) => {
+                    transmog_websocket::ControlFrame::Close(close) => {
                         assert!(close.reason.len() <= 123);
                     }
-                    rustymiddle_websocket::ControlFrame::Ping(bytes)
-                    | rustymiddle_websocket::ControlFrame::Pong(bytes) => {
+                    transmog_websocket::ControlFrame::Ping(bytes)
+                    | transmog_websocket::ControlFrame::Pong(bytes) => {
                         assert!(bytes.len() <= 125);
                     }
                 },

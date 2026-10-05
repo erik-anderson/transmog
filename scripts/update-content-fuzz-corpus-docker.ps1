@@ -11,7 +11,7 @@ param(
         'content_pipeline'
     ),
 
-    [string]$Image = 'rustymiddle-content-fuzz:nightly-2026-10-01'
+    [string]$Image = 'transmog-content-fuzz:nightly-2026-10-01'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,8 +54,8 @@ $repositoryMount = "type=bind,source=$repoRoot,target=/work"
     --env "FUZZ_RUNS=$Runs" `
     --env "FUZZ_TARGETS=$($Target -join ' ')" `
     --mount $repositoryMount `
-    --mount 'type=volume,source=rustymiddle-content-fuzz-cargo-registry,target=/usr/local/cargo/registry' `
-    --mount 'type=volume,source=rustymiddle-content-fuzz-target,target=/work/fuzz/target' `
+    --mount 'type=volume,source=transmog-content-fuzz-cargo-registry,target=/usr/local/cargo/registry' `
+    --mount 'type=volume,source=transmog-content-fuzz-target,target=/work/fuzz/target' `
     --workdir /work `
     $Image `
     bash fuzz/update-corpus.sh

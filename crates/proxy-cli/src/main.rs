@@ -16,12 +16,12 @@ use std::{
 };
 
 use bytes::Bytes;
-use rustymiddle_capture::{
+use transmog_capture::{
     CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter, JsonLinesExporter,
     RecoveredCapture, loss_record, record_from_observer, recover,
 };
-use rustymiddle_content::{ContentLimits, ContentPolicy};
-use rustymiddle_core::{
+use transmog_content::{ContentLimits, ContentPolicy};
+use transmog_core::{
     HeaderField, RoutePolicy,
     intercept::{
         BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody, BufferedBodyHandler,
@@ -35,12 +35,12 @@ use rustymiddle_core::{
         ObserverError, ObserverEvent, ObserverHub,
     },
 };
-use rustymiddle_runtime::{
+use transmog_runtime::{
     ExchangeEvidence, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
     WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
-use rustymiddle_saz::{SazExporter, SazLimits, SazMode};
-use rustymiddle_tls::{
+use transmog_saz::{SazExporter, SazLimits, SazMode};
+use transmog_tls::{
     CachedMitmCertificateResolver, CompositeTrustSource, EndpointIdentity, PemTrustSource, ProxyCa,
     SystemTrustSource, TrustSnapshot, TrustSource,
 };
@@ -50,13 +50,13 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "rustymiddle=info".into()),
+                .unwrap_or_else(|_| "transmog=info".into()),
         )
         .with_target(false)
         .try_init()
         .ok();
     if let Err(error) = run().await {
-        eprintln!("rustymiddle: {error}");
+        eprintln!("transmog: {error}");
         std::process::exit(2);
     }
 }
@@ -76,7 +76,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             print_usage();
             Ok(())
         }
-        _ => Err(invalid_input("unknown command; run `rustymiddle help`").into()),
+        _ => Err(invalid_input("unknown command; run `transmog help`").into()),
     }
 }
 
@@ -276,7 +276,7 @@ fn append_observer_event(
     state: &Mutex<LiveCaptureState>,
     policy: &CapturePolicy,
     event: &ObserverEvent,
-) -> Result<(), rustymiddle_capture::CaptureError> {
+) -> Result<(), transmog_capture::CaptureError> {
     let mut state = state
         .lock()
         .map_err(|_| io::Error::other("capture state is unavailable"))?;
@@ -385,12 +385,12 @@ fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 fn write_sealed_capture<W: Write>(
     output: W,
     capture: &RecoveredCapture,
-) -> Result<(), rustymiddle_capture::CaptureError> {
+) -> Result<(), transmog_capture::CaptureError> {
     let mut writer = CaptureWriter::new(output, CaptureLimits::default())?;
     for record in &capture.records {
         if !matches!(
             record.kind,
-            rustymiddle_capture::CaptureRecordKind::Seal { .. }
+            transmog_capture::CaptureRecordKind::Seal { .. }
         ) {
             writer.append(record)?;
         }
@@ -523,18 +523,18 @@ fn print_websocket_evidence(event: &WebSocketSessionEvidence) {
     }
 }
 
-fn protocol_alpn(version: rustymiddle_core::HttpLegVersion) -> &'static str {
+fn protocol_alpn(version: transmog_core::HttpLegVersion) -> &'static str {
     match version {
-        rustymiddle_core::HttpLegVersion::Http1 => "http/1.1",
-        rustymiddle_core::HttpLegVersion::Http2 => "h2",
-        rustymiddle_core::HttpLegVersion::Http3 => "h3",
+        transmog_core::HttpLegVersion::Http1 => "http/1.1",
+        transmog_core::HttpLegVersion::Http2 => "h2",
+        transmog_core::HttpLegVersion::Http3 => "h3",
     }
 }
 
 fn generate_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let certificate_path = PathBuf::from(required_option(arguments, "--cert")?);
     let key_path = PathBuf::from(required_option(arguments, "--key")?);
-    let common_name = option(arguments, "--name").unwrap_or("rustymiddle local interception CA");
+    let common_name = option(arguments, "--name").unwrap_or("Transmog local interception CA");
     if certificate_path.exists() || key_path.exists() {
         return Err(invalid_input("refusing to overwrite an existing certificate or key").into());
     }
@@ -606,18 +606,18 @@ fn invalid_input(message: impl Into<String>) -> io::Error {
 
 fn print_usage() {
     println!(
-        "rustymiddle\n\n\
+        "transmog\n\n\
          Generate a CA (files must not already exist):\n  \
-         rustymiddle ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
+         transmog ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
          Issue a short-lived server leaf from an existing CA:\n  \
-         rustymiddle ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
+         transmog ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
          Run the explicit proxy:\n  \
-         rustymiddle serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
+         transmog serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
          Inspect, validate, recover/seal, or export a native capture:\n  \
-         rustymiddle capture inspect --input FILE\n  \
-         rustymiddle capture validate --input FILE\n  \
-         rustymiddle capture seal --input FILE --output RECOVERED_FILE\n  \
-         rustymiddle capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
+         transmog capture inspect --input FILE\n  \
+         transmog capture validate --input FILE\n  \
+         transmog capture seal --input FILE --output RECOVERED_FILE\n  \
+         transmog capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
          Non-loopback listening additionally requires --allow-remote."
     );
 }
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn recovered_native_capture_can_be_resealed_without_mutating_records() {
-        let source_record = rustymiddle_capture::loss_record(7, 2, 1, "test-gap");
+        let source_record = transmog_capture::loss_record(7, 2, 1, "test-gap");
         let mut source = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
         source.append(&source_record).unwrap();
         let recovered = recover(&source.into_inner()[..], CaptureLimits::default()).unwrap();

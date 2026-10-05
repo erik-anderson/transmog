@@ -2,12 +2,12 @@
 
 WebSocket support is split across three clean boundaries:
 
-1. `rustymiddle-http` retains Hyper's upgraded origin stream while returning a
+1. `transmog-http` retains Hyper's upgraded origin stream while returning a
    canonical handshake head.
-2. `rustymiddle-runtime` applies the ordinary HTTP Hooks v2 chain to the
+2. `transmog-runtime` applies the ordinary HTTP Hooks v2 chain to the
    opening request and response, authenticates the server accept proof, and
    connects the two upgraded streams.
-3. `rustymiddle-websocket` owns protocol-neutral handshake validation, frame
+3. `transmog-websocket` owns protocol-neutral handshake validation, frame
    parsing, message assembly, compression, message/control hooks, effect
    attribution, and the bounded bidirectional relay.
 

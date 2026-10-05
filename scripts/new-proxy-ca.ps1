@@ -3,7 +3,7 @@ param(
     [string]$CertificatePath,
     [Parameter(Mandatory = $true)]
     [string]$PrivateKeyPath,
-    [string]$Name = "rustymiddle local interception CA",
+    [string]$Name = "Transmog local interception CA",
     [string]$BinaryPath
 )
 
@@ -17,7 +17,7 @@ if ($BinaryPath) {
     $binary = (Resolve-Path -LiteralPath $BinaryPath).Path
     & $binary ca generate --cert $certificate --key $privateKey --name $Name
 } else {
-    cargo run --locked -p rustymiddle -- ca generate --cert $certificate --key $privateKey --name $Name
+    cargo run --locked -p transmog -- ca generate --cert $certificate --key $privateKey --name $Name
 }
 
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name

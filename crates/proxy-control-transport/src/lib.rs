@@ -11,12 +11,12 @@ use std::{
     time::Duration,
 };
 
-use rustymiddle_control_model::{
+use thiserror::Error;
+use tokio::{sync::mpsc, time::timeout};
+use transmog_control_model::{
     BreakpointInput, BreakpointRequest, Capability, ControlEvent, DecisionAction, DecisionCommand,
     DecisionId, EXPERIMENTAL_CONTROL_REVISION, Handshake, ModelError,
 };
-use thiserror::Error;
-use tokio::{sync::mpsc, time::timeout};
 
 /// Finite transport configuration.
 #[derive(Clone, Copy, Debug)]
@@ -420,7 +420,7 @@ pub enum ReplyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustymiddle_control_model::{BreakpointPhase, ControlEvent, ControlExchangeId, EventKind};
+    use transmog_control_model::{BreakpointPhase, ControlEvent, ControlExchangeId, EventKind};
 
     fn endpoints(timeout: Duration) -> (ControlProducer, ControlController) {
         let handshake = Handshake::v0("test-build", 4);

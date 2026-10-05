@@ -4,13 +4,13 @@ Status: local implementation and hardening complete; hosted CI intentionally
 deferred until a human enables it
 Audience: implementation agent and reviewers
 Baseline: commit `8045959`
-Primary scope: `rustymiddle-core` and the exchange orchestration in `rustymiddle-runtime`
+Primary scope: `transmog-core` and the exchange orchestration in `transmog-runtime`
 
 ## Mission
 
 Replace the current phase-generic breakpoint callback with a typed, composable,
 per-exchange interception API suitable for a production proxy library. The new
-API must preserve rustymiddle's protocol-neutral model, bounded streaming,
+API must preserve Transmog's protocol-neutral model, bounded streaming,
 backpressure, cancellation, and fail-closed behavior while allowing future
 products to add interactive breakpoints, rule engines, capture storage, IPC,
 and user interfaces outside the core.
@@ -484,7 +484,7 @@ tasks may not retain exchanges indefinitely.
 ## Proposed source organization
 
 Keep the existing crate boundaries. Do not create a crate per trait. A suggested
-`rustymiddle-core` layout is:
+`transmog-core` layout is:
 
 ```text
 src/

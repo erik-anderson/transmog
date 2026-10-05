@@ -1,6 +1,6 @@
 # Architecture
 
-rustymiddle is a library-first exchange engine with an explicit-proxy listener.
+Transmog is a library-first exchange engine with an explicit-proxy listener.
 Browser traffic currently enters as plain absolute-form HTTP or as HTTP/1.1 or
 HTTP/2 inside an intercepted `CONNECT`. HTTP/3 is an origin egress protocol;
 the project does not claim to intercept a browser's native QUIC packets.
@@ -38,7 +38,7 @@ HTTP/1.1 101 upgrade
 Observers receive redacted immutable events beside the HTTP path through finite
 queues; they cannot mutate traffic.
 
-`rustymiddle-session` sits above this complete path. It turns observer evidence
+`transmog-session` sits above this complete path. It turns observer evidence
 into a finite live catalog, owns one runtime task and dynamic capture worker,
 adapts experimental control decisions into an identified hook, and exposes
 injected replay and transactional host-integration seams. The layer is
@@ -46,7 +46,7 @@ UI-independent and no lower crate depends on it.
 
 ## Hooks v2
 
-`rustymiddle-core` exposes transport-neutral, typed lifecycle callbacks. An
+`transmog-core` exposes transport-neutral, typed lifecycle callbacks. An
 `InterceptorFactory` creates one `ExchangeInterceptor` per exchange. Request
 callbacks run in registration order and response and terminal callbacks unwind
 in reverse order. A short-circuit at interceptor B never enters C; a local
@@ -59,7 +59,7 @@ Hyper, quiche, Tokio channels, and TLS connection objects do not appear in hook
 signatures. Pass-through streams before producer completion; complete-body
 editing is available only through an explicit nonzero limit.
 
-`rustymiddle-content` is the next layer above canonical body framing. It owns
+`transmog-content` is the next layer above canonical body framing. It owns
 content-coding plans, representation header repair, decompression budgets, and
 bounded streaming gzip/Brotli/deflate/zstd codec engines. Its content-aware
 pipeline composes those engines around the Hooks v2 body pipeline without

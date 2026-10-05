@@ -1,4 +1,4 @@
-# rustymiddle desktop shell
+# Transmog desktop shell
 
 This Windows-first Tauri 2 application is the Phase 0 delivery spike for the
 product shell. It proves Rust-native Microsoft WebUI SSR, a TypeScript-only
@@ -30,8 +30,8 @@ npm run check
 Pop-Location
 
 . ./scripts/dev-env.ps1
-cargo test --locked -p rustymiddle-desktop
-cargo run --locked -p rustymiddle-desktop
+cargo test --locked -p transmog-desktop
+cargo run --locked -p transmog-desktop
 ```
 
 For the real WebView smoke check, start the binary with a loopback-only

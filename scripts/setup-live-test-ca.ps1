@@ -15,7 +15,7 @@ if (-not $PrivateKeyPath) {
     $PrivateKeyPath = Join-Path $localDirectory 'live-test-ca.key'
 }
 if (-not $BinaryPath) {
-    $BinaryPath = Join-Path $repositoryRoot 'target\release\rustymiddle.exe'
+    $BinaryPath = Join-Path $repositoryRoot 'target\release\transmog.exe'
 }
 
 $certificateExists = Test-Path -LiteralPath $CertificatePath
@@ -28,7 +28,7 @@ if (-not $certificateExists) {
     & "$PSScriptRoot\new-proxy-ca.ps1" `
         -CertificatePath $CertificatePath `
         -PrivateKeyPath $PrivateKeyPath `
-        -Name 'rustymiddle durable Playwright test CA' `
+        -Name 'Transmog durable Playwright test CA' `
         -BinaryPath $BinaryPath
 }
 

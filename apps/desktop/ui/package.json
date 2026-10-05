@@ -1,5 +1,5 @@
 {
-  "name": "@rustymiddle/desktop-ui",
+  "name": "@transmog/desktop-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",

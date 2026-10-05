@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-automation"
-description = "Optional declarative automation compiled to rustymiddle Hooks v2"
+name = "transmog-automation"
+description = "Optional declarative automation compiled to Transmog Hooks v2"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 bytes.workspace = true
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
 thiserror.workspace = true
 
 [dev-dependencies]

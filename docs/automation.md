@@ -1,7 +1,7 @@
 # Optional automation
 
-`rustymiddle-automation` is a convenience layer over Hooks v2. It is not a
-second interception engine and it is not required by `rustymiddle-core`.
+`transmog-automation` is a convenience layer over Hooks v2. It is not a
+second interception engine and it is not required by `transmog-core`.
 Applications with domain-specific behavior should continue to register their
 own `ExchangeInterceptor` implementations directly.
 

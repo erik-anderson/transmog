@@ -27,8 +27,8 @@ renderer—not a static Tauri configuration string—must own the effective CSP.
 Use Tauri 2.12.1 with WebView2 on Windows and Microsoft WebUI 0.0.30 behind a
 local adapter.
 
-- Register `rustymiddle-ui` and serve only allowlisted embedded paths. On
-  Windows, the observed origin is `http://rustymiddle-ui.localhost/`. Do not
+- Register `transmog-ui` and serve only allowlisted embedded paths. On
+  Windows, the observed origin is `http://transmog-ui.localhost/`. Do not
   open a TCP listener or use Tauri's localhost plugin.
 - Render initial documents in Rust from the embedded WebUI protocol. Generate a
   fresh CSP nonce for each document, pass it through `RenderOptions`, and return
@@ -95,7 +95,7 @@ SDK 10.0.26100, and WebView2 154.0.4258.53.
   licenses added by Tauri. RUSTSEC-2024-0370 is ignored only because Cargo
   metadata exposes Tauri's GTK 0.18 packages while target-specific `cargo tree`
   proves the unmaintained macro is unreachable from both configured Windows
-  and Linux rustymiddle desktop targets. The exception must be removed or
+  and Linux Transmog desktop targets. The exception must be removed or
   replaced before Linux desktop support is enabled.
 
 ## Consequences

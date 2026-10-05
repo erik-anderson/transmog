@@ -1,4 +1,4 @@
-use rustymiddle_core::{HeaderBlock, HeaderField};
+use transmog_core::{HeaderBlock, HeaderField};
 
 use crate::{ContentCodingError, ContentCodingStack, ContentLimits};
 
@@ -174,7 +174,7 @@ pub(crate) fn repaired_raw_output_headers(source: &HeaderBlock) -> HeaderBlock {
 
 #[cfg(test)]
 mod tests {
-    use rustymiddle_core::HeaderField;
+    use transmog_core::HeaderField;
 
     use super::*;
 

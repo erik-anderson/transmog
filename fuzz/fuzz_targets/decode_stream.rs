@@ -4,11 +4,11 @@ use std::{num::NonZeroUsize, sync::OnceLock, time::Duration};
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
-use rustymiddle_content::{
+use transmog_content::{
     ContentCodecError, ContentCoding, ContentDecoder, ContentDecoderOptions, ContentLimits,
     ContentWorkLimits, DeflateCompatibility,
 };
-use rustymiddle_core::{BodyFrame, HeaderBlock, HeaderField};
+use transmog_core::{BodyFrame, HeaderBlock, HeaderField};
 use tokio::runtime::{Builder, Runtime};
 
 const CODINGS: [ContentCoding; 4] = [

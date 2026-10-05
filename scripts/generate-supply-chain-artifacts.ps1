@@ -138,10 +138,10 @@ $sbom = [ordered]@{
     version = 1
     metadata = @{
         timestamp = [DateTimeOffset]::UtcNow.ToString('o')
-        tools = @(@{ vendor = 'rustymiddle'; name = 'generate-supply-chain-artifacts.ps1' })
+        tools = @(@{ vendor = 'Transmog'; name = 'generate-supply-chain-artifacts.ps1' })
         component = @{
             type = 'application'
-            name = 'rustymiddle'
+            name = 'transmog'
             version = '0.1.0'
         }
     }

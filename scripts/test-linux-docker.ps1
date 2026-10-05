@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Image = 'rustymiddle-linux-tools:rust-1.97.1-nightly-2026-10-01'
+    [string]$Image = 'transmog-linux-tools:rust-1.97.1-nightly-2026-10-01'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,8 +45,8 @@ $repositoryMount = "type=bind,source=$repoRoot,target=/work,readonly"
     --env 'CXXFLAGS=' `
     --env 'CARGO_TARGET_DIR=/work-target' `
     --mount $repositoryMount `
-    --mount 'type=volume,source=rustymiddle-linux-cargo-registry,target=/usr/local/cargo/registry' `
-    --mount 'type=volume,source=rustymiddle-linux-target,target=/work-target' `
+    --mount 'type=volume,source=transmog-linux-cargo-registry,target=/usr/local/cargo/registry' `
+    --mount 'type=volume,source=transmog-linux-target,target=/work-target' `
     --workdir /work `
     $Image `
     bash -c 'set -euo pipefail; cargo fmt --all -- --check && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings && cargo test --workspace --all-features --all-targets --locked && cargo build --release --workspace --all-features --locked'

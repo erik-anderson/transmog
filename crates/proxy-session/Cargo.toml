@@ -1,20 +1,20 @@
 [package]
-name = "rustymiddle-session"
+name = "transmog-session"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Headless application and live-session service for rustymiddle"
+description = "Headless application and live-session service for Transmog"
 
 [dependencies]
 bytes.workspace = true
 http.workspace = true
-rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
-rustymiddle-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
-rustymiddle-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
-rustymiddle-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
+transmog-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
 thiserror.workspace = true
 tokio.workspace = true
 

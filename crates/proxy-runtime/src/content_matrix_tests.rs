@@ -17,10 +17,17 @@ use http_body_util::{BodyExt, Full};
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use quiche::h3::NameValue;
-use rustymiddle_content::{
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream, UdpSocket},
+    sync::{Notify, oneshot},
+    task::JoinHandle,
+    time::timeout,
+};
+use transmog_content::{
     ContentCoding, ContentDecoder, ContentEncoder, ContentLimits, ContentPolicy,
 };
-use rustymiddle_core::{
+use transmog_core::{
     BodyFrame, BodyStream, HeaderBlock, HeaderField, HttpLegVersion, ResponseHead, RoutePolicy,
     StreamingRequest, StreamingResponse,
     intercept::{
@@ -32,18 +39,11 @@ use rustymiddle_core::{
     route::UpstreamPlan,
     upstream::{BoxUpstreamFuture, UpstreamError, UpstreamService},
 };
-use rustymiddle_h3::{H3TransportLimits, Origin};
-use rustymiddle_tls::{
+use transmog_h3::{H3TransportLimits, Origin};
+use transmog_tls::{
     CachedMitmCertificateResolver, DownstreamTlsContextFactory, DownstreamTlsPolicy,
     EndpointIdentity, LoadedTrust, ProxyCa, TrustError, TrustSnapshot, TrustSource,
     UpstreamTlsContextFactory, UpstreamTlsPolicy,
-};
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream, UdpSocket},
-    sync::{Notify, oneshot},
-    task::JoinHandle,
-    time::timeout,
 };
 
 use super::{ProxyComponents, ProxyConfig, ProxyServer};
@@ -146,7 +146,7 @@ impl UpstreamService for StreamingCompressedUpstream {
         &self,
         mut request: StreamingRequest,
         _plan: UpstreamPlan,
-        _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        _cancellation: transmog_core::intercept::ExchangeCancellation,
     ) -> BoxUpstreamFuture<'_> {
         let first = self.first.clone();
         let second = self.second.clone();
@@ -189,7 +189,7 @@ impl UpstreamService for MultiplexedCompressedUpstream {
         &self,
         mut request: StreamingRequest,
         _plan: UpstreamPlan,
-        _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        _cancellation: transmog_core::intercept::ExchangeCancellation,
     ) -> BoxUpstreamFuture<'_> {
         let slow = request.head.target.path == "/slow";
         let body_bytes = if slow {
@@ -234,7 +234,7 @@ impl UpstreamService for BodyFailureUpstream {
         &self,
         mut request: StreamingRequest,
         _plan: UpstreamPlan,
-        _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        _cancellation: transmog_core::intercept::ExchangeCancellation,
     ) -> BoxUpstreamFuture<'_> {
         let body_failed = Arc::clone(&self.body_failed);
         Box::pin(async move {
@@ -278,7 +278,7 @@ async fn every_content_coding_crosses_the_complete_protocol_matrix() {
 async fn auto_fallback_replays_the_processed_coded_body_before_response_start() {
     let encoded_request = encode_stack(b"request").await;
     let encoded_response = encode_stack(b"response").await;
-    let origin_ca = ProxyCa::generate("rustymiddle coded fallback origin", 2).unwrap();
+    let origin_ca = ProxyCa::generate("Transmog coded fallback origin", 2).unwrap();
     let origin_leaf = origin_ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
@@ -292,7 +292,7 @@ async fn auto_fallback_replays_the_processed_coded_body_before_response_start() 
         )
         .unwrap(),
     );
-    let proxy_ca = ProxyCa::generate("rustymiddle coded fallback proxy", 2).unwrap();
+    let proxy_ca = ProxyCa::generate("Transmog coded fallback proxy", 2).unwrap();
     let browser_trust = Arc::new(
         TrustSnapshot::load(
             &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -497,7 +497,7 @@ async fn paused_codec_stream_does_not_block_an_unrelated_h2_stream() {
 
 #[tokio::test]
 async fn paused_h3_codec_stream_does_not_block_an_unrelated_stream() {
-    let origin_ca = ProxyCa::generate("rustymiddle multiplexed content h3 origin", 2).unwrap();
+    let origin_ca = ProxyCa::generate("Transmog multiplexed content h3 origin", 2).unwrap();
     let origin_leaf = origin_ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
@@ -518,7 +518,7 @@ async fn paused_h3_codec_stream_does_not_block_an_unrelated_stream() {
     .await;
     let (proxy, browser_trust) = bind_h3_content_proxy(
         origin_ca.certificate().to_der().unwrap(),
-        "rustymiddle multiplexed content h3 proxy",
+        "Transmog multiplexed content h3 proxy",
     )
     .await;
     let proxy_addr = proxy.local_addr().unwrap();
@@ -632,7 +632,7 @@ async fn bind_application_proxy(
     policy: ContentPolicy,
     service: Arc<dyn UpstreamService>,
 ) -> (ProxyServer, Arc<TrustSnapshot>) {
-    let trust_ca = ProxyCa::generate("rustymiddle application content trust", 2).unwrap();
+    let trust_ca = ProxyCa::generate("Transmog application content trust", 2).unwrap();
     let trust = Arc::new(
         TrustSnapshot::load(
             &StaticTrust(vec![trust_ca.certificate().to_der().unwrap()]),
@@ -640,7 +640,7 @@ async fn bind_application_proxy(
         )
         .unwrap(),
     );
-    let proxy_ca = ProxyCa::generate("rustymiddle application content proxy", 2).unwrap();
+    let proxy_ca = ProxyCa::generate("Transmog application content proxy", 2).unwrap();
     let browser_trust = Arc::new(
         TrustSnapshot::load(
             &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -766,7 +766,7 @@ async fn run_matrix_case(
     encoded_request: Bytes,
     encoded_response: Bytes,
 ) {
-    let origin_ca = ProxyCa::generate("rustymiddle content matrix origin", 2).unwrap();
+    let origin_ca = ProxyCa::generate("Transmog content matrix origin", 2).unwrap();
     let origin_leaf = origin_ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
@@ -790,7 +790,7 @@ async fn run_matrix_case(
         .unwrap(),
     );
 
-    let proxy_ca = ProxyCa::generate("rustymiddle content matrix proxy", 2).unwrap();
+    let proxy_ca = ProxyCa::generate("Transmog content matrix proxy", 2).unwrap();
     let browser_trust = Arc::new(
         TrustSnapshot::load(
             &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -865,7 +865,7 @@ async fn run_matrix_case(
 
 async fn spawn_content_origin(
     version: HttpLegVersion,
-    leaf: rustymiddle_tls::IssuedLeaf,
+    leaf: transmog_tls::IssuedLeaf,
     bind_ip: IpAddr,
     response: Bytes,
 ) -> (SocketAddr, TestOrigin) {
@@ -879,7 +879,7 @@ async fn spawn_content_origin(
 
 async fn spawn_content_tls_origin(
     version: HttpLegVersion,
-    leaf: rustymiddle_tls::IssuedLeaf,
+    leaf: transmog_tls::IssuedLeaf,
     response_body: Bytes,
 ) -> (SocketAddr, TestOrigin) {
     let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default())
@@ -1142,7 +1142,7 @@ fn http1_response_body(response: &[u8]) -> Vec<u8> {
 }
 
 async fn spawn_content_h3_origin(
-    leaf: rustymiddle_tls::IssuedLeaf,
+    leaf: transmog_tls::IssuedLeaf,
     bind_ip: IpAddr,
     response: Bytes,
 ) -> (SocketAddr, TestOrigin) {
@@ -1183,7 +1183,7 @@ async fn spawn_content_h3_origin(
 }
 
 async fn spawn_multiplexed_content_h3_origin(
-    leaf: rustymiddle_tls::IssuedLeaf,
+    leaf: transmog_tls::IssuedLeaf,
     bind_ip: IpAddr,
     slow_body: Bytes,
     fast_body: Bytes,

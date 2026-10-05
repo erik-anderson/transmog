@@ -1,15 +1,15 @@
 //! Fixed-input content-processing microbenchmark.
 //!
-//! Run with `cargo run --release -p rustymiddle-content --example content_benchmark`.
+//! Run with `cargo run --release -p transmog-content --example content_benchmark`.
 
 use std::{hint::black_box, sync::Arc, time::Instant};
 
 use bytes::Bytes;
-use rustymiddle_content::{
+use transmog_content::{
     ContentBodyPipeline, ContentCoding, ContentDecoder, ContentEncoder, ContentLimits,
     ContentPolicy,
 };
-use rustymiddle_core::{
+use transmog_core::{
     BodyFrame, ConnectionId, HeaderBlock, HeaderField, HttpLegVersion, RequestHead, SessionId,
     SessionMetadata, StreamId, Target,
     intercept::{

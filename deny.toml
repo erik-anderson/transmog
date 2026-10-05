@@ -9,7 +9,7 @@ targets = [
 [advisories]
 yanked = "deny"
 # Tauri's metadata includes GTK 0.18 target dependencies even though the
-# desktop crate selects Tauri only on Windows. No configured rustymiddle target
+# desktop crate selects Tauri only on Windows. No configured Transmog target
 # can reach proc-macro-error (verified with target-specific cargo tree checks).
 # Remove this exception before enabling the Linux desktop target.
 ignore = ["RUSTSEC-2024-0370"]

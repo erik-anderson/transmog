@@ -1,6 +1,6 @@
-# rustymiddle
+# Transmog
 
-`rustymiddle` is a library-first, explicit intercepting proxy for inspecting and
+**Transmog** is a library-first, explicit intercepting proxy for inspecting and
 modifying HTTP/1.1, HTTP/2, and HTTP/3 origin exchanges. Browser traffic enters
 through an HTTP proxy (including intercepted `CONNECT`); HTTP/3 is an origin
 egress protocol, not browser-to-proxy QUIC.
@@ -22,6 +22,8 @@ The UI-independent composition boundary is documented in the
 [application/session service guide](docs/application-session-service.md).
 The Windows-first Tauri/WebUI product shell spike and its local verification
 commands are documented in [the desktop app guide](apps/desktop/README.md).
+Product and package naming conventions are recorded in
+[the branding guide](docs/branding.md).
 
 ## Local verification
 
@@ -75,26 +77,26 @@ pwsh ./scripts/remove-live-test-ca.ps1
 Create an operator-controlled CA and apply a user-only ACL to its private key:
 
 ```powershell
-pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./rustymiddle-ca.pem -PrivateKeyPath ./rustymiddle-ca.key
-pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./rustymiddle-ca.pem
+pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./transmog-ca.pem -PrivateKeyPath ./transmog-ca.key
+pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./transmog-ca.pem
 ```
 
 Run the loopback proxy with a forced egress protocol or `auto`:
 
 ```powershell
-cargo run --locked -p rustymiddle -- serve --ca-cert ./rustymiddle-ca.pem --ca-key ./rustymiddle-ca.key --listen 127.0.0.1:8080 --route h2
+cargo run --locked -p transmog -- serve --ca-cert ./transmog-ca.pem --ca-key ./transmog-ca.key --listen 127.0.0.1:8080 --route h2
 ```
 
-Add `--capture ./session.rmcap` to stream redacted metadata to the native,
+Add `--capture ./session.tmcap` to stream redacted metadata to the native,
 checksummed capture format. Body bytes remain excluded unless
 `--capture-bodies` is also supplied. Existing output files are never
 overwritten. Headless inspection and conversion use the same capture library:
 
 ```powershell
-cargo run --locked -p rustymiddle -- capture inspect --input ./session.rmcap
-cargo run --locked -p rustymiddle -- capture validate --input ./session.rmcap
-cargo run --locked -p rustymiddle -- capture export --input ./session.rmcap --format jsonl --output ./session.jsonl
-cargo run --locked -p rustymiddle -- capture export --input ./session.rmcap --format saz --output ./session.saz
+cargo run --locked -p transmog -- capture inspect --input ./session.tmcap
+cargo run --locked -p transmog -- capture validate --input ./session.tmcap
+cargo run --locked -p transmog -- capture export --input ./session.tmcap --format jsonl --output ./session.jsonl
+cargo run --locked -p transmog -- capture export --input ./session.tmcap --format saz --output ./session.saz
 ```
 
 SAZ is a finalized compatibility export, not the live storage format. Strict

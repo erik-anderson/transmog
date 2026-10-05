@@ -13,10 +13,10 @@ const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response
   return response.json();
 });
 const candidates = targets.filter((target) =>
-  target.type === 'page' && target.title === 'rustymiddle delivery spike'
+  target.type === 'page' && target.title === 'Transmog delivery spike'
 );
 if (candidates.length !== 1) {
-  throw new Error(`expected one rustymiddle page, found ${candidates.length}`);
+  throw new Error(`expected one Transmog page, found ${candidates.length}`);
 }
 
 const socket = new WebSocket(candidates[0].webSocketDebuggerUrl);
@@ -64,9 +64,9 @@ try {
   await Promise.all([call('Page.enable'), call('Runtime.enable'), call('Log.enable')]);
   await call('Page.addScriptToEvaluateOnNewDocument', {
     source: `
-      globalThis.__rustymiddleCspViolations = [];
+      globalThis.__transmogCspViolations = [];
       addEventListener('securitypolicyviolation', (event) => {
-        globalThis.__rustymiddleCspViolations.push({
+        globalThis.__transmogCspViolations.push({
           blockedURI: event.blockedURI,
           directive: event.effectiveDirective
         });
@@ -102,7 +102,7 @@ try {
         url: location.href,
         readyState: document.readyState,
         resources: performance.getEntriesByType('resource').map((entry) => entry.name),
-        cspViolations: globalThis.__rustymiddleCspViolations
+        cspViolations: globalThis.__transmogCspViolations
       };
     })()
   `);
@@ -111,7 +111,7 @@ try {
   assert(result.text.includes('fetch=custom-protocol'), 'same-origin custom-protocol fetch did not pass');
   assert(result.text.includes('command=WebView2'), 'typed Tauri command did not pass');
   assert(result.text.includes('hint=1'), 'bounded Tauri channel notification did not pass');
-  assert(result.url === 'http://rustymiddle-ui.localhost/', `unexpected application origin: ${result.url}`);
+  assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
   assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
   assert(result.cspViolations.length === 0, `CSP violations: ${JSON.stringify(result.cspViolations)}`);

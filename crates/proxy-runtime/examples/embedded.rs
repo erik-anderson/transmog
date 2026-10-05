@@ -1,10 +1,10 @@
-//! Embeds rustymiddle with application-owned hooks, observation, routing, and upstream service.
+//! Embeds Transmog with application-owned hooks, observation, routing, and upstream service.
 
 use std::{num::NonZeroUsize, sync::Arc};
 
 use bytes::Bytes;
-use rustymiddle_content::{ContentLimits, ContentPolicy};
-use rustymiddle_core::{
+use transmog_content::{ContentLimits, ContentPolicy};
+use transmog_core::{
     BodyFrame, BodyStream, HeaderBlock, HeaderField, HttpLegVersion, ResponseHead, RoutePolicy,
     StreamingRequest, StreamingResponse,
     intercept::{
@@ -19,8 +19,8 @@ use rustymiddle_core::{
     route::{OriginalDestinationOnly, PolicyRouteSelector, UpstreamPlan},
     upstream::{BoxUpstreamFuture, UpstreamService},
 };
-use rustymiddle_runtime::{ProxyComponents, ProxyConfig, ProxyServer};
-use rustymiddle_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
+use transmog_runtime::{ProxyComponents, ProxyConfig, ProxyServer};
+use transmog_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
 #[derive(Clone, Copy)]
 struct AddApplicationHeader;
@@ -39,7 +39,7 @@ impl ExchangeInterceptor for AddApplicationHeader {
         Box::pin(async move {
             let mut head = event.head;
             head.headers.replace_all(
-                HeaderField::try_new("x-embedded-proxy", "rustymiddle")
+                HeaderField::try_new("x-embedded-proxy", "transmog")
                     .expect("static header is valid"),
             );
             RequestHeadAction::Replace(head)
@@ -101,17 +101,17 @@ impl UpstreamService for ApplicationUpstream {
         &self,
         mut request: StreamingRequest,
         _plan: UpstreamPlan,
-        cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+        cancellation: transmog_core::intercept::ExchangeCancellation,
     ) -> BoxUpstreamFuture<'_> {
         Box::pin(async move {
             while let Some(frame) = request.body.recv().await {
                 if cancellation.is_cancelled() {
-                    return Err(rustymiddle_core::upstream::UpstreamError::application(
+                    return Err(transmog_core::upstream::UpstreamError::application(
                         "exchange cancelled",
                     ));
                 }
                 frame.map_err(|error| {
-                    rustymiddle_core::upstream::UpstreamError::application(error.to_string())
+                    transmog_core::upstream::UpstreamError::application(error.to_string())
                 })?;
             }
 
@@ -164,7 +164,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "embedded",
     );
     let certificates = Arc::new(CachedMitmCertificateResolver::new(
-        ProxyCa::generate("rustymiddle embedded example", 2)?,
+        ProxyCa::generate("Transmog embedded example", 2)?,
         config.limits.leaf_cache_capacity,
         config.limits.leaf_validity_days,
     )?);

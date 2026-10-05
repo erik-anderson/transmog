@@ -125,7 +125,7 @@ impl UiRenderer {
         let nonce = generate_nonce()?;
         let state = json!({
             "language": "en",
-            "pageTitle": "rustymiddle delivery spike",
+            "pageTitle": "Transmog delivery spike",
             "introHeading": "Proxy inspection, from the core outward",
             "introSummary": "This server-rendered shell has no HTTP listener and no runtime Node process.",
             "probeHeading": "Delivery-path proof",
@@ -260,7 +260,7 @@ pub use windows::run;
 /// Reports the intentionally unsupported platform when built elsewhere.
 #[cfg(not(windows))]
 pub fn run() {
-    eprintln!("rustymiddle-desktop currently supports Windows with WebView2 only");
+    eprintln!("Transmog Desktop currently supports Windows with WebView2 only");
 }
 
 #[cfg(test)]

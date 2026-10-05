@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 
-//! Owned DTOs for the experimental, same-build rustymiddle control protocol.
+//! Owned DTOs for the experimental, same-build Transmog control protocol.
 //!
 //! These types deliberately do not serialize core structs. Version zero is
 //! breakable until a human maintainer explicitly decides to stabilize it.

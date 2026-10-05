@@ -11,16 +11,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use rustymiddle_core::{
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
+use transmog_core::{
     HeaderBlock,
     intercept::{HookEffectAction, HookPhase},
     observe::{ExchangeBoundary, ObserverEvent, ObserverEventKind},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use thiserror::Error;
 
-const MAGIC: [u8; 8] = *b"RMCAP01\0";
+const MAGIC: [u8; 8] = *b"TMCAP01\0";
+const LEGACY_MAGIC: [u8; 8] = *b"RMCAP01\0";
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Native capture format revision.
@@ -588,7 +589,7 @@ pub fn recover<R: Read>(
             CaptureError::Io(error)
         }
     })?;
-    if magic != MAGIC {
+    if magic != MAGIC && magic != LEGACY_MAGIC {
         return Err(CaptureError::InvalidMagic);
     }
     let mut records = Vec::new();
@@ -770,7 +771,7 @@ fn captured_headers(headers: &HeaderBlock, redacted: &BTreeSet<String>) -> Vec<C
         .collect()
 }
 
-fn display_target(target: &rustymiddle_core::Target) -> String {
+fn display_target(target: &transmog_core::Target) -> String {
     let mut value = format!("{}://{}{}", target.scheme, target.authority, target.path);
     if let Some(query) = &target.query {
         value.push('?');
@@ -1151,7 +1152,7 @@ pub enum CaptureError {
 mod tests {
     use std::io::Cursor;
 
-    use rustymiddle_core::{
+    use transmog_core::{
         HeaderField, HttpLegVersion, RequestHead, Target, intercept::ExchangeId,
         observe::ObserverEventKind,
     };
@@ -1214,6 +1215,16 @@ mod tests {
         .unwrap();
         assert!(recovered.sealed);
         assert!(!recovered.truncated_tail);
+        assert_eq!(recovered.records.len(), 2);
+    }
+
+    #[test]
+    fn pre_rebrand_capture_magic_remains_readable() {
+        let mut bytes = artifact(&[completed(1)], true);
+        bytes[..LEGACY_MAGIC.len()].copy_from_slice(&LEGACY_MAGIC);
+
+        let recovered = recover(&bytes[..], CaptureLimits::default()).unwrap();
+        assert!(recovered.sealed);
         assert_eq!(recovered.records.len(), 2);
     }
 

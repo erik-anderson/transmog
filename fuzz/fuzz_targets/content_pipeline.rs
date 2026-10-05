@@ -8,11 +8,11 @@ use std::{
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
-use rustymiddle_content::{
+use transmog_content::{
     ContentBodyPipeline, ContentCoding, ContentCodingStack, ContentDecoder, ContentDecoderOptions,
     ContentEncoder, ContentLimits, ContentOutput, ContentPipelineError, ContentWorkLimits,
 };
-use rustymiddle_core::{
+use transmog_core::{
     BodyFrame, ConnectionId, HeaderBlock, HeaderField, HttpLegVersion, RequestHead, SessionId,
     SessionMetadata, StreamId, Target,
     intercept::{

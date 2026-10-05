@@ -4,7 +4,7 @@ Status: active; milestones 0-9 and the standalone interoperability expansion
 are locally complete; the product shell is next and hosted Linux/macOS
 automation remains intentionally deferred
 Audience: maintainers, implementation agents, and reviewers  
-Scope: the initial rustymiddle monorepo and the future repository boundaries it
+Scope: the initial Transmog monorepo and the future repository boundaries it
 must preserve
 
 ## Mission
@@ -26,7 +26,7 @@ boundaries.
 2. Content decoding and re-encoding is a separate library layer above core body
    framing and below product rules or interactive editing.
 3. Capture, saved rules, UI state, projects, and replay collections do not live
-   in `rustymiddle-core`.
+   in `transmog-core`.
 4. A control-model boundary may be introduced before it is stable, but core
    structs and incidental Serde representations are never the wire protocol.
 5. The control protocol remains experimental and breakable until a human
@@ -42,28 +42,28 @@ boundaries.
 ## Intended layers and dependency direction
 
 ```text
-rustymiddle-core
+transmog-core
   canonical messages, bounded bodies, Hooks v2, routing contracts
 
-rustymiddle-content -> core
+transmog-content -> core
   content-coding plans, bounded codecs, representation metadata repair
 
-rustymiddle-tls
+transmog-tls
   trust snapshots, downstream certificates, verified TLS contexts
 
-rustymiddle-http -> core + tls
-rustymiddle-h3   -> core + tls
+transmog-http -> core + tls
+transmog-h3   -> core + tls
   transport adapters and upstream pools
 
-rustymiddle-runtime -> core + content + tls + http + h3
+transmog-runtime -> core + content + tls + http + h3
   listener, exchange orchestration, retries, shutdown, provider assembly
 
-rustymiddle-control-model -> core
-rustymiddle-control-transport -> control-model
+transmog-control-model -> core
+transmog-control-transport -> control-model
   experimental commands/events and in-process or IPC delivery
 
-rustymiddle-capture -> core + control-model
-rustymiddle-rules   -> core + content
+transmog-capture -> core + control-model
+transmog-rules   -> core + content
   durable capture/spooling and reusable automated decisions
 
 CLI / desktop / web products -> public library layers

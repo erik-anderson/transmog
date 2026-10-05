@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-runtime"
-description = "Listener, routing, pooling, and orchestration for rustymiddle"
+name = "transmog-runtime"
+description = "Listener, routing, pooling, and orchestration for Transmog"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,12 +15,12 @@ http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
-rustymiddle-content = { version = "=0.1.0", path = "../proxy-content" }
-rustymiddle-h3 = { version = "=0.1.0", path = "../proxy-h3" }
-rustymiddle-http = { version = "=0.1.0", path = "../proxy-http" }
-rustymiddle-tls = { version = "=0.1.0", path = "../proxy-tls" }
-rustymiddle-websocket = { version = "=0.1.0", path = "../proxy-websocket" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-content = { version = "=0.1.0", path = "../proxy-content" }
+transmog-h3 = { version = "=0.1.0", path = "../proxy-h3" }
+transmog-http = { version = "=0.1.0", path = "../proxy-http" }
+transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
+transmog-websocket = { version = "=0.1.0", path = "../proxy-websocket" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-boring.workspace = true

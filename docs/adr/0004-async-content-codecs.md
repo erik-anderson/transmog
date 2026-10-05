@@ -7,7 +7,7 @@ Status: accepted for gzip, Brotli, deflate, and zstd
 The content-processing layer needs incremental, bounded decoding and encoding.
 It must fit Tokio body pumps without buffering complete representations, keep
 codec implementation types out of public contracts, and eventually support
-gzip, deflate, Brotli, and zstd behind one rustymiddle-owned interface.
+gzip, deflate, Brotli, and zstd behind one Transmog-owned interface.
 
 The dependency choice is deliberately narrower than the planned product
 surface. Enabling a codec is a supply-chain and runtime decision of its own;
@@ -24,8 +24,8 @@ through its Tokio streaming adapters. Pin the exact reviewed release (currently
 so the selected codec surface is explicit.
 
 Keep every dependency type private. The public API accepts and returns
-rustymiddle's canonical `BodyFrame` values, reports rustymiddle-owned typed
-errors, and enforces rustymiddle-owned byte and expansion budgets before bytes
+Transmog's canonical `BodyFrame` values, reports Transmog-owned typed
+errors, and enforces Transmog-owned byte and expansion budgets before bytes
 are retained. This lets the implementation change without coupling transport,
 hook, or application layers to a codec crate.
 
@@ -33,7 +33,7 @@ The gzip and deflate features currently use `flate2`. Its default backend is
 the pure-Rust `miniz_oxide` implementation, documented by
 [`flate2`](https://docs.rs/flate2/latest/flate2/). Brotli is enabled through the
 library's separately gated feature and exercised through the same
-rustymiddle-owned API and bounds. The upstream project is dual
+Transmog-owned API and bounds. The upstream project is dual
 MIT/Apache-2.0 licensed; see the
 [`async-compression` repository](https://github.com/Nullus157/async-compression).
 

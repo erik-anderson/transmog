@@ -9,7 +9,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use bytes::Bytes;
-use rustymiddle_core::{
+use thiserror::Error;
+use transmog_core::{
     HeaderError, HeaderField, RequestHead, ResponseHead,
     intercept::{
         BodyPlan, BoxHookFuture, BufferedBody, ExchangeInterceptor, ExchangeMetadata,
@@ -18,7 +19,6 @@ use rustymiddle_core::{
         ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
     },
 };
-use thiserror::Error;
 
 /// Finite compile-time automation bounds.
 #[derive(Clone, Copy, Debug)]
@@ -440,7 +440,7 @@ impl ExchangeInterceptor for RuleInterceptor {
     }
 }
 
-fn apply_headers(headers: &mut rustymiddle_core::HeaderBlock, actions: &[HeaderOperation]) {
+fn apply_headers(headers: &mut transmog_core::HeaderBlock, actions: &[HeaderOperation]) {
     for action in actions {
         match action {
             HeaderOperation::Set(field) => headers.replace_all(field.clone()),
@@ -493,7 +493,7 @@ pub enum CompileError {
 mod tests {
     use std::time::Duration;
 
-    use rustymiddle_core::{
+    use transmog_core::{
         ConnectionId, HeaderBlock, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
         intercept::{
             BodyPlanKind, HookEffectAction, HookLimits, HookPhase, InterceptorChainFactory,

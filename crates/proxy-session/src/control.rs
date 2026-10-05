@@ -9,16 +9,17 @@ use std::{
 
 use bytes::Bytes;
 use http::{Method, StatusCode, uri::PathAndQuery};
-use rustymiddle_control_model::{
+use thiserror::Error;
+use transmog_control_model::{
     Boundary, BreakpointInput, BreakpointPhase, Capability, ControlEvent, ControlExchangeId,
     DecisionAction, EventKind, Handshake, HeaderField as ControlHeaderField,
     RequestHead as ControlRequestHead, ResponseHead as ControlResponseHead,
 };
-use rustymiddle_control_transport::{
+use transmog_control_transport::{
     ControlController, ControlProducer, HandshakeError, NegotiatedSession, PendingDecision,
     RequestCancellation, TransportConfig, connect,
 };
-use rustymiddle_core::{
+use transmog_core::{
     HeaderBlock, HeaderField, RequestHead, ResponseHead,
     intercept::{
         BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody, BufferedBodyHandler,
@@ -29,10 +30,9 @@ use rustymiddle_core::{
     },
     observe::{ExchangeBoundary, ObserverEvent, ObserverEventKind},
 };
-use thiserror::Error;
 
 /// Stable Hooks v2 identity used for every interactive controller effect.
-pub const INTERACTIVE_CONTROL_HOOK_ID: &str = "rustymiddle.session.interactive-control";
+pub const INTERACTIVE_CONTROL_HOOK_ID: &str = "transmog.session.interactive-control";
 
 /// One explicitly enabled interactive breakpoint phase.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -434,7 +434,7 @@ struct ControlBodyHandler {
     producer: ControlProducer,
     exchange_id: u128,
     phase: BreakpointPhase,
-    cancellation: rustymiddle_core::intercept::ExchangeCancellation,
+    cancellation: transmog_core::intercept::ExchangeCancellation,
     limit: NonZeroUsize,
 }
 
@@ -484,7 +484,7 @@ impl BufferedBodyHandler for ControlBodyHandler {
 async fn request_decision(
     producer: &ControlProducer,
     input: BreakpointInput,
-    context: &rustymiddle_core::intercept::HookContext,
+    context: &transmog_core::intercept::HookContext,
 ) -> Result<DecisionAction, String> {
     let cancellation = RequestCancellation::new();
     tokio::select! {
@@ -657,8 +657,8 @@ const fn boundary_to_control(boundary: ExchangeBoundary) -> Boundary {
 mod tests {
     use std::{net::SocketAddr, time::Duration};
 
-    use rustymiddle_control_model::DecisionCommand;
-    use rustymiddle_core::{
+    use transmog_control_model::DecisionCommand;
+    use transmog_core::{
         BodyFrame, ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
         intercept::{
             BodyPipelineLimits, HookContext, HookLimits, InterceptorChainFactory,

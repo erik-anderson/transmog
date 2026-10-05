@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-control-model"
-description = "Experimental same-build control v0 model for rustymiddle"
+name = "transmog-control-model"
+description = "Experimental same-build control v0 model for Transmog"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

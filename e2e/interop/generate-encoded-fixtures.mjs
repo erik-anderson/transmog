@@ -36,7 +36,7 @@ function body(coding) {
     `<!doctype html><html lang="en"><head><meta charset="utf-8">`
       + `<title>${coding} interop fixture</title></head>`
       + `<body><h1 data-origin="nginx" data-coding="${coding}">`
-      + `${coding} through rustymiddle</h1></body></html>`,
+      + `${coding} through Transmog</h1></body></html>`,
     'utf8',
   );
 }

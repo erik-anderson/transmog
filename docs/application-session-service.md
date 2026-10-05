@@ -1,6 +1,6 @@
 # Application/session service
 
-`rustymiddle-session` is the UI-independent application boundary above the
+`transmog-session` is the UI-independent application boundary above the
 proxy runtime. It composes a bound proxy, immutable observer evidence,
 experimental same-build control, streaming native capture, replay/composer, and
 caller-owned host setup without moving product state or operating-system policy
@@ -16,7 +16,7 @@ The dependency direction is one way:
 ```text
 desktop / CLI / embedding application
                  |
-       rustymiddle-session
+       transmog-session
         /       |        \
  runtime   control/capture  core evidence
     |
@@ -33,7 +33,7 @@ policy, certificate resolver, and WebSocket hooks.
 1. Create an `ApplicationSessionService` with finite `ServiceConfig` limits.
 2. Build the application's `ProxyComponents` as usual.
 3. Call `prepare_components` exactly once. It appends the service observer and
-   the stable `rustymiddle.session.interactive-control` hook; it does not
+   the stable `transmog.session.interactive-control` hook; it does not
    replace caller registrations.
 4. Bind `ProxyServer` with the returned components.
 5. Call `start`, or `start_with_host` with a caller-owned transactional adapter.

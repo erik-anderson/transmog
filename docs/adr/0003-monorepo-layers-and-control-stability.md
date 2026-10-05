@@ -8,7 +8,7 @@ Accepted.
 
 ## Context
 
-rustymiddle will initially build the proxy engine, content processing, control,
+Transmog will initially build the proxy engine, content processing, control,
 capture, rules, and product layers in one monorepo. Atomic changes are valuable
 while these APIs are being discovered, but accidental coupling would make a
 later repository split expensive. A control boundary will eventually be useful
@@ -41,4 +41,3 @@ v1 compatibility and support policy before the promise is made.
 - Persisted capture schemas must not reuse live control envelopes as durable
   storage records.
 - Splitting repositories does not itself stabilize the control protocol.
-

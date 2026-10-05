@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-saz"
-description = "SAZ compatibility adapter for rustymiddle native captures"
+name = "transmog-saz"
+description = "SAZ compatibility adapter for Transmog native captures"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-rustymiddle-capture = { version = "=0.1.0", path = "../proxy-capture" }
-rustymiddle-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

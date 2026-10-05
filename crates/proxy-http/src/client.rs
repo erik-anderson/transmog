@@ -16,14 +16,14 @@ use hyper_util::{
     client::legacy::{Client, Error as ClientError, connect::HttpConnector},
     rt::TokioExecutor,
 };
-use rustymiddle_core::{
+use thiserror::Error;
+use tokio::time::timeout;
+use transmog_core::{
     BodyFrame, BodyStream, BodyStreamError, CanonicalRequest, CanonicalResponse, HeaderBlock,
     HeaderField, HttpLegVersion, MessageKind, RequestHead, ResponseHead, StreamingRequest,
     StreamingResponse, TranslationOptions, prepare_headers,
 };
-use rustymiddle_tls::{TrustError, UpstreamTlsContextFactory};
-use thiserror::Error;
-use tokio::time::timeout;
+use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 use crate::{HyperEgressMode, build_https_connector};
 
@@ -389,7 +389,7 @@ fn canonical_to_http_frame(frame: BodyFrame) -> Result<Frame<Bytes>, HyperOrigin
 
 async fn stream_incoming(
     mut body: Incoming,
-    sender: rustymiddle_core::BodyStreamSender,
+    sender: transmog_core::BodyStreamSender,
     limit: usize,
     body_idle_timeout: Duration,
 ) {
@@ -524,10 +524,10 @@ pub enum HyperOriginError {
     Trust(#[from] TrustError),
     /// Canonical header validation failed.
     #[error(transparent)]
-    Header(#[from] rustymiddle_core::HeaderError),
+    Header(#[from] transmog_core::HeaderError),
     /// Canonical translation rejected unsafe framing.
     #[error(transparent)]
-    Translation(#[from] rustymiddle_core::TranslationError),
+    Translation(#[from] transmog_core::TranslationError),
     /// A canonical URI could not be represented for Hyper.
     #[error(transparent)]
     Uri(#[from] InvalidUri),

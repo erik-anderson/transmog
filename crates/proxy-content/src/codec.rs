@@ -20,9 +20,9 @@ use async_compression::tokio::{
 };
 use async_compression::zstd::DParameter;
 use bytes::Bytes;
-use rustymiddle_core::{BodyFrame, HeaderBlock};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use transmog_core::{BodyFrame, HeaderBlock};
 
 use crate::{ContentBudget, ContentCoding, ContentLimitError, ContentLimits, ContentWorkLimits};
 
@@ -997,7 +997,7 @@ mod tests {
         time::Duration,
     };
 
-    use rustymiddle_core::HeaderField;
+    use transmog_core::HeaderField;
 
     use super::*;
 

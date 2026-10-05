@@ -18,8 +18,17 @@ use http_body::{Body, Frame};
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, service::service_fn};
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
-use rustymiddle_content::{ContentBodyPipeline, ContentPipelineError, ContentPolicy};
-use rustymiddle_core::{
+use thiserror::Error;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf},
+    net::{TcpListener, TcpStream},
+    sync::{Mutex, RwLock, Semaphore, broadcast},
+    task::JoinSet,
+    time::timeout,
+};
+use tracing::{debug, warn};
+use transmog_content::{ContentBodyPipeline, ContentPipelineError, ContentPolicy};
+use transmog_core::{
     BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender, BoundedBodyBuffer,
     CanonicalRequest, CanonicalResponse, ConnectionId, FallbackDecision, HeaderBlock, HeaderField,
     HttpLegVersion, MessageKind, Replayability, RequestHead, ResponseHead, RoutePolicy, SessionId,
@@ -44,18 +53,18 @@ use rustymiddle_core::{
     },
     upstream::{UpstreamError, UpstreamExecutor, UpstreamService},
 };
-use rustymiddle_h3::{
+use transmog_h3::{
     AltSvcCache, H3OriginClient, H3OriginError, H3Telemetry, H3TransportLimits, Origin,
 };
-use rustymiddle_http::{
+use transmog_http::{
     ConnectAuthority, HyperEgressMode, HyperOriginClient, HyperOriginError, HyperUpgradeResponse,
 };
-use rustymiddle_tls::{
+use transmog_tls::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
     DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, LeafCacheError, ProxyCa,
     TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy, normalize_connect_identity,
 };
-use rustymiddle_websocket::{
+use transmog_websocket::{
     CompressionError as WebSocketCompressionError, Direction as WebSocketDirection,
     HandshakeError as WebSocketHandshakeError, PerMessageDeflateCodec, RelayError, RelayLimits,
     RelayReport, RequestHandshake, ResponseHandshake, SessionCancellation, WebSocketHookError,
@@ -63,20 +72,13 @@ use rustymiddle_websocket::{
     validate_request as validate_websocket_request,
     validate_response as validate_websocket_response,
 };
-use thiserror::Error;
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf},
-    net::{TcpListener, TcpStream},
-    sync::{Mutex, RwLock, Semaphore, broadcast},
-    task::JoinSet,
-    time::timeout,
-};
-use tracing::{debug, warn};
 
 use crate::{
     AtomicRuntimeIdGenerator, ListenerConfigError, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind,
     RuntimeLimits, SystemRuntimeClock,
 };
+
+const FAILED_EXCHANGE_BODY: &[u8] = b"Transmog exchange failed\n";
 
 /// Complete configuration for one explicit proxy instance.
 #[derive(Clone, Debug)]
@@ -1724,9 +1726,7 @@ impl ProxyState {
             .select(
                 RouteInput {
                     metadata: Arc::clone(chain.context().metadata()),
-                    original_target: rustymiddle_core::intercept::OriginalTarget::new(
-                        original_target,
-                    ),
+                    original_target: transmog_core::intercept::OriginalTarget::new(original_target),
                     effective_request: request_head.clone(),
                     explicit_reroute,
                     replayability,
@@ -3086,7 +3086,7 @@ fn content_pipeline_failure_kind(error: &ContentPipelineError) -> ExchangeFailur
 
 fn validate_resolved_leaf(
     requested: &EndpointIdentity,
-    leaf: &rustymiddle_tls::IssuedLeaf,
+    leaf: &transmog_tls::IssuedLeaf,
 ) -> Result<(), CertificateResolverError> {
     if &leaf.identity == requested {
         Ok(())
@@ -3237,7 +3237,7 @@ fn validate_declared_body_limit(
         return Ok(());
     };
     if declared > u64::try_from(limit).unwrap_or(u64::MAX) {
-        return Err(rustymiddle_core::BodyLimitError::LimitExceeded {
+        return Err(transmog_core::BodyLimitError::LimitExceeded {
             limit,
             attempted: usize::try_from(declared).unwrap_or(usize::MAX),
         }
@@ -3896,7 +3896,7 @@ fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBod
         _ => StatusCode::BAD_GATEWAY,
     };
     let mut response = Response::new(DownstreamBody::from_bytes(Bytes::from_static(
-        b"rustymiddle exchange failed\n",
+        FAILED_EXCHANGE_BODY,
     )));
     *response.status_mut() = status;
     response.headers_mut().insert(
@@ -4048,7 +4048,7 @@ pub enum ProxyRuntimeError {
     Http(#[from] http::Error),
     /// Canonical header validation failed.
     #[error(transparent)]
-    Header(#[from] rustymiddle_core::HeaderError),
+    Header(#[from] transmog_core::HeaderError),
     /// Header-name conversion failed.
     #[error(transparent)]
     HeaderName(#[from] http::header::InvalidHeaderName),
@@ -4057,10 +4057,10 @@ pub enum ProxyRuntimeError {
     HeaderValue(#[from] http::header::InvalidHeaderValue),
     /// Header translation rejected unsafe framing.
     #[error(transparent)]
-    Translation(#[from] rustymiddle_core::TranslationError),
+    Translation(#[from] transmog_core::TranslationError),
     /// Body exceeded its explicit bound or had illegal trailer ordering.
     #[error(transparent)]
-    BodyLimit(#[from] rustymiddle_core::BodyLimitError),
+    BodyLimit(#[from] transmog_core::BodyLimitError),
     /// A required per-exchange interceptor could not be created.
     #[error(transparent)]
     HookInitialization(#[from] ChainInitError),
@@ -4114,10 +4114,10 @@ pub enum ProxyRuntimeError {
     H3Origin(#[from] H3OriginError),
     /// CONNECT authority was invalid.
     #[error(transparent)]
-    ConnectAuthority(#[from] rustymiddle_http::AuthorityError),
+    ConnectAuthority(#[from] transmog_http::AuthorityError),
     /// CONNECT/SNI or canonical identity was invalid.
     #[error(transparent)]
-    Identity(#[from] rustymiddle_tls::IdentityError),
+    Identity(#[from] transmog_tls::IdentityError),
     /// Leaf cache configuration or issuance failed.
     #[error(transparent)]
     Leaf(#[from] LeafCacheError),
@@ -4126,7 +4126,7 @@ pub enum ProxyRuntimeError {
     CertificateResolver(#[from] CertificateResolverError),
     /// Browser-facing TLS context construction failed.
     #[error(transparent)]
-    DownstreamTls(#[from] rustymiddle_tls::DownstreamTlsError),
+    DownstreamTls(#[from] transmog_tls::DownstreamTlsError),
     /// Browser did not finish TLS within the configured deadline.
     #[error("downstream TLS handshake timed out")]
     DownstreamTlsTimeout,
@@ -4187,30 +4187,30 @@ mod tests {
         ssl::{SslContext, SslMethod},
     };
     use quiche::h3::NameValue;
-    use rustymiddle_content::{ContentCoding, ContentDecoder, ContentEncoder, ContentLimits};
-    use rustymiddle_core::intercept::{
-        BodyFilter, BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody,
-        ExchangeInterceptor, HookInitError, RequestBodyAction, RequestBodyEvent, RequestHeadAction,
-        RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction,
-        ResponseHeadEvent,
-    };
-    use rustymiddle_h3::H3UpstreamService;
-    use rustymiddle_http::HyperUpstreamService;
-    use rustymiddle_tls::{
-        DownstreamTlsContextFactory, DownstreamTlsPolicy, LoadedTrust, ProxyCa, SystemTrustSource,
-        TrustError, TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
-    };
-    use rustymiddle_websocket::{
-        BoxWebSocketFuture, CloseFrame, DataKind, Direction, Frame as WebSocketFrame, FrameLimits,
-        MessageAction, MessageDecoder, MessageEvent, MessageEventHook, WebSocketHookLimits,
-        WebSocketHookRegistration, WebSocketInterceptor, WebSocketInterceptorFactory,
-        encode_frame as encode_websocket_frame,
-    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream, UdpSocket},
         sync::{Notify, oneshot},
         task::JoinHandle,
+    };
+    use transmog_content::{ContentCoding, ContentDecoder, ContentEncoder, ContentLimits};
+    use transmog_core::intercept::{
+        BodyFilter, BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody,
+        ExchangeInterceptor, HookInitError, RequestBodyAction, RequestBodyEvent, RequestHeadAction,
+        RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent, ResponseHeadAction,
+        ResponseHeadEvent,
+    };
+    use transmog_h3::H3UpstreamService;
+    use transmog_http::HyperUpstreamService;
+    use transmog_tls::{
+        DownstreamTlsContextFactory, DownstreamTlsPolicy, LoadedTrust, ProxyCa, SystemTrustSource,
+        TrustError, TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,
+    };
+    use transmog_websocket::{
+        BoxWebSocketFuture, CloseFrame, DataKind, Direction, Frame as WebSocketFrame, FrameLimits,
+        MessageAction, MessageDecoder, MessageEvent, MessageEventHook, WebSocketHookLimits,
+        WebSocketHookRegistration, WebSocketInterceptor, WebSocketInterceptorFactory,
+        encode_frame as encode_websocket_frame,
     };
 
     use super::*;
@@ -4510,11 +4510,11 @@ mod tests {
         }
     }
 
-    impl rustymiddle_core::route::DestinationAuthorizer for AllowAllDestinations {
+    impl transmog_core::route::DestinationAuthorizer for AllowAllDestinations {
         fn authorize(
             &self,
-            _original: &rustymiddle_core::intercept::OriginalTarget,
-            _proposed: &rustymiddle_core::route::UpstreamDestination,
+            _original: &transmog_core::intercept::OriginalTarget,
+            _proposed: &transmog_core::route::UpstreamDestination,
         ) -> Result<(), RouteError> {
             Ok(())
         }
@@ -4525,8 +4525,8 @@ mod tests {
             &self,
             mut request: StreamingRequest,
             plan: UpstreamPlan,
-            _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
-        ) -> rustymiddle_core::upstream::BoxUpstreamFuture<'_> {
+            _cancellation: transmog_core::intercept::ExchangeCancellation,
+        ) -> transmog_core::upstream::BoxUpstreamFuture<'_> {
             let observed = Arc::clone(&self.observed);
             Box::pin(async move {
                 while let Some(frame) = request.body.recv().await {
@@ -4544,7 +4544,7 @@ mod tests {
                         .await
                         .unwrap();
                 });
-                Ok(rustymiddle_core::StreamingResponse {
+                Ok(transmog_core::StreamingResponse {
                     head: ResponseHead {
                         status: 200,
                         headers: HeaderBlock::new(),
@@ -4561,8 +4561,8 @@ mod tests {
             &self,
             mut request: StreamingRequest,
             _plan: UpstreamPlan,
-            _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
-        ) -> rustymiddle_core::upstream::BoxUpstreamFuture<'_> {
+            _cancellation: transmog_core::intercept::ExchangeCancellation,
+        ) -> transmog_core::upstream::BoxUpstreamFuture<'_> {
             let observed = Arc::clone(&self.observed);
             let response = self.response.clone();
             Box::pin(async move {
@@ -4582,7 +4582,7 @@ mod tests {
                 tokio::spawn(async move {
                     sender.send(Ok(BodyFrame::Data(response))).await.unwrap();
                 });
-                Ok(rustymiddle_core::StreamingResponse {
+                Ok(transmog_core::StreamingResponse {
                     head: ResponseHead {
                         status: 200,
                         headers: HeaderBlock::from_fields(vec![
@@ -4603,8 +4603,8 @@ mod tests {
             &self,
             mut request: StreamingRequest,
             plan: UpstreamPlan,
-            _cancellation: rustymiddle_core::intercept::ExchangeCancellation,
-        ) -> rustymiddle_core::upstream::BoxUpstreamFuture<'_> {
+            _cancellation: transmog_core::intercept::ExchangeCancellation,
+        ) -> transmog_core::upstream::BoxUpstreamFuture<'_> {
             Box::pin(async move {
                 assert_eq!(request.head.target.scheme, plan.pool_key.destination.scheme);
                 assert_eq!(request.head.target.host, plan.pool_key.destination.host);
@@ -4624,7 +4624,7 @@ mod tests {
                         .await
                         .unwrap();
                 });
-                Ok(rustymiddle_core::StreamingResponse {
+                Ok(transmog_core::StreamingResponse {
                     head: ResponseHead {
                         status: 200,
                         headers: HeaderBlock::new(),
@@ -4645,8 +4645,8 @@ mod tests {
         expected_body: &'static [u8],
     ) {
         let plan = UpstreamPlan {
-            pool_key: rustymiddle_core::route::UpstreamPoolKey {
-                destination: rustymiddle_core::route::UpstreamDestination {
+            pool_key: transmog_core::route::UpstreamPoolKey {
+                destination: transmog_core::route::UpstreamDestination {
                     scheme: target.scheme.clone(),
                     host: target.host.clone(),
                     port: target.port,
@@ -4682,7 +4682,7 @@ mod tests {
                     body,
                 },
                 plan,
-                &rustymiddle_core::intercept::ExchangeCancellation::new(),
+                &transmog_core::intercept::ExchangeCancellation::new(),
             )
             .await
             .unwrap();
@@ -4699,11 +4699,11 @@ mod tests {
         assert_eq!(response_data, expected_body);
     }
 
-    impl rustymiddle_core::observe::Observer for LifecycleObserver {
+    impl transmog_core::observe::Observer for LifecycleObserver {
         fn on_event(
             &self,
-            event: rustymiddle_core::observe::ObserverEvent,
-        ) -> rustymiddle_core::observe::BoxObserverFuture<'_> {
+            event: transmog_core::observe::ObserverEvent,
+        ) -> transmog_core::observe::BoxObserverFuture<'_> {
             let phase = match event.kind {
                 ObserverEventKind::ExchangeStarted { .. } => "started",
                 ObserverEventKind::RequestHeadObserved { .. } => "request-head-boundary",
@@ -4743,7 +4743,7 @@ mod tests {
         );
         let certificates = Arc::new(
             CachedMitmCertificateResolver::new(
-                ProxyCa::generate("rustymiddle embedded test", 2).unwrap(),
+                ProxyCa::generate("Transmog embedded test", 2).unwrap(),
                 config.limits.leaf_cache_capacity,
                 config.limits.leaf_validity_days,
             )
@@ -4754,7 +4754,7 @@ mod tests {
             Arc::new(LifecycleObserver {
                 phases: Arc::clone(&phases),
             }),
-            rustymiddle_core::observe::ObserverConfig::default(),
+            transmog_core::observe::ObserverConfig::default(),
         )]);
         let observed = Arc::new(StdMutex::new(Vec::new()));
         let selector = PolicyRouteSelector::new(
@@ -4926,7 +4926,7 @@ mod tests {
         );
         let certificates = Arc::new(
             CachedMitmCertificateResolver::new(
-                ProxyCa::generate("rustymiddle content policy test", 2).unwrap(),
+                ProxyCa::generate("Transmog content policy test", 2).unwrap(),
                 config.limits.leaf_cache_capacity,
                 config.limits.leaf_validity_days,
             )
@@ -5079,7 +5079,7 @@ mod tests {
     }
 
     async fn assert_h3_upstream_contract() {
-        let origin_ca = ProxyCa::generate("rustymiddle h3 contract origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog h3 contract origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -5134,9 +5134,9 @@ mod tests {
         let initial = Arc::new(TrustSnapshot::load(&SystemTrustSource, 50).unwrap());
         let proxy = ProxyServer::bind(
             ProxyConfig::default(),
-            ProxyCa::generate("rustymiddle trust reload test", 2).unwrap(),
+            ProxyCa::generate("Transmog trust reload test", 2).unwrap(),
             initial,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5173,9 +5173,9 @@ mod tests {
                 },
                 ..ProxyConfig::default()
             },
-            ProxyCa::generate("rustymiddle slow header test", 2).unwrap(),
+            ProxyCa::generate("Transmog slow header test", 2).unwrap(),
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5227,7 +5227,7 @@ mod tests {
         });
 
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 11).unwrap());
-        let ca = ProxyCa::generate("rustymiddle runtime test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog runtime test", 2).unwrap();
         let config = ProxyConfig {
             route_policy: RoutePolicy::Http1Only,
             ..ProxyConfig::default()
@@ -5290,7 +5290,7 @@ mod tests {
             stream.shutdown().await.unwrap();
         });
 
-        let proxy_ca = ProxyCa::generate("rustymiddle transparent websocket test", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog transparent websocket test", 2).unwrap();
         let trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -5305,7 +5305,7 @@ mod tests {
             },
             proxy_ca,
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5360,7 +5360,7 @@ mod tests {
             stream.shutdown().await.unwrap();
         });
 
-        let proxy_ca = ProxyCa::generate("rustymiddle CONNECT websocket test", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog CONNECT websocket test", 2).unwrap();
         let trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -5375,7 +5375,7 @@ mod tests {
             },
             proxy_ca,
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5521,7 +5521,7 @@ mod tests {
             route_policy: RoutePolicy::Http1Only,
             ..ProxyConfig::default()
         };
-        let proxy_ca = ProxyCa::generate("rustymiddle inspected websocket test", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog inspected websocket test", 2).unwrap();
         let trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -5552,7 +5552,7 @@ mod tests {
         let http_hooks = InterceptorChainFactory::new(
             vec![InterceptorRegistration::new(
                 "application",
-                Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+                Arc::new(transmog_core::intercept::NoopInterceptorFactory),
                 InterceptorRequirement::Required,
             )],
             config.limits.hooks,
@@ -5614,7 +5614,7 @@ mod tests {
                         assert_eq!(message.payload, "server-hook");
                         saw_message = true;
                     }
-                    MessageEvent::Control(rustymiddle_websocket::ControlFrame::Close(close)) => {
+                    MessageEvent::Control(transmog_websocket::ControlFrame::Close(close)) => {
                         assert!(saw_message);
                         let reply = encode_websocket_frame(
                             &WebSocketFrame {
@@ -5650,7 +5650,7 @@ mod tests {
                                 .effects
                                 .iter()
                                 .filter(|effect| {
-                                    effect.action == rustymiddle_websocket::HookActionKind::Replace
+                                    effect.action == transmog_websocket::HookActionKind::Replace
                                 })
                                 .count(),
                             2
@@ -5687,7 +5687,7 @@ mod tests {
         });
 
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 16).unwrap());
-        let ca = ProxyCa::generate("rustymiddle response streaming test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog response streaming test", 2).unwrap();
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
@@ -5699,7 +5699,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5785,7 +5785,7 @@ mod tests {
         });
 
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 17).unwrap());
-        let ca = ProxyCa::generate("rustymiddle request streaming test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog request streaming test", 2).unwrap();
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
@@ -5797,7 +5797,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5854,9 +5854,9 @@ mod tests {
                 },
                 ..ProxyConfig::default()
             },
-            ProxyCa::generate("rustymiddle stalled body test", 2).unwrap(),
+            ProxyCa::generate("Transmog stalled body test", 2).unwrap(),
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -5913,7 +5913,7 @@ mod tests {
         });
 
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 13).unwrap());
-        let ca = ProxyCa::generate("rustymiddle request edit test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog request edit test", 2).unwrap();
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
@@ -5954,7 +5954,7 @@ mod tests {
     #[tokio::test]
     async fn rejected_exchange_emits_failed_and_returns_a_bounded_error() {
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 12).unwrap());
-        let ca = ProxyCa::generate("rustymiddle lifecycle test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog lifecycle test", 2).unwrap();
         let handler = Arc::new(RejectingLifecycleHandler::default());
         let proxy = ProxyServer::bind(
             ProxyConfig {
@@ -5999,7 +5999,7 @@ mod tests {
     #[tokio::test]
     async fn request_limit_returns_413_before_contacting_an_origin() {
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 14).unwrap());
-        let ca = ProxyCa::generate("rustymiddle body limit test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog body limit test", 2).unwrap();
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
@@ -6011,7 +6011,7 @@ mod tests {
             },
             ca,
             trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -6039,7 +6039,7 @@ mod tests {
     #[tokio::test]
     async fn handler_can_synthesize_a_response_and_head_suppresses_its_body() {
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 15).unwrap());
-        let ca = ProxyCa::generate("rustymiddle synthetic response test", 2).unwrap();
+        let ca = ProxyCa::generate("Transmog synthetic response test", 2).unwrap();
         let proxy = ProxyServer::bind(
             ProxyConfig {
                 route_policy: RoutePolicy::Http1Only,
@@ -6101,7 +6101,7 @@ mod tests {
 
     #[tokio::test]
     async fn connect_tls_is_intercepted_without_certificate_bypass() {
-        let origin_ca = ProxyCa::generate("rustymiddle origin test root", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog origin test root", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6131,7 +6131,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle CONNECT test root", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog CONNECT test root", 2).unwrap();
         let proxy_client_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6212,7 +6212,7 @@ mod tests {
             (RoutePolicy::Http2Only, false),
             (RoutePolicy::Http2Only, true),
         ] {
-            let origin_ca = ProxyCa::generate("rustymiddle invalid upstream origin", 2).unwrap();
+            let origin_ca = ProxyCa::generate("Transmog invalid upstream origin", 2).unwrap();
             let leaf_identity = if wrong_hostname {
                 "wrong.example"
             } else {
@@ -6245,7 +6245,7 @@ mod tests {
             };
             let upstream_trust =
                 Arc::new(TrustSnapshot::load(&StaticTrust(vec![trusted_root]), 37).unwrap());
-            let proxy_ca = ProxyCa::generate("rustymiddle invalid-cert proxy", 2).unwrap();
+            let proxy_ca = ProxyCa::generate("Transmog invalid-cert proxy", 2).unwrap();
             let browser_trust = Arc::new(
                 TrustSnapshot::load(
                     &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6260,7 +6260,7 @@ mod tests {
                 },
                 proxy_ca,
                 upstream_trust,
-                Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+                Arc::new(transmog_core::intercept::NoopInterceptorFactory),
             )
             .await
             .unwrap();
@@ -6317,8 +6317,8 @@ mod tests {
             assert!(response.starts_with(b"HTTP/1.1 502"));
             assert!(
                 response
-                    .windows(28)
-                    .any(|window| window == b"rustymiddle exchange failed\n")
+                    .windows(FAILED_EXCHANGE_BODY.len())
+                    .any(|window| window == FAILED_EXCHANGE_BODY)
             );
             assert!(matches!(
                 evidence.try_recv(),
@@ -6334,7 +6334,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn connect_h1_ingress_can_force_verified_h2_egress() {
-        let origin_ca = ProxyCa::generate("rustymiddle h2 origin root", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog h2 origin root", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6372,7 +6372,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle h2 proxy root", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog h2 proxy root", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6450,7 +6450,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn paused_h2_stream_does_not_block_an_unrelated_stream() {
-        let origin_ca = ProxyCa::generate("rustymiddle concurrent h2 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog concurrent h2 origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6485,7 +6485,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle concurrent h2 proxy", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog concurrent h2 proxy", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6597,7 +6597,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn connect_h2_ingress_can_force_verified_h1_egress() {
-        let origin_ca = ProxyCa::generate("rustymiddle h2-to-h1 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog h2-to-h1 origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6634,7 +6634,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle h2-to-h1 proxy", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog h2-to-h1 proxy", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6720,7 +6720,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn auto_safely_falls_back_from_unreachable_h3_before_response_start() {
-        let origin_ca = ProxyCa::generate("rustymiddle auto fallback origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog auto fallback origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6758,7 +6758,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle auto fallback proxy", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog auto fallback proxy", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6873,7 +6873,7 @@ mod tests {
         let tcp_origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin_addr = tcp_origin.local_addr().unwrap();
         let upstream_trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 55).unwrap());
-        let proxy_ca = ProxyCa::generate("rustymiddle no replay proxy", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog no replay proxy", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -6892,7 +6892,7 @@ mod tests {
             },
             proxy_ca,
             upstream_trust,
-            Arc::new(rustymiddle_core::intercept::NoopInterceptorFactory),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
         )
         .await
         .unwrap();
@@ -6972,7 +6972,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn connect_h1_ingress_can_force_verified_h3_egress() {
-        let origin_ca = ProxyCa::generate("rustymiddle proxy h3 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog proxy h3 origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -6990,7 +6990,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle h3 proxy root", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog h3 proxy root", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -7078,7 +7078,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
     async fn connect_h2_ingress_can_force_verified_h3_egress() {
-        let origin_ca = ProxyCa::generate("rustymiddle h2-to-h3 origin", 2).unwrap();
+        let origin_ca = ProxyCa::generate("Transmog h2-to-h3 origin", 2).unwrap();
         let origin_leaf = origin_ca
             .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
             .unwrap();
@@ -7096,7 +7096,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let proxy_ca = ProxyCa::generate("rustymiddle h2-to-h3 proxy", 2).unwrap();
+        let proxy_ca = ProxyCa::generate("Transmog h2-to-h3 proxy", 2).unwrap();
         let browser_trust = Arc::new(
             TrustSnapshot::load(
                 &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
@@ -7218,7 +7218,7 @@ mod tests {
     }
 
     async fn spawn_h3_origin(
-        leaf: rustymiddle_tls::IssuedLeaf,
+        leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
     ) -> (SocketAddr, TestH3Origin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();

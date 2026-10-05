@@ -6,8 +6,8 @@ latency, peak-memory, and cancellation testing.
 
 ```powershell
 . ./scripts/dev-env.ps1
-cargo run --locked --release -p rustymiddle-core --example hooks_benchmark
-cargo run --locked --release -p rustymiddle-content --example content_benchmark
+cargo run --locked --release -p transmog-core --example hooks_benchmark
+cargo run --locked --release -p transmog-content --example content_benchmark
 ./scripts/benchmark-content.ps1
 ```
 

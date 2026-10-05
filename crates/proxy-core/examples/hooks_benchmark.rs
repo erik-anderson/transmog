@@ -1,11 +1,11 @@
 //! Small dependency-free Hooks v2 microbenchmark harness.
 //!
-//! Run with `cargo run --release -p rustymiddle-core --example hooks_benchmark`.
+//! Run with `cargo run --release -p transmog-core --example hooks_benchmark`.
 
 use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use bytes::Bytes;
-use rustymiddle_core::{
+use transmog_core::{
     BodyFrame, ConnectionId, HeaderBlock, HttpLegVersion, RequestHead, ResponseHead, SessionId,
     SessionMetadata, StreamId, Target,
     intercept::{
@@ -80,16 +80,15 @@ async fn measure(interceptors: usize) {
         let mut chain = factory
             .create_exchange(metadata(iteration))
             .expect("no-op initialization");
-        let rustymiddle_core::intercept::RequestHeadOutcome::Continue { head: request, .. } =
+        let transmog_core::intercept::RequestHeadOutcome::Continue { head: request, .. } =
             chain.request_head(request()).await.expect("request hook")
         else {
             panic!("no-op interceptor changed request outcome");
         };
-        let rustymiddle_core::intercept::ResponseHeadOutcome::Continue { head: response, .. } =
-            chain
-                .response_head(&request, response(), None, false)
-                .await
-                .expect("response hook")
+        let transmog_core::intercept::ResponseHeadOutcome::Continue { head: response, .. } = chain
+            .response_head(&request, response(), None, false)
+            .await
+            .expect("response hook")
         else {
             panic!("no-op interceptor changed response outcome");
         };
@@ -162,7 +161,7 @@ async fn measure_transform() {
     let started = Instant::now();
     for iteration in 0..ITERATIONS {
         let mut chain = factory.create_exchange(metadata(iteration)).unwrap();
-        let rustymiddle_core::intercept::RequestHeadOutcome::Continue { head, .. } =
+        let transmog_core::intercept::RequestHeadOutcome::Continue { head, .. } =
             chain.request_head(request()).await.unwrap()
         else {
             panic!("transform interceptor changed request outcome");

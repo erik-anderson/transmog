@@ -3054,209 +3054,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
-name = "rustymiddle"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "rustymiddle-capture",
- "rustymiddle-content",
- "rustymiddle-core",
- "rustymiddle-runtime",
- "rustymiddle-saz",
- "rustymiddle-tls",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rustymiddle-automation"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "rustymiddle-core",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "rustymiddle-capture"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "rustymiddle-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rustymiddle-content"
-version = "0.1.0"
-dependencies = [
- "async-compression",
- "bytes",
- "rustymiddle-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "rustymiddle-control-model"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rustymiddle-control-transport"
-version = "0.1.0"
-dependencies = [
- "rustymiddle-control-model",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "rustymiddle-core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "rustymiddle-desktop"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.4.3",
- "microsoft-webui",
- "microsoft-webui-handler",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rustymiddle-h3"
-version = "0.1.0"
-dependencies = [
- "boring",
- "bytes",
- "quiche",
- "rustymiddle-core",
- "rustymiddle-tls",
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "rustymiddle-http"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-boring",
- "hyper-util",
- "rustymiddle-core",
- "rustymiddle-tls",
- "thiserror 2.0.21",
- "tokio",
- "tower-service",
- "tracing",
-]
-
-[[package]]
-name = "rustymiddle-runtime"
-version = "0.1.0"
-dependencies = [
- "boring",
- "bytes",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-util",
- "quiche",
- "rustymiddle-content",
- "rustymiddle-core",
- "rustymiddle-h3",
- "rustymiddle-http",
- "rustymiddle-tls",
- "rustymiddle-websocket",
- "thiserror 2.0.21",
- "tokio",
- "tokio-boring",
- "tracing",
-]
-
-[[package]]
-name = "rustymiddle-saz"
-version = "0.1.0"
-dependencies = [
- "rustymiddle-capture",
- "rustymiddle-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "zip",
-]
-
-[[package]]
-name = "rustymiddle-session"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "rustymiddle-capture",
- "rustymiddle-control-model",
- "rustymiddle-control-transport",
- "rustymiddle-core",
- "rustymiddle-runtime",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "rustymiddle-tls"
-version = "0.1.0"
-dependencies = [
- "boring",
- "rustls-native-certs",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rustymiddle-websocket"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "flate2",
- "futures-util",
- "getrandom 0.4.3",
- "sha1",
- "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4434,6 +4231,209 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transmog"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "transmog-capture",
+ "transmog-content",
+ "transmog-core",
+ "transmog-runtime",
+ "transmog-saz",
+ "transmog-tls",
+]
+
+[[package]]
+name = "transmog-automation"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "thiserror 2.0.21",
+ "tokio",
+ "transmog-core",
+]
+
+[[package]]
+name = "transmog-capture"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "transmog-core",
+]
+
+[[package]]
+name = "transmog-content"
+version = "0.1.0"
+dependencies = [
+ "async-compression",
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "transmog-core",
+]
+
+[[package]]
+name = "transmog-control-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "transmog-control-transport"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+ "tokio",
+ "transmog-control-model",
+]
+
+[[package]]
+name = "transmog-core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "transmog-desktop"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.4.3",
+ "microsoft-webui",
+ "microsoft-webui-handler",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "transmog-h3"
+version = "0.1.0"
+dependencies = [
+ "boring",
+ "bytes",
+ "quiche",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "transmog-core",
+ "transmog-tls",
+]
+
+[[package]]
+name = "transmog-http"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-boring",
+ "hyper-util",
+ "thiserror 2.0.21",
+ "tokio",
+ "tower-service",
+ "tracing",
+ "transmog-core",
+ "transmog-tls",
+]
+
+[[package]]
+name = "transmog-runtime"
+version = "0.1.0"
+dependencies = [
+ "boring",
+ "bytes",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "quiche",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-boring",
+ "tracing",
+ "transmog-content",
+ "transmog-core",
+ "transmog-h3",
+ "transmog-http",
+ "transmog-tls",
+ "transmog-websocket",
+]
+
+[[package]]
+name = "transmog-saz"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "transmog-capture",
+ "transmog-core",
+ "zip",
+]
+
+[[package]]
+name = "transmog-session"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http",
+ "thiserror 2.0.21",
+ "tokio",
+ "transmog-capture",
+ "transmog-control-model",
+ "transmog-control-transport",
+ "transmog-core",
+ "transmog-runtime",
+]
+
+[[package]]
+name = "transmog-tls"
+version = "0.1.0"
+dependencies = [
+ "boring",
+ "rustls-native-certs",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "transmog-websocket"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "flate2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "sha1",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

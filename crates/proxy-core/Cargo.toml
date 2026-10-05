@@ -1,5 +1,5 @@
 [package]
-name = "rustymiddle-core"
+name = "transmog-core"
 description = "Protocol-neutral interception model and Hooks v2 engine"
 version.workspace = true
 edition.workspace = true

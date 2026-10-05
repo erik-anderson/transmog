@@ -129,7 +129,7 @@ jobs:
   browser-live:
     runs-on: windows-latest
     env:
-      RUSTYMIDDLE_LIVE: '1'
+      TRANSMOG_LIVE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -162,11 +162,11 @@ jobs:
           npx playwright install chromium
       - name: Install job-scoped test CA
         shell: pwsh
-        run: ./scripts/setup-live-test-ca.ps1 -BinaryPath ./target/release/rustymiddle.exe
+        run: ./scripts/setup-live-test-ca.ps1 -BinaryPath ./target/release/transmog.exe
       - name: Run live browser matrix
         working-directory: e2e/playwright
         env:
-          RUSTYMIDDLE_BIN: ${{ github.workspace }}\target\release\rustymiddle.exe
+          TRANSMOG_BIN: ${{ github.workspace }}\target\release\transmog.exe
         run: npm test
       - name: Remove job-scoped test CA
         if: always()

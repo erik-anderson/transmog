@@ -66,7 +66,7 @@ function Measure-ChildProcess {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $repoRoot
 try {
-    cargo build --locked --release -p rustymiddle-content --example content_pipeline_benchmark
+    cargo build --locked --release -p transmog-content --example content_pipeline_benchmark
     Assert-LastCommand 'Building the content-pipeline benchmark'
 
     $extension = if ($IsWindows) { '.exe' } else { '' }

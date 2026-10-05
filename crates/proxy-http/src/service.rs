@@ -2,7 +2,7 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
-use rustymiddle_core::{
+use transmog_core::{
     StreamingRequest,
     intercept::ExchangeCancellation,
     route::{UpstreamDestination, UpstreamPlan},
@@ -61,10 +61,10 @@ impl UpstreamService for HyperUpstreamService {
         cancellation: ExchangeCancellation,
     ) -> BoxUpstreamFuture<'_> {
         let mode = match plan.pool_key.version_policy {
-            rustymiddle_core::RoutePolicy::Http1Only => HyperEgressMode::Http1Only,
-            rustymiddle_core::RoutePolicy::Http2Only => HyperEgressMode::Http2Only,
-            rustymiddle_core::RoutePolicy::Auto => HyperEgressMode::Auto,
-            rustymiddle_core::RoutePolicy::Http3Only => {
+            transmog_core::RoutePolicy::Http1Only => HyperEgressMode::Http1Only,
+            transmog_core::RoutePolicy::Http2Only => HyperEgressMode::Http2Only,
+            transmog_core::RoutePolicy::Auto => HyperEgressMode::Auto,
+            transmog_core::RoutePolicy::Http3Only => {
                 return Box::pin(async {
                     Err(contract_error(
                         "HTTP/3-only plans cannot execute through the Hyper adapter",
@@ -139,13 +139,13 @@ fn map_hyper_error(error: &HyperOriginError) -> UpstreamError {
 mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
-    use rustymiddle_core::{
+    use transmog_core::{
         BodyStream, HeaderBlock, HttpLegVersion, Replayability, RequestHead, RoutePolicy, Target,
         intercept::ExchangeCancellation,
         route::{UpstreamDestination, UpstreamPlan, UpstreamPoolKey},
         upstream::{UpstreamErrorKind, UpstreamService},
     };
-    use rustymiddle_tls::{
+    use transmog_tls::{
         SystemTrustSource, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
     };
 

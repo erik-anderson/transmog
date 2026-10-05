@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use rustymiddle_core::intercept::HookLimits;
+use transmog_core::intercept::HookLimits;
 
 use thiserror::Error;
 

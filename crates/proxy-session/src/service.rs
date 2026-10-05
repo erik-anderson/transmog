@@ -6,15 +6,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use rustymiddle_control_model::Handshake;
-use rustymiddle_control_transport::TransportConfig;
-use rustymiddle_core::{
+use thiserror::Error;
+use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
+use transmog_control_model::Handshake;
+use transmog_control_transport::TransportConfig;
+use transmog_core::{
     intercept::{ExchangeCancellation, InterceptorRegistration, InterceptorRequirement},
     observe::Observer,
 };
-use rustymiddle_runtime::{ProxyComponents, ProxyControl, ProxyServer};
-use thiserror::Error;
-use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
+use transmog_runtime::{ProxyComponents, ProxyControl, ProxyServer};
 
 use crate::{
     AttachedController, CaptureManager, CaptureServiceError, CaptureStart, CaptureStatus,
@@ -43,7 +43,7 @@ impl Default for ServiceConfig {
             sessions: SessionLimits::default(),
             observer_queue_capacity: NonZeroUsize::new(2_048).expect("constant is nonzero"),
             capture_queue_capacity: NonZeroUsize::new(2_048).expect("constant is nonzero"),
-            control_build_id: Arc::from(concat!("rustymiddle-session/", env!("CARGO_PKG_VERSION"))),
+            control_build_id: Arc::from(concat!("transmog-session/", env!("CARGO_PKG_VERSION"))),
         }
     }
 }
@@ -593,7 +593,7 @@ struct ProxyRunner {
     server: ProxyServer,
     local_addr: SocketAddr,
     control: ProxyControl,
-    websocket: tokio::sync::broadcast::Receiver<rustymiddle_runtime::WebSocketSessionEvidence>,
+    websocket: tokio::sync::broadcast::Receiver<transmog_runtime::WebSocketSessionEvidence>,
     catalog: SessionCatalog,
 }
 

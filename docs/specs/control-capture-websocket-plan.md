@@ -18,7 +18,7 @@ live control envelopes as their durable representation.
 
 ## Non-negotiable boundaries
 
-- `rustymiddle-core` owns canonical exchanges, Hooks v2, attributed hook
+- `transmog-core` owns canonical exchanges, Hooks v2, attributed hook
   effects, observation boundaries, cancellation, and finite resource limits.
 - Control DTOs and delivery live above core. They do not become hook APIs.
 - Native capture is append-oriented and independently versioned from control.

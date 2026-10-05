@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-websocket"
-description = "Bounded protocol-neutral WebSocket inspection for rustymiddle"
+name = "transmog-websocket"
+description = "Bounded protocol-neutral WebSocket inspection for Transmog"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

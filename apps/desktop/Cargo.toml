@@ -1,6 +1,6 @@
 [package]
-name = "rustymiddle-desktop"
-description = "Windows Tauri product shell for rustymiddle"
+name = "transmog-desktop"
+description = "Windows Tauri product shell for Transmog"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,11 @@ repository.workspace = true
 build = "build.rs"
 
 [lib]
-name = "rustymiddle_desktop"
+name = "transmog_desktop"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rustymiddle-desktop"
+name = "transmog-desktop"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,6 +1,6 @@
 # Build prerequisites
 
-rustymiddle compiles BoringSSL, quiche, and the bundled zstd C sources from
+Transmog compiles BoringSSL, quiche, and the bundled zstd C sources from
 source. A Rust-only installation is therefore insufficient even for
 `cargo check --workspace`.
 
@@ -111,8 +111,8 @@ Build, test, and run through the repository's LLVM/Ninja environment:
 
 ```powershell
 . ./scripts/dev-env.ps1
-cargo test --locked -p rustymiddle-desktop
-cargo run --locked -p rustymiddle-desktop
+cargo test --locked -p transmog-desktop
+cargo run --locked -p transmog-desktop
 ```
 
 Create the Windows installer from `apps/desktop`:

@@ -24,19 +24,19 @@ type LiveResult = {
   directFallbackBlocked?: boolean;
 };
 
-const enabled = process.env.RUSTYMIDDLE_LIVE === '1';
+const enabled = process.env.TRANSMOG_LIVE === '1';
 const windows = process.platform === 'win32';
 const repo = path.resolve(__dirname, '..', '..', '..');
-const binary = process.env.RUSTYMIDDLE_BIN ?? path.join(
+const binary = process.env.TRANSMOG_BIN ?? path.join(
   repo,
   'target',
   'release',
-  windows ? 'rustymiddle.exe' : 'rustymiddle',
+  windows ? 'transmog.exe' : 'transmog',
 );
 const pwsh = process.env.PWSH ?? 'pwsh';
-const caCertificate = process.env.RUSTYMIDDLE_TEST_CA_CERT
+const caCertificate = process.env.TRANSMOG_TEST_CA_CERT
   ?? path.join(repo, '.local', 'live-test-ca.pem');
-const caPrivateKey = process.env.RUSTYMIDDLE_TEST_CA_KEY
+const caPrivateKey = process.env.TRANSMOG_TEST_CA_KEY
   ?? path.join(repo, '.local', 'live-test-ca.key');
 const reportPath = path.join(repo, 'verification', 'live-report.json');
 const reportMarkdownPath = path.join(repo, 'verification', 'live-report.md');
@@ -45,7 +45,7 @@ let caTrustVerifiedBeforeRun = false;
 let caTrustVerifiedAfterRun = false;
 const results: LiveResult[] = [];
 
-test.skip(!enabled, 'Set RUSTYMIDDLE_LIVE=1 in the explicitly network-enabled live job.');
+test.skip(!enabled, 'Set TRANSMOG_LIVE=1 in the explicitly network-enabled live job.');
 test.skip(!windows, 'The initial live verification target is Windows.');
 
 test.beforeAll(() => {
@@ -173,7 +173,7 @@ test('Cloudflare Auto learns Alt-Svc and upgrades a later request to H3', async 
       serviceWorkers: 'block',
     });
     const page = await context.newPage();
-    const warmupUrl = `https://cloudflare-quic.com/?rustymiddle-warmup=${randomUUID()}`;
+    const warmupUrl = `https://cloudflare-quic.com/?transmog-warmup=${randomUUID()}`;
     const warmup = await page.goto(
       warmupUrl,
       { waitUntil: 'domcontentloaded' },
@@ -194,7 +194,7 @@ test('Cloudflare Auto learns Alt-Svc and upgrades a later request to H3', async 
     expect(warmupEvidence.upstream_verification).toBe('verified');
 
     const upgraded = await page.goto(
-      `https://cloudflare-quic.com/?rustymiddle-upgrade=${randomUUID()}`,
+      `https://cloudflare-quic.com/?transmog-upgrade=${randomUUID()}`,
       { waitUntil: 'domcontentloaded' },
     );
     expect(upgraded).not.toBeNull();

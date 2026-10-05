@@ -32,12 +32,12 @@ run verifies it read-only, and the dedicated teardown removes the exact root.
 Routine telemetry records fingerprints and verification results, not private
 keys or full subject names. There is no global accept-invalid-certificate mode.
 
-For private origins and hermetic tests, `rustymiddle serve
+For private origins and hermetic tests, `transmog serve
 --upstream-ca-cert roots.pem` augments the OS-enumerated roots with one or more
 PEM certificates before constructing the immutable BoringSSL snapshot. It does
 not replace public roots, mutate an OS store, or enable invalid-certificate
 acceptance; chain, identity, validity, and usage verification are unchanged for
-Hyper and quiche. `rustymiddle ca issue --ca-cert ca.pem --ca-key ca.key
+Hyper and quiche. `transmog ca issue --ca-cert ca.pem --ca-key ca.key
 --identity HOST_OR_IP --cert leaf.pem --key leaf.key` issues a short-lived leaf
 with the requested DNS or IP identity for controlled origins. The resulting
 private key has the same handling requirements as any server key and should not
@@ -47,8 +47,8 @@ The CLI does not modify an operating-system trust store. On Windows, the
 checked-in scripts provide the explicit, reversible test workflow:
 
 ```powershell
-pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./rustymiddle-ca.pem -PrivateKeyPath ./rustymiddle-ca.key
-$install = pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./rustymiddle-ca.pem
+pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./transmog-ca.pem -PrivateKeyPath ./transmog-ca.key
+$install = pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./transmog-ca.pem
 # Save the CA_SHA256 value emitted above.
 pwsh ./scripts/uninstall-ca-user.ps1 -Sha256 <saved-sha256>
 ```
@@ -66,4 +66,4 @@ user-only ACL applied by `new-proxy-ca.ps1`, do not log or transmit it, and
 remove ordinary one-off roots immediately after use. For the durable
 live-browser root, run `scripts/remove-live-test-ca.ps1` as soon as repeated
 live testing is complete. Certificate-pinned applications are unsupported;
-rustymiddle does not bypass pinning.
+Transmog does not bypass pinning.

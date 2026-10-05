@@ -7,7 +7,7 @@ use tauri::{
 
 use crate::{ProbeError, ProbeHint, ProbeInput, ProbeResult, UiRenderer, UiResponse, run_probe};
 
-const UI_HOST: &str = "rustymiddle-ui.localhost";
+const UI_HOST: &str = "transmog-ui.localhost";
 
 #[tauri::command]
 async fn phase_zero_probe(
@@ -31,20 +31,15 @@ pub fn run() {
     let renderer = UiRenderer::new().expect("embedded WebUI assets must be valid");
 
     tauri::Builder::default()
-        .register_uri_scheme_protocol(
-            "rustymiddle-ui",
-            move |_context, request: Request<Vec<u8>>| {
-                into_tauri_response(
-                    renderer.respond(request.method().as_str(), request.uri().path()),
-                )
-            },
-        )
+        .register_uri_scheme_protocol("transmog-ui", move |_context, request: Request<Vec<u8>>| {
+            into_tauri_response(renderer.respond(request.method().as_str(), request.uri().path()))
+        })
         .invoke_handler(tauri::generate_handler![phase_zero_probe])
         .setup(|app| {
-            let url = tauri::Url::parse("rustymiddle-ui://localhost/")
+            let url = tauri::Url::parse("transmog-ui://localhost/")
                 .expect("fixed application URL must parse");
             WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
-                .title("rustymiddle")
+                .title("Transmog")
                 .inner_size(960.0, 680.0)
                 .min_inner_size(680.0, 480.0)
                 .on_navigation(is_allowed_navigation)
@@ -57,7 +52,7 @@ pub fn run() {
 }
 
 fn is_allowed_navigation(url: &tauri::Url) -> bool {
-    (url.scheme() == "rustymiddle-ui" && url.host_str() == Some("localhost"))
+    (url.scheme() == "transmog-ui" && url.host_str() == Some("localhost"))
         || (url.scheme() == "http" && url.host_str() == Some(UI_HOST))
 }
 
@@ -95,9 +90,9 @@ mod tests {
     #[test]
     fn navigation_is_limited_to_the_embedded_origin() {
         for allowed in [
-            "rustymiddle-ui://localhost/",
-            "rustymiddle-ui://localhost/app.js",
-            "http://rustymiddle-ui.localhost/",
+            "transmog-ui://localhost/",
+            "transmog-ui://localhost/app.js",
+            "http://transmog-ui.localhost/",
         ] {
             let url = tauri::Url::parse(allowed).expect("allowed URL should parse");
             assert!(
@@ -107,10 +102,10 @@ mod tests {
         }
 
         for denied in [
-            "https://rustymiddle-ui.localhost/",
+            "https://transmog-ui.localhost/",
             "http://localhost/",
             "https://example.com/",
-            "rustymiddle-ui://attacker.invalid/",
+            "transmog-ui://attacker.invalid/",
         ] {
             let url = tauri::Url::parse(denied).expect("denied URL should parse");
             assert!(

@@ -20,7 +20,7 @@ interactive islands.
 
 The shipped application must not require a Node.js process, bundle a browser,
 or expose the proxy core directly to the WebView. The headless
-`rustymiddle-session` API remains independently usable by future commands and
+`transmog-session` API remains independently usable by future commands and
 embedding applications.
 
 ## Accepted technology direction
@@ -61,25 +61,25 @@ The intended dependency direction is:
 ```text
 apps/desktop                 Tauri window, lifecycle, packaging
        |
-rustymiddle-app-webui        WebUI rendering and presentation DTOs
+transmog-app-webui        WebUI rendering and presentation DTOs
        |
-rustymiddle-app              product use cases and UI-neutral application state
+transmog-app              product use cases and UI-neutral application state
        |
-rustymiddle-session          bounded live session and proxy lifecycle
+transmog-session          bounded live session and proxy lifecycle
        |
 existing proxy libraries
 
-rustymiddle-host-windows     caller-owned Windows host adapter
+transmog-host-windows     caller-owned Windows host adapter
        |
-rustymiddle-session::HostIntegration
+transmog-session::HostIntegration
 ```
 
-`rustymiddle-app` is reusable by a future CLI and owns product operations such
+`transmog-app` is reusable by a future CLI and owns product operations such
 as selection-independent queries, replay requests, capture/export workflows,
 settings validation, and redaction-safe diagnostics. It does not depend on
 Tauri, WebUI, a WebView, or Windows.
 
-`rustymiddle-app-webui` maps application read models to bounded WebUI render
+`transmog-app-webui` maps application read models to bounded WebUI render
 state and owns the loaded template protocol. It contains no OS mutation and no
 proxy transport implementation. Rendering is independently testable without a
 window.
@@ -88,7 +88,7 @@ window.
 small allowlisted command adapter, maps service delta hints to a bounded UI
 notification channel, and coordinates graceful application exit.
 
-`rustymiddle-host-windows` implements transactional current-user system-proxy
+`transmog-host-windows` implements transactional current-user system-proxy
 and certificate setup. The application chooses whether to install it; neither
 the session crate nor the renderer acquires OS side effects.
 
@@ -277,7 +277,7 @@ contains no development server.
 
 ### Phase 1: Application facade and render foundation
 
-Add `rustymiddle-app`, `rustymiddle-app-webui`, and the thin desktop binary.
+Add `transmog-app`, `transmog-app-webui`, and the thin desktop binary.
 Define bounded presentation DTOs with opaque IDs/cursors and stable error
 categories. Add a Rust asset build task that runs the pinned TypeScript bundle
 first, consumes its WebUI projection manifest, compiles templates, validates
@@ -447,7 +447,7 @@ validation stays enabled.
 
 - [x] Tauri/WebUI delivery ADR and offline packaged spike pass on WebView2.
 - [ ] Layering prevents Tauri, WebUI, and platform APIs from entering proxy
-      libraries or `rustymiddle-session`.
+      libraries or `transmog-session`.
 - [ ] Rust owns authoritative state, validation, rendering, and product
       operations; authored browser code is TypeScript-only and minimal.
 - [x] Custom protocol, CSP, Trusted Types decision, navigation, and Tauri

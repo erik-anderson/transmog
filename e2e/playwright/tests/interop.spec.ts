@@ -13,25 +13,25 @@ type Origin = {
   serverValue: RegExp;
 };
 
-const enabled = process.env.RUSTYMIDDLE_INTEROP === '1';
+const enabled = process.env.TRANSMOG_INTEROP === '1';
 const windows = process.platform === 'win32';
 const repo = path.resolve(__dirname, '..', '..', '..');
-const binary = requiredEnvironment('RUSTYMIDDLE_BIN');
-const caCertificate = requiredEnvironment('RUSTYMIDDLE_TEST_CA_CERT');
-const caPrivateKey = requiredEnvironment('RUSTYMIDDLE_TEST_CA_KEY');
-const caddyUrl = requiredEnvironment('RUSTYMIDDLE_CADDY_URL');
-const curl = process.env.RUSTYMIDDLE_CURL ?? (windows ? 'curl.exe' : 'curl');
+const binary = requiredEnvironment('TRANSMOG_BIN');
+const caCertificate = requiredEnvironment('TRANSMOG_TEST_CA_CERT');
+const caPrivateKey = requiredEnvironment('TRANSMOG_TEST_CA_KEY');
+const caddyUrl = requiredEnvironment('TRANSMOG_CADDY_URL');
+const curl = process.env.TRANSMOG_CURL ?? (windows ? 'curl.exe' : 'curl');
 const origins: Origin[] = [
   {
     name: 'Nginx',
-    url: requiredEnvironment('RUSTYMIDDLE_NGINX_URL'),
+    url: requiredEnvironment('TRANSMOG_NGINX_URL'),
     marker: 'nginx',
     serverHeader: /^server:\s*nginx\/1\.28\.0\s*$/im,
     serverValue: /^nginx\/1\.28\.0$/i,
   },
   {
     name: 'Apache HTTP Server',
-    url: requiredEnvironment('RUSTYMIDDLE_APACHE_URL'),
+    url: requiredEnvironment('TRANSMOG_APACHE_URL'),
     marker: 'apache',
     serverHeader: /^server:\s*Apache\/2\.4\.65(?:\s+\([^)]*\))?\s*$/im,
     serverValue: /^Apache\/2\.4\.65(?:\s+\([^)]*\))?$/i,

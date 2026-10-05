@@ -11,11 +11,13 @@ use std::{
 };
 
 use bytes::Bytes;
-use rustymiddle_content::{
+use serde::Serialize;
+use tokio::sync::{Barrier, Notify};
+use transmog_content::{
     ContentBodyPipeline, ContentCoding, ContentDecoder, ContentDecoderOptions, ContentEncoder,
     ContentLimits, ContentOutput, ContentWorkLimits,
 };
-use rustymiddle_core::{
+use transmog_core::{
     BodyFrame, ConnectionId, HeaderBlock, HeaderField, HttpLegVersion, RequestHead, SessionId,
     SessionMetadata, StreamId, Target,
     intercept::{
@@ -25,8 +27,6 @@ use rustymiddle_core::{
         RequestBodyEvent, RequestHeadOutcome,
     },
 };
-use serde::Serialize;
-use tokio::sync::{Barrier, Notify};
 
 const CODINGS: [ContentCoding; 4] = [
     ContentCoding::Gzip,

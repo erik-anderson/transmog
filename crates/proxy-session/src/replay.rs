@@ -2,11 +2,11 @@ use std::{future::Future, num::NonZeroUsize, pin::Pin, sync::Arc, time::Duration
 
 use bytes::Bytes;
 use http::{Method, StatusCode, uri::PathAndQuery};
-use rustymiddle_core::{
-    HeaderBlock, Target, intercept::ExchangeCancellation, route::UpstreamDestination,
-};
 use thiserror::Error;
 use tokio::time::timeout;
+use transmog_core::{
+    HeaderBlock, Target, intercept::ExchangeCancellation, route::UpstreamDestination,
+};
 
 /// Finite validation and execution limits for one replay request and response.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -348,7 +348,7 @@ fn is_idempotent(method: &Method) -> bool {
 mod tests {
     use std::future::pending;
 
-    use rustymiddle_core::HeaderField;
+    use transmog_core::HeaderField;
 
     use super::*;
 

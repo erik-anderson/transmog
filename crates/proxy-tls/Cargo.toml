@@ -1,5 +1,5 @@
 [package]
-name = "rustymiddle-tls"
+name = "transmog-tls"
 description = "Shared BoringSSL trust, verification, and proxy certificate issuance"
 version.workspace = true
 edition.workspace = true

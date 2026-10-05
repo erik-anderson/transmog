@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn cached_resolver_reuses_exact_identity_and_keeps_identities_separate() {
         let resolver = CachedMitmCertificateResolver::new(
-            ProxyCa::generate("rustymiddle resolver test", 2).unwrap(),
+            ProxyCa::generate("Transmog resolver test", 2).unwrap(),
             2,
             1,
         )

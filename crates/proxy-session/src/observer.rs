@@ -1,6 +1,6 @@
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
-use rustymiddle_core::observe::{
+use transmog_core::observe::{
     BodyObservation, BoxObserverFuture, ObservationInterest, Observer, ObserverConfig,
     ObserverDeliveryPolicy, ObserverEvent,
 };
@@ -84,7 +84,7 @@ impl From<SessionObserver> for Arc<dyn Observer> {
 mod tests {
     use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::SystemTime};
 
-    use rustymiddle_core::{
+    use transmog_core::{
         ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
         intercept::{ExchangeId, ExchangeMetadata},
         observe::{ObserverEvent, ObserverEventKind},

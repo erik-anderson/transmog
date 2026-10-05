@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
-use rustymiddle_core::HeaderBlock;
 use thiserror::Error;
+use transmog_core::HeaderBlock;
 
 /// A supported HTTP content-coding token.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -195,7 +195,7 @@ fn is_tchar(value: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use rustymiddle_core::HeaderField;
+    use transmog_core::HeaderField;
 
     use super::*;
 

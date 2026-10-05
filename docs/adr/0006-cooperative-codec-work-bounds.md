@@ -37,7 +37,7 @@ Encoding divides input into quantum-sized writes and applies the same yield and
 deadline checks. The neutral and raw pass-through paths do not construct codecs
 and retain their existing zero-codec fast path.
 
-An operation or cumulative deadline violation returns the rustymiddle-owned
+An operation or cumulative deadline violation returns the Transmog-owned
 `ContentCodecError::Timeout` and makes that codec terminal. Dropping the owning
 body task drops the in-progress codec future; no codec thread or blocking job
 continues in the background. An embedding application that directly cancels a
@@ -45,7 +45,7 @@ borrowed codec operation must discard that codec object rather than attempting
 to resume partially advanced compression state.
 
 This is cooperative preemption at bounded progress boundaries. One call into a
-dependency may still perform work before returning to rustymiddle. The input
+dependency may still perform work before returning to Transmog. The input
 quantum and fixed output buffer bound the data offered at that boundary, but
 they are not an instruction counter and cannot forcibly interrupt native zstd
 or another codec halfway through a call. Applications accepting hostile input
