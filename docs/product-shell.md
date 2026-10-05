@@ -1,9 +1,10 @@
-# Transmog product shell through Phase 7
+# Transmog product shell through Phase 8
 
 The Windows desktop shell is a thin Tauri adapter over `transmog-app`. The same
 application facade is suitable for a future CLI: it owns proxy lifecycle,
 bounded session queries, safe inspectors, breakpoints, replay, capture, import,
-and export without depending on Tauri or WebUI.
+export, product state, and privacy-safe diagnostics without depending on Tauri
+or WebUI.
 
 ## Operating model
 
@@ -28,6 +29,12 @@ and export without depending on Tauri or WebUI.
 - Native `.tmcap` files are the streaming source of truth. JSONL export streams
   records sequentially. SAZ must be finalized and cannot preserve every native
   boundary or hook record, so each result includes a fidelity disclosure.
+- Product state is schema-versioned, bounded, and committed as atomic
+  generations. Corrupt newest state falls back to a prior valid generation or
+  safe defaults. Persistence failure never blocks proxy shutdown.
+- Structured diagnostics are bounded and redacted before memory or disk. A
+  support bundle excludes traffic bodies, header values, credentials, keys,
+  and paths by default, and reports the native WebView runtime version.
 
 ## File safety
 
@@ -37,5 +44,6 @@ and record-size bounds; interrupted native files recover only their checksummed
 valid prefix.
 
 Build and Windows prerequisites are documented in [building.md](building.md).
-The remaining product phases cover persisted preferences/diagnostics, Windows
-hardening and packaging, and Linux qualification.
+Product-state and support behavior is documented in
+[product-state-and-support.md](product-state-and-support.md). The remaining
+product phases cover Windows hardening/packaging and Linux qualification.

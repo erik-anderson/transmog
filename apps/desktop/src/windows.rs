@@ -15,11 +15,13 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, BreakpointDecision, BreakpointSettings,
-    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, ExportRequest,
-    ExportResult, ImportRequest, ProxyRoute, ProxyStartRequest, SessionDetail, SessionHint,
-    SessionPage, SessionQueryInput, SystemReplayExecutor,
+    AppConfig, AppError, AppStatus, Application, ArtifactKind, BreakpointDecision,
+    BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel,
+    CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot,
+    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest, ProductState,
+    ProxyRoute, ProxyStartRequest, RuntimeDiagnostics, SessionDetail, SessionHint, SessionPage,
+    SessionQueryInput, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
+    WindowState,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -38,6 +40,40 @@ struct DesktopState {
 #[allow(clippy::needless_pass_by_value)]
 fn app_status(state: State<'_, DesktopState>) -> AppStatus {
     state.application.status()
+}
+
+#[tauri::command]
+fn product_state(state: State<'_, DesktopState>) -> ProductState {
+    state.application.product_state()
+}
+
+#[tauri::command]
+fn save_product_state(
+    product_state: ProductState,
+    state: State<'_, DesktopState>,
+) -> Result<ProductState, AppError> {
+    state.application.save_product_state(product_state)
+}
+
+#[tauri::command]
+fn diagnostics_report(state: State<'_, DesktopState>) -> DiagnosticsReport {
+    state.application.diagnostics(runtime_diagnostics())
+}
+
+#[tauri::command]
+async fn create_support_bundle(
+    destination: PathBuf,
+    include_recent_paths: bool,
+    state: State<'_, DesktopState>,
+) -> Result<SupportBundleResult, AppError> {
+    state
+        .application
+        .create_support_bundle(SupportBundleRequest {
+            destination,
+            runtime: runtime_diagnostics(),
+            include_recent_paths,
+        })
+        .await
 }
 
 #[tauri::command]
@@ -107,6 +143,9 @@ async fn create_ca(
     CurrentUserKeyProtection
         .protect(&private_key_path)
         .map_err(|error| format!("CA was created but private-key protection failed: {error}"))?;
+    state
+        .application
+        .remember_artifact(identity.certificate_path.clone(), ArtifactKind::Certificate);
     Ok(identity)
 }
 
@@ -197,7 +236,12 @@ async fn start_capture(
     request: CaptureStartRequest,
     state: State<'_, DesktopState>,
 ) -> Result<CaptureReadModel, AppError> {
-    state.application.start_capture(request).await
+    let path = request.path.clone();
+    let result = state.application.start_capture(request).await?;
+    state
+        .application
+        .remember_artifact(path, ArtifactKind::NativeCapture);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -215,7 +259,12 @@ async fn import_capture(
     request: ImportRequest,
     state: State<'_, DesktopState>,
 ) -> Result<CaptureSummaryView, AppError> {
-    state.application.import_capture(request).await
+    let path = request.path.clone();
+    let result = state.application.import_capture(request).await?;
+    state
+        .application
+        .remember_artifact(path, ArtifactKind::NativeCapture);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -223,7 +272,14 @@ async fn export_capture(
     request: ExportRequest,
     state: State<'_, DesktopState>,
 ) -> Result<ExportResult, AppError> {
-    state.application.export_capture(request).await
+    let path = request.destination.clone();
+    let kind = match request.format {
+        ExportFormat::JsonLines => ArtifactKind::JsonLines,
+        ExportFormat::SazStrict | ExportFormat::SazExtended => ArtifactKind::Saz,
+    };
+    let result = state.application.export_capture(request).await?;
+    state.application.remember_artifact(path, kind);
+    Ok(result)
 }
 
 /// Runs the Windows `WebView2` host with a fixed embedded origin.
@@ -234,17 +290,20 @@ async fn export_capture(
 pub fn run() {
     let replay = SystemReplayExecutor::new(ProxyRoute::Auto)
         .expect("operating-system trust must initialize for composer replay");
+    let state_root = std::env::var_os("LOCALAPPDATA")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join("Transmog");
     let application = Application::new(AppConfig {
         replay_executor: Some(Arc::new(replay)),
+        product_state_path: Some(state_root.join("preferences")),
+        diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
         ..AppConfig::default()
     })
     .expect("application must initialize");
     let renderer = AppRenderer::new().expect("embedded WebUI assets must be valid");
-    let journal_root = std::env::var_os("LOCALAPPDATA")
-        .map_or_else(std::env::temp_dir, PathBuf::from)
-        .join("Transmog");
+    let initial_window = application.product_state().window;
     let host = Arc::new(WindowsProxyIntegration::system(
-        journal_root.join("proxy-recovery-v1.json"),
+        state_root.join("proxy-recovery-v1.json"),
     ));
     let protocol_application = application.clone();
     let close_application = application.clone();
@@ -266,6 +325,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_status,
+            product_state,
+            save_product_state,
+            diagnostics_report,
+            create_support_bundle,
             start_proxy,
             stop_application,
             retry_host_restore,
@@ -289,18 +352,7 @@ pub fn run() {
             import_capture,
             export_capture
         ])
-        .setup(|app| {
-            let url = tauri::Url::parse("transmog-ui://localhost/")
-                .expect("fixed application URL must parse");
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
-                .title("Transmog")
-                .inner_size(1180.0, 760.0)
-                .min_inner_size(760.0, 520.0)
-                .on_navigation(is_allowed_navigation)
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build()?;
-            Ok(())
-        })
+        .setup(move |app| Ok(create_main_window(app, initial_window)?))
         .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && !close_guard.swap(true, Ordering::AcqRel)
@@ -310,6 +362,7 @@ pub fn run() {
                 let window = window.clone();
                 let close_guard = Arc::clone(&close_guard);
                 tauri::async_runtime::spawn(async move {
+                    persist_window_state(&application, &window);
                     if application.shutdown().await.is_ok() {
                         let _ = window.destroy();
                     } else {
@@ -321,6 +374,50 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Tauri desktop host failed");
+}
+
+fn create_main_window(app: &tauri::App, initial: WindowState) -> tauri::Result<()> {
+    let url =
+        tauri::Url::parse("transmog-ui://localhost/").expect("fixed application URL must parse");
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
+        .title("Transmog")
+        .inner_size(f64::from(initial.width), f64::from(initial.height))
+        .min_inner_size(760.0, 520.0)
+        .on_navigation(is_allowed_navigation)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+    if let (Some(x), Some(y)) = (initial.x, initial.y) {
+        builder = builder.position(f64::from(x), f64::from(y));
+    }
+    let window = builder.build()?;
+    if initial.maximized {
+        window.maximize()?;
+    }
+    Ok(())
+}
+
+fn runtime_diagnostics() -> RuntimeDiagnostics {
+    RuntimeDiagnostics {
+        operating_system: format!("{} {}", std::env::consts::OS, std::env::consts::FAMILY),
+        architecture: std::env::consts::ARCH.to_owned(),
+        webview_version: tauri::webview_version().ok(),
+    }
+}
+
+fn persist_window_state(application: &Application, window: &tauri::Window) {
+    let mut state = application.product_state();
+    let maximized = window.is_maximized().unwrap_or(false);
+    state.window.maximized = maximized;
+    if !maximized {
+        if let Ok(size) = window.inner_size() {
+            state.window.width = size.width;
+            state.window.height = size.height;
+        }
+        if let Ok(position) = window.outer_position() {
+            state.window.x = Some(position.x);
+            state.window.y = Some(position.y);
+        }
+    }
+    let _ = application.save_product_state(state);
 }
 
 fn is_allowed_navigation(url: &tauri::Url) -> bool {

@@ -9,11 +9,13 @@
 mod artifacts;
 mod breakpoints;
 mod composer;
+mod diagnostics;
 mod inspector;
 mod lifecycle;
+mod product_state;
 mod sessions;
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
@@ -25,8 +27,16 @@ pub use breakpoints::{
 pub use composer::{
     ComposerHeader, ComposerRequest, ComposerResult, ComposerSnapshot, SystemReplayExecutor,
 };
+pub use diagnostics::{
+    DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
+    SupportBundleResult,
+};
 pub use inspector::{BodyView, HeaderView, SessionDetail};
 pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
+pub use product_state::{
+    ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
+    ThemePreference, WindowState,
+};
 use serde::Serialize;
 pub use sessions::{
     SessionHint, SessionPage, SessionQueryInput, SessionSummary, SessionUpdateSubscription,
@@ -136,6 +146,10 @@ pub struct AppConfig {
     pub service: ServiceConfig,
     /// Route-aware executor shared by composer/replay operations.
     pub replay_executor: Option<Arc<dyn ReplayExecutor>>,
+    /// Optional prefix for crash-safe product-state generations.
+    pub product_state_path: Option<PathBuf>,
+    /// Optional bounded JSON-lines operational log.
+    pub diagnostics_log_path: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -144,6 +158,8 @@ impl std::fmt::Debug for AppConfig {
             .debug_struct("AppConfig")
             .field("service", &self.service)
             .field("replay_executor", &self.replay_executor.is_some())
+            .field("product_state_path", &self.product_state_path)
+            .field("diagnostics_log_path", &self.diagnostics_log_path)
             .finish()
     }
 }
@@ -155,6 +171,8 @@ pub struct Application {
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
     breakpoints: breakpoints::BreakpointManager,
     composer: composer::ComposerManager,
+    product_state: product_state::ProductStateManager,
+    diagnostics: diagnostics::DiagnosticLog,
 }
 
 impl std::fmt::Debug for Application {
@@ -175,12 +193,78 @@ impl Application {
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
+        let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
+        let (product_state, warning) =
+            product_state::ProductStateManager::load(config.product_state_path);
+        if let Some(warning) = warning {
+            diagnostics.record(
+                diagnostics::DiagnosticLevel::Warning,
+                "product-state",
+                "state-recovered",
+                &warning,
+            );
+        }
         Ok(Self {
             service: service.clone(),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
             breakpoints: breakpoints::BreakpointManager::new(service, build_id),
             composer: composer::ComposerManager::new(config.replay_executor),
+            product_state,
+            diagnostics,
         })
+    }
+
+    /// Returns validated product preferences and window/artifact state.
+    pub fn product_state(&self) -> ProductState {
+        self.product_state.snapshot()
+    }
+
+    /// Validates and crash-safely persists product state when configured.
+    ///
+    /// # Errors
+    /// Returns a bounded validation or persistence error. A persistence error
+    /// never changes proxy lifecycle state or prevents shutdown.
+    pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
+        let result = self.product_state.save(state);
+        match &result {
+            Ok(_) => self.diagnostics.record(
+                DiagnosticLevel::Info,
+                "product-state",
+                "state-saved",
+                "product state saved",
+            ),
+            Err(error) => self.diagnostics.record(
+                DiagnosticLevel::Warning,
+                "product-state",
+                "state-save-failed",
+                &error.message,
+            ),
+        }
+        result
+    }
+
+    /// Adds one bounded recent artifact reference if privacy settings allow it.
+    pub fn remember_artifact(&self, path: PathBuf, kind: ArtifactKind) {
+        self.product_state.remember(path, kind);
+    }
+
+    /// Returns a bounded, redacted operational report.
+    pub fn diagnostics(&self, runtime: RuntimeDiagnostics) -> DiagnosticsReport {
+        self.diagnostics
+            .report(runtime, &self.product_state.snapshot())
+    }
+
+    /// Creates a privacy-safe, create-new support bundle.
+    ///
+    /// # Errors
+    /// Returns validation, destination, serialization, or finalization errors.
+    pub async fn create_support_bundle(
+        &self,
+        request: SupportBundleRequest,
+    ) -> Result<SupportBundleResult, AppError> {
+        let report = self.diagnostics(request.runtime.clone());
+        let state = self.product_state.snapshot();
+        diagnostics::create_support_bundle(request, report, state).await
     }
 
     /// Returns the authoritative session service for product use-case modules.
@@ -229,7 +313,25 @@ impl Application {
     /// Returns a retryable safe error when drain or restoration fails.
     pub async fn shutdown(&self) -> Result<(), AppError> {
         self.breakpoints.disable().await;
-        self.service.stop().await.map_err(AppError::from)
+        let result = self.service.stop().await.map_err(AppError::from);
+        self.diagnostics.record(
+            if result.is_ok() {
+                DiagnosticLevel::Info
+            } else {
+                DiagnosticLevel::Error
+            },
+            "lifecycle",
+            if result.is_ok() {
+                "shutdown-complete"
+            } else {
+                "shutdown-failed"
+            },
+            result
+                .as_ref()
+                .err()
+                .map_or("proxy shutdown complete", |error| error.message.as_str()),
+        );
+        result
     }
 
     /// Binds and starts the product proxy using validated local CA material.
@@ -244,7 +346,25 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
-        lifecycle::start_proxy(&self.service, request, host).await?;
+        let result = lifecycle::start_proxy(&self.service, request, host).await;
+        self.diagnostics.record(
+            if result.is_ok() {
+                DiagnosticLevel::Info
+            } else {
+                DiagnosticLevel::Error
+            },
+            "lifecycle",
+            if result.is_ok() {
+                "proxy-started"
+            } else {
+                "proxy-start-failed"
+            },
+            result
+                .as_ref()
+                .err()
+                .map_or("proxy listener started", |error| error.message.as_str()),
+        );
+        result?;
         Ok(self.status())
     }
 
@@ -413,5 +533,28 @@ mod tests {
         application.shutdown().await.unwrap();
         application.shutdown().await.unwrap();
         assert_eq!(application.status().lifecycle, AppLifecycle::Stopped);
+    }
+
+    #[tokio::test]
+    async fn persistence_failure_cannot_prevent_proxy_shutdown() {
+        let root = std::env::temp_dir().join(format!(
+            "transmog-unwritable-state-parent-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&root);
+        std::fs::write(&root, b"not a directory").unwrap();
+        let application = Application::new(AppConfig {
+            product_state_path: Some(root.join("preferences")),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        assert!(
+            application
+                .save_product_state(application.product_state())
+                .is_err()
+        );
+        application.shutdown().await.unwrap();
+        assert_eq!(application.status().lifecycle, AppLifecycle::Stopped);
+        std::fs::remove_file(root).unwrap();
     }
 }

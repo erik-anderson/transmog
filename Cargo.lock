@@ -4271,6 +4271,7 @@ dependencies = [
  "transmog-saz",
  "transmog-session",
  "transmog-tls",
+ "zip",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # Plan: Tauri and WebUI product shell
 
-Status: active; Phases 0-7 completed on 2026-10-04
+Status: active; Phases 0-8 completed on 2026-10-04
 Audience: maintainers, product-shell authors, security reviewers, and release
 engineers
 Depends on: the completed application/session service, native capture, SAZ
@@ -409,6 +409,15 @@ recover their valid prefix, existing destinations are never overwritten, and
 SAZ fidelity disclosures reach the UI and exported result.
 
 ### Phase 8: Product state and operational diagnostics
+
+Status: complete. `transmog-app` owns a bounded v2 product-state schema,
+explicit v1 migration, validated atomic generations, corrupt-generation
+fallback, and non-fatal persistence. It also owns a redacted 256-event
+diagnostic ring, a best-effort 1-MiB rotating JSON-lines sink, native runtime
+reporting, and create-new support bundles whose default contents omit captured
+traffic, credentials, private keys, and paths. The Windows shell persists
+window geometry on close without putting persistence on the shutdown critical
+path.
 
 Persist only versioned product preferences, window state, recent artifact
 references, and explicit privacy settings. Use atomic replacement, schema

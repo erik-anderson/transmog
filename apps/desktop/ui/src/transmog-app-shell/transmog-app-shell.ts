@@ -69,6 +69,13 @@ interface ComposerResult {
   attribution: string;
 }
 type CaptureReadModel = Record<string, unknown>;
+interface ProductState {
+  schemaVersion: number;
+  preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };
+  privacy: { retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
+  window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
+  recentArtifacts: Array<{path: string; kind: string}>;
+}
 
 export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
@@ -87,6 +94,9 @@ export class TransmogAppShell extends WebUIElement {
   captureForm!: HTMLFormElement;
   artifactForm!: HTMLFormElement;
   captureOutput!: HTMLPreElement;
+  settingsForm!: HTMLFormElement;
+  supportForm!: HTMLFormElement;
+  supportOutput!: HTMLPreElement;
   private nextCursor: string | null = null;
   private watching = false;
 
@@ -438,6 +448,63 @@ export class TransmogAppShell extends WebUIElement {
       this.captureOutput.textContent = JSON.stringify(report, null, 2);
     } catch (error: unknown) {
       this.captureOutput.textContent = `Export failed: ${describeError(error)}`;
+    }
+  }
+
+  async loadSettings(): Promise<void> {
+    try {
+      const state = await invoke<ProductState>('product_state');
+      const elements = this.settingsForm.elements;
+      (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
+      (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
+      (elements.namedItem('defaultSystemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
+      (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainBodySamples;
+      (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
+      (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
+      this.supportOutput.textContent = `Loaded schema ${state.schemaVersion}; ${state.recentArtifacts.length} recent artifact reference(s).`;
+    } catch (error: unknown) {
+      this.supportOutput.textContent = `Settings load failed: ${describeError(error)}`;
+    }
+  }
+
+  async saveSettings(event: Event): Promise<void> {
+    event.preventDefault();
+    try {
+      const state = await invoke<ProductState>('product_state');
+      const data = new FormData(this.settingsForm);
+      state.preferences.theme = String(data.get('theme')) as ProductState['preferences']['theme'];
+      state.preferences.sessionPageSize = Number(data.get('pageSize'));
+      state.preferences.configureSystemProxy = data.get('defaultSystemProxy') === 'on';
+      state.privacy.retainBodySamples = data.get('defaultBodies') === 'on';
+      state.privacy.rememberRecentArtifacts = data.get('rememberArtifacts') === 'on';
+      state.privacy.includePathsInSupportBundles = data.get('supportPaths') === 'on';
+      const saved = await invoke<ProductState>('save_product_state', { productState: state });
+      this.supportOutput.textContent = `Saved product-state schema ${saved.schemaVersion}.`;
+    } catch (error: unknown) {
+      this.supportOutput.textContent = `Settings save failed: ${describeError(error)}`;
+    }
+  }
+
+  async refreshDiagnostics(): Promise<void> {
+    try {
+      const report = await invoke<Record<string, unknown>>('diagnostics_report');
+      this.supportOutput.textContent = JSON.stringify(report, null, 2);
+    } catch (error: unknown) {
+      this.supportOutput.textContent = `Diagnostics unavailable: ${describeError(error)}`;
+    }
+  }
+
+  async createSupportBundle(event: Event): Promise<void> {
+    event.preventDefault();
+    const data = new FormData(this.supportForm);
+    try {
+      const result = await invoke<Record<string, unknown>>('create_support_bundle', {
+        destination: String(data.get('destination') ?? ''),
+        includeRecentPaths: data.get('includePaths') === 'on',
+      });
+      this.supportOutput.textContent = JSON.stringify(result, null, 2);
+    } catch (error: unknown) {
+      this.supportOutput.textContent = `Support bundle failed: ${describeError(error)}`;
     }
   }
 

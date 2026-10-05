@@ -17,6 +17,7 @@
       <a href="#breakpoints">Breakpoints</a>
       <a href="#composer">Composer</a>
       <a href="#captures">Captures</a>
+      <a href="#settings">Settings &amp; support</a>
     </nav>
 
     <main>
@@ -120,6 +121,34 @@
             </div>
           </form>
           <pre w-ref="{captureOutput}" tabindex="0">Capture is idle.</pre>
+        </div>
+      </section>
+      <section id="settings" class="workspace full" aria-labelledby="settings-heading">
+        <div>
+          <p class="section-label">Local product state</p>
+          <h2 id="settings-heading">Settings and support</h2>
+          <p>Only versioned preferences, window state, explicit privacy choices, and opted-in recent artifact references are persisted. Live traffic and breakpoint decisions are never settings.</p>
+          <form w-ref="{settingsForm}" @submit="{saveSettings(event)}">
+            <label>Theme <select name="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+            <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
+            <label><input name="defaultSystemProxy" type="checkbox"> Configure the system proxy by default</label>
+            <label><input name="defaultBodies" type="checkbox"> Retain bounded body samples by default</label>
+            <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
+            <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
+            <div class="actions">
+              <button type="button" class="secondary" @click="{loadSettings()}">Load settings</button>
+              <button type="submit">Save settings</button>
+            </div>
+          </form>
+          <form w-ref="{supportForm}" @submit="{createSupportBundle(event)}">
+            <label>New support bundle <input name="destination" value="transmog-support.zip" required></label>
+            <label><input name="includePaths" type="checkbox"> Include recent paths if the saved privacy setting permits it</label>
+            <div class="actions">
+              <button type="button" class="secondary" @click="{refreshDiagnostics()}">Refresh redacted diagnostics</button>
+              <button type="submit">Create support bundle</button>
+            </div>
+          </form>
+          <pre w-ref="{supportOutput}" tabindex="0">Diagnostics have not been loaded.</pre>
         </div>
       </section>
       <section class="diagnostics" aria-labelledby="diagnostics-heading">
