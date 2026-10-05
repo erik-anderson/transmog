@@ -245,6 +245,104 @@ impl CurrentUserCertificateStore {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CertificateOwnershipRecord {
+    schema: u32,
+    sha256: String,
+}
+
+/// Durable exact-thumbprint ownership record for an app-installed current-user
+/// root certificate.
+#[derive(Clone, Debug)]
+pub struct OwnedCertificateRegistry {
+    path: PathBuf,
+}
+
+impl OwnedCertificateRegistry {
+    /// Creates a registry at an application-owned path.
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    /// Records the exact certificate before attempting trust-store mutation.
+    ///
+    /// Repeating the same claim is idempotent. A different existing claim
+    /// fails closed so no certificate can become silently orphaned.
+    ///
+    /// # Errors
+    /// Returns a thumbprint, ownership conflict, serialization, or I/O error.
+    pub fn claim(&self, sha256: &str) -> Result<bool, WindowsHostError> {
+        validate_thumbprint(sha256)?;
+        if let Some(existing) = self.owned_thumbprint()? {
+            if existing.eq_ignore_ascii_case(sha256) {
+                return Ok(false);
+            }
+            return Err(WindowsHostError::CertificateOwnershipConflict);
+        }
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(WindowsHostError::Io)?;
+        }
+        let bytes = serde_json::to_vec(&CertificateOwnershipRecord {
+            schema: 1,
+            sha256: sha256.to_ascii_uppercase(),
+        })
+        .map_err(WindowsHostError::Journal)?;
+        let temp = self
+            .path
+            .with_extension(format!("tmp-{}", std::process::id()));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(WindowsHostError::Io)?;
+        let result = file
+            .write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| fs::rename(&temp, &self.path));
+        if let Err(error) = result {
+            let _ = fs::remove_file(temp);
+            return Err(WindowsHostError::Io(error));
+        }
+        Ok(true)
+    }
+
+    /// Returns the exact owned certificate identity, if one is recorded.
+    ///
+    /// # Errors
+    /// Returns a malformed, oversized, unsupported, or unreadable record.
+    pub fn owned_thumbprint(&self) -> Result<Option<String>, WindowsHostError> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(WindowsHostError::Io(error)),
+        };
+        if bytes.len() > 4 * 1024 {
+            return Err(WindowsHostError::InvalidCertificateOwnership);
+        }
+        let record: CertificateOwnershipRecord = serde_json::from_slice(&bytes)
+            .map_err(|_| WindowsHostError::InvalidCertificateOwnership)?;
+        if record.schema != 1 || validate_thumbprint(&record.sha256).is_err() {
+            return Err(WindowsHostError::InvalidCertificateOwnership);
+        }
+        Ok(Some(record.sha256))
+    }
+
+    /// Clears the ownership record only when it identifies the exact expected
+    /// certificate.
+    ///
+    /// # Errors
+    /// Returns a thumbprint, ownership conflict, malformed record, or I/O error.
+    pub fn clear(&self, sha256: &str) -> Result<(), WindowsHostError> {
+        validate_thumbprint(sha256)?;
+        match self.owned_thumbprint()? {
+            Some(existing) if existing.eq_ignore_ascii_case(sha256) => remove_journal(&self.path),
+            Some(_) => Err(WindowsHostError::CertificateOwnershipConflict),
+            None => Ok(()),
+        }
+    }
+}
+
 /// Applies a current-user-only Windows ACL to app-owned private key files.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CurrentUserKeyProtection;
@@ -282,6 +380,12 @@ pub enum WindowsHostError {
     /// A certificate thumbprint was not a canonical SHA-256 value.
     #[error("certificate thumbprint must be 64 hexadecimal characters")]
     InvalidThumbprint,
+    /// An ownership record refers to a different exact certificate.
+    #[error("a different app-owned certificate is already recorded")]
+    CertificateOwnershipConflict,
+    /// A certificate ownership record was malformed or unsupported.
+    #[error("certificate ownership record is invalid")]
+    InvalidCertificateOwnership,
 }
 
 fn write_journal(path: &Path, prior: &ProxySettings) -> Result<(), WindowsHostError> {
@@ -537,6 +641,28 @@ mod tests {
             validate_thumbprint("ABCD"),
             Err(WindowsHostError::InvalidThumbprint)
         ));
+    }
+
+    #[test]
+    fn certificate_ownership_is_exact_idempotent_and_conflict_safe() {
+        let path = temp_journal("certificate-ownership");
+        let _ = fs::remove_file(&path);
+        let registry = OwnedCertificateRegistry::new(&path);
+        let first = "11".repeat(32);
+        let other = "22".repeat(32);
+        assert!(registry.claim(&first).unwrap());
+        assert!(!registry.claim(&first).unwrap());
+        assert_eq!(registry.owned_thumbprint().unwrap(), Some(first.clone()));
+        assert!(matches!(
+            registry.claim(&other),
+            Err(WindowsHostError::CertificateOwnershipConflict)
+        ));
+        assert!(matches!(
+            registry.clear(&other),
+            Err(WindowsHostError::CertificateOwnershipConflict)
+        ));
+        registry.clear(&first).unwrap();
+        assert_eq!(registry.owned_thumbprint().unwrap(), None);
     }
 
     #[cfg(windows)]

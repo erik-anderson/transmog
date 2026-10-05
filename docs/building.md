@@ -81,8 +81,9 @@ shell.
 The product shell additionally requires the Microsoft Edge WebView2 Evergreen
 Runtime and Node.js 24 or newer with npm. Current Windows 11 installations
 normally receive WebView2 with Microsoft Edge, but it is a runtime prerequisite
-rather than a bundled browser. A clean-machine release gate must verify it or
-install Microsoft's Evergreen bootstrapper before starting the app.
+rather than a bundled browser. A clean-machine release gate must verify the
+Evergreen runtime is present and current before starting the app; Transmog does
+not include a fixed runtime, bootstrapper, or offline WebView installer.
 
 The proxy can run in manual-configuration mode without changing Windows. The
 optional current-user system-proxy adapter requires Windows PowerShell 5.1 or
@@ -99,6 +100,8 @@ responsible for applying an equivalent platform policy.
 The desktop dependency toolchain is pinned in both lockfiles:
 
 - Tauri Rust crates and npm API/CLI 2.12.1;
+- Tauri single-instance plugin 2.4.5 (the last reviewed line compatible with
+  the workspace's Rust 1.88 minimum; 2.5 requires Rust 1.90);
 - Microsoft WebUI Rust and browser packages 0.0.30;
 - TypeScript 7.0.2 and esbuild 0.28.2.
 
@@ -132,21 +135,21 @@ cargo test --locked -p transmog-desktop
 cargo run --locked -p transmog-desktop
 ```
 
-Create the Windows installer from `apps/desktop`:
+Create an unsigned development installer from the repository root:
 
 ```powershell
-Push-Location ./apps/desktop
-. ../../scripts/dev-env.ps1
-./ui/node_modules/.bin/tauri.cmd build --bundles nsis --ci
-Pop-Location
+pwsh ./scripts/package-windows.ps1 -UnsignedDevelopment
 ```
 
-The first packaging run downloads Tauri's hash-verified NSIS 3.11 toolchain and
-`nsis_tauri_utils` into its user cache. After that cache and all Cargo/npm
-dependencies exist, the same command succeeds with Cargo offline and network
-access blocked. Node and the Tauri CLI are build tools only; neither the
-optimized executable nor the NSIS-installed application starts a Node process
-or a development server.
+Signed release procedure, lifecycle policy, ownership boundaries, and the
+clean-machine checklist are in [windows-release.md](windows-release.md). The
+bundle relies on the host's Evergreen WebView2 runtime and does not include a
+fixed runtime, bootstrapper, or offline installer. The first packaging run
+downloads Tauri's hash-verified NSIS 3.11 toolchain and `nsis_tauri_utils` into
+its user cache. After that cache and all Cargo/npm dependencies exist, the same
+command succeeds with Cargo offline and network access blocked. Node and the
+Tauri CLI are build tools only; neither the optimized executable nor the
+NSIS-installed application starts a Node process or a development server.
 
 For the local WebView2 delivery smoke test, launch the debug or release binary
 with a loopback DevTools port and, while it is running, execute:

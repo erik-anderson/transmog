@@ -508,6 +508,15 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
+  async prepareUpdate(): Promise<void> {
+    try {
+      await invoke<AppStatus>('prepare_update_handoff');
+      this.supportOutput.textContent = 'Proxy, capture, breakpoints, and Windows host changes are stopped. Close Transmog before running the installer.';
+    } catch (error: unknown) {
+      this.supportOutput.textContent = `Update handoff failed: ${describeError(error)}`;
+    }
+  }
+
   async refreshStatus(): Promise<void> {
     try {
       const status = await invoke<AppStatus>('app_status');

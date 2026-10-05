@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build-client.mjs",
     "check": "tsc --noEmit && node build-client.mjs --check",
-    "smoke:webview": "node scripts/smoke-webview.mjs"
+    "smoke:webview": "node scripts/smoke-webview.mjs",
+    "soak:webview": "node scripts/smoke-webview.mjs --soak-minutes 30"
   },
   "dependencies": {
     "@microsoft/webui-framework": "0.0.30",

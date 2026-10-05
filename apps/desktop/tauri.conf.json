@@ -16,6 +16,27 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.ico"]
+    "publisher": "Erik Anderson",
+    "homepage": "https://github.com/erik-anderson/rustymiddle",
+    "copyright": "Copyright © 2026 Erik Anderson",
+    "license": "MIT",
+    "category": "DeveloperTool",
+    "shortDescription": "Native break-and-inspect HTTP proxy",
+    "longDescription": "Transmog is a Windows desktop developer tool for inspecting, breaking, modifying, replaying, and exporting HTTP traffic.",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "allowDowngrades": false,
+      "webviewInstallMode": {
+        "type": "skip"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "compression": "lzma",
+        "startMenuFolder": "Transmog",
+        "installerHooks": "windows/installer-hooks.nsh",
+        "languages": ["English"]
+      }
+    }
   }
 }

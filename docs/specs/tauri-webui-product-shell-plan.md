@@ -1,6 +1,7 @@
 # Plan: Tauri and WebUI product shell
 
-Status: active; Phases 0-8 completed on 2026-10-04
+Status: active; Phases 0-8 completed and Phase 9 implemented on 2026-10-04;
+signed clean-machine Phase 9 qualification remains pending
 Audience: maintainers, product-shell authors, security reviewers, and release
 engineers
 Depends on: the completed application/session service, native capture, SAZ
@@ -433,6 +434,17 @@ and support-bundle generation cannot prevent proxy shutdown or leak secrets.
 
 ### Phase 9: Windows hardening and packaging
 
+Status: implementation complete. The Windows shell now has first-registered
+single-instance enforcement, explicit update and uninstall maintenance modes,
+fail-closed proxy recovery, exact SHA-256 certificate ownership, conservative
+app-data cleanup, a current-user NSIS bundle, and signed/offline packaging
+policy. Evergreen WebView2 is an assumed host prerequisite and no runtime,
+bootstrapper, or installer is bundled. Local packaged-WebView accessibility,
+high-contrast, high-DPI, long-label, startup, memory, and soak checks pass.
+The release exit gate remains open until a human supplies a signing identity
+and records the signed clean-machine checklist, including the manual trust
+dialogs.
+
 Produce a signed-release-ready Windows bundle with WebView2 prerequisite
 handling, installer/uninstaller policy, single-instance behavior, clean update
 handoff, crash recovery, and explicit ownership of app data and certificates.
@@ -522,10 +534,10 @@ validation stays enabled.
       the application without making the UI authoritative.
 - [ ] Windows accessibility, packaging, offline startup, soak, and clean-machine
       end-to-end gates pass.
-- [ ] Build prerequisites and dependency/supply-chain procedures are checked in.
-- [ ] Existing core, interoperability, fuzz, and Linux gates remain green.
-- [ ] Hosted CI remains inactive until a human explicitly enables it.
-- [ ] Linux is labeled experimental until its WebKitGTK qualification gate
+- [x] Build prerequisites and dependency/supply-chain procedures are checked in.
+- [x] Existing core, interoperability, fuzz, and Linux gates remain green.
+- [x] Hosted CI remains inactive until a human explicitly enables it.
+- [x] Linux is labeled experimental until its WebKitGTK qualification gate
       passes; no release claim is inferred from successful compilation alone.
 
 ## Deliberate exclusions
