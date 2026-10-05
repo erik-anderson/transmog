@@ -211,7 +211,8 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
         .unwrap();
     let handle = preview.preview_handle.expect("image preview handle");
     let normalized = application.image_preview(&handle).expect("cached preview");
-    assert!(normalized.starts_with(b"\x89PNG\r\n\x1a\n"));
+    assert_eq!(normalized.1, "image/png");
+    assert!(normalized.0.starts_with(b"\x89PNG\r\n\x1a\n"));
 
     let failure = curl(
         &environment,

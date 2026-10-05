@@ -17,6 +17,15 @@
       </div>
     </header>
 
+    <section w-ref="{notice}" class="notice" role="alert" aria-live="assertive" hidden>
+      <div>
+        <strong w-ref="{noticeTitle}">Action required</strong>
+        <p w-ref="{noticeMessage}"></p>
+      </div>
+      <button w-ref="{noticeActionButton}" type="button" @click="{runNoticeAction()}">Resolve</button>
+      <button type="button" class="secondary compact-button" aria-label="Dismiss notification" @click="{dismissNotice()}">Dismiss</button>
+    </section>
+
     <div class="app-body">
       <nav class="rail" aria-label="Primary">
         <a href="#traffic" class="active" data-view="traffic" aria-current="page" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">↕</span><span class="nav-label">Traffic</span></a>
@@ -38,23 +47,25 @@
             <form w-ref="{filterForm}" @submit="{refreshSessions(e)}" class="filters">
               <label><span class="sr-only">Method</span><input name="method" maxlength="32" placeholder="Method"></label>
               <label><span class="sr-only">Host</span><input name="host" maxlength="255" placeholder="Filter host"></label>
-              <button type="submit" class="secondary compact-button">Refresh</button>
-              <button w-ref="{watchButton}" type="button" class="secondary compact-button" @click="{watchSessions()}">Watch live</button>
+              <button type="submit" class="secondary compact-button">Apply filters</button>
             </form>
           </header>
           <output w-ref="{sessionOutput}" class="session-status" aria-live="polite">Live refresh is off.</output>
 
           <div class="traffic-workspace">
             <section class="session-list-pane" aria-label="Captured sessions">
-              <div class="table-wrap">
+              <div w-ref="{sessionScroller}" class="table-wrap">
                 <table>
                   <thead><tr><th>Method</th><th>Status</th><th>Host</th><th>Path and query</th><th>Protocol</th><th>Duration</th><th>Response</th><th>State</th></tr></thead>
                   <tbody w-ref="{sessionRows}"><tr><td colspan="8" class="empty-cell">No sessions loaded.</td></tr></tbody>
                 </table>
               </div>
               <div class="list-footer">
-                <span>Newest matching sessions</span>
-                <button w-ref="{nextButton}" type="button" class="secondary compact-button" @click="{nextSessions()}" disabled>Next page</button>
+                <span w-ref="{followStatus}">Following latest traffic</span>
+                <div class="list-footer-actions">
+                  <button w-ref="{followButton}" type="button" class="secondary compact-button" @click="{resumeLatest()}" disabled>Latest</button>
+                  <button type="button" class="secondary compact-button" @click="{exportLiveCapture()}">Export TMCap</button>
+                </div>
               </div>
             </section>
 
@@ -76,11 +87,11 @@
                     <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><option value="">Select a session first</option></select></label>
                     <label>View <select w-ref="{bodyRepresentation}"><option value="auto">Auto</option><option value="original-text">Original text</option><option value="formatted">Formatted</option><option value="bytes">Bytes</option><option value="metadata">Metadata only</option><option value="image">Image</option></select></label>
                     <label>Limit <input w-ref="{bodyMaxBytes}" type="number" min="1" max="16777216" value="262144"></label>
-                    <label class="checkbox-label"><input w-ref="{bodyDecoded}" type="checkbox"> Decode</label>
+                    <label class="checkbox-label"><input w-ref="{bodyDecoded}" type="checkbox" checked> Decode</label>
                     <button type="button" class="secondary compact-button" @click="{inspectBody()}">Inspect body</button>
                   </div>
                   <pre w-ref="{bodyPreviewOutput}" class="body-preview" tabindex="0">No body selected.</pre>
-                  <img w-ref="{bodyImagePreview}" class="body-image-preview" alt="Normalized response image preview" hidden>
+                  <img w-ref="{bodyImagePreview}" class="body-image-preview" alt="Sandboxed response image preview" hidden>
                 </section>
               </div>
             </section>
@@ -89,9 +100,9 @@
 
         <section id="breakpoints" class="app-view tool-view" aria-labelledby="breakpoints-heading" hidden>
           <div class="tool-page">
-            <p class="section-label">Hooks v2</p>
+            <p class="section-label">Interactive control</p>
             <h1 id="breakpoints-heading">Break and modify</h1>
-            <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is attributed to <code>transmog.session.interactive-control</code>.</p>
+            <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is recorded in the session audit history.</p>
             <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(e)}" class="phase-form">
               <label><input name="requestHead" type="checkbox" checked> Request head</label>
               <label><input name="requestBody" type="checkbox"> Request body</label>
@@ -107,46 +118,46 @@
 
         <section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" hidden>
           <div class="tool-page">
-            <p class="section-label">Native Hooks v2 rules</p>
-            <h1 id="automation-heading">Conditional automation</h1>
-            <p>Validate first, then atomically activate for newly admitted exchanges. Active exchanges keep their original rule snapshot and audit IDs include the exact rule revision.</p>
-            <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
-              <label>Rule ID <input name="ruleId" value="conditional-user-agent" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
-              <label>Revision <input name="revision" type="number" min="1" value="1" required></label>
-              <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-              <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
-              <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
-              <button type="submit">Validate and activate</button>
-              <button type="button" class="secondary" @click="{refreshAutomation()}">Refresh active rules</button>
-            </form>
-            <h2>Saved and authored responses</h2>
-            <form w-ref="{responseAssetForm}" @submit="{createResponseAsset(e)}" class="composer-form">
-              <label>Asset ID <input name="assetId" value="saved-response" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
-              <label>Revision <input name="assetRevision" type="number" min="1" value="1" required></label>
-              <label>Status <input name="status" type="number" min="200" max="599" value="200" required></label>
-              <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
-              <label>Body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
-              <button type="submit">Create immutable asset</button>
-            </form>
-            <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(e)}" class="composer-form">
-              <label>Rule ID <input name="ruleId" value="auto-response" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
-              <label>Rule revision <input name="revision" type="number" min="1" value="1" required></label>
-              <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-              <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
-              <label>Exact asset reference <input name="assetRef" value="saved-response@1" maxlength="258" required></label>
-              <button type="submit">Activate autoresponse</button>
-            </form>
-            <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
+            <p class="section-label">Traffic actions</p>
+            <h1 id="automation-heading">Automation</h1>
+            <p>Enable common actions with simple request filters. Transmog handles validation and records each change in the session audit history.</p>
+            <div class="automation-stack">
+              <details class="automation-card" open>
+                <summary><span><strong>Override User-Agent</strong><small>Replace the outgoing User-Agent on matching requests.</small></span></summary>
+                <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
+                  <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
+                  <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+                  <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
+                  <div class="actions">
+                    <button type="submit">Enable override</button>
+                    <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-user-agent')}">Disable</button>
+                  </div>
+                </form>
+              </details>
+              <details class="automation-card">
+                <summary><span><strong>Auto-respond</strong><small>Return a saved response without contacting the origin.</small></span></summary>
+                <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(e)}" class="composer-form">
+                  <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+                  <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
+                  <label>Response <select w-ref="{responseAssetSelect}" name="responseSource"><option value="">Create a new response below</option></select></label>
+                  <label>Response status <input name="status" type="number" min="200" max="599" value="200" required></label>
+                  <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
+                  <label>Response body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
+                  <div class="actions">
+                    <button type="submit">Save and enable response</button>
+                    <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-auto-response')}">Disable</button>
+                  </div>
+                </form>
+              </details>
+            </div>
+            <output w-ref="{automationOutput}" class="operation-status" aria-live="polite">No built-in traffic actions are active.</output>
             <section class="script-workspace" aria-labelledby="script-heading">
               <p class="section-label">Sandboxed TypeScript</p>
               <h2 id="script-heading">Traffic scripts</h2>
-              <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Activate atomically applies the exact validated revision to newly admitted exchanges.</p>
+              <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Enable applies that tested script to new requests.</p>
               <form w-ref="{scriptForm}" @submit="{validateScript(e)}" class="script-form">
-                <label>Script ID <input name="scriptId" value="conditional-user-agent-script" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
-                <label>Revision <input name="scriptRevision" type="number" min="1" value="1" required></label>
-                <label>Host prefilter <input name="scriptHost" value="example.test" maxlength="255"></label>
-                <label>Path prefix <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
-                <label>Priority <input name="scriptPriority" type="number" value="0" required></label>
+                <label>Host filter (optional) <input name="scriptHost" value="example.test" maxlength="255"></label>
+                <label>Path-prefix filter (optional) <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
                 <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096"></label>
                 <fieldset>
                   <legend>Capabilities</legend>
@@ -160,9 +171,9 @@
                   <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
                   <button type="submit">Validate</button>
                   <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
-                  <button type="button" class="secondary" @click="{activateScript()}">Activate</button>
-                  <button type="button" class="secondary" @click="{disableScript()}">Disable active</button>
-                  <button type="button" class="secondary" @click="{compareActiveScript()}">Compare active</button>
+                  <button type="button" class="secondary" @click="{activateScript()}">Enable</button>
+                  <button type="button" class="secondary" @click="{disableScript()}">Disable</button>
+                  <button type="button" class="secondary" @click="{compareActiveScript()}">Compare with active</button>
                 </div>
               </form>
               <div class="editor-label">TypeScript source <span>Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement</span></div>
@@ -208,7 +219,7 @@
             <form w-ref="{artifactForm}" @submit="{inspectCapture(e)}">
               <label>Native source <input name="source" value="session.tmcap" required></label>
               <label>Export destination <input name="destination" value="session.jsonl" required></label>
-              <label>Format <select name="format"><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
+              <label>Format <select name="format"><option value="native">TMCap snapshot</option><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
               <div class="actions">
                 <button type="submit" class="secondary">Inspect/recover</button>
                 <button type="button" @click="{exportCapture()}">Export create-new</button>
@@ -230,10 +241,9 @@
                     <label>CA certificate <input w-ref="{caCertificate}" name="certificate" required></label>
                     <label>CA private key <input w-ref="{caPrivateKey}" name="privateKey" required></label>
                     <label>CA SHA-256 <input w-ref="{caThumbprint}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
-                    <label><input name="systemProxy" type="checkbox"> Configure the current-user Windows proxy for this run</label>
+                    <p>Start automatically configures the current-user Windows proxy and restores the exact prior settings when stopped or closed.</p>
                     <div class="actions">
-                      <button type="button" class="secondary" @click="{createCa()}">Create durable CA</button>
-                      <button type="button" class="secondary" @click="{installCa()}">Trust public CA</button>
+                      <button type="button" @click="{setupCa()}">Set up HTTPS interception</button>
                       <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
                       <button type="submit">Start proxy</button>
                       <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
@@ -248,8 +258,8 @@
                 <form w-ref="{settingsForm}" @submit="{saveSettings(e)}">
                   <label>Theme <select name="theme"><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
                   <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
-                  <label><input name="defaultSystemProxy" type="checkbox"> Configure the system proxy by default</label>
                   <label><input name="defaultBodies" type="checkbox" checked> Retain response bodies in the one-GiB circular cache</label>
+                  <label><input name="captureBodies" type="checkbox"> Retain bounded redacted body samples in automatic TMCap captures</label>
                   <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
                   <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
                   <div class="actions">

@@ -50,6 +50,9 @@ impl CursorRegistry {
 pub struct SessionQueryInput {
     /// Opaque continuation token returned by the prior page.
     pub cursor: Option<String>,
+    /// Return the newest matching bounded window without pagination.
+    #[serde(default)]
+    pub latest: bool,
     /// Requested page length; the session layer applies its configured cap.
     pub limit: Option<usize>,
     /// Optional terminal-state filter.
@@ -156,6 +159,13 @@ pub(crate) fn query_sessions(
 ) -> Result<SessionPage, AppError> {
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
+    if input.latest && input.cursor.is_some() {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "latest session queries do not accept a cursor",
+            false,
+        ));
+    }
     let after = if let Some(token) = input.cursor.as_deref() {
         Some(
             registry
@@ -181,7 +191,7 @@ pub(crate) fn query_sessions(
             false,
         )
     })?;
-    let page = service.catalog().query(&CatalogQuery {
+    let query = CatalogQuery {
         after,
         limit: Some(limit),
         filter: SessionFilter {
@@ -189,7 +199,12 @@ pub(crate) fn query_sessions(
             method: input.method,
             host: input.host,
         },
-    });
+    };
+    let page = if input.latest {
+        service.catalog().query_latest(&query)
+    } else {
+        service.catalog().query(&query)
+    };
     let capturing = matches!(
         service.capture().status(),
         transmog_session::CaptureStatus::Active { .. }
@@ -386,6 +401,36 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.category, ErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn latest_window_is_bounded_and_remains_in_admission_order() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=12 {
+            assert_eq!(
+                service.catalog().apply(started(id)),
+                transmog_session::CatalogApply::Applied
+            );
+        }
+        let page = query_sessions(
+            &service,
+            &Arc::new(Mutex::new(CursorRegistry::default())),
+            SessionQueryInput {
+                latest: true,
+                limit: Some(4),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            page.sessions
+                .iter()
+                .map(|session| session.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/9", "/10", "/11", "/12"]
+        );
+        assert!(page.next_cursor.is_none());
     }
 
     #[test]

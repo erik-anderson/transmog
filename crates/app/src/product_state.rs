@@ -73,7 +73,7 @@ impl Default for ProductPreferences {
         Self {
             theme: ThemePreference::System,
             session_page_size: 100,
-            configure_system_proxy: false,
+            configure_system_proxy: true,
         }
     }
 }

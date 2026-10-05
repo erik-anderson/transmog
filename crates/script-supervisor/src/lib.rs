@@ -342,7 +342,9 @@ fn launch_development(executable: &Path) -> Result<Child, ScriptFailure> {
     let working_directory = executable
         .parent()
         .ok_or_else(|| unavailable("script host directory is unavailable"))?;
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    suppress_console_window(&mut command);
+    command
         .current_dir(working_directory)
         .env_clear()
         .stdin(Stdio::piped())
@@ -351,6 +353,16 @@ fn launch_development(executable: &Path) -> Result<Child, ScriptFailure> {
         .spawn()
         .map_err(|_| unavailable("script host process could not start"))
 }
+
+#[cfg(windows)]
+fn suppress_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt as _;
+
+    command.creation_flags(0x0800_0000);
+}
+
+#[cfg(not(windows))]
+fn suppress_console_window(_command: &mut Command) {}
 
 fn kill(process: &Mutex<Option<Child>>) {
     let Ok(mut process) = process.lock() else {
@@ -388,7 +400,7 @@ mod platform {
         process::{Child, Command, Stdio},
     };
 
-    use super::{ScriptFailure, unavailable};
+    use super::{ScriptFailure, suppress_console_window, unavailable};
 
     pub(super) fn launch_sandboxed(
         executable: &Path,
@@ -397,7 +409,9 @@ mod platform {
         let working_directory = executable
             .parent()
             .ok_or_else(|| unavailable("script host directory is unavailable"))?;
-        Command::new(executable)
+        let mut command = Command::new(executable);
+        suppress_console_window(&mut command);
+        command
             .arg("--sandbox-bootstrap")
             .arg(max_heap_bytes.to_string())
             .current_dir(working_directory)

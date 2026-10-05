@@ -85,17 +85,18 @@ rather than a bundled browser. A clean-machine release gate must verify the
 Evergreen runtime is present and current before starting the app; Transmog does
 not include a fixed runtime, bootstrapper, or offline WebView installer.
 
-The proxy can run in manual-configuration mode without changing Windows. The
-optional current-user system-proxy adapter requires Windows PowerShell 5.1 or
-newer and access to
+The reusable proxy libraries and CLI can run without changing Windows. The
+desktop Start action always uses the current-user system-proxy adapter, which
+requires Windows PowerShell 5.1 or newer and access to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`. Explicit
 CA installation/removal uses the current-user Root certificate store and can
 display an operating-system consent dialog; it is never part of an unattended
 build or test. Automated tests use an in-memory host backend. A development or
 production CA must be created separately, and its private key must be protected
-by a user-only ACL before use. The Windows desktop's **Create durable CA**
-action applies that ACL automatically; embedders and the headless CLI remain
-responsible for applying an equivalent platform policy.
+by a user-only ACL before use. The Windows desktop's **Set up HTTPS
+interception** action applies that ACL automatically and then asks the user to
+approve the public certificate trust dialog; embedders and the headless CLI
+remain responsible for applying equivalent platform policy.
 
 The desktop dependency toolchain is pinned in both lockfiles:
 

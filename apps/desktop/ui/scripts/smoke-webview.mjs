@@ -7,6 +7,10 @@ const soakArgument = process.argv.findIndex((value) => value === '--soak-minutes
 const soakMinutes = soakArgument >= 0 ? Number(process.argv[soakArgument + 1]) : 0;
 const screenshotArgument = process.argv.findIndex((value) => value === '--screenshot');
 const screenshotPath = screenshotArgument >= 0 ? process.argv[screenshotArgument + 1] : undefined;
+const automationScreenshotArgument = process.argv.findIndex((value) => value === '--automation-screenshot');
+const automationScreenshotPath = automationScreenshotArgument >= 0
+  ? process.argv[automationScreenshotArgument + 1]
+  : undefined;
 if (port === undefined || !/^\d{1,5}$/.test(port)) {
   throw new Error('usage: npm run smoke:webview -- --port <loopback DevTools port>');
 }
@@ -113,12 +117,19 @@ try {
       if (!(filter instanceof HTMLFormElement) || !(sessionOutput instanceof HTMLOutputElement)) {
         throw new Error('session submission controls were not found');
       }
+      const initializationDeadline = performance.now() + 10_000;
+      while (!sessionOutput.textContent?.startsWith('Watching live traffic.')) {
+        if (performance.now() >= initializationDeadline) {
+          throw new Error('automatic live-watch initialization timed out with: ' + sessionOutput.textContent);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
       sessionOutput.textContent = 'Submitting session query…';
       filter.requestSubmit();
       const submissionDeadline = performance.now() + 10_000;
       while (!sessionOutput.textContent?.startsWith('Loaded ')) {
         if (performance.now() >= submissionDeadline) {
-          throw new Error('WebUI form submission timed out');
+          throw new Error('WebUI form submission timed out with: ' + sessionOutput.textContent);
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
@@ -141,6 +152,8 @@ try {
         activeView: element.shadowRoot.querySelector('.app-view.active')?.id,
         settingsVisible
       };
+      const surfaceText = element.shadowRoot.textContent ?? '';
+      const automation = element.shadowRoot.querySelector('#automation');
       return {
         text: statusText,
         formSubmission: sessionOutput.textContent,
@@ -165,6 +178,18 @@ try {
           })
           .map((control) => ({ tag: control.tagName, className: control.className, outerHTML: control.outerHTML.slice(0, 300) })),
         rootLayout,
+        ux: {
+          paginationControls: [...element.shadowRoot.querySelectorAll('button')]
+            .filter((candidate) => /next page/i.test(candidate.textContent ?? '')).length,
+          watchControls: [...element.shadowRoot.querySelectorAll('button')]
+            .filter((candidate) => /watch live/i.test(candidate.textContent ?? '')).length,
+          hooksV2Branding: /hooks v2/i.test(surfaceText),
+          automationExpanders: automation?.querySelectorAll('details.automation-card').length ?? 0,
+          internalAutomationFields: automation?.querySelectorAll('input[name="ruleId"], input[name="revision"], input[name="assetId"], input[name="assetRevision"]').length ?? 0,
+          decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
+          noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
+          sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement
+        },
         themePreference: element.dataset.theme,
         startupMs: performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd ?? 0
       };
@@ -189,12 +214,39 @@ try {
     `document body can scroll: ${JSON.stringify(result.rootLayout)}`);
   assert(result.rootLayout.shellHeight <= result.rootLayout.documentClientHeight + 1,
     `application shell exceeds the viewport: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
+    `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
+  assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
+  assert(result.ux.automationExpanders >= 2 && result.ux.internalAutomationFields === 0,
+    `automation surface exposes internals instead of task-oriented expanders: ${JSON.stringify(result.ux)}`);
+  assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable,
+    `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
   if (screenshotPath !== undefined) {
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
     result.screenshot = screenshotPath;
+  }
+  if (automationScreenshotPath !== undefined) {
+    const automationLayout = await evaluate(`(() => {
+      const shell = document.querySelector('transmog-app-shell');
+      shell.shadowRoot.querySelector('a[data-view="automation"]').click();
+      const notice = shell.shadowRoot.querySelector('.notice');
+      return {
+        documentScrollTop: document.scrollingElement.scrollTop,
+        noticeHidden: notice.hidden,
+        noticeText: notice.textContent.trim(),
+        topbarTop: shell.shadowRoot.querySelector('.topbar').getBoundingClientRect().top,
+        topbarHeight: shell.shadowRoot.querySelector('.topbar').getBoundingClientRect().height
+      };
+    })()`);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    await writeFile(automationScreenshotPath, Buffer.from(screenshot.data, 'base64'));
+    result.automationScreenshot = automationScreenshotPath;
+    result.automationLayout = automationLayout;
+    await evaluate(`(() => document.querySelector('transmog-app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`);
   }
 
   const accessibility = await call('Accessibility.getFullAXTree');

@@ -4,7 +4,10 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use transmog_capture::{CaptureExporter, CaptureLimits, CapturePolicy, JsonLinesExporter, recover};
+use transmog_capture::{
+    CaptureExporter, CaptureLimits, CapturePolicy, CaptureRecordKind, CaptureWriter,
+    JsonLinesExporter, recover,
+};
 use transmog_saz::{SazExporter, SazLimits, SazMode};
 use transmog_session::{ApplicationSessionService, CaptureStart, CaptureStatus, SealedCapture};
 
@@ -92,6 +95,8 @@ pub struct CaptureSummaryView {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExportFormat {
+    /// Sealed native `TMCap` snapshot of every complete source record.
+    Native,
     /// Streaming newline-delimited JSON.
     JsonLines,
     /// Conventional compatibility SAZ.
@@ -212,24 +217,19 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
     let capture = recover_path(&request.source, request.max_source_bytes)?;
     let destination = request.destination.clone();
     let mut destination_created = false;
-    let result: Result<(usize, u64, String), String> = match request.format {
+    let result = match request.format {
+        ExportFormat::Native => create_new(&destination)
+            .map_err(|error| error.to_string())
+            .inspect(|_file| {
+                destination_created = true;
+            })
+            .and_then(|file| export_native(file, &capture)),
         ExportFormat::JsonLines => create_new(&destination)
             .map_err(|error| error.to_string())
             .inspect(|_file| {
                 destination_created = true;
             })
-            .and_then(|file| {
-                JsonLinesExporter::new(file)
-                    .export(&capture)
-                    .map_err(|error| error.to_string())
-            })
-            .map(|report| {
-                (
-                    report.records,
-                    report.bytes,
-                    "JSONL preserves every native record and streams sequentially.".to_owned(),
-                )
-            }),
+            .and_then(|file| export_json_lines(file, &capture)),
         ExportFormat::SazStrict | ExportFormat::SazExtended => {
             let mode = if request.format == ExportFormat::SazStrict {
                 SazMode::Strict
@@ -245,28 +245,7 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
                 .inspect(|_file| {
                     destination_created = true;
                 })
-                .and_then(|file| {
-                    SazExporter::new(file, mode, SazLimits::default())
-                        .map_err(|error| error.to_string())
-                })
-                .and_then(|mut exporter| {
-                    exporter
-                        .export(&capture)
-                        .map_err(|error| error.to_string())
-                        .map(|report| {
-                            let detail = exporter.report().unwrap_or_default();
-                            (
-                                report.records,
-                                report.bytes,
-                                format!(
-                                    "SAZ is finalized, not streaming; it omits non-HTTP-native evidence. skipped_incomplete={}, incomplete_bodies={}, extended_manifest={}",
-                                    detail.skipped_incomplete,
-                                    detail.incomplete_bodies,
-                                    request.format == ExportFormat::SazExtended
-                                ),
-                            )
-                        })
-                })
+                .and_then(|file| export_saz(file, mode, &capture))
         }
     };
     match result {
@@ -289,6 +268,67 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
             ))
         }
     }
+}
+
+type ExportOutcome = Result<(usize, u64, String), String>;
+
+fn export_native(file: File, capture: &transmog_capture::RecoveredCapture) -> ExportOutcome {
+    let limits = CaptureLimits {
+        max_file_bytes: MAX_IMPORT_BYTES,
+        max_record_bytes: MAX_RECORD_BYTES,
+        max_records: MAX_RECORDS,
+    };
+    let mut writer = CaptureWriter::new(file, limits).map_err(|error| error.to_string())?;
+    let mut records = 0_usize;
+    for record in capture
+        .records
+        .iter()
+        .filter(|record| !matches!(record.kind, CaptureRecordKind::Seal { .. }))
+    {
+        writer.append(record).map_err(|error| error.to_string())?;
+        records = records.saturating_add(1);
+    }
+    writer.seal().map_err(|error| error.to_string())?;
+    Ok((
+        records,
+        writer.bytes_written(),
+        "Native TMCap snapshot preserves every complete source record available at export time; an interrupted in-flight tail, if present, is omitted."
+            .to_owned(),
+    ))
+}
+
+fn export_json_lines(file: File, capture: &transmog_capture::RecoveredCapture) -> ExportOutcome {
+    let report = JsonLinesExporter::new(file)
+        .export(capture)
+        .map_err(|error| error.to_string())?;
+    Ok((
+        report.records,
+        report.bytes,
+        "JSONL preserves every native record and streams sequentially.".to_owned(),
+    ))
+}
+
+fn export_saz(
+    file: File,
+    mode: SazMode,
+    capture: &transmog_capture::RecoveredCapture,
+) -> ExportOutcome {
+    let mut exporter =
+        SazExporter::new(file, mode, SazLimits::default()).map_err(|error| error.to_string())?;
+    let report = exporter
+        .export(capture)
+        .map_err(|error| error.to_string())?;
+    let detail = exporter.report().unwrap_or_default();
+    Ok((
+        report.records,
+        report.bytes,
+        format!(
+            "SAZ is finalized, not streaming; it omits non-HTTP-native evidence. skipped_incomplete={}, incomplete_bodies={}, extended_manifest={}",
+            detail.skipped_incomplete,
+            detail.incomplete_bodies,
+            mode == SazMode::Extended
+        ),
+    ))
 }
 
 fn recover_path(
@@ -424,7 +464,27 @@ mod tests {
         let first = std::fs::read(&destination).unwrap();
         assert!(export_capture(request).await.is_err());
         assert_eq!(std::fs::read(&destination).unwrap(), first);
+        let native_destination = temp("native-export");
+        let _ = std::fs::remove_file(&native_destination);
+        let native = export_capture(ExportRequest {
+            source: source.clone(),
+            destination: native_destination.clone(),
+            format: ExportFormat::Native,
+            max_source_bytes: 1024 * 1024,
+        })
+        .await
+        .unwrap();
+        assert_eq!(native.records, 1);
+        assert!(native.source_truncated_tail);
+        let recovered = recover(
+            File::open(&native_destination).unwrap(),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        assert!(recovered.sealed);
+        assert!(!recovered.truncated_tail);
         let _ = std::fs::remove_file(source);
         let _ = std::fs::remove_file(destination);
+        let _ = std::fs::remove_file(native_destination);
     }
 }

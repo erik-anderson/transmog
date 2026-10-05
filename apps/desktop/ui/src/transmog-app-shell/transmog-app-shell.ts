@@ -31,6 +31,7 @@ interface DesktopBootstrap {
   caFilesPresent: boolean;
   ownedCaSha256: string | null;
   ownedCaTrusted: boolean;
+  hostRestorePending: boolean;
   diagnosticsPath: string;
 }
 
@@ -127,7 +128,7 @@ interface ProductState {
 interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 interface AutomationStatus {
   generation: number;
-  rules: Array<{id: string; revision: number; priority: number}>;
+  rules: Array<Record<string, unknown> & {id: string; revision: number; priority: number}>;
   candidateCount: number;
   historyCount: number;
 }
@@ -183,17 +184,22 @@ export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
   listenerValue!: HTMLElement;
   diagnostics!: HTMLOutputElement;
+  notice!: HTMLElement;
+  noticeTitle!: HTMLElement;
+  noticeMessage!: HTMLParagraphElement;
+  noticeActionButton!: HTMLButtonElement;
   proxyForm!: HTMLFormElement;
   proxyControls!: HTMLFieldSetElement;
   proxyOutput!: HTMLOutputElement;
   sessionOutput!: HTMLOutputElement;
-  watchButton!: HTMLButtonElement;
   caCertificate!: HTMLInputElement;
   caPrivateKey!: HTMLInputElement;
   caThumbprint!: HTMLInputElement;
   filterForm!: HTMLFormElement;
   sessionRows!: HTMLTableSectionElement;
-  nextButton!: HTMLButtonElement;
+  sessionScroller!: HTMLElement;
+  followStatus!: HTMLElement;
+  followButton!: HTMLButtonElement;
   selectedMethod!: HTMLElement;
   selectedUrl!: HTMLElement;
   selectedStatus!: HTMLElement;
@@ -208,8 +214,8 @@ export class TransmogAppShell extends WebUIElement {
   pausedList!: HTMLDivElement;
   breakpointForm!: HTMLFormElement;
   automationForm!: HTMLFormElement;
-  responseAssetForm!: HTMLFormElement;
   autoResponseForm!: HTMLFormElement;
+  responseAssetSelect!: HTMLSelectElement;
   automationOutput!: HTMLPreElement;
   scriptForm!: HTMLFormElement;
   scriptEditor!: HTMLDivElement;
@@ -224,8 +230,13 @@ export class TransmogAppShell extends WebUIElement {
   supportForm!: HTMLFormElement;
   supportOutput!: HTMLPreElement;
   diagnosticsPath!: HTMLElement;
-  private nextCursor: string | null = null;
   private watching = false;
+  private sessionUpdates: Channel<SessionHint> | null = null;
+  private followLatest = true;
+  private programmaticSessionScroll = false;
+  private noticeAction: 'setup-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null = null;
+  private scriptRevision = Date.now();
+  private sessionLimit = 100;
   private selectedSessionId: string | null = null;
   private sourceEditor: monaco.editor.IStandaloneCodeEditor | null = null;
   private revisionDiff: monaco.editor.IStandaloneDiffEditor | null = null;
@@ -236,12 +247,21 @@ export class TransmogAppShell extends WebUIElement {
   private readonly systemThemeChanged = (): void => {
     if (this.dataset.theme === 'system') this.applyMonacoTheme('system');
   };
+  private readonly sessionScrolled = (): void => {
+    if (this.programmaticSessionScroll || this.selectedSessionId !== null) return;
+    const distance = this.sessionScroller.scrollHeight
+      - this.sessionScroller.scrollTop
+      - this.sessionScroller.clientHeight;
+    this.followLatest = distance <= 4;
+    this.renderFollowState();
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
     this.lockRootViewport();
     this.systemTheme.addEventListener('change', this.systemThemeChanged);
     queueMicrotask(() => {
+      this.sessionScroller.addEventListener('scroll', this.sessionScrolled, { passive: true });
       void this.initializeShell();
       void this.initializeScriptEditor().catch((error: unknown) => {
         this.scriptOutput.textContent = `Script editor initialization failed: ${describeError(error)}`;
@@ -261,6 +281,7 @@ export class TransmogAppShell extends WebUIElement {
 
   disconnectedCallback(): void {
     this.systemTheme.removeEventListener('change', this.systemThemeChanged);
+    this.sessionScroller?.removeEventListener('scroll', this.sessionScrolled);
     for (const editor of this.breakpointEditors) editor.dispose();
     this.breakpointEditors = [];
     this.revisionDiff?.dispose();
@@ -319,8 +340,6 @@ export class TransmogAppShell extends WebUIElement {
       this.diagnosticsPath.textContent = bootstrap.diagnosticsPath;
       this.applyTheme(productState.preferences.theme);
       this.populateSettings(productState);
-      const systemProxy = this.proxyForm.elements.namedItem('systemProxy') as HTMLInputElement;
-      systemProxy.checked = productState.preferences.configureSystemProxy;
       this.renderAppStatus(status);
       const certificate = bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent
         ? `Owned CA ${bootstrap.ownedCaSha256} is remembered, but its app-managed files are missing. Remove exact CA, then create and trust a new durable CA.`
@@ -331,7 +350,23 @@ export class TransmogAppShell extends WebUIElement {
             : `Owned CA ${bootstrap.ownedCaSha256} is not present in current-user trust.`;
       const ready = bootstrap.caFilesPresent && bootstrap.ownedCaTrusted;
       this.setProxyOutput(`${certificate} Diagnostic log: ${bootstrap.diagnosticsPath}`, ready ? 'success' : bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent ? 'error' : 'progress');
-      await this.refreshSessions();
+      if (bootstrap.hostRestorePending) {
+        this.showNotice(
+          'Windows proxy recovery required',
+          'Transmog could not restore the settings journaled by a previous run. Restore them before starting again.',
+          'Restore settings',
+          'recover-proxy',
+        );
+      } else if (!ready) {
+        this.showNotice(
+          'HTTPS interception needs setup',
+          'Before the proxy can start, create and trust Transmog’s local interception certificate. Windows will ask you to approve adding it to your current-user trusted roots.',
+          'Set up now',
+          'setup-ca',
+        );
+      }
+      await this.watchSessions();
+      await Promise.all([this.refreshAutomation(), this.refreshResponseAssets()]);
     } catch (error: unknown) {
       const message = `Desktop initialization failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
@@ -347,6 +382,10 @@ export class TransmogAppShell extends WebUIElement {
     const link = event.currentTarget as HTMLAnchorElement;
     const view = link.dataset.view;
     if (view === undefined) return;
+    this.activateView(view);
+  }
+
+  private activateView(view: string): void {
     for (const candidate of this.shadowRoot?.querySelectorAll<HTMLAnchorElement>('.rail a[data-view]') ?? []) {
       const active = candidate.dataset.view === view;
       candidate.classList.toggle('active', active);
@@ -378,14 +417,28 @@ export class TransmogAppShell extends WebUIElement {
   async startProxy(event?: Event): Promise<void> {
     event?.preventDefault();
     const data = new FormData(this.proxyForm);
-    const configureSystemProxy = data.get('systemProxy') === 'on';
-    this.setProxyOutput(
-      configureSystemProxy
-        ? 'Starting the proxy and applying current-user Windows proxy settings…'
-        : 'Starting the proxy in manual client-configuration mode…',
-      'progress',
-    );
     try {
+      const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      if (bootstrap.hostRestorePending) {
+        this.showNotice(
+          'Windows proxy recovery required',
+          'Restore the exact settings journaled by the previous run before starting the proxy again.',
+          'Restore settings',
+          'recover-proxy',
+        );
+        this.setProxyOutput('Start blocked: Windows proxy recovery is pending.', 'error');
+        return;
+      }
+      if (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted) {
+        const missing = !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
+          ? 'Create and trust Transmog’s interception certificate before starting the proxy.'
+          : 'Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.';
+        this.showNotice('Proxy setup required', missing, 'Set up HTTPS interception', 'setup-ca');
+        this.setProxyOutput(`Start blocked: ${missing}`, 'error');
+        this.activateView('settings');
+        return;
+      }
+      this.setProxyOutput('Starting capture, binding the proxy, and applying current-user Windows proxy settings…', 'progress');
       const status = await invoke<AppStatus>('start_proxy', {
         request: {
           caCertificatePath: String(data.get('certificate') ?? ''),
@@ -394,21 +447,60 @@ export class TransmogAppShell extends WebUIElement {
           route: 'auto',
           allowRemoteClients: false,
         },
-        configureSystemProxy,
       });
       this.renderAppStatus(status);
-      await this.persistSystemProxyPreference(configureSystemProxy);
       const listener = status.listener ?? 'an unknown listener';
-      this.setProxyOutput(
-        configureSystemProxy
-          ? `Proxy listening at ${listener}. The current-user Windows proxy is configured; Chrome traffic should now appear below.`
-          : `Proxy listening at ${listener} in manual mode. Configure the client to use this HTTP/HTTPS proxy; Chrome is not changed automatically.`,
-        'success',
-      );
+      this.dismissNotice();
+      this.setProxyOutput(`Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`, 'success');
+      await this.watchSessions();
     } catch (error: unknown) {
       const message = `Start failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
       this.diagnostics.textContent = message;
+      this.showNotice('Proxy could not start', `${message} See Settings for recovery options.`, 'Open Settings', 'settings');
+    }
+  }
+
+  async setupCa(): Promise<void> {
+    const proceed = window.confirm(
+      'Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?',
+    );
+    if (!proceed) return;
+    const data = new FormData(this.proxyForm);
+    this.setProxyOutput('Preparing the interception certificate…', 'progress');
+    try {
+      let bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      let sha256 = bootstrap.ownedCaSha256;
+      if (!bootstrap.caFilesPresent) {
+        const identity = await invoke<CaIdentity>('create_ca', {
+          request: {
+            certificatePath: String(data.get('certificate') ?? ''),
+            privateKeyPath: String(data.get('privateKey') ?? ''),
+            commonName: 'Transmog local interception CA',
+            validityDays: 3650,
+          },
+        });
+        sha256 = identity.sha256;
+        this.caThumbprint.value = identity.sha256;
+      }
+      if (sha256 === null) {
+        throw new Error('The existing certificate files do not have a recorded Transmog identity. Remove the files and run setup again.');
+      }
+      this.setProxyOutput('Approve the Windows certificate dialog to trust the Transmog interception CA.', 'progress');
+      await invoke<void>('install_certificate', {
+        path: String(data.get('certificate') ?? ''),
+        sha256,
+      });
+      bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      if (!bootstrap.ownedCaTrusted) throw new Error('Windows did not report the certificate as trusted.');
+      this.caThumbprint.value = sha256;
+      const message = 'HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.';
+      this.setProxyOutput(message, 'success');
+      this.showNotice('HTTPS interception is ready', 'You can start the proxy now.', 'Start proxy', 'start-proxy');
+    } catch (error: unknown) {
+      const message = `Certificate setup failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.showNotice('Certificate setup needs attention', message, 'Try again', 'setup-ca');
     }
   }
 
@@ -455,7 +547,7 @@ export class TransmogAppShell extends WebUIElement {
     const data = new FormData(this.proxyForm);
     try {
       await invoke<void>('remove_certificate', { sha256: String(data.get('thumbprint') ?? '') });
-      const message = 'The exact public CA was removed from current-user trust. The CA files were retained.';
+      const message = 'The exact public CA was removed from current-user trust. The durable CA files and identity were retained so setup can trust it again.';
       this.setProxyOutput(message, 'success');
       this.diagnostics.textContent = message;
     } catch (error: unknown) {
@@ -493,22 +585,21 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
-  async refreshSessions(event?: Event, cursor: string | null = null): Promise<void> {
+  async refreshSessions(event?: Event): Promise<void> {
     event?.preventDefault();
     const data = new FormData(this.filterForm);
     try {
       const page = await invoke<SessionPage>('query_sessions', {
         query: {
-          cursor,
-          limit: 100,
+          cursor: null,
+          latest: true,
+          limit: this.sessionLimit,
           terminal: null,
           method: optionalText(data.get('method')),
           host: optionalText(data.get('host')),
         },
       });
       this.renderSessions(page.sessions);
-      this.nextCursor = page.nextCursor;
-      this.nextButton.disabled = page.nextCursor === null;
       const message = `Loaded ${page.sessions.length} sessions · evicted ${page.evicted} · gaps ${page.sequenceGaps} · subscriber lag ${page.subscriberLag}`;
       this.sessionOutput.textContent = message;
       this.sessionOutput.dataset.kind = 'success';
@@ -521,10 +612,6 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
-  async nextSessions(): Promise<void> {
-    if (this.nextCursor !== null) await this.refreshSessions(undefined, this.nextCursor);
-  }
-
   async watchSessions(): Promise<void> {
     if (this.watching) {
       this.sessionOutput.textContent = 'Live session refresh is already enabled.';
@@ -532,21 +619,20 @@ export class TransmogAppShell extends WebUIElement {
       return;
     }
     this.watching = true;
-    this.watchButton.disabled = true;
     this.sessionOutput.textContent = 'Enabling live session refresh…';
     this.sessionOutput.dataset.kind = 'progress';
     const onEvent = new Channel<SessionHint>();
     onEvent.onmessage = () => { void this.refreshSessions(); };
+    this.sessionUpdates = onEvent;
     try {
       await invoke<void>('watch_sessions', { onEvent });
       await this.refreshSessions();
-      this.watchButton.textContent = 'Watching live';
-      this.sessionOutput.textContent = 'Live session refresh enabled. Waiting for proxied traffic.';
+      this.sessionOutput.textContent = 'Watching live traffic. Waiting for proxied requests.';
       this.sessionOutput.dataset.kind = 'success';
       this.diagnostics.textContent = 'Live session refresh enabled.';
     } catch (error: unknown) {
       this.watching = false;
-      this.watchButton.disabled = false;
+      this.sessionUpdates = null;
       const message = `Live refresh failed: ${describeError(error)}`;
       this.sessionOutput.textContent = message;
       this.sessionOutput.dataset.kind = 'error';
@@ -555,6 +641,7 @@ export class TransmogAppShell extends WebUIElement {
   }
 
   private renderSessions(sessions: SessionSummary[]): void {
+    if (this.followLatest) this.programmaticSessionScroll = true;
     this.sessionRows.replaceChildren();
     if (sessions.length === 0) {
       const row = document.createElement('tr');
@@ -563,6 +650,8 @@ export class TransmogAppShell extends WebUIElement {
       cell.textContent = 'No matching sessions.';
       row.append(cell);
       this.sessionRows.append(row);
+      this.programmaticSessionScroll = false;
+      this.renderFollowState();
       return;
     }
     for (const session of sessions.slice(0, 200)) {
@@ -601,9 +690,18 @@ export class TransmogAppShell extends WebUIElement {
       });
       this.sessionRows.append(row);
     }
+    if (this.followLatest) {
+      requestAnimationFrame(() => {
+        this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
+        requestAnimationFrame(() => { this.programmaticSessionScroll = false; });
+      });
+    }
+    this.renderFollowState();
   }
 
   private async inspectSession(session: SessionSummary): Promise<void> {
+    this.followLatest = false;
+    this.renderFollowState();
     this.selectedMethod.textContent = session.method;
     this.selectedUrl.textContent = `${session.host}${session.path}`;
     this.selectedStatus.textContent = session.status === null ? 'Pending' : `${session.status}`;
@@ -648,6 +746,46 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
+  resumeLatest(): void {
+    this.selectedSessionId = null;
+    this.followLatest = true;
+    for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
+      row.classList.remove('selected');
+      row.setAttribute('aria-selected', 'false');
+    }
+    this.programmaticSessionScroll = true;
+    this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
+    requestAnimationFrame(() => { this.programmaticSessionScroll = false; });
+    this.renderFollowState();
+  }
+
+  private renderFollowState(): void {
+    this.followStatus.textContent = this.followLatest
+      ? 'Following latest traffic'
+      : this.selectedSessionId === null
+        ? 'Live updates continue · scroll position paused'
+        : 'Live updates continue · selected request pinned';
+    this.followButton.disabled = this.followLatest;
+  }
+
+  async exportLiveCapture(): Promise<void> {
+    this.sessionOutput.textContent = 'Exporting a sealed TMCap snapshot…';
+    this.sessionOutput.dataset.kind = 'progress';
+    try {
+      const result = await invoke<{destination: string; records: number; bytes: number}>('export_live_capture');
+      const message = `Exported ${result.records} records (${result.bytes} bytes) to ${result.destination}`;
+      this.sessionOutput.textContent = message;
+      this.sessionOutput.dataset.kind = 'success';
+      this.diagnostics.textContent = message;
+      this.showNotice('TMCap export complete', result.destination, null, null);
+    } catch (error: unknown) {
+      const message = `TMCap export failed: ${describeError(error)}`;
+      this.sessionOutput.textContent = message;
+      this.sessionOutput.dataset.kind = 'error';
+      this.showNotice('TMCap export failed', message, null, null);
+    }
+  }
+
   async inspectBody(): Promise<void> {
     if (this.selectedSessionId === null || this.bodyBoundary.value.length === 0) {
       this.bodyPreviewOutput.textContent = 'Select a session with retained body metadata first.';
@@ -671,7 +809,10 @@ export class TransmogAppShell extends WebUIElement {
       if (inspection.previewHandle !== null) {
         this.bodyImagePreview.src = `transmog-preview://localhost/preview/${encodeURIComponent(inspection.previewHandle)}`;
         this.bodyImagePreview.hidden = false;
-        this.bodyPreviewOutput.textContent = `${summary}\nNormalized in an isolated decoder as ${inspection.previewMimeType ?? 'image/png'}. Active document content and metadata were discarded.`;
+        const safety = inspection.previewMimeType === 'image/svg+xml'
+          ? 'Loaded as a sandboxed image; scripts and external resources are blocked.'
+          : 'Normalized to PNG in an isolated decoder, then loaded as an image.';
+        this.bodyPreviewOutput.textContent = `${summary}\n${safety}`;
       } else {
         this.bodyPreviewOutput.textContent = `${summary}${inspection.warning ? `\n${inspection.warning}` : ''}\n\n${inspection.display}`;
       }
@@ -799,7 +940,7 @@ export class TransmogAppShell extends WebUIElement {
       if (model !== null && model !== undefined) {
         monaco.editor.setModelMarkers(model, 'transmog-rust', []);
       }
-      this.scriptOutput.textContent = `Validated ${this.candidate.scriptId}@${this.candidate.revision}\nSHA-256 ${this.candidate.sourceHash}\nCandidate ${this.candidate.candidateId}`;
+      this.scriptOutput.textContent = 'Script validated. Test it in the sandbox, then enable it for new requests.';
     } catch (error: unknown) {
       this.candidate = null;
       this.scriptFailure('Rust validation failed', error);
@@ -832,7 +973,7 @@ export class TransmogAppShell extends WebUIElement {
           body: bodyHandler ? { bytes: Array.from(new TextEncoder().encode('editor test body')), truncated: false } : null,
         },
       });
-      this.scriptOutput.textContent = `Sandbox test passed. No traffic was changed.\n${JSON.stringify(action, null, 2)}`;
+      this.scriptOutput.textContent = `Sandbox test passed with action “${String(action.action ?? 'continue')}”. No traffic was changed.`;
     } catch (error: unknown) {
       this.scriptFailure('Sandbox test aborted', error);
     }
@@ -844,7 +985,8 @@ export class TransmogAppShell extends WebUIElement {
       if (this.candidate === null) return;
       const status = await invoke<ScriptStatus>('activate_script', { candidateId: this.candidate.candidateId });
       this.candidate = null;
-      this.renderScriptStatus('Exact validated revision activated for new exchanges.', status);
+      this.renderScriptStatus('Validated script enabled for new requests.', status);
+      this.scriptRevision += 1;
     } catch (error: unknown) {
       this.scriptFailure('Activation failed', error);
     }
@@ -852,8 +994,7 @@ export class TransmogAppShell extends WebUIElement {
 
   async disableScript(): Promise<void> {
     try {
-      const data = new FormData(this.scriptForm);
-      const status = await invoke<ScriptStatus>('disable_script', { scriptId: String(data.get('scriptId') ?? '') });
+      const status = await invoke<ScriptStatus>('disable_script', { scriptId: 'user-script' });
       this.renderScriptStatus('Script disabled for new exchanges.', status);
     } catch (error: unknown) {
       this.scriptFailure('Disable failed', error);
@@ -865,7 +1006,7 @@ export class TransmogAppShell extends WebUIElement {
       const status = await invoke<ScriptStatus>('script_status');
       const draft = this.scriptDraft();
       const active = status.active.find((revision) => revision.manifest.id === draft.id);
-      if (active === undefined) throw new Error('this script has no active revision to compare');
+      if (active === undefined) throw new Error('this script is not currently enabled');
       this.revisionDiff?.dispose();
       for (const model of this.diffModels) model.dispose();
       this.diffModels = [
@@ -876,16 +1017,16 @@ export class TransmogAppShell extends WebUIElement {
       this.revisionDiff = monaco.editor.createDiffEditor(this.scriptDiffEditor, {
         automaticLayout: true,
         accessibilitySupport: 'on',
-        ariaLabel: 'Active revision and current draft comparison',
+        ariaLabel: 'Enabled script and current draft comparison',
         readOnly: true,
         theme: this.monacoTheme(),
       });
       const [original, modified] = this.diffModels;
-      if (original === undefined || modified === undefined) throw new Error('revision comparison models were not created');
+      if (original === undefined || modified === undefined) throw new Error('script comparison could not be prepared');
       this.revisionDiff.setModel({ original, modified });
-      this.scriptOutput.textContent = `Comparing active ${active.manifest.id}@${active.manifest.revision} with the current draft.`;
+      this.scriptOutput.textContent = 'Comparing the active script with the current draft.';
     } catch (error: unknown) {
-      this.scriptFailure('Revision comparison unavailable', error);
+      this.scriptFailure('Script comparison unavailable', error);
     }
   }
 
@@ -909,8 +1050,8 @@ export class TransmogAppShell extends WebUIElement {
       .map((value) => value.trim().toLowerCase())
       .filter((value) => value.length > 0);
     return {
-      id: String(data.get('scriptId') ?? ''),
-      revision: Number(data.get('scriptRevision') ?? 1),
+      id: 'user-script',
+      revision: this.scriptRevision,
       source,
       handlers,
       prefilter: { method: null, host: optionalText(data.get('scriptHost')), pathPrefix: optionalText(data.get('scriptPath')) },
@@ -929,12 +1070,12 @@ export class TransmogAppShell extends WebUIElement {
         maxHeapBytes: 64 * 1024 * 1024,
         maxDurationMs: 100,
       },
-      priority: Number(data.get('scriptPriority') ?? 0),
+      priority: 0,
     };
   }
 
   private renderScriptStatus(message: string, status: ScriptStatus): void {
-    this.scriptOutput.textContent = `${message}\n\n${JSON.stringify(status, null, 2)}`;
+    this.scriptOutput.textContent = `${message} ${status.active.length} active script${status.active.length === 1 ? '' : 's'}; ${status.saved.length} saved draft${status.saved.length === 1 ? '' : 's'}.`;
   }
 
   private scriptFailure(prefix: string, error: unknown): void {
@@ -971,12 +1112,12 @@ export class TransmogAppShell extends WebUIElement {
     const encode = (value: string): number[] => Array.from(new TextEncoder().encode(value));
     const host = optionalText(data.get('host'));
     const path = optionalText(data.get('path'));
-    const document = {
-      schemaVersion: 1,
-      generation: 0,
-      rules: [{
-        id: String(data.get('ruleId') ?? ''),
-        revision: Number(data.get('revision') ?? 1),
+    try {
+      const current = await invoke<AutomationStatus>('automation_status');
+      const previous = current.rules.find((rule) => rule.id === 'desktop-user-agent');
+      const rule = {
+        id: 'desktop-user-agent',
+        revision: (previous?.revision ?? 0) + 1,
         priority: 0,
         matcher: {
           method: null,
@@ -1002,15 +1143,15 @@ export class TransmogAppShell extends WebUIElement {
           allowNonIdempotentBodyReplacement: false,
         },
         response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
-      }],
-    };
-    try {
-      const candidate = await invoke<AutomationCandidate>('validate_automation', { document });
-      const status = await invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
+      };
+      const rules = current.rules.filter((candidate) => candidate.id !== rule.id);
+      rules.push(rule);
+      const status = await this.activateRuleSet(rules, current.generation);
       this.renderAutomation(status);
-      this.diagnostics.textContent = `Activated ${candidate.ruleCount} native rule with ${candidate.registrationCount} attributed hook registration.`;
+      this.diagnostics.textContent = 'User-Agent override enabled for new matching requests.';
     } catch (error: unknown) {
-      this.automationOutput.textContent = `Activation failed: ${describeError(error)}`;
+      this.automationOutput.textContent = `User-Agent override could not be enabled: ${describeError(error)}`;
+      this.automationOutput.dataset.kind = 'error';
     }
   }
 
@@ -1022,36 +1163,32 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
-  async createResponseAsset(event: Event): Promise<void> {
-    event.preventDefault();
-    const data = new FormData(this.responseAssetForm);
-    try {
-      const asset = await invoke<ResponseAsset>('create_response_asset', {
-        input: {
-          id: String(data.get('assetId') ?? ''),
-          revision: Number(data.get('assetRevision') ?? 1),
-          status: Number(data.get('status') ?? 200),
-          headers: [],
-          body: Array.from(new TextEncoder().encode(String(data.get('body') ?? ''))),
-          mediaType: optionalText(data.get('mediaType')),
-        },
-      });
-      this.automationOutput.textContent = JSON.stringify(asset, null, 2);
-      this.diagnostics.textContent = `Created immutable response asset ${asset.id}@${asset.revision}.`;
-    } catch (error: unknown) {
-      this.automationOutput.textContent = `Asset creation failed: ${describeError(error)}`;
-    }
-  }
-
   async activateAutoResponseRule(event: Event): Promise<void> {
     event.preventDefault();
     const data = new FormData(this.autoResponseForm);
-    const document = {
-      schemaVersion: 1,
-      generation: 0,
-      rules: [{
-        id: String(data.get('ruleId') ?? ''),
-        revision: Number(data.get('revision') ?? 1),
+    try {
+      let assetReference = String(data.get('responseSource') ?? '');
+      if (assetReference.length === 0) {
+        const suffix = crypto.randomUUID().replaceAll('-', '');
+        const assetId = `desktop-response-${suffix}`;
+        const asset = await invoke<ResponseAsset>('create_response_asset', {
+          input: {
+            id: assetId,
+            revision: 1,
+            status: Number(data.get('status') ?? 200),
+            headers: [],
+            body: Array.from(new TextEncoder().encode(String(data.get('body') ?? ''))),
+            mediaType: optionalText(data.get('mediaType')),
+          },
+        });
+        assetReference = `${asset.id}@${asset.revision}`;
+        await this.refreshResponseAssets(assetReference);
+      }
+      const current = await invoke<AutomationStatus>('automation_status');
+      const previous = current.rules.find((rule) => rule.id === 'desktop-auto-response');
+      const rule = {
+        id: 'desktop-auto-response',
+        revision: (previous?.revision ?? 0) + 1,
         priority: 0,
         matcher: {
           method: null,
@@ -1070,24 +1207,81 @@ export class TransmogAppShell extends WebUIElement {
           replaceBody: null,
           discardBody: false,
           abortReason: null,
-          responseAsset: String(data.get('assetRef') ?? ''),
+          responseAsset: assetReference,
           allowNonIdempotentBodyReplacement: false,
         },
         response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
-      }],
-    };
-    try {
-      const candidate = await invoke<AutomationCandidate>('validate_automation', { document });
-      const status = await invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
+      };
+      const rules = current.rules.filter((candidate) => candidate.id !== rule.id);
+      rules.push(rule);
+      const status = await this.activateRuleSet(rules, current.generation);
       this.renderAutomation(status);
-      this.diagnostics.textContent = 'Activated head-based autoresponse; matching traffic will not contact the origin.';
+      this.diagnostics.textContent = 'Auto-response enabled; new matching requests will not contact the origin.';
     } catch (error: unknown) {
-      this.automationOutput.textContent = `Autoresponse activation failed: ${describeError(error)}`;
+      this.automationOutput.textContent = `Auto-response could not be enabled: ${describeError(error)}`;
+      this.automationOutput.dataset.kind = 'error';
     }
   }
 
+  private async refreshResponseAssets(selected?: string): Promise<void> {
+    try {
+      const assets = await invoke<ResponseAsset[]>('response_assets');
+      const current = selected ?? this.responseAssetSelect.value;
+      this.responseAssetSelect.replaceChildren();
+      const create = document.createElement('option');
+      create.value = '';
+      create.textContent = 'Create a new response below';
+      this.responseAssetSelect.append(create);
+      assets.forEach((asset, index) => {
+        const option = document.createElement('option');
+        option.value = `${asset.id}@${asset.revision}`;
+        option.textContent = `Saved response ${index + 1} · ${asset.status} · ${asset.bodyBytes} bytes`;
+        this.responseAssetSelect.append(option);
+      });
+      this.responseAssetSelect.value = current;
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Saved responses are unavailable: ${describeError(error)}`;
+      this.automationOutput.dataset.kind = 'error';
+    }
+  }
+
+  async disableBuiltInAutomation(id: string): Promise<void> {
+    try {
+      const current = await invoke<AutomationStatus>('automation_status');
+      const rules = current.rules.filter((rule) => rule.id !== id);
+      if (rules.length === current.rules.length) {
+        this.renderAutomation(current);
+        return;
+      }
+      const status = await this.activateRuleSet(rules, current.generation);
+      this.renderAutomation(status);
+      this.diagnostics.textContent = 'Traffic action disabled for new requests.';
+    } catch (error: unknown) {
+      this.automationOutput.textContent = `Traffic action could not be disabled: ${describeError(error)}`;
+      this.automationOutput.dataset.kind = 'error';
+    }
+  }
+
+  private async activateRuleSet(
+    rules: AutomationStatus['rules'],
+    generation: number,
+  ): Promise<AutomationStatus> {
+    const candidate = await invoke<AutomationCandidate>('validate_automation', {
+      document: { schemaVersion: 1, generation, rules },
+    });
+    return invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
+  }
+
   private renderAutomation(status: AutomationStatus): void {
-    this.automationOutput.textContent = JSON.stringify(status, null, 2);
+    const actions: string[] = [];
+    if (status.rules.some((rule) => rule.id === 'desktop-user-agent')) actions.push('User-Agent override');
+    if (status.rules.some((rule) => rule.id === 'desktop-auto-response')) actions.push('Auto-response');
+    const other = status.rules.filter((rule) => !rule.id.startsWith('desktop-')).length;
+    if (other > 0) actions.push(`${other} advanced rule${other === 1 ? '' : 's'}`);
+    this.automationOutput.textContent = actions.length === 0
+      ? 'No built-in traffic actions are active.'
+      : `Active for new requests: ${actions.join(', ')}.`;
+    this.automationOutput.dataset.kind = 'success';
   }
 
   async executeComposer(event: Event): Promise<void> {
@@ -1189,8 +1383,9 @@ export class TransmogAppShell extends WebUIElement {
       const data = new FormData(this.settingsForm);
       state.preferences.theme = String(data.get('theme')) as ProductState['preferences']['theme'];
       state.preferences.sessionPageSize = Number(data.get('pageSize'));
-      state.preferences.configureSystemProxy = data.get('defaultSystemProxy') === 'on';
+      state.preferences.configureSystemProxy = true;
       state.privacy.retainResponseBodies = data.get('defaultBodies') === 'on';
+      state.privacy.retainBodySamples = data.get('captureBodies') === 'on';
       state.privacy.rememberRecentArtifacts = data.get('rememberArtifacts') === 'on';
       state.privacy.includePathsInSupportBundles = data.get('supportPaths') === 'on';
       const saved = await invoke<ProductState>('save_product_state', { productState: state });
@@ -1256,11 +1451,11 @@ export class TransmogAppShell extends WebUIElement {
     const elements = this.settingsForm.elements;
     (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
     (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
-    (elements.namedItem('defaultSystemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
+    this.sessionLimit = state.preferences.sessionPageSize;
     (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
+    (elements.namedItem('captureBodies') as HTMLInputElement).checked = state.privacy.retainBodySamples;
     (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
     (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
-    (this.proxyForm.elements.namedItem('systemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
   }
 
   private applyTheme(theme: ProductState['preferences']['theme']): void {
@@ -1285,18 +1480,32 @@ export class TransmogAppShell extends WebUIElement {
     this.proxyOutput.dataset.kind = kind;
   }
 
-  private async persistSystemProxyPreference(enabled: boolean): Promise<void> {
-    try {
-      const state = await invoke<ProductState>('product_state');
-      if (state.preferences.configureSystemProxy === enabled) return;
-      state.preferences.configureSystemProxy = enabled;
-      await invoke<ProductState>('save_product_state', { productState: state });
-      const setting = this.settingsForm.elements.namedItem('defaultSystemProxy') as HTMLInputElement;
-      setting.checked = enabled;
-    } catch (error: unknown) {
-      this.diagnostics.textContent = `Proxy is running, but the startup-mode preference was not saved: ${describeError(error)}`;
-      await this.reportFrontendIssue('proxy-preference-save-failed', error);
-    }
+  private showNotice(
+    title: string,
+    message: string,
+    actionLabel: string | null,
+    action: 'setup-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null,
+  ): void {
+    this.noticeTitle.textContent = title;
+    this.noticeMessage.textContent = message;
+    this.noticeAction = action;
+    this.noticeActionButton.hidden = actionLabel === null;
+    this.noticeActionButton.textContent = actionLabel ?? '';
+    this.notice.hidden = false;
+  }
+
+  runNoticeAction(): void {
+    const action = this.noticeAction;
+    this.dismissNotice();
+    if (action === 'setup-ca') void this.setupCa();
+    else if (action === 'start-proxy') void this.startProxy();
+    else if (action === 'settings') this.activateView('settings');
+    else if (action === 'recover-proxy') void this.recoverProxy();
+  }
+
+  dismissNotice(): void {
+    this.noticeAction = null;
+    this.notice.hidden = true;
   }
 
   private async reportFrontendIssue(code: string, error: unknown): Promise<void> {

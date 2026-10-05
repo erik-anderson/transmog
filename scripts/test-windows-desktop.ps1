@@ -3,6 +3,7 @@ param(
     [int]$SoakMinutes = 0,
     [int]$DevToolsPort = 9333,
     [string]$ScreenshotPath,
+    [string]$AutomationScreenshotPath,
     [switch]$SkipReleaseBuild
 )
 
@@ -11,6 +12,15 @@ $PSNativeCommandUseErrorActionPreference = $true
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $desktopUi = Join-Path $repositoryRoot 'apps\desktop\ui'
 $executable = Join-Path $repositoryRoot 'target\release\transmog-desktop.exe'
+
+function Resolve-ArtifactPath([string]$Path) {
+    if (-not $Path) { return $null }
+    if ([System.IO.Path]::IsPathRooted($Path)) { return [System.IO.Path]::GetFullPath($Path) }
+    return [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $Path))
+}
+
+$ScreenshotPath = Resolve-ArtifactPath $ScreenshotPath
+$AutomationScreenshotPath = Resolve-ArtifactPath $AutomationScreenshotPath
 
 . (Join-Path $PSScriptRoot 'dev-env.ps1')
 
@@ -51,6 +61,9 @@ try {
         $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', "$SoakMinutes")
         if ($ScreenshotPath) {
             $smokeArguments += @('--screenshot', $ScreenshotPath)
+        }
+        if ($AutomationScreenshotPath) {
+            $smokeArguments += @('--automation-screenshot', $AutomationScreenshotPath)
         }
         & npm @smokeArguments
     } finally {

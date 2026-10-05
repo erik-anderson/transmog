@@ -252,8 +252,8 @@ struct CertificateOwnershipRecord {
     sha256: String,
 }
 
-/// Durable exact-thumbprint ownership record for an app-installed current-user
-/// root certificate.
+/// Durable exact-thumbprint ownership record for app-created certificate
+/// material, whether or not it is currently present in current-user roots.
 #[derive(Clone, Debug)]
 pub struct OwnedCertificateRegistry {
     path: PathBuf,
@@ -265,7 +265,7 @@ impl OwnedCertificateRegistry {
         Self { path: path.into() }
     }
 
-    /// Records the exact certificate before attempting trust-store mutation.
+    /// Records the exact app-created certificate before trust-store mutation.
     ///
     /// Repeating the same claim is idempotent. A different existing claim
     /// fails closed so no certificate can become silently orphaned.
@@ -435,6 +435,11 @@ fn run_script(script: &str, input: Option<&str>) -> Result<String, WindowsHostEr
         return Err(WindowsHostError::UnsupportedPlatform);
     }
     let mut command = Command::new("powershell.exe");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        command.creation_flags(0x0800_0000);
+    }
     command.args([
         "-NoLogo",
         "-NoProfile",

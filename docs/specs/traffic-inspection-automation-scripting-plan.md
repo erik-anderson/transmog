@@ -341,7 +341,8 @@ context.
 ## Safe preview policy
 
 Captured content is hostile input. It is never inserted into the Transmog UI
-origin as HTML, `srcdoc`, SVG, script, style, or an executable URL.
+origin as HTML, `srcdoc`, script, style, or an executable URL. Image previews
+use only opaque handles on a separate origin and are rendered by `<img>`.
 
 Initial presentation support is limited to:
 
@@ -349,16 +350,21 @@ Initial presentation support is limited to:
 - bounded formatted JSON;
 - bounded encoded or decoded byte views; and
 - PNG, JPEG, GIF, and WebP images after signature validation and isolated
-  decoding/rasterization.
+  decoding/rasterization; and
+- bounded UTF-8 SVG served as `image/svg+xml` only to `<img>`, with `nosniff`,
+  no-store caching, a sandboxed `default-src 'none'` response policy, and no
+  direct markup insertion.
 
 Image decoding enforces source bytes, decoded pixels, dimensions, frame count,
 animation duration, color-profile, and wall-time limits. Prefer a separate
 restricted preview worker so a decoder failure cannot terminate the proxy or
-desktop process. The WebView receives only a raster result through an opaque
-preview handle on a separate no-network origin with `default-src 'none'`.
+desktop process. The WebView receives only a normalized PNG or passive SVG
+through an opaque preview handle on a separate no-network origin with
+`default-src 'none'`. The image element and response policy prevent SVG script
+execution and external resource loading while preserving vector rendering.
 
-SVG, HTML, XML with active content, PDF, fonts, audio, video, and documents are
-not previewed initially. Adding a format requires its own threat analysis,
+HTML, general XML, PDF, fonts, audio, video, and documents are not previewed.
+Adding a format requires its own threat analysis,
 decoder isolation decision, hostile corpus, resource limits, CSP behavior, and
 accessibility fallback.
 
@@ -463,7 +469,8 @@ contrast aware, screen-reader usable, and non-authoritative for execution.
 
 Add presentation selection, charset diagnostics, JSON formatting, the isolated
 preview worker, image limits, opaque preview handles, separate origin, and
-preview cache eviction. Keep active document formats disabled.
+preview cache eviction. Support passive SVG only through the restricted image
+path; keep active document formats disabled.
 
 Exit gate: hostile text, polyglots, malformed images, decompression bombs,
 large dimensions, animations, and decoder crashes cannot execute content,
@@ -559,6 +566,6 @@ and H3 egress and every supported content-coding path.
 The first scripting milestone does not provide Node compatibility, npm package
 installation, arbitrary local modules, remote imports, filesystem or network
 APIs, persistent script globals, asynchronous timers, DOM APIs, browser
-automation, or active HTML/SVG/PDF preview. It does not stabilize the external
+automation, or active HTML/PDF preview. It does not stabilize the external
 control protocol or the script API. Each exclusion requires a separate product
 need and threat-model update before implementation.

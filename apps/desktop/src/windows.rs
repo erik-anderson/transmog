@@ -3,9 +3,10 @@
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -34,6 +35,8 @@ use transmog_host_windows::{
 };
 
 const UI_HOST: &str = "transmog-ui.localhost";
+const AUTOMATIC_CAPTURE_BYTES: u64 = 1024 * 1024 * 1024;
+static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct DesktopState {
@@ -43,6 +46,9 @@ struct DesktopState {
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     diagnostics_path: PathBuf,
+    capture_root: PathBuf,
+    export_root: PathBuf,
+    live_capture_path: Arc<Mutex<Option<PathBuf>>>,
 }
 
 #[derive(Serialize)]
@@ -53,6 +59,7 @@ struct DesktopBootstrap {
     ca_files_present: bool,
     owned_ca_sha256: Option<String>,
     owned_ca_trusted: bool,
+    host_restore_pending: bool,
     diagnostics_path: PathBuf,
 }
 
@@ -94,6 +101,7 @@ fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap,
             && state.ca_private_key_path.is_file(),
         owned_ca_sha256,
         owned_ca_trusted,
+        host_restore_pending: state.host.recovery_pending(),
         diagnostics_path: state.diagnostics_path.clone(),
     })
 }
@@ -262,22 +270,81 @@ async fn stop_application(state: State<'_, DesktopState>) -> Result<AppStatus, A
 #[tauri::command]
 async fn start_proxy(
     request: ProxyStartRequest,
-    configure_system_proxy: bool,
     state: State<'_, DesktopState>,
-) -> Result<AppStatus, AppError> {
+) -> Result<AppStatus, String> {
+    if state.host.recovery_pending() {
+        return Err(
+            "Restore the journaled Windows proxy settings before starting a new proxy run."
+                .to_owned(),
+        );
+    }
+    if !state.ca_certificate_path.is_file() || !state.ca_private_key_path.is_file() {
+        return Err(
+            "Set up the Transmog interception certificate before starting the proxy.".to_owned(),
+        );
+    }
+    let sha256 = state
+        .owned_certificate
+        .owned_thumbprint()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "Set up the Transmog interception certificate before starting the proxy.".to_owned()
+        })?;
+    if !CurrentUserCertificateStore
+        .contains(&sha256)
+        .map_err(|error| error.to_string())?
+    {
+        return Err(
+            "Trust the Transmog interception certificate before starting the proxy.".to_owned(),
+        );
+    }
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "desktop",
         "proxy-start-requested",
-        if configure_system_proxy {
-            "proxy start requested with current-user Windows proxy integration"
-        } else {
-            "proxy start requested in manual client configuration mode"
-        },
+        "proxy start requested with automatic capture and current-user Windows proxy integration",
     );
-    let host = configure_system_proxy
-        .then(|| Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
-    state.application.start_proxy(request, host).await
+    std::fs::create_dir_all(&state.capture_root)
+        .map_err(|error| format!("automatic capture directory is unavailable: {error}"))?;
+    let (capture_path, capture_started) = match state.application.capture_status() {
+        CaptureReadModel::Active { path, .. } => (path, false),
+        CaptureReadModel::Shutdown => {
+            return Err("capture service is unavailable until Transmog restarts".to_owned());
+        }
+        CaptureReadModel::Idle
+        | CaptureReadModel::Sealed { .. }
+        | CaptureReadModel::Failed { .. } => {
+            let path = unique_artifact_path(&state.capture_root, "live", "tmcap");
+            state
+                .application
+                .start_capture(CaptureStartRequest {
+                    path: path.clone(),
+                    max_file_bytes: AUTOMATIC_CAPTURE_BYTES,
+                    retain_body_samples: state
+                        .application
+                        .product_state()
+                        .privacy
+                        .retain_body_samples,
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+            (path, true)
+        }
+    };
+    *state
+        .live_capture_path
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(capture_path);
+    let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
+    match state.application.start_proxy(request, host).await {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            if capture_started {
+                let _ = state.application.stop_capture().await;
+            }
+            Err(error.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -369,10 +436,7 @@ fn remove_certificate(sha256: String, state: State<'_, DesktopState>) -> Result<
         CurrentUserCertificateStore
             .remove(&sha256)
             .map_err(|error| error.to_string())?;
-        state
-            .owned_certificate
-            .clear(&sha256)
-            .map_err(|error| error.to_string())
+        Ok(())
     })();
     match &result {
         Ok(()) => state.application.record_diagnostic(
@@ -422,6 +486,17 @@ async fn create_ca(
             DiagnosticLevel::Error,
             "certificate",
             "key-protection-failed",
+            &message,
+        );
+        return Err(message);
+    }
+    if let Err(error) = state.owned_certificate.claim(&identity.sha256) {
+        let message =
+            format!("CA was created but its durable identity could not be recorded: {error}");
+        state.application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "ownership-claim-failed",
             &message,
         );
         return Err(message);
@@ -583,12 +658,52 @@ async fn export_capture(
 ) -> Result<ExportResult, AppError> {
     let path = request.destination.clone();
     let kind = match request.format {
+        ExportFormat::Native => ArtifactKind::NativeCapture,
         ExportFormat::JsonLines => ArtifactKind::JsonLines,
         ExportFormat::SazStrict | ExportFormat::SazExtended => ArtifactKind::Saz,
     };
     let result = state.application.export_capture(request).await?;
     state.application.remember_artifact(path, kind);
     Ok(result)
+}
+
+#[tauri::command]
+async fn export_live_capture(state: State<'_, DesktopState>) -> Result<ExportResult, String> {
+    let source = state
+        .live_capture_path
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .ok_or_else(|| "Start the proxy before exporting its traffic.".to_owned())?;
+    std::fs::create_dir_all(&state.export_root)
+        .map_err(|error| format!("capture export directory is unavailable: {error}"))?;
+    let destination = unique_artifact_path(&state.export_root, "Transmog-capture", "tmcap");
+    let result = state
+        .application
+        .export_capture(ExportRequest {
+            source,
+            destination: destination.clone(),
+            format: ExportFormat::Native,
+            max_source_bytes: 4 * 1024 * 1024 * 1024,
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    state
+        .application
+        .remember_artifact(destination, ArtifactKind::NativeCapture);
+    Ok(result)
+}
+
+fn unique_artifact_path(root: &std::path::Path, prefix: &str, extension: &str) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let sequence = ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    root.join(format!(
+        "{prefix}-{timestamp}-{}-{sequence}.{extension}",
+        std::process::id()
+    ))
 }
 
 /// Runs the Windows `WebView2` host with a fixed embedded origin.
@@ -624,6 +739,14 @@ pub fn run() {
     let host = Arc::new(WindowsProxyIntegration::system(
         state_root.join("proxy-recovery-v1.json"),
     ));
+    if let Err(error) = host.recover_pending() {
+        application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "desktop",
+            "startup-proxy-recovery-failed",
+            &error.to_string(),
+        );
+    }
     let owned_certificate =
         OwnedCertificateRegistry::new(state_root.join("certificate-ownership-v1.json"));
     let ca_certificate_path = state_root.join("interception-ca.pem");
@@ -636,7 +759,9 @@ pub fn run() {
     let close_started = Arc::new(AtomicBool::new(false));
     let close_guard = Arc::clone(&close_started);
 
-    tauri::Builder::default()
+    let exit_host = Arc::clone(&host);
+    let exit_application = application.clone();
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(
             |app, _arguments, _cwd| {
                 if let Some(window) = app.get_webview_window("main") {
@@ -648,11 +773,14 @@ pub fn run() {
         ))
         .manage(DesktopState {
             application: application.clone(),
-            host,
+            host: Arc::clone(&host),
             owned_certificate,
             ca_certificate_path,
             ca_private_key_path,
             diagnostics_path,
+            capture_root: state_root.join("captures"),
+            export_root: state_root.join("exports"),
+            live_capture_path: Arc::new(Mutex::new(None)),
         })
         .register_uri_scheme_protocol("transmog-ui", move |_context, request: Request<Vec<u8>>| {
             let view = ShellView::from(&protocol_application.status());
@@ -713,7 +841,8 @@ pub fn run() {
             stop_capture,
             capture_status,
             import_capture,
-            export_capture
+            export_capture,
+            export_live_capture
         ])
         .setup(move |app| Ok(create_main_window(app, initial_window, webview_data_path)?))
         .on_window_event(move |window, event| {
@@ -735,8 +864,22 @@ pub fn run() {
                 });
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Tauri desktop host failed");
+        .build(tauri::generate_context!())
+        .expect("Tauri desktop host failed to build");
+    app.run(move |_app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) && let Err(error) = exit_host.recover_pending()
+        {
+            exit_application.record_diagnostic(
+                DiagnosticLevel::Error,
+                "desktop",
+                "exit-proxy-recovery-failed",
+                &error.to_string(),
+            );
+        }
+    });
 }
 
 fn packaged_script_host() -> Option<PathBuf> {
@@ -764,13 +907,14 @@ fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Re
                 b"preview unavailable".to_vec(),
             )
         },
-        |png| (StatusCode::OK, "image/png", png.as_ref().clone()),
+        |(bytes, mime_type)| (StatusCode::OK, mime_type, bytes.as_ref().clone()),
     );
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-store")
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CONTENT_DISPOSITION, "inline")
         .header(
             header::CONTENT_SECURITY_POLICY,
             "default-src 'none'; sandbox",

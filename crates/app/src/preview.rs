@@ -28,7 +28,13 @@ struct PreviewCache {
 
 struct PreviewEntry {
     handle: String,
-    png: Arc<Vec<u8>>,
+    asset: PreviewAsset,
+}
+
+#[derive(Clone)]
+pub(crate) struct PreviewAsset {
+    pub(crate) bytes: Arc<Vec<u8>>,
+    pub(crate) mime_type: &'static str,
 }
 
 impl PreviewService {
@@ -39,7 +45,23 @@ impl PreviewService {
         }
     }
 
-    pub(crate) async fn create(&self, source: Vec<u8>) -> Result<String, AppError> {
+    pub(crate) async fn create(
+        &self,
+        source: Vec<u8>,
+        media_type: Option<&str>,
+    ) -> Result<(String, &'static str), AppError> {
+        if source.is_empty() || source.len() > transmog_preview_worker::MAX_SOURCE_BYTES {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "image preview source exceeds sixteen MiB",
+                false,
+            ));
+        }
+        if media_type.is_some_and(is_svg_media_type) {
+            validate_svg(&source)?;
+            let handle = self.insert(source, "image/svg+xml")?;
+            return Ok((handle, "image/svg+xml"));
+        }
         let executable = self.executable.as_deref().ok_or_else(|| {
             AppError::new(
                 ErrorCategory::Unavailable,
@@ -54,14 +76,9 @@ impl PreviewService {
                 true,
             ));
         }
-        if source.is_empty() || source.len() > transmog_preview_worker::MAX_SOURCE_BYTES {
-            return Err(AppError::new(
-                ErrorCategory::Limit,
-                "image preview source exceeds sixteen MiB",
-                false,
-            ));
-        }
         let mut command = tokio::process::Command::new(executable.as_path());
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000);
         command
             .arg("--sandbox-bootstrap")
             .current_dir(executable.parent().ok_or_else(|| {
@@ -107,10 +124,11 @@ impl PreviewService {
                 false,
             ));
         };
-        self.insert(png)
+        let handle = self.insert(png, "image/png")?;
+        Ok((handle, "image/png"))
     }
 
-    pub(crate) fn get(&self, handle: &str) -> Option<Arc<Vec<u8>>> {
+    pub(crate) fn get(&self, handle: &str) -> Option<PreviewAsset> {
         if handle.len() != 24
             || !handle
                 .bytes()
@@ -124,10 +142,10 @@ impl PreviewService {
             .entries
             .iter()
             .find(|entry| entry.handle == handle)
-            .map(|entry| Arc::clone(&entry.png))
+            .map(|entry| entry.asset.clone())
     }
 
-    fn insert(&self, png: Vec<u8>) -> Result<String, AppError> {
+    fn insert(&self, bytes: Vec<u8>, mime_type: &'static str) -> Result<String, AppError> {
         let mut random = [0_u8; 18];
         getrandom::fill(&mut random).map_err(|_| {
             AppError::new(
@@ -137,7 +155,7 @@ impl PreviewService {
             )
         })?;
         let handle = URL_SAFE_NO_PAD.encode(random);
-        let length = png.len();
+        let length = bytes.len();
         let mut cache = self
             .cache
             .lock()
@@ -148,7 +166,7 @@ impl PreviewService {
             let Some(evicted) = cache.entries.pop_front() else {
                 break;
             };
-            cache.bytes = cache.bytes.saturating_sub(evicted.png.len());
+            cache.bytes = cache.bytes.saturating_sub(evicted.asset.bytes.len());
         }
         if length > MAX_CACHE_BYTES {
             return Err(AppError::new(
@@ -160,10 +178,43 @@ impl PreviewService {
         cache.bytes = cache.bytes.saturating_add(length);
         cache.entries.push_back(PreviewEntry {
             handle: handle.clone(),
-            png: Arc::new(png),
+            asset: PreviewAsset {
+                bytes: Arc::new(bytes),
+                mime_type,
+            },
         });
         Ok(handle)
     }
+}
+
+fn is_svg_media_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("image/svg+xml"))
+}
+
+fn validate_svg(source: &[u8]) -> Result<(), AppError> {
+    let text = std::str::from_utf8(source).map_err(|_| {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "SVG preview must be valid UTF-8",
+            false,
+        )
+    })?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let prefix = text
+        .get(..text.len().min(64 * 1024))
+        .unwrap_or(text)
+        .to_ascii_lowercase();
+    if !prefix.contains("<svg") {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "SVG preview does not contain an SVG root element",
+            false,
+        ));
+    }
+    Ok(())
 }
 
 async fn communicate(
@@ -256,13 +307,45 @@ mod tests {
         let service = PreviewService::new(None);
         let mut handles = Vec::new();
         for value in 0..=MAX_PREVIEWS {
-            handles.push(service.insert(vec![u8::try_from(value).unwrap()]).unwrap());
+            handles.push(
+                service
+                    .insert(vec![u8::try_from(value).unwrap()], "image/png")
+                    .unwrap(),
+            );
         }
         assert!(service.get(&handles[0]).is_none());
         assert_eq!(
-            service.get(handles.last().unwrap()).unwrap().as_slice(),
+            service
+                .get(handles.last().unwrap())
+                .unwrap()
+                .bytes
+                .as_slice(),
             &[64]
         );
         assert!(service.get("../../not-a-handle").is_none());
+    }
+
+    #[tokio::test]
+    async fn svg_uses_opaque_direct_image_asset_without_a_worker() {
+        let service = PreviewService::new(None);
+        let source = br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect width="1" height="1"/></svg>"#.to_vec();
+        let (handle, mime_type) = service
+            .create(source.clone(), Some("image/svg+xml; charset=utf-8"))
+            .await
+            .unwrap();
+        let asset = service.get(&handle).unwrap();
+        assert_eq!(mime_type, "image/svg+xml");
+        assert_eq!(asset.mime_type, "image/svg+xml");
+        assert_eq!(asset.bytes.as_slice(), source);
+    }
+
+    #[tokio::test]
+    async fn mislabeled_non_svg_is_rejected_without_starting_a_worker() {
+        let service = PreviewService::new(None);
+        let error = service
+            .create(b"not an image".to_vec(), Some("image/svg+xml"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.category, ErrorCategory::InvalidInput);
     }
 }

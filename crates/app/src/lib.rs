@@ -662,7 +662,9 @@ impl Application {
             let (metadata, source, decoded) =
                 inspector::image_source(self.body_store.as_ref(), &request).await?;
             let display_bytes = source.len();
-            let preview_handle = self.previews.create(source).await?;
+            let media_type = metadata.media_type.clone();
+            let (preview_handle, preview_mime_type) =
+                self.previews.create(source, media_type.as_deref()).await?;
             return Ok(BodyInspection {
                 metadata,
                 representation: "image",
@@ -673,15 +675,17 @@ impl Application {
                 next_offset: None,
                 warning: None,
                 preview_handle: Some(preview_handle),
-                preview_mime_type: Some("image/png"),
+                preview_mime_type: Some(preview_mime_type),
             });
         }
         inspector::inspect_body(self.body_store.as_ref(), request).await
     }
 
-    /// Resolves one opaque, short-lived normalized preview handle.
-    pub fn image_preview(&self, handle: &str) -> Option<Arc<Vec<u8>>> {
-        self.previews.get(handle)
+    /// Resolves one opaque, short-lived safe image preview handle.
+    pub fn image_preview(&self, handle: &str) -> Option<(Arc<Vec<u8>>, &'static str)> {
+        self.previews
+            .get(handle)
+            .map(|asset| (asset.bytes, asset.mime_type))
     }
 
     /// Attaches the exclusive same-build breakpoint controller.

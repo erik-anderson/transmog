@@ -465,6 +465,33 @@ impl SessionCatalog {
         CatalogPage { sessions, next }
     }
 
+    /// Returns the newest matching bounded window in admission order.
+    ///
+    /// This is intended for live traffic surfaces that follow the tail rather
+    /// than expose cursor-based historical pagination.
+    pub fn query_latest(&self, query: &CatalogQuery) -> CatalogPage {
+        let state = self.lock_state();
+        let limit = query
+            .limit
+            .map_or(self.inner.limits.max_page_size.get(), NonZeroUsize::get)
+            .min(self.inner.limits.max_page_size.get());
+        let mut selected = state
+            .order
+            .iter()
+            .rev()
+            .filter_map(|(_, exchange_id)| {
+                let session = state.by_id.get(exchange_id)?;
+                matches_filter(session, &query.filter).then_some(session)
+            })
+            .take(limit)
+            .collect::<Vec<_>>();
+        selected.reverse();
+        CatalogPage {
+            sessions: selected.into_iter().map(MutableSession::snapshot).collect(),
+            next: None,
+        }
+    }
+
     /// Returns monotonic pressure and loss counters.
     pub fn counters(&self) -> CatalogCounters {
         self.lock_state().counters

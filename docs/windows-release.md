@@ -124,16 +124,20 @@ Use a disposable, fully updated Windows 11 VM with no Transmog state:
    a valid Authenticode publisher and that no WebView payload is installed by
    Transmog.
 2. Launch Transmog twice. Confirm one process/window and focus handoff.
-3. Create the app CA and approve current-user trust. Start current-user proxy
-   integration and verify HTTPS interception with certificate validation on.
+3. Choose **Set up HTTPS interception**, verify the warning precedes the OS
+   prompt, and approve current-user trust. Start the proxy and verify that the
+   current-user proxy is applied, live traffic follows automatically, and HTTPS
+   certificate validation remains on.
 4. Exercise HTTP/1.1, HTTP/2, HTTP/3 egress, gzip, deflate, Brotli, zstd,
    WebSocket inspection, one request edit, one response edit, composer replay,
    native capture, JSONL export, and strict/extended SAZ export. For every case,
    verify the Transmog session/capture evidence so a direct path cannot pass.
 5. Exercise keyboard-only navigation, a screen reader, 100%, 150%, and 200%
    scaling, Windows high contrast, reduced motion, and deliberately long text.
-6. Start the system proxy, terminate Transmog, relaunch, and use recovery.
-   Confirm the exact previous registry values are restored.
+6. Start the proxy, terminate Transmog, and relaunch. Confirm startup recovery
+   restores the exact previous registry values without requiring a manual
+   recovery click. Also verify normal close and an OS-requested exit restore
+   before process termination.
 7. Run **Prepare safe update handoff**, install a newer signed build offline,
    and confirm preferences and the exact app-owned certificate survive.
 8. Uninstall and approve exact certificate removal. Confirm the system proxy is
