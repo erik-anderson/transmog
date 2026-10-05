@@ -98,7 +98,10 @@ if (-not $runRoot.StartsWith($interopRoot + [IO.Path]::DirectorySeparatorChar)) 
 
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 try {
-    cargo build --release --locked -p transmog
+    cargo build --release --locked `
+        -p transmog `
+        -p transmog-script-host `
+        -p transmog-preview-worker
     & $binary ca generate `
         --cert $caCertificate `
         --key $caPrivateKey `
@@ -132,12 +135,16 @@ try {
     $env:TRANSMOG_APACHE_URL = Get-PublishedUrl $dockerCli $composeFile $project 'apache'
     $env:TRANSMOG_CADDY_URL = "https://127.0.0.1:$($env:TRANSMOG_INTEROP_TLS_PORT)/"
     $env:TRANSMOG_INTEROP = '1'
+    $env:TRANSMOG_SCRIPT_HOST = Join-Path $repoRoot "target\release\transmog-script-host.exe"
+    $env:TRANSMOG_PREVIEW_WORKER = Join-Path $repoRoot "target\release\transmog-preview-worker.exe"
 
     Write-Output "NGINX_ORIGIN=$($env:TRANSMOG_NGINX_URL)"
     Write-Output "APACHE_ORIGIN=$($env:TRANSMOG_APACHE_URL)"
     Write-Output "CADDY_ORIGIN=$($env:TRANSMOG_CADDY_URL)"
     Write-Output "CURL=$curlCli"
     Write-Output "CURL_VERSION=$((& $curlCli --version | Select-Object -First 1).Trim())"
+
+    cargo test --release --locked -p transmog-app --test headless_product -- --ignored --nocapture
 
     Push-Location $playwrightProject
     try {

@@ -290,6 +290,7 @@ pub(crate) fn session_detail(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn inspect_body(
     body_store: Option<&BodyStore>,
     request: BodyInspectionRequest,
@@ -574,24 +575,25 @@ async fn decode_content(codings: &[String], encoded: Vec<u8>) -> Result<Vec<u8>,
         .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))?;
     let mut current = encoded;
     for coding in stack.decode_order() {
-        let mut decoder = ContentDecoder::new(coding, limits)
+        let mut codec = ContentDecoder::new(coding, limits)
             .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
-        let mut frames = decoder
+        let mut frames = codec
             .on_frame(BodyFrame::Data(Bytes::from(current)))
             .await
             .map_err(content_decode_error)?;
-        frames.extend(decoder.finish().await.map_err(content_decode_error)?);
-        let mut decoded = Vec::new();
+        frames.extend(codec.finish().await.map_err(content_decode_error)?);
+        let mut decoded_bytes = Vec::new();
         for frame in frames {
             if let BodyFrame::Data(bytes) = frame {
-                decoded.extend_from_slice(&bytes);
+                decoded_bytes.extend_from_slice(&bytes);
             }
         }
-        current = decoded;
+        current = decoded_bytes;
     }
     Ok(current)
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn content_decode_error(error: transmog_content::ContentCodecError) -> AppError {
     AppError::new(
         ErrorCategory::InvalidInput,
@@ -669,9 +671,9 @@ fn decode_unicode(bytes: &[u8], declared: Option<&str>) -> Option<String> {
         decode_utf16(&bytes[2..], false)?
     } else {
         match normalized.as_deref() {
-            Some("utf-16") | Some("utf-16le") => decode_utf16(bytes, true)?,
+            Some("utf-16" | "utf-16le") => decode_utf16(bytes, true)?,
             Some("utf-16be") => decode_utf16(bytes, false)?,
-            Some("utf-32") | Some("utf-32le") => decode_utf32(bytes, true)?,
+            Some("utf-32" | "utf-32le") => decode_utf32(bytes, true)?,
             Some("utf-32be") => decode_utf32(bytes, false)?,
             Some("us-ascii") if bytes.iter().all(u8::is_ascii) => {
                 String::from_utf8(bytes.to_vec()).ok()?
@@ -876,7 +878,7 @@ mod tests {
             0,
         );
         assert_eq!(rendered.0, "formatted-json");
-        assert!(rendered.1.contains("\n"));
+        assert!(rendered.1.contains('\n'));
         assert!(hex_dump(&[0, b'A', 0xff], 16).starts_with("00000010"));
     }
 
@@ -888,13 +890,13 @@ mod tests {
             ContentCoding::Brotli,
             ContentCoding::Zstd,
         ] {
-            let mut encoder = ContentEncoder::new(coding, ContentLimits::default()).unwrap();
-            let mut frames = encoder
+            let mut codec = ContentEncoder::new(coding, ContentLimits::default()).unwrap();
+            let mut frames = codec
                 .on_frame(BodyFrame::Data(Bytes::from_static(b"encoded preview")))
                 .await
                 .unwrap();
-            frames.extend(encoder.finish().await.unwrap());
-            let encoded = frames
+            frames.extend(codec.finish().await.unwrap());
+            let encoded_bytes = frames
                 .into_iter()
                 .filter_map(|frame| match frame {
                     BodyFrame::Data(bytes) => Some(bytes),
@@ -903,7 +905,7 @@ mod tests {
                 .flatten()
                 .collect::<Vec<_>>();
             assert_eq!(
-                decode_content(&[coding.as_str().to_owned()], encoded)
+                decode_content(&[coding.as_str().to_owned()], encoded_bytes)
                     .await
                     .unwrap(),
                 b"encoded preview"

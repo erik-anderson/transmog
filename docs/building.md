@@ -232,6 +232,14 @@ browser. Docker Desktop must be running. No CA installation or administrator
 access is required; the suite creates an ephemeral CA and exact-IP origin leaf
 inside its per-run directory and deletes them during cleanup.
 
+The runner also builds release copies of the proxy, script host, and preview
+worker, then runs the UI-neutral product workflow with the production
+AppContainer/Job Object requirement. The current user must be allowed to create
+and launch an AppContainer profile, but no trust-store, system-proxy, registry,
+or administrator mutation is performed. The test keeps all application state,
+body-cache data, captures, exports, and temporary sandbox identities under its
+per-run directory and removes them during cleanup.
+
 Content fuzzing is an optional maintainer workflow, not a build prerequisite.
 It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
 LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal

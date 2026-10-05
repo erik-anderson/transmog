@@ -120,6 +120,7 @@ distributed clients and servers:
 
 | Client | Origin | Assertions |
 |---|---|---|
+| curl through headless `transmog-app` | Nginx 1.28.0 | native and scripted conditional headers, break/edit, small and streamed autoresponses, original/effective bodies, image preview, script-error abort, circular eviction, capture/export, and persisted-service restart |
 | curl | Nginx 1.28.0 | HTTP status, pinned server identity, proxy-added header and HTML marker, terminal exchange evidence |
 | curl | Apache HTTP Server 2.4.65 | HTTP status, pinned server identity, proxy-added header and HTML marker, terminal exchange evidence |
 | Chromium | Nginx 1.28.0 | navigation, response headers, DOM marker, terminal exchange evidence |
@@ -149,6 +150,15 @@ network, generated encoded bodies, and private material are removed in a
 ```powershell
 pwsh ./scripts/test-interop.ps1
 ```
+
+Before the browser matrix, the runner builds the release `transmog`,
+`transmog-script-host`, and `transmog-preview-worker` binaries and invokes the
+ignored `crates/app/tests/headless_product.rs` test. The test constructs the
+real UI-neutral `Application`, launches curl through its proxy, and requires the
+packaged V8 and raster-preview helpers to start with production sandbox policy.
+Its restart step creates a new application instance over the same project
+directory and proves active automation, scripts, and response assets reload;
+Tauri, `WebView2`, and Monaco are not present in that process.
 
 Pass `-SkipBrowserInstall` only when the package's pinned Playwright Chromium
 is already cached. This local, deterministic matrix complements rather than

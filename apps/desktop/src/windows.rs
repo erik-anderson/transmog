@@ -441,6 +441,7 @@ async fn export_capture(
 /// # Panics
 ///
 /// Panics if the embedded assets, application service, or Tauri host cannot initialize.
+#[allow(clippy::too_many_lines)]
 pub fn run() {
     exit_for_maintenance_if_requested();
     let replay = SystemReplayExecutor::new(ProxyRoute::Auto)

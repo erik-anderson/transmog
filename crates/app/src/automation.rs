@@ -102,9 +102,7 @@ impl AutomationRegistry {
         let limits = AutomationLimits::default();
         let document = path
             .as_deref()
-            .map(|path| load_latest(path, assets.clone()))
-            .transpose()?
-            .flatten()
+            .and_then(|path| load_latest(path, &assets))
             .unwrap_or_default();
         validate_document(&document)?;
         let compiled = compile_with_assets(document.rules.clone(), limits, Some(assets.clone()))
@@ -289,6 +287,7 @@ fn validate_document(document: &AutomationRuleSet) -> Result<(), AppError> {
     Ok(())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn compile_error(error: transmog_automation::CompileError) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, error.to_string(), false)
 }
@@ -299,10 +298,7 @@ fn slot_path(path: &Path, slot: u64) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn load_latest(
-    path: &Path,
-    assets: Arc<dyn ResponseAssetResolver>,
-) -> Result<Option<AutomationRuleSet>, AppError> {
+fn load_latest(path: &Path, assets: &Arc<dyn ResponseAssetResolver>) -> Option<AutomationRuleSet> {
     let mut candidates = Vec::new();
     for slot in 0..=1 {
         let candidate = slot_path(path, slot);
@@ -315,21 +311,20 @@ fn load_latest(
         let Ok(bytes) = std::fs::read(candidate) else {
             continue;
         };
-        if let Ok(document) = serde_json::from_slice::<AutomationRuleSet>(&bytes) {
-            if validate_document(&document).is_ok()
-                && compile_with_assets(
-                    document.rules.clone(),
-                    AutomationLimits::default(),
-                    Some(assets.clone()),
-                )
-                .is_ok()
-            {
-                candidates.push(document);
-            }
+        if let Ok(document) = serde_json::from_slice::<AutomationRuleSet>(&bytes)
+            && validate_document(&document).is_ok()
+            && compile_with_assets(
+                document.rules.clone(),
+                AutomationLimits::default(),
+                Some(Arc::clone(assets)),
+            )
+            .is_ok()
+        {
+            candidates.push(document);
         }
     }
     candidates.sort_by_key(|candidate| candidate.generation);
-    Ok(candidates.pop())
+    candidates.pop()
 }
 
 fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
@@ -383,8 +378,10 @@ fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
 fn hex_sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            let _ = std::fmt::Write::write_fmt(&mut output, format_args!("{byte:02x}"));
+            output
+        })
 }
 
 #[cfg(test)]

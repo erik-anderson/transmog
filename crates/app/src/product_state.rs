@@ -81,6 +81,7 @@ impl Default for ProductPreferences {
 /// Explicit persisted privacy choices.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)]
 pub struct PrivacySettings {
     /// Retain response bodies in the product cache for inspection.
     #[serde(default = "default_true")]

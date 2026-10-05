@@ -134,9 +134,7 @@ impl ScriptRegistry {
     ) -> Result<Self, AppError> {
         let workspace = path
             .as_deref()
-            .map(load_latest)
-            .transpose()?
-            .flatten()
+            .and_then(load_latest)
             .unwrap_or(ScriptWorkspace {
                 schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
                 ..ScriptWorkspace::default()
@@ -570,7 +568,7 @@ fn slot_path(path: &Path, slot: u64) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn load_latest(path: &Path) -> Result<Option<ScriptWorkspace>, AppError> {
+fn load_latest(path: &Path) -> Option<ScriptWorkspace> {
     let mut workspaces = Vec::new();
     for slot in 0..=1 {
         let candidate = slot_path(path, slot);
@@ -583,14 +581,14 @@ fn load_latest(path: &Path) -> Result<Option<ScriptWorkspace>, AppError> {
         let Ok(bytes) = std::fs::read(candidate) else {
             continue;
         };
-        if let Ok(workspace) = serde_json::from_slice::<ScriptWorkspace>(&bytes) {
-            if validate_workspace(&workspace).is_ok() {
-                workspaces.push(workspace);
-            }
+        if let Ok(workspace) = serde_json::from_slice::<ScriptWorkspace>(&bytes)
+            && validate_workspace(&workspace).is_ok()
+        {
+            workspaces.push(workspace);
         }
     }
     workspaces.sort_by_key(|workspace| workspace.generation);
-    Ok(workspaces.pop())
+    workspaces.pop()
 }
 
 fn persist(path: &Path, workspace: &ScriptWorkspace) -> Result<(), AppError> {
@@ -644,10 +642,13 @@ fn persist(path: &Path, workspace: &ScriptWorkspace) -> Result<(), AppError> {
 fn hex_sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::with_capacity(64), |mut output, byte| {
+            let _ = std::fmt::Write::write_fmt(&mut output, format_args!("{byte:02x}"));
+            output
+        })
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn script_compile_error(error: transmog_script::ScriptCompileError) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, error.to_string(), false)
 }

@@ -13,6 +13,9 @@ The project is under active implementation. See [architecture](docs/architecture
 [limitations](docs/limitations.md). Forward work is organized by the
 [layered monorepo roadmap](docs/specs/monorepo-roadmap.md), with a dedicated
 [content-processing plan](docs/specs/content-processing-plan.md).
+The completed traffic inspection, automation, response-asset, sandboxed
+scripting, and safe-preview implementation is recorded in the
+[traffic workspace plan](docs/specs/traffic-inspection-automation-scripting-plan.md).
 SAZ conversion behavior and its fidelity limits are documented in
 [SAZ compatibility](docs/saz-compatibility.md). The optional declarative layer
 is described in [automation](docs/automation.md); embedders may instead install
@@ -44,10 +47,13 @@ It publishes digest-pinned Nginx, Apache, and Caddy only on ephemeral loopback
 ports. Standalone curl proves HTTP/1.1 plus verified HTTP/2 and HTTP/3 origin
 egress; Playwright-managed Chromium proves normal navigation, every supported
 HTTP content coding (including a four-layer stack), and a WebSocket echo through
-the browser's `CONNECT` behavior. Every case requires proxy modification or
-terminal exchange evidence so client bypass cannot produce a false pass. The
-runner uses an ephemeral CA in process and does not install a certificate or
-modify an OS trust store.
+the browser's `CONNECT` behavior. Before that matrix, curl drives the real
+headless application service through native rules, sandboxed scripts,
+breakpoints, response assets, retained-body inspection and eviction, isolated
+image preview, capture/export, and restart persistence. Every case requires
+proxy modification or terminal exchange evidence so client bypass cannot
+produce a false pass. The runner uses an ephemeral CA in process and does not
+install a certificate or modify an OS trust store.
 
 The primary build profile is **Windows LLVM/Ninja**: Clang compiles native code,
 `llvm-lib` archives it, Ninja executes native builds, and the Windows SDK

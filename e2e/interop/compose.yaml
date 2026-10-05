@@ -11,6 +11,10 @@ services:
         source: ${TRANSMOG_INTEROP_ASSETS_DIR:?set TRANSMOG_INTEROP_ASSETS_DIR}
         target: /usr/share/nginx/html/encoding
         read_only: true
+      - type: bind
+        source: ${TRANSMOG_INTEROP_ASSETS_DIR:?set TRANSMOG_INTEROP_ASSETS_DIR}/image.png
+        target: /usr/share/nginx/html/image.png
+        read_only: true
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
       interval: 1s

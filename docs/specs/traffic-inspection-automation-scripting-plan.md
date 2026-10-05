@@ -1,6 +1,6 @@
 # Plan: Traffic inspection, automation, and sandboxed scripting
 
-Status: approved; implementation in progress
+Status: completed 2026-10-04
 Audience: maintainers, application authors, security reviewers, and UI authors
 Depends on: Hooks v2, content processing, application/session service, native
 capture, and the Windows Tauri/WebUI shell
@@ -82,27 +82,24 @@ decisions; it never receives core objects, file paths, sockets, or Tauri
 handles. A future CLI reuses the workspace and supervisor layers without
 depending on Monaco or Tauri.
 
-## Current foundation and gaps
+## Implemented architecture
 
-| Capability | Current foundation | Remaining gap |
-| --- | --- | --- |
-| Live traffic | Bounded catalog, paging, filters, and lossy update hints | Virtualized live workspace, stable selection, richer filters, timing, tags, and body availability |
-| Break and inspect | Request and response head/body phases with bounded decoded edits | Integrated editors, original/effective diffs, automatic pause UX, and clearer deadlines |
-| Conditional headers | Native rules support method, host, path-prefix, status, and header set/remove actions | Product persistence, request-header predicates, dynamic activation, richer safe matching, and UI |
-| Autoresponse | A request-head hook can return a bounded local response | Response asset store, matching, live activation, completeness checks, UI, and large streaming bodies |
-| Response bodies | Observers can receive full chunks and native capture can retain them | Indexed random-access store, default retention, eviction, representation metadata, decoding, and preview |
-| Audit | Hook identity, phase, header-name changes, body plan, abort, and local response are recorded | Rule/script revision, source hash, handler, response asset, runtime failure, and source location |
-| Scripting | Hooks v2 is a suitable execution target | API schema, compiler, isolated runtime, permissions, supervisor, persistence, diagnostics, and editor |
-| Preview | Escaped text and hex summaries exist | Full inspector modes, charset handling, image rasterization, isolated serving, and hostile-input tests |
+| Capability | Completed result |
+| --- | --- |
+| Live traffic | Bounded catalog paging, filters, coalesced live updates, stable selection, timing, route, audit, WebSocket, and body-availability models feed a virtualized grid. |
+| Break and inspect | Request and response head/body phases use bounded typed editors, original/effective views, explicit deadlines, and controller ownership. |
+| Conditional headers | Persisted native rules and sandboxed scripts share immutable per-exchange snapshots, ordered actions, conflict checks, and exact revision attribution. |
+| Autoresponse | Immutable authored, imported, or session-derived response assets support repaired small responses and backpressured large streams. |
+| Response bodies | A boundary-aware on-disk store provides range reads, default one-GiB circular retention, deterministic eviction, explicit loss states, decoding, and previews. |
+| Audit | Effects identify rule or script revision, source hash, handler, phase, action, changed fields, selected response asset, and bounded failures. |
+| Scripting | Versioned DTOs, Rust-authoritative TypeScript compilation, generated declarations, V8 execution, AppContainer/Job Object isolation, supervision, persistence, diagnostics, and Monaco authoring are wired end to end. |
+| Preview | Bounded Unicode, JSON, and byte modes plus isolated raster image normalization use opaque handles and a separate no-network origin. |
 
-The application currently constructs an empty caller hook chain before the
-session service appends interactive control. Wiring dynamic product hooks into
-that construction is therefore application work, not a replacement for core.
-The small core extension is a bounded registration provider invoked when an
-exchange is admitted. It returns an immutable, finite set of identified
-`InterceptorRegistration`s for that exchange. This preserves native Hooks v2
-ordering and exact rule or script attribution instead of hiding all product
-decisions behind one dispatcher identity.
+The application installs bounded dynamic registration providers before the
+session service appends interactive control. Each admitted exchange receives an
+immutable, finite set of identified `InterceptorRegistration`s. Native rules,
+scripts, and breakpoint control therefore retain Hooks v2 ordering and exact
+attribution instead of hiding decisions behind one dispatcher identity.
 
 ## Response body retention
 
@@ -484,6 +481,19 @@ Exit gate: tests prove that the proxy observed or changed each exchange, script
 failures abort visibly, body eviction preserves evidence, and the same project
 services operate headlessly without Tauri or Monaco.
 
+Completion evidence (2026-10-04): `scripts/test-interop.ps1` builds the release
+proxy, script host, and preview worker and runs the ignored
+`transmog-app/tests/headless_product.rs` workflow against the digest-pinned
+Nginx origin with standalone curl. That workflow covers native and scripted
+conditional `User-Agent` changes, request break/edit, small native and scripted
+autoresponses, a streamed response larger than the buffered limit,
+original/effective body hashes and views, isolated PNG preview, visible
+script-error abort, deterministic circular eviction, native capture, JSONL and
+strict SAZ export, and clean application restart with persisted rules, scripts,
+and assets. The same runner then executes the independent curl/Chromium matrix
+against Nginx, Apache, Caddy, and the WebSocket origin, including verified H2
+and H3 egress and every supported content-coding path.
+
 ## Test strategy
 
 - Unit and property tests cover matcher overlap, rule ordering, write sets,
@@ -511,27 +521,27 @@ services operate headlessly without Tauri or Monaco.
 
 ## Definition of done
 
-- [ ] Conditional native `User-Agent` changes and equivalent scripts produce
+- [x] Conditional native `User-Agent` changes and equivalent scripts produce
       the same canonical header result and distinct attributed hook IDs.
-- [ ] Response retention defaults to a configurable one-GiB circular buffer;
+- [x] Response retention defaults to a configurable one-GiB circular buffer;
       off and stop-when-full modes behave deterministically.
-- [ ] Original upstream and effective client response bodies are separately
+- [x] Original upstream and effective client response bodies are separately
       identifiable, with safe text, structured, image, and bounded byte views.
-- [ ] Eviction, loss, truncation, unsupported encoding, and unavailable preview
+- [x] Eviction, loss, truncation, unsupported encoding, and unavailable preview
       are never displayed as an empty successful body.
-- [ ] Saved or authored responses work through native rules and scripts, and
+- [x] Saved or authored responses work through native rules and scripts, and
       large assets stream without complete-body memory growth.
-- [ ] Every traffic modification identifies the exact rule or script revision,
+- [x] Every traffic modification identifies the exact rule or script revision,
       phase, action, and changed structural fields.
-- [ ] User scripts run outside the proxy and desktop processes with operating-
+- [x] User scripts run outside the proxy and desktop processes with operating-
       system and V8 resource limits and no ambient capabilities.
-- [ ] Every enabled-script error aborts the affected exchange and produces a
+- [x] Every enabled-script error aborts the affected exchange and produces a
       redacted, source-mapped, actionable UI diagnostic.
-- [ ] Monaco and all language workers are locally packaged, CSP-clean,
+- [x] Monaco and all language workers are locally packaged, CSP-clean,
       accessible, and absent from headless products.
-- [ ] Active captured content cannot execute in the app origin or initiate
+- [x] Active captured content cannot execute in the app origin or initiate
       network, filesystem, navigation, or script activity.
-- [ ] Core, content, runtime, standalone interoperability, fuzz, dependency,
+- [x] Core, content, runtime, standalone interoperability, fuzz, dependency,
       desktop, and packaging gates remain green without hosted CI.
 
 ## Design references

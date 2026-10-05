@@ -187,7 +187,7 @@ impl ResponseAssetStore {
             input.id,
             input.revision,
             input.status,
-            input.headers,
+            &input.headers,
             input.media_type,
             ResponseAssetProvenance::Authored,
             std::io::Cursor::new(input.body),
@@ -214,7 +214,7 @@ impl ResponseAssetStore {
             input.id,
             input.revision,
             input.status,
-            input.headers,
+            &input.headers,
             input.media_type,
             ResponseAssetProvenance::Imported,
             file,
@@ -250,7 +250,7 @@ impl ResponseAssetStore {
             input.id,
             input.revision,
             input.status,
-            input.headers,
+            &input.headers,
             input
                 .media_type
                 .or_else(|| lease.metadata().media_type.clone()),
@@ -268,7 +268,7 @@ impl ResponseAssetStore {
         id: String,
         revision: u64,
         status: u16,
-        headers: HeaderBlock,
+        headers: &HeaderBlock,
         media_type: Option<String>,
         provenance: ResponseAssetProvenance,
         reader: impl Read,
@@ -389,7 +389,7 @@ impl ResponseAssetResolver for ResponseAssetStore {
         let expected = asset.body_bytes;
         std::thread::Builder::new()
             .name("transmog-response-asset".to_owned())
-            .spawn(move || stream_file(path, expected, sender))
+            .spawn(move || stream_file(path, expected, &sender))
             .map_err(|_| "response asset stream could not start".to_owned())?;
         Ok(AutomationResponse::Streaming(LocalStreamingResponse {
             head,
@@ -416,7 +416,7 @@ impl ScriptResponseAssetResolver for ResponseAssetStore {
     }
 }
 
-fn stream_file(path: PathBuf, expected: u64, sender: transmog_core::BodyStreamSender) {
+fn stream_file(path: PathBuf, expected: u64, sender: &transmog_core::BodyStreamSender) {
     let result = (|| -> Result<(), BodyStreamError> {
         let mut file = File::open(path)
             .map_err(|_| BodyStreamError::Failed("response asset body open failed".to_owned()))?;
@@ -467,7 +467,7 @@ fn validate_identity(id: &str, revision: u64) -> Result<(), AppError> {
 }
 
 fn repair_headers(
-    headers: HeaderBlock,
+    headers: &HeaderBlock,
     body_bytes: u64,
     media_type: Option<&str>,
 ) -> Result<HeaderBlock, AppError> {
@@ -661,7 +661,13 @@ fn random_hex() -> Result<String, AppError> {
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    bytes.iter().fold(
+        String::with_capacity(bytes.len().saturating_mul(2)),
+        |mut output, byte| {
+            let _ = std::fmt::Write::write_fmt(&mut output, format_args!("{byte:02x}"));
+            output
+        },
+    )
 }
 
 fn invalid(message: &'static str) -> AppError {
@@ -721,7 +727,11 @@ mod tests {
         let root = root();
         std::fs::create_dir_all(&root).unwrap();
         let source = root.join("large.input");
-        std::fs::write(&source, vec![0x5a; BUFFERED_RESPONSE_BYTES as usize + 1]).unwrap();
+        std::fs::write(
+            &source,
+            vec![0x5a; usize::try_from(BUFFERED_RESPONSE_BYTES).unwrap() + 1],
+        )
+        .unwrap();
         let store = ResponseAssetStore::load(Some(root.clone())).unwrap();
         let asset = store
             .import_file(ImportResponseAsset {

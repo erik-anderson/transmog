@@ -596,6 +596,7 @@ pub enum ScriptAction {
     /// Serve an exact response asset revision.
     Respond {
         /// `id@revision` asset reference.
+        #[serde(rename = "assetRef")]
         asset_ref: String,
     },
     /// Abort with a redaction-safe operator reason.
@@ -1453,5 +1454,23 @@ mod tests {
         assert!(declarations.contains("onRequestHead"));
         assert!(declarations.contains("replace-body"));
         assert!(!declarations.contains("Deno"));
+    }
+
+    #[test]
+    fn response_assets_use_the_documented_camel_case_wire_field() {
+        let action: ScriptAction =
+            serde_json::from_str(r#"{"action":"respond","assetRef":"saved-response@7"}"#).unwrap();
+        assert_eq!(
+            action,
+            ScriptAction::Respond {
+                asset_ref: "saved-response@7".to_owned()
+            }
+        );
+        assert!(
+            serde_json::from_str::<ScriptAction>(
+                r#"{"action":"respond","asset_ref":"saved-response@7"}"#
+            )
+            .is_err()
+        );
     }
 }

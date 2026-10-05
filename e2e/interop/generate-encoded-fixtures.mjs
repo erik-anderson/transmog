@@ -31,6 +31,16 @@ for (const encode of [gzipSync, brotliCompressSync, deflateSync, zstdCompressSyn
 }
 writeFileSync(path.join(output, 'stacked'), stacked);
 
+// Signature-valid opaque 1x1 PNG used to qualify the isolated raster preview
+// path with a real standalone origin. It contains no active content or metadata.
+writeFileSync(
+  path.join(output, 'image.png'),
+  Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  ),
+);
+
 function body(coding) {
   return Buffer.from(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">`

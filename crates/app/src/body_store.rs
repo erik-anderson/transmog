@@ -68,7 +68,7 @@ impl BodyStoreConfig {
             mode: RetentionMode::Circular,
             max_bytes: DEFAULT_BODY_STORE_BYTES,
             max_body_bytes: DEFAULT_BODY_STORE_BYTES,
-            queue_capacity: NonZeroUsize::new(2_048).expect("constant is nonzero"),
+            queue_capacity: NonZeroUsize::new(2_048).unwrap_or(NonZeroUsize::MIN),
             max_read_bytes: MAX_BODY_READ_BYTES,
             retain_requests: false,
         }
@@ -328,7 +328,7 @@ struct StoreState {
 }
 
 enum WorkerCommand {
-    Event(ObserverEvent),
+    Event(Box<ObserverEvent>),
     Flush(mpsc::Sender<()>),
     Shutdown,
 }
@@ -397,7 +397,7 @@ impl BodyStore {
         let worker = Arc::downgrade(&inner);
         std::thread::Builder::new()
             .name("transmog-body-store".to_owned())
-            .spawn(move || worker_loop(worker, receiver))
+            .spawn(move || worker_loop(&worker, &receiver))
             .map_err(|_| BodyStoreError::WorkerUnavailable)?;
         Ok(Self { inner })
     }
@@ -532,20 +532,19 @@ impl BodyStore {
             record.leases = record.leases.saturating_add(1);
             (path, record.metadata(key))
         };
-        match std::fs::File::open(path) {
-            Ok(file) => Ok(BodyReadLease {
+        if let Ok(file) = std::fs::File::open(path) {
+            Ok(BodyReadLease {
                 file,
                 key,
                 inner: Arc::clone(&self.inner),
                 metadata,
-            }),
-            Err(_) => {
-                let mut state = self.lock_state();
-                if let Some(record) = state.records.get_mut(&key) {
-                    record.leases = record.leases.saturating_sub(1);
-                }
-                Err(BodyStoreError::ReadUnavailable)
+            })
+        } else {
+            let mut state = self.lock_state();
+            if let Some(record) = state.records.get_mut(&key) {
+                record.leases = record.leases.saturating_sub(1);
             }
+            Err(BodyStoreError::ReadUnavailable)
         }
     }
 
@@ -594,12 +593,15 @@ impl BodyStore {
     }
 
     fn enqueue(&self, event: ObserverEvent) {
-        if let Err(error) = self.inner.sender.try_send(WorkerCommand::Event(event)) {
-            if let mpsc::TrySendError::Full(WorkerCommand::Event(event))
-            | mpsc::TrySendError::Disconnected(WorkerCommand::Event(event)) = error
-            {
-                mark_dropped_event(&self.inner, &event);
-            }
+        if let Err(
+            mpsc::TrySendError::Full(WorkerCommand::Event(event))
+            | mpsc::TrySendError::Disconnected(WorkerCommand::Event(event)),
+        ) = self
+            .inner
+            .sender
+            .try_send(WorkerCommand::Event(Box::new(event)))
+        {
+            mark_dropped_event(&self.inner, &event);
         }
     }
 
@@ -618,13 +620,13 @@ impl Observer for BodyStore {
     }
 }
 
-fn worker_loop(inner: std::sync::Weak<BodyStoreInner>, receiver: mpsc::Receiver<WorkerCommand>) {
+fn worker_loop(inner: &std::sync::Weak<BodyStoreInner>, receiver: &mpsc::Receiver<WorkerCommand>) {
     while let Ok(command) = receiver.recv() {
         let Some(inner) = inner.upgrade() else {
             break;
         };
         match command {
-            WorkerCommand::Event(event) => process_event(&inner, event),
+            WorkerCommand::Event(event) => process_event(&inner, *event),
             WorkerCommand::Flush(done) => {
                 let _ = done.send(());
             }
@@ -983,11 +985,9 @@ fn cleanup_owned_files(root: &Path) -> Result<(), BodyStoreError> {
         let entry = entry.map_err(|_| BodyStoreError::DirectoryUnavailable)?;
         let path = entry.path();
         let owned = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.ends_with(".part") || name.ends_with(".body") || name.ends_with(".preview")
-            });
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| matches!(extension, "part" | "body" | "preview"));
         if owned && entry.file_type().is_ok_and(|kind| kind.is_file()) {
             fs::remove_file(path).map_err(|_| BodyStoreError::DirectoryUnavailable)?;
         }
