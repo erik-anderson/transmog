@@ -232,7 +232,11 @@ browser-side behavior. Add session browsing, breakpoint controls,
 inspectors/editors, search, export, and diagnostics against the application
 service. UI state never becomes proxy correctness state. The dedicated
 [Tauri and WebUI product shell plan](tauri-webui-product-shell-plan.md) defines
-the layering, security model, platform gates, and implementation phases.
+the layering, security model, platform gates, and implementation phases. The
+follow-on [traffic inspection, automation, and sandboxed scripting plan](traffic-inspection-automation-scripting-plan.md)
+defines the Fiddler-style workspace, default-on circular response retention,
+conditional rules, autoresponse, isolated V8 execution, Monaco authoring, and
+safe preview work.
 
 Exit gate: closing or restarting the UI cannot silently disable proxy safety,
 and headless embedding remains fully supported.

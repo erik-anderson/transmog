@@ -455,7 +455,19 @@ Exit gate: a clean Windows machine can install, run offline, intercept verified
 traffic, modify a request, capture/export it, restore host state, and uninstall
 without leaving the system proxy enabled or removing unrelated trust material.
 
-### Phase 10: Linux qualification
+### Phase 10: Traffic inspection, automation, and sandboxed scripting
+
+Build the production traffic workspace, default-on quota-bound response body
+retention, original/effective multi-representation inspectors, conditional
+native rules, saved-response autoresponders, sandboxed TypeScript/JavaScript,
+Monaco authoring, and safe image preview described by the dedicated
+[traffic inspection, automation, and sandboxed scripting plan](traffic-inspection-automation-scripting-plan.md).
+
+Exit gate: native rules and scripts produce the same typed Hooks v2 actions,
+script failures abort visibly, circular body eviction preserves metadata, and
+captured content cannot execute in the application origin.
+
+### Phase 11: Linux qualification
 
 Install Tauri's documented WebKitGTK prerequisites in the local Linux/Docker or
 WSL test environment. Verify every used Web Platform feature rather than
@@ -534,6 +546,9 @@ validation stays enabled.
       the application without making the UI authoritative.
 - [ ] Windows accessibility, packaging, offline startup, soak, and clean-machine
       end-to-end gates pass.
+- [ ] The traffic workspace, conditional native automation, autoresponse,
+      response-body retention and views, sandboxed scripting, Monaco authoring,
+      and safe preview plan passes its definition of done.
 - [x] Build prerequisites and dependency/supply-chain procedures are checked in.
 - [x] Existing core, interoperability, fuzz, and Linux gates remain green.
 - [x] Hosted CI remains inactive until a human explicitly enables it.

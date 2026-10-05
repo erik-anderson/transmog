@@ -1,4 +1,4 @@
-# Transmog product shell through Phase 8
+# Transmog product shell
 
 The Windows desktop shell is a thin Tauri adapter over `transmog-app`. The same
 application facade is suitable for a future CLI: it owns proxy lifecycle,
@@ -45,5 +45,8 @@ valid prefix.
 
 Build and Windows prerequisites are documented in [building.md](building.md).
 Product-state and support behavior is documented in
-[product-state-and-support.md](product-state-and-support.md). The remaining
-product phases cover Windows hardening/packaging and Linux qualification.
+[product-state-and-support.md](product-state-and-support.md). The next product
+milestone is specified in the
+[traffic inspection, automation, and sandboxed scripting plan](specs/traffic-inspection-automation-scripting-plan.md).
+Windows release qualification and eventual Linux qualification remain separate
+platform gates.
