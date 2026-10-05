@@ -14,7 +14,7 @@ pub const MAX_OUTPUT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_DIMENSION: u32 = 8_192;
 /// Maximum decoded pixels.
 pub const MAX_PIXELS: u64 = 40_000_000;
-/// Job Object process-memory ceiling requested by the bootstrap.
+/// Exact Job Object process-memory ceiling requested by the bootstrap.
 pub const PROCESS_MEMORY_BYTES: usize = 384 * 1024 * 1024;
 
 /// Decodes one image and emits a metadata-free, single-frame PNG.
@@ -149,6 +149,11 @@ mod tests {
             assert!(rasterize(source).is_err());
         }
         assert!(rasterize(&vec![0; MAX_SOURCE_BYTES + 1]).is_err());
+        let oversized = one_pixel_with_dimensions(MAX_DIMENSION + 1, 1);
+        assert_eq!(
+            rasterize(&oversized).unwrap_err(),
+            "preview image dimensions exceed their limit"
+        );
     }
 
     #[test]
@@ -162,5 +167,12 @@ mod tests {
         assert_eq!(response[0], 0);
         assert!(response[5..].starts_with(b"\x89PNG"));
         assert!(run([0, 0, 0, 0].as_slice(), Vec::new()).is_err());
+    }
+
+    fn one_pixel_with_dimensions(width: u32, height: u32) -> Vec<u8> {
+        let image = image::DynamicImage::new_rgba8(width, height);
+        let mut bytes = Cursor::new(Vec::new());
+        image.write_to(&mut bytes, ImageFormat::Png).unwrap();
+        bytes.into_inner()
     }
 }

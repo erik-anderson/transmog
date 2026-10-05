@@ -82,116 +82,30 @@ impl PreviewService {
                 true,
             )
         })?;
-        let mut input = child.stdin.take().ok_or_else(|| {
+        let input = child.stdin.take().ok_or_else(|| {
             AppError::new(
                 ErrorCategory::Internal,
                 "preview input pipe is unavailable",
                 false,
             )
         })?;
-        let mut output = child.stdout.take().ok_or_else(|| {
+        let output = child.stdout.take().ok_or_else(|| {
             AppError::new(
                 ErrorCategory::Internal,
                 "preview output pipe is unavailable",
                 false,
             )
         })?;
-        let operation = async {
-            let length = u32::try_from(source.len()).map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Limit,
-                    "image preview source is too large",
-                    false,
-                )
-            })?;
-            input.write_all(&length.to_be_bytes()).await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker input failed",
-                    true,
-                )
-            })?;
-            input.write_all(&source).await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker input failed",
-                    true,
-                )
-            })?;
-            input.shutdown().await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker input failed",
-                    true,
-                )
-            })?;
-            let status = output.read_u8().await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker exited without a result",
-                    true,
-                )
-            })?;
-            let length = output.read_u32().await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker returned a truncated result",
-                    true,
-                )
-            })? as usize;
-            let maximum = if status == 0 {
-                transmog_preview_worker::MAX_OUTPUT_BYTES
-            } else {
-                512
-            };
-            if length == 0 || length > maximum {
-                return Err(AppError::new(
-                    ErrorCategory::Limit,
-                    "preview worker response exceeds its limit",
-                    false,
-                ));
-            }
-            let mut bytes = vec![0_u8; length];
-            output.read_exact(&mut bytes).await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker returned a truncated result",
-                    true,
-                )
-            })?;
-            let exit = child.wait().await.map_err(|_| {
-                AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker status is unavailable",
-                    true,
-                )
-            })?;
-            if !exit.success() {
-                return Err(AppError::new(
-                    ErrorCategory::Unavailable,
-                    "preview worker was terminated by its sandbox",
-                    true,
-                ));
-            }
-            if status != 0 {
-                return Err(AppError::new(
-                    ErrorCategory::InvalidInput,
-                    String::from_utf8_lossy(&bytes).into_owned(),
-                    false,
-                ));
-            }
-            Ok(bytes)
-        };
-        let png = match tokio::time::timeout(PREVIEW_DEADLINE, operation).await {
-            Ok(result) => result?,
-            Err(_) => {
-                let _ = child.kill().await;
-                return Err(AppError::new(
-                    ErrorCategory::Limit,
-                    "image preview exceeded its three-second deadline",
-                    false,
-                ));
-            }
+        let operation = communicate(&mut child, input, output, &source);
+        let png = if let Ok(result) = tokio::time::timeout(PREVIEW_DEADLINE, operation).await {
+            result?
+        } else {
+            let _ = child.kill().await;
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "image preview exceeded its three-second deadline",
+                false,
+            ));
         };
         self.insert(png)
     }
@@ -249,5 +163,106 @@ impl PreviewService {
             png: Arc::new(png),
         });
         Ok(handle)
+    }
+}
+
+async fn communicate(
+    child: &mut tokio::process::Child,
+    mut input: tokio::process::ChildStdin,
+    mut output: tokio::process::ChildStdout,
+    source: &[u8],
+) -> Result<Vec<u8>, AppError> {
+    let length = u32::try_from(source.len()).map_err(|_| {
+        AppError::new(
+            ErrorCategory::Limit,
+            "image preview source is too large",
+            false,
+        )
+    })?;
+    input
+        .write_all(&length.to_be_bytes())
+        .await
+        .map_err(|_| preview_unavailable("preview worker input failed"))?;
+    input
+        .write_all(source)
+        .await
+        .map_err(|_| preview_unavailable("preview worker input failed"))?;
+    input
+        .shutdown()
+        .await
+        .map_err(|_| preview_unavailable("preview worker input failed"))?;
+    let (status, bytes) = read_response(&mut output).await?;
+    let exit = child
+        .wait()
+        .await
+        .map_err(|_| preview_unavailable("preview worker status is unavailable"))?;
+    if !exit.success() {
+        return Err(preview_unavailable(
+            "preview worker was terminated by its sandbox",
+        ));
+    }
+    if status != 0 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            String::from_utf8_lossy(&bytes).into_owned(),
+            false,
+        ));
+    }
+    Ok(bytes)
+}
+
+async fn read_response(
+    output: &mut tokio::process::ChildStdout,
+) -> Result<(u8, Vec<u8>), AppError> {
+    let status = output
+        .read_u8()
+        .await
+        .map_err(|_| preview_unavailable("preview worker exited without a result"))?;
+    let length = output
+        .read_u32()
+        .await
+        .map_err(|_| preview_unavailable("preview worker returned a truncated result"))?
+        as usize;
+    let maximum = if status == 0 {
+        transmog_preview_worker::MAX_OUTPUT_BYTES
+    } else {
+        512
+    };
+    if length == 0 || length > maximum {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "preview worker response exceeds its limit",
+            false,
+        ));
+    }
+    let mut bytes = vec![0_u8; length];
+    output
+        .read_exact(&mut bytes)
+        .await
+        .map_err(|_| preview_unavailable("preview worker returned a truncated result"))?;
+    Ok((status, bytes))
+}
+
+fn preview_unavailable(message: &'static str) -> AppError {
+    AppError::new(ErrorCategory::Unavailable, message, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opaque_cache_evicts_oldest_handle_at_entry_limit() {
+        let service = PreviewService::new(None);
+        let mut handles = Vec::new();
+        for value in 0..=MAX_PREVIEWS {
+            handles.push(service.insert(vec![u8::try_from(value).unwrap()]).unwrap());
+        }
+        assert!(service.get(&handles[0]).is_none());
+        assert_eq!(
+            service.get(handles.last().unwrap()).unwrap().as_slice(),
+            &[64]
+        );
+        assert!(service.get("../../not-a-handle").is_none());
     }
 }

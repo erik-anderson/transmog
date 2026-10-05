@@ -20,6 +20,7 @@ members = [
     "crates/script-host",
     "crates/script-supervisor",
     "crates/preview-worker",
+    "crates/process-sandbox",
     "crates/proxy-websocket",
     "crates/proxy-session",
     "crates/proxy-cli",

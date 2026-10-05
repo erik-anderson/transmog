@@ -1,4 +1,4 @@
-//! Small audited Win32 boundary used before any untrusted code is read.
+//! Small audited Win32 boundary used before any hostile input is read.
 
 use std::{
     ffi::c_void,
@@ -39,6 +39,8 @@ use windows_sys::Win32::{
         },
     },
 };
+
+use crate::SandboxIdentity;
 
 struct Handle(HANDLE);
 
@@ -85,16 +87,25 @@ impl AttributeList {
     }
 }
 
-pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
+#[allow(clippy::too_many_lines)] // The linear Win32 setup keeps every pointer lifetime auditable.
+pub(super) fn bootstrap(
+    identity: SandboxIdentity,
+    process_memory_bytes: usize,
+) -> Result<i32, String> {
     // The profile is unique per bootstrap, so scripts cannot share its private
     // storage even if a future native-engine defect exposes file APIs.
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "sandbox clock is unavailable")?
         .as_nanos();
-    let profile_name = wide(&format!("Transmog.Script.{}.{}", std::process::id(), nonce));
-    let display_name = wide("Transmog isolated traffic script");
-    let description = wide("Ephemeral zero-capability Transmog script host");
+    let profile_name = wide(&format!(
+        "Transmog.{}.{}.{}",
+        identity.profile_namespace,
+        std::process::id(),
+        nonce
+    ));
+    let display_name = wide(identity.display_name);
+    let description = wide(identity.description);
     let mut sid = null_mut();
     // SAFETY: all strings are terminated and output storage is valid.
     let profile_result = unsafe {
@@ -104,7 +115,7 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
             description.as_ptr(),
             null(),
             0,
-            &mut sid,
+            &raw mut sid,
         )
     };
     if profile_result < 0 || sid.is_null() {
@@ -117,7 +128,7 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
 
     let mut attribute_bytes = 0_usize;
     // SAFETY: the documented sizing call intentionally passes a null buffer.
-    unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &mut attribute_bytes) };
+    unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &raw mut attribute_bytes) };
     if attribute_bytes == 0 {
         return Err("AppContainer attribute sizing failed".to_owned());
     }
@@ -126,8 +137,9 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
         bytes: vec![0_usize; words],
     };
     // SAFETY: the aligned allocation has the exact requested byte capacity.
-    if unsafe { InitializeProcThreadAttributeList(attributes.as_ptr(), 1, 0, &mut attribute_bytes) }
-        == 0
+    if unsafe {
+        InitializeProcThreadAttributeList(attributes.as_ptr(), 1, 0, &raw mut attribute_bytes)
+    } == 0
     {
         return Err("AppContainer attribute initialization failed".to_owned());
     }
@@ -153,7 +165,7 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
         return Err("AppContainer security capability setup failed".to_owned());
     }
 
-    let job = create_job(max_heap_bytes)?;
+    let job = create_job(process_memory_bytes)?;
     let executable = std::env::current_exe().map_err(|_| "host executable is unavailable")?;
     let mut command_line = command_line(&executable);
     let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
@@ -188,7 +200,7 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
             environment.as_ptr().cast(),
             null(),
             (&raw const startup.StartupInfo),
-            &mut process,
+            &raw mut process,
         )
     } == 0
     {
@@ -200,36 +212,33 @@ pub(super) fn bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
     let thread_handle = Handle(process.hThread);
     // SAFETY: process_handle names the still-suspended child and job is valid.
     if unsafe { AssignProcessToJobObject(job.0, process_handle.0) } == 0 {
-        return Err("script Job Object assignment failed".to_owned());
+        return Err("sandbox Job Object assignment failed".to_owned());
     }
     // SAFETY: thread_handle is the primary suspended thread.
     if unsafe { ResumeThread(thread_handle.0) } == u32::MAX {
-        return Err("sandboxed script process could not resume".to_owned());
+        return Err("sandboxed helper process could not resume".to_owned());
     }
     // SAFETY: process_handle remains valid for the whole wait.
     unsafe { WaitForSingleObject(process_handle.0, INFINITE) };
     let mut exit_code = 70_u32;
     // SAFETY: output storage and process handle are valid.
-    unsafe { GetExitCodeProcess(process_handle.0, &mut exit_code) };
+    unsafe { GetExitCodeProcess(process_handle.0, &raw mut exit_code) };
     Ok(i32::try_from(exit_code).unwrap_or(70))
 }
 
-fn create_job(max_heap_bytes: usize) -> Result<Handle, String> {
+fn create_job(process_memory_bytes: usize) -> Result<Handle, String> {
     // SAFETY: null security attributes/name request an anonymous job.
     let raw = unsafe { CreateJobObjectW(null(), null()) };
     if raw.is_null() {
-        return Err("script Job Object creation failed".to_owned());
+        return Err("sandbox Job Object creation failed".to_owned());
     }
     let job = Handle(raw);
-    let process_memory = max_heap_bytes
-        .saturating_mul(3)
-        .saturating_add(128 * 1024 * 1024);
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS
         | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
     limits.BasicLimitInformation.ActiveProcessLimit = 1;
-    limits.ProcessMemoryLimit = process_memory;
+    limits.ProcessMemoryLimit = process_memory_bytes;
     // SAFETY: fixed-size information structure is fully initialized.
     if unsafe {
         SetInformationJobObject(
@@ -241,7 +250,7 @@ fn create_job(max_heap_bytes: usize) -> Result<Handle, String> {
         )
     } == 0
     {
-        return Err("script Job Object limits failed".to_owned());
+        return Err("sandbox Job Object limits failed".to_owned());
     }
     let ui = JOBOBJECT_BASIC_UI_RESTRICTIONS {
         UIRestrictionsClass: JOB_OBJECT_UILIMIT_DESKTOP
@@ -264,7 +273,7 @@ fn create_job(max_heap_bytes: usize) -> Result<Handle, String> {
         )
     } == 0
     {
-        return Err("script Job Object UI restrictions failed".to_owned());
+        return Err("sandbox Job Object UI restrictions failed".to_owned());
     }
     Ok(job)
 }
@@ -272,13 +281,15 @@ fn create_job(max_heap_bytes: usize) -> Result<Handle, String> {
 pub(super) fn verify_current_process() -> Result<(), String> {
     let mut in_job = 0;
     // SAFETY: the pseudo-handle is always valid and output storage is valid.
-    if unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &mut in_job) } == 0 || in_job == 0 {
-        return Err("script host is not in a Job Object".to_owned());
+    if unsafe { IsProcessInJob(GetCurrentProcess(), null_mut(), &raw mut in_job) } == 0
+        || in_job == 0
+    {
+        return Err("helper process is not in a Job Object".to_owned());
     }
     let mut token: HANDLE = null_mut();
     // SAFETY: output storage is valid; TOKEN_QUERY is read-only.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return Err("script host token cannot be inspected".to_owned());
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+        return Err("helper process token cannot be inspected".to_owned());
     }
     let token = Handle(token);
     let mut app_container = 0_u32;
@@ -290,12 +301,12 @@ pub(super) fn verify_current_process() -> Result<(), String> {
             TokenIsAppContainer,
             (&raw mut app_container).cast(),
             u32::try_from(size_of::<u32>()).map_err(|_| "token query size is invalid")?,
-            &mut returned,
+            &raw mut returned,
         )
     } == 0
         || app_container == 0
     {
-        return Err("script host is not an AppContainer".to_owned());
+        return Err("helper process is not an AppContainer".to_owned());
     }
     Ok(())
 }

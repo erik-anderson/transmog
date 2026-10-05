@@ -6211,7 +6211,14 @@ name = "transmog-preview-worker"
 version = "0.1.0"
 dependencies = [
  "image",
- "transmog-script-host",
+ "transmog-process-sandbox",
+]
+
+[[package]]
+name = "transmog-process-sandbox"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6271,9 +6278,9 @@ dependencies = [
  "deno_core",
  "serde_json",
  "tokio",
+ "transmog-process-sandbox",
  "transmog-script",
  "transmog-script-supervisor",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

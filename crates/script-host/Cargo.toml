@@ -11,10 +11,8 @@ repository.workspace = true
 deno_core.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
+transmog-process-sandbox = { version = "=0.1.0", path = "../process-sandbox" }
 transmog-script = { version = "=0.1.0", path = "../proxy-script" }
 
 [dev-dependencies]
 transmog-script-supervisor = { version = "=0.1.0", path = "../script-supervisor" }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true

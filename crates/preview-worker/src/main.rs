@@ -1,10 +1,16 @@
-//! AppContainer entry point for the one-shot raster preview decoder.
+//! `AppContainer` entry point for the one-shot raster preview decoder.
 
 fn main() {
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--sandbox-bootstrap")) {
-        match transmog_script_host::sandbox_bootstrap(transmog_preview_worker::PROCESS_MEMORY_BYTES)
-        {
+        match transmog_process_sandbox::sandbox_bootstrap(
+            transmog_process_sandbox::SandboxIdentity {
+                profile_namespace: "Preview",
+                display_name: "Transmog isolated image preview",
+                description: "Ephemeral zero-capability Transmog raster decoder",
+            },
+            transmog_preview_worker::PROCESS_MEMORY_BYTES,
+        ) {
             Ok(code) => std::process::exit(code),
             Err(error) => {
                 eprintln!("preview sandbox bootstrap failed: {error}");
@@ -16,7 +22,7 @@ fn main() {
         eprintln!("preview worker requires its operating-system sandbox");
         std::process::exit(72);
     }
-    if let Err(error) = transmog_script_host::verify_sandbox() {
+    if let Err(error) = transmog_process_sandbox::verify_current_process() {
         eprintln!("preview sandbox verification failed: {error}");
         std::process::exit(72);
     }

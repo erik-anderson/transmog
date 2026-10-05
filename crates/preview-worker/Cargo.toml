@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 image.workspace = true
-transmog-script-host = { version = "=0.1.0", path = "../script-host" }
+transmog-process-sandbox = { version = "=0.1.0", path = "../process-sandbox" }
 
 [lints]
 workspace = true

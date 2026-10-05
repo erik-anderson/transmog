@@ -12,9 +12,6 @@ use transmog_script::{
     write_host_frame,
 };
 
-#[cfg(windows)]
-mod windows_sandbox;
-
 const BOOTSTRAP: &str = r#"
 const __transmogDeepFreeze = (value, seen = new WeakSet()) => {
   if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return value;
@@ -264,15 +261,17 @@ pub fn configure_v8() {
 /// Returns a redacted bootstrap failure. This function is available on every
 /// platform so argument handling never silently falls back to no sandbox.
 pub fn sandbox_bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
-    #[cfg(windows)]
-    {
-        windows_sandbox::bootstrap(max_heap_bytes)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = max_heap_bytes;
-        Err("the script sandbox is supported only on Windows".to_owned())
-    }
+    let process_memory_bytes = max_heap_bytes
+        .saturating_mul(3)
+        .saturating_add(128 * 1024 * 1024);
+    transmog_process_sandbox::sandbox_bootstrap(
+        transmog_process_sandbox::SandboxIdentity {
+            profile_namespace: "Script",
+            display_name: "Transmog isolated traffic script",
+            description: "Ephemeral zero-capability Transmog script host",
+        },
+        process_memory_bytes,
+    )
 }
 
 /// Verifies the current host has both AppContainer and Job Object isolation.
@@ -280,14 +279,7 @@ pub fn sandbox_bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
 /// # Errors
 /// Returns an error if a production host was launched without either boundary.
 pub fn verify_sandbox() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        windows_sandbox::verify_current_process()
-    }
-    #[cfg(not(windows))]
-    {
-        Err("the script sandbox is supported only on Windows".to_owned())
-    }
+    transmog_process_sandbox::verify_current_process()
 }
 
 #[cfg(test)]
