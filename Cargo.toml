@@ -4,6 +4,7 @@ members = [
     "apps/desktop",
     "crates/app",
     "crates/app-webui",
+    "crates/host-windows",
     "crates/proxy-core",
     "crates/proxy-content",
     "crates/proxy-tls",

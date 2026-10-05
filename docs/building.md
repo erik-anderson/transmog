@@ -84,6 +84,16 @@ normally receive WebView2 with Microsoft Edge, but it is a runtime prerequisite
 rather than a bundled browser. A clean-machine release gate must verify it or
 install Microsoft's Evergreen bootstrapper before starting the app.
 
+The proxy can run in manual-configuration mode without changing Windows. The
+optional current-user system-proxy adapter requires Windows PowerShell 5.1 or
+newer and access to
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`. Explicit
+CA installation/removal uses the current-user Root certificate store and can
+display an operating-system consent dialog; it is never part of an unattended
+build or test. Automated tests use an in-memory host backend. A development or
+production CA must be created separately, and its private key must be protected
+by a user-only ACL before use.
+
 The desktop dependency toolchain is pinned in both lockfiles:
 
 - Tauri Rust crates and npm API/CLI 2.12.1;
