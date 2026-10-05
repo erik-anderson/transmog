@@ -220,11 +220,14 @@ fn import_response_asset(
 }
 
 #[tauri::command]
-fn create_response_asset_from_session(
+async fn create_response_asset_from_session(
     input: SessionResponseAsset,
     state: State<'_, DesktopState>,
 ) -> Result<ResponseAsset, AppError> {
-    state.application.create_response_asset_from_session(input)
+    state
+        .application
+        .create_response_asset_from_session(input)
+        .await
 }
 
 #[tauri::command]

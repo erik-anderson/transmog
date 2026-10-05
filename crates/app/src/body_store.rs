@@ -13,7 +13,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use transmog_core::{
-    HeaderBlock,
+    HeaderBlock, ResponseHead,
     intercept::ExchangeId,
     observe::{
         BodyDirection, BodyObservation, BoxObserverFuture, ExchangeBoundary, ObservationInterest,
@@ -275,6 +275,7 @@ struct StoredBody {
     media_type: Option<String>,
     charset: Option<String>,
     content_codings: Vec<String>,
+    response_head: Option<ResponseHead>,
     sha256: Option<String>,
     reason: Option<String>,
     hasher: Sha256,
@@ -292,6 +293,7 @@ impl StoredBody {
             media_type: None,
             charset: None,
             content_codings: Vec::new(),
+            response_head: None,
             sha256: None,
             reason: None,
             hasher: Sha256::new(),
@@ -408,6 +410,7 @@ impl BodyStore {
         ObserverConfig {
             interest: ObservationInterest {
                 lifecycle: true,
+                sensitive_headers: true,
                 request_body: if self.inner.config.retain_requests {
                     BodyObservation::Full
                 } else {
@@ -457,6 +460,24 @@ impl BodyStore {
             state.records.get(&key).map(|record| record.metadata(key))
         })
         .collect()
+    }
+
+    /// Returns one protected exact response head retained for asset creation.
+    ///
+    /// Sensitive fields are intentionally available only at this application
+    /// boundary and are never included in inspector or session DTOs.
+    pub(crate) fn response_head(
+        &self,
+        exchange_id: ExchangeId,
+        boundary: ExchangeBoundary,
+    ) -> Option<ResponseHead> {
+        self.lock_state()
+            .records
+            .get(&BodyKey {
+                exchange_id,
+                boundary: BoundaryKey::from_boundary(boundary),
+            })
+            .and_then(|record| record.response_head.clone())
     }
 
     /// Reads a bounded retained range while holding an eviction lease.
@@ -657,20 +678,14 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
             state.exchange_modes.insert(event.exchange_id, mode);
         }
         ObserverEventKind::ResponseHeadObserved { boundary, head } => {
-            observe_head(
-                inner,
-                &mut state,
-                event.exchange_id,
-                boundary,
-                &head.headers,
-            );
+            observe_head(inner, &mut state, event.exchange_id, boundary, &head);
         }
         ObserverEventKind::ResponseHeadFinalized(head) => observe_head(
             inner,
             &mut state,
             event.exchange_id,
             ExchangeBoundary::ClientResponse,
-            &head.headers,
+            &head,
         ),
         ObserverEventKind::BodyChunk(chunk) => {
             observe_chunk(inner, &mut state, event.exchange_id, chunk);
@@ -701,7 +716,7 @@ fn observe_head(
     state: &mut StoreState,
     exchange_id: ExchangeId,
     boundary: ExchangeBoundary,
-    headers: &HeaderBlock,
+    head: &ResponseHead,
 ) {
     let key = BodyKey {
         exchange_id,
@@ -722,6 +737,8 @@ fn observe_head(
             BodyAvailability::Capturing
         })
     });
+    record.response_head = Some(head.clone());
+    let headers = &head.headers;
     let content_type = header_text(headers, "content-type");
     if let Some(content_type) = content_type {
         let mut parts = content_type.split(';');
@@ -1185,6 +1202,51 @@ mod tests {
                 .bytes,
             b"ell"
         );
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn protected_client_response_head_survives_without_exposing_it_in_metadata() {
+        let root = root("protected-head");
+        let store = BodyStore::new(config(root.clone(), 32)).unwrap();
+        let response_head = ResponseHead {
+            status: 204,
+            source_version: HttpLegVersion::Http1,
+            headers: HeaderBlock::from_fields(vec![
+                HeaderField::try_new("set-cookie", "session=secret").unwrap(),
+                HeaderField::try_new("content-type", "text/plain").unwrap(),
+            ]),
+        };
+        push(
+            &store,
+            [
+                started(9),
+                event(
+                    9,
+                    2,
+                    ObserverEventKind::ResponseHeadObserved {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        head: response_head.clone(),
+                    },
+                ),
+                completed(9, 3),
+            ],
+        );
+        let metadata = store.metadata(ExchangeId(9));
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].boundary, "client-response");
+        assert_eq!(metadata[0].availability, BodyAvailability::Complete);
+        assert_eq!(metadata[0].retained_bytes, 0);
+        let retained = store
+            .response_head(ExchangeId(9), ExchangeBoundary::ClientResponse)
+            .unwrap();
+        assert_eq!(retained.status, 204);
+        assert_eq!(
+            retained.headers.values("set-cookie").next(),
+            Some(&b"session=secret"[..])
+        );
+        assert!(!serde_json::to_string(&metadata).unwrap().contains("secret"));
         drop(store);
         let _ = fs::remove_dir_all(root);
     }

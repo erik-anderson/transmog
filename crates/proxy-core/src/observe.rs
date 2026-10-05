@@ -28,7 +28,8 @@ pub type BoxObserverFuture<'a> =
 
 /// Immutable lifecycle-event consumer.
 pub trait Observer: Send + Sync {
-    /// Consumes one already-redacted event.
+    /// Consumes one event filtered and redacted according to its declared
+    /// observation interest.
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_>;
 }
 
@@ -65,6 +66,11 @@ pub enum BodyObservation {
 pub struct ObservationInterest {
     /// Receive lifecycle and finalized-head events.
     pub lifecycle: bool,
+    /// Receive credential-bearing request and response fields.
+    ///
+    /// This is disabled by default and should be used only by protected local
+    /// stores that never expose the values through presentation read models.
+    pub sensitive_headers: bool,
     /// Request-body observation policy.
     pub request_body: BodyObservation,
     /// Response-body observation policy.
@@ -75,6 +81,7 @@ impl Default for ObservationInterest {
     fn default() -> Self {
         Self {
             lifecycle: true,
+            sensitive_headers: false,
             request_body: BodyObservation::MetadataOnly,
             response_body: BodyObservation::MetadataOnly,
         }
@@ -420,6 +427,9 @@ impl ObserverDispatcher {
     }
 
     fn prepare(&self, mut event: ObserverEvent) -> Option<ObserverEvent> {
+        if !self.interest.sensitive_headers {
+            event.kind = redact(event.kind);
+        }
         if event.kind.is_lifecycle() {
             return self.interest.lifecycle.then_some(event);
         }
@@ -623,7 +633,7 @@ impl ExchangeObserver {
         let event = ObserverEvent {
             exchange_id: self.metadata.exchange_id,
             sequence: state.sequence,
-            kind: redact(kind),
+            kind,
         };
         let mut report = ObserverDeliveryReport::default();
         for dispatcher in self.dispatchers.iter() {
@@ -660,6 +670,11 @@ fn redact(kind: ObserverEventKind) -> ObserverEventKind {
                 ),
             );
             ObserverEventKind::BodyTrailers(trailers)
+        }
+        ObserverEventKind::Completed(mut completed) => {
+            redact_headers(&mut completed.request_head.headers, true);
+            redact_headers(&mut completed.response_head.headers, false);
+            ObserverEventKind::Completed(completed)
         }
         other => other,
     }
@@ -768,6 +783,123 @@ mod tests {
             };
             assert!(head.headers.values("authorization").next().is_none());
             assert_eq!(head.headers.values("x-safe").next(), Some(&b"visible"[..]));
+        }
+        hub.shutdown().await;
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn protected_observer_must_explicitly_opt_in_to_sensitive_headers() {
+        let redacted_events = Arc::new(StdMutex::new(Vec::new()));
+        let protected_events = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![
+            (
+                Arc::new(RecordingObserver {
+                    events: Arc::clone(&redacted_events),
+                }),
+                ObserverConfig::default(),
+            ),
+            (
+                Arc::new(RecordingObserver {
+                    events: Arc::clone(&protected_events),
+                }),
+                ObserverConfig {
+                    interest: ObservationInterest {
+                        sensitive_headers: true,
+                        ..ObservationInterest::default()
+                    },
+                    ..ObserverConfig::default()
+                },
+            ),
+        ]);
+        let metadata = metadata();
+        let observer = hub.start_exchange(Arc::clone(&metadata));
+        observer
+            .emit(ObserverEventKind::ResponseHeadFinalized(ResponseHead {
+                status: 200,
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("set-cookie", "session=secret").unwrap(),
+                    HeaderField::try_new("x-safe", "visible").unwrap(),
+                ]),
+                source_version: HttpLegVersion::Http2,
+            }))
+            .await;
+        observer
+            .emit(ObserverEventKind::Completed(CompletedExchange {
+                metadata,
+                request_head: RequestHead {
+                    method: "GET".to_owned(),
+                    target: Target {
+                        scheme: "https".to_owned(),
+                        authority: "example.test".to_owned(),
+                        host: "example.test".to_owned(),
+                        port: 443,
+                        path: "/".to_owned(),
+                        query: None,
+                    },
+                    headers: HeaderBlock::from_fields(vec![
+                        HeaderField::try_new("authorization", "secret").unwrap(),
+                    ]),
+                    source_version: HttpLegVersion::Http2,
+                },
+                response_head: ResponseHead {
+                    status: 200,
+                    headers: HeaderBlock::from_fields(vec![
+                        HeaderField::try_new("set-cookie", "session=secret").unwrap(),
+                    ]),
+                    source_version: HttpLegVersion::Http2,
+                },
+            }))
+            .await;
+        while redacted_events.lock().unwrap().len() < 2
+            || protected_events.lock().unwrap().len() < 2
+        {
+            tokio::task::yield_now().await;
+        }
+        let response_headers = |events: &Arc<StdMutex<Vec<ObserverEvent>>>| {
+            let events = events.lock().unwrap();
+            let ObserverEventKind::ResponseHeadFinalized(head) = &events[0].kind else {
+                panic!("expected response head");
+            };
+            head.headers.clone()
+        };
+        assert!(
+            response_headers(&redacted_events)
+                .values("set-cookie")
+                .next()
+                .is_none()
+        );
+        assert_eq!(
+            response_headers(&protected_events)
+                .values("set-cookie")
+                .next(),
+            Some(&b"session=secret"[..])
+        );
+        {
+            let redacted = redacted_events.lock().unwrap();
+            let ObserverEventKind::Completed(completed) = &redacted[1].kind else {
+                panic!("expected completed event");
+            };
+            assert!(completed.request_head.headers.iter().next().is_none());
+            assert!(completed.response_head.headers.iter().next().is_none());
+        }
+        {
+            let protected = protected_events.lock().unwrap();
+            let ObserverEventKind::Completed(completed) = &protected[1].kind else {
+                panic!("expected completed event");
+            };
+            assert_eq!(
+                completed
+                    .request_head
+                    .headers
+                    .values("authorization")
+                    .next(),
+                Some(&b"secret"[..])
+            );
+            assert_eq!(
+                completed.response_head.headers.values("set-cookie").next(),
+                Some(&b"session=secret"[..])
+            );
         }
         hub.shutdown().await;
     }

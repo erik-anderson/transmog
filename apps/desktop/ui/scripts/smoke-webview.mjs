@@ -154,6 +154,22 @@ try {
       };
       const surfaceText = element.shadowRoot.textContent ?? '';
       const automation = element.shadowRoot.querySelector('#automation');
+      const scratchButton = [...(automation?.querySelectorAll('button') ?? [])]
+        .find((candidate) => candidate.textContent?.trim() === 'Create from scratch');
+      scratchButton?.click();
+      const autoResponseEditor = automation?.querySelector('.auto-response-editor');
+      const autoResponseMethod = autoResponseEditor?.querySelector('select[name="method"]');
+      const requestHeaders = autoResponseEditor?.querySelector('textarea[name="requestHeaders"]')?.closest('label');
+      const scratchEditorOpened = autoResponseEditor instanceof HTMLFormElement && !autoResponseEditor.hidden;
+      if (autoResponseMethod instanceof HTMLSelectElement) {
+        autoResponseMethod.value = 'POST';
+        autoResponseMethod.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const postHeaderFilterVisible = requestHeaders instanceof HTMLElement && !requestHeaders.hidden;
+      const cancelEditor = [...(autoResponseEditor?.querySelectorAll('button') ?? [])]
+        .find((candidate) => candidate.textContent?.trim() === 'Cancel');
+      cancelEditor?.click();
+      trafficLink.click();
       return {
         text: statusText,
         formSubmission: sessionOutput.textContent,
@@ -185,6 +201,13 @@ try {
             .filter((candidate) => /watch live/i.test(candidate.textContent ?? '')).length,
           hooksV2Branding: /hooks v2/i.test(surfaceText),
           automationExpanders: automation?.querySelectorAll('details.automation-card').length ?? 0,
+          autoResponseWorkspace: automation?.querySelectorAll('.auto-response-workspace').length ?? 0,
+          autoResponseDropZone: automation?.querySelectorAll('.auto-response-drop-zone').length ?? 0,
+          exactUrlFields: automation?.querySelectorAll('input[name="url"]').length ?? 0,
+          firstMatchExplained: /first enabled match wins/i.test(automation?.textContent ?? ''),
+          scratchEditorOpened,
+          postHeaderFilterVisible,
+          scratchEditorClosed: autoResponseEditor instanceof HTMLFormElement && autoResponseEditor.hidden,
           internalAutomationFields: automation?.querySelectorAll('input[name="ruleId"], input[name="revision"], input[name="assetId"], input[name="assetRevision"]').length ?? 0,
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
           noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
@@ -217,8 +240,12 @@ try {
   assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.automationExpanders >= 2 && result.ux.internalAutomationFields === 0,
-    `automation surface exposes internals instead of task-oriented expanders: ${JSON.stringify(result.ux)}`);
+  assert(result.ux.automationExpanders >= 1 && result.ux.autoResponseWorkspace === 1
+    && result.ux.autoResponseDropZone === 1 && result.ux.exactUrlFields === 1
+    && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
+    && result.ux.postHeaderFilterVisible && result.ux.scratchEditorClosed
+    && result.ux.internalAutomationFields === 0,
+    `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
   assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
@@ -305,12 +332,16 @@ try {
       shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
       headingHeight: heading.getBoundingClientRect().height,
       controlsVisible: [...root.querySelectorAll('.app-view.active button, .topbar button, .app-footer button')]
+        .filter((button) => !button.hidden)
         .every((button) => button.getBoundingClientRect().height > 0),
+      invisibleControls: [...root.querySelectorAll('.app-view.active button, .topbar button, .app-footer button')]
+        .filter((button) => !button.hidden && button.getBoundingClientRect().height <= 0)
+        .map((button) => button.textContent?.trim()),
       rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
     };
   })()`);
   assert(scaled.shellWidth <= scaled.viewport + 1, `200% DPI shell overflow: ${JSON.stringify(scaled)}`);
-  assert(scaled.headingHeight > 0 && scaled.controlsVisible, 'long localized text hid interactive UI');
+  assert(scaled.headingHeight > 0 && scaled.controlsVisible, `long localized text hid interactive UI: ${JSON.stringify(scaled)}`);
   assert(scaled.rootScroll <= 1, `200% DPI introduced root scrolling: ${JSON.stringify(scaled)}`);
   await call('Emulation.clearDeviceMetricsOverride');
   await call('Emulation.setEmulatedMedia', { media: 'screen', features: [] });

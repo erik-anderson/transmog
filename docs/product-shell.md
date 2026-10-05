@@ -25,6 +25,12 @@ or WebUI.
   live automatically, and has no pagination. It follows the latest row until
   the user scrolls away or selects a request; capture continues while that view
   is pinned.
+- Completed retained client responses can seed auto-responses directly from
+  the Traffic inspector or by drag-and-drop. The Automation workspace exposes
+  a reorderable top-to-bottom list where the first enabled exact method/URL
+  match wins; internal asset IDs, revisions, and numeric priorities are not
+  authoring fields. Winning traffic is marked `AUTO` and names the rule and
+  immutable response asset that served it.
 - The primary desktop canvas is a fixed-viewport traffic workspace: an
   internally scrolling request list remains visible above a persistent split
   request/response inspector. Tool views use the left rail and scroll only

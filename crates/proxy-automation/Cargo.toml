@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 bytes.workspace = true
+http.workspace = true
 regex.workspace = true
 serde.workspace = true
 transmog-core = { version = "=0.1.0", path = "../proxy-core" }

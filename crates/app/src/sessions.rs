@@ -12,7 +12,7 @@ use transmog_session::{
     SessionSnapshot, SessionTerminal, SubscriptionEvent,
 };
 
-use crate::{AppError, ErrorCategory};
+use crate::{AppError, AutoResponseMatchView, ErrorCategory, inspector::auto_response_match};
 
 const MAX_CURSOR_TOKENS: usize = 256;
 const DEFAULT_PAGE_SIZE: usize = 100;
@@ -91,6 +91,8 @@ pub struct SessionSummary {
     pub loss: bool,
     /// Whether native capture is active for this page.
     pub capturing: bool,
+    /// Winning local autoresponse, when the origin was bypassed.
+    pub auto_response: Option<AutoResponseMatchView>,
 }
 
 /// Authoritative page plus visible global pressure counters.
@@ -297,6 +299,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         terminal,
         loss: snapshot.sequence_loss > 0,
         capturing,
+        auto_response: auto_response_match(snapshot),
     }
 }
 

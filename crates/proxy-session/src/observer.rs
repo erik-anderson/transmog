@@ -64,6 +64,7 @@ pub fn session_observer_config(queue_capacity: NonZeroUsize) -> ObserverConfig {
     ObserverConfig {
         interest: ObservationInterest {
             lifecycle: true,
+            sensitive_headers: false,
             request_body: BodyObservation::Full,
             response_body: BodyObservation::Full,
         },

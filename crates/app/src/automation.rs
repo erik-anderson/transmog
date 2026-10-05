@@ -396,6 +396,8 @@ mod tests {
             generation: 999,
             rules: vec![Rule {
                 id: "conditional-ua".to_owned(),
+                display_name: None,
+                enabled: true,
                 revision: 7,
                 priority: 10,
                 matcher: RuleMatcher {

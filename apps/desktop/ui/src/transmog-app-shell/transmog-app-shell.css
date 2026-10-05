@@ -147,6 +147,7 @@ th:nth-child(8), td:nth-child(8) { width: 6rem; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--row-hover); }
 tbody tr.selected { background: var(--accent-soft); box-shadow: inset .2rem 0 0 var(--accent); }
+tbody tr.auto-responded td:nth-child(2) { color: var(--accent-strong); font-weight: 750; }
 tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .empty-cell { height: 4rem; color: var(--muted); text-align: center !important; }
 .session-link { min-height: 0; padding: .1rem .2rem; border: 0; color: var(--accent-strong); background: transparent; font: inherit; font-weight: 720; text-align: left; }
@@ -154,10 +155,11 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 .list-footer-actions { display: flex; align-items: center; gap: .35rem; }
 
 .details-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; background: var(--panel); }
-.selection-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .65rem; min-height: 2.25rem; padding: .35rem .65rem; border-bottom: 1px solid var(--line); background: var(--panel-subtle); }
+.selection-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: .65rem; min-height: 2.25rem; padding: .35rem .65rem; border-bottom: 1px solid var(--line); background: var(--panel-subtle); }
 .selection-bar strong { overflow: hidden; font-family: "Cascadia Mono", Consolas, monospace; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
 .method-badge, .status-badge { min-width: 3.3rem; padding: .18rem .45rem; border-radius: 999px; color: var(--text); background: var(--panel-raised); font-size: .66rem; font-weight: 750; text-align: center; white-space: nowrap; }
 .status-badge.success { color: var(--accent-strong); background: var(--accent-soft); }
+.status-badge.auto-response { color: #fff; background: var(--accent-strong); }
 .exchange-inspector { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); min-height: 0; overflow: hidden; }
 .message-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden; }
 .request-pane { border-right: 1px solid var(--line-strong); }
@@ -165,6 +167,7 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 .message-pane > header { display: flex; align-items: baseline; gap: .65rem; min-height: 2rem; padding: .35rem .65rem; border-bottom: 1px solid var(--line); }
 .message-pane > header h2 { margin: 0; font-size: .78rem; }
 .message-pane > header span { color: var(--muted); font-size: .67rem; }
+.matched-rule-button { margin-left: auto; }
 .message-pane pre, .body-preview { min-width: 0; min-height: 0; margin: 0; padding: .65rem; overflow: auto; border: 0; color: var(--text); background: var(--code); font: .72rem/1.45 "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .body-toolbar { display: grid; grid-template-columns: minmax(8rem, 1.25fr) minmax(7rem, 1fr) 6.5rem auto auto; align-items: end; gap: .4rem; padding: .35rem .5rem; border-block: 1px solid var(--line); background: var(--panel-subtle); }
 .body-toolbar label { font-size: .65rem; }
@@ -206,6 +209,34 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .automation-card[open] > summary { border-bottom: 1px solid var(--line); }
 .automation-card form { max-width: none; margin: 0; padding: .85rem; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
 .automation-card form .actions, .automation-card form label:has(textarea) { grid-column: 1 / -1; }
+.auto-response-workspace { margin-top: .2rem; padding: 1rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--panel); }
+.auto-response-header { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.auto-response-header h2 { margin: 0; font-size: 1rem; }
+.auto-response-header p { margin: .25rem 0 0; font-size: .76rem; }
+.auto-response-header .actions { flex: 0 0 auto; }
+.auto-response-drop-zone { margin-top: .8rem; padding: .75rem; border: 1px dashed var(--line-strong); border-radius: .4rem; color: var(--muted); background: var(--panel-subtle); font-size: .75rem; text-align: center; }
+.auto-response-drop-zone:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.auto-response-list { display: grid; gap: .45rem; margin-top: .75rem; }
+.auto-response-empty { margin: 0; padding: .7rem; border-radius: .35rem; background: var(--panel-subtle); font-size: .76rem; }
+.auto-response-rule { display: grid; grid-template-columns: 1rem 1.7rem minmax(12rem, 1fr) auto auto; align-items: center; gap: .55rem; min-width: 0; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: .4rem; background: var(--panel); }
+.auto-response-rule.disabled { opacity: .65; }
+.auto-response-rule.matched-rule { outline: 2px solid var(--focus); outline-offset: 2px; }
+.drag-handle { color: var(--muted); cursor: grab; user-select: none; }
+.rule-order { display: grid; place-items: center; width: 1.55rem; height: 1.55rem; border-radius: 50%; color: var(--accent-strong); background: var(--accent-soft); font-size: .68rem; font-weight: 800; }
+.rule-description { display: grid; min-width: 0; gap: .15rem; }
+.rule-description strong, .rule-description small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-description small { color: var(--muted); font: .68rem "Cascadia Mono", Consolas, monospace; }
+.rule-state { color: var(--muted); font-size: .68rem; font-weight: 700; }
+.rule-actions { display: flex; gap: .3rem; }
+.rule-actions button { padding-inline: .45rem; }
+.auto-response-editor { max-width: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.auto-response-editor > header { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; }
+.auto-response-editor h3 { margin: 0; font-size: 1rem; }
+.auto-response-editor .section-label { display: block; margin-bottom: .15rem; }
+.wide-field { grid-column: 1 / -1; }
+.auto-response-source { padding: .65rem; border-left: .2rem solid var(--accent); background: var(--accent-soft); }
+.auto-response-source p { margin: .2rem 0 0; font-size: .74rem; }
+.captured-response-options { display: flex; flex-wrap: wrap; gap: 1rem; }
 .paused-card .monaco-editor-host { min-height: 12rem; margin: .6rem 0; }
 .phase-form { display: flex; flex-wrap: wrap; align-items: end; max-width: none; }
 .composer-form textarea { min-height: 6rem; font-family: "Cascadia Mono", Consolas, monospace; }
@@ -241,6 +272,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .body-toolbar { grid-template-columns: minmax(6rem, 1fr) minmax(5rem, 1fr) auto; }
   .body-toolbar .checkbox-label, .body-toolbar button { align-self: end; }
   .settings-grid { grid-template-columns: 1fr; }
+  .auto-response-rule { grid-template-columns: 1rem 1.7rem minmax(8rem, 1fr); }
+  .rule-state, .rule-actions { grid-column: 3; }
+  .auto-response-header { flex-direction: column; }
   .support-card { grid-column: auto; }
 }
 

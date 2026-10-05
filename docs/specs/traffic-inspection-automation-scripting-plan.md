@@ -219,8 +219,10 @@ at admission so a mid-flight edit cannot mix behavior.
 
 A response asset contains a stable ID and revision, status, ordered headers,
 body reference, byte length, checksum, media metadata, creation provenance,
-and completeness state. Assets may be authored directly or derived from an
-upstream-original or client-effective response body.
+and completeness state. Assets may be authored directly or derived from the
+client-effective response body. The discoverable ordered authoring flow and
+its exact-match decisions are specified in
+[the auto-response UX plan](autoresponder-ux-plan.md).
 
 Creating an asset from traffic requires a complete retained body. The UI must
 not offer an incomplete, truncated, lossy, or evicted body as if it were a

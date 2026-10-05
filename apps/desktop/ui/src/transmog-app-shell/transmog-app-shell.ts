@@ -48,6 +48,7 @@ interface SessionSummary {
   terminal: 'active' | 'completed' | 'failed';
   loss: boolean;
   capturing: boolean;
+  autoResponse: AutoResponseMatch | null;
 }
 
 interface SessionPage {
@@ -61,8 +62,8 @@ interface SessionPage {
 interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 interface SessionDetail {
   id: string;
-  requests: unknown[];
-  responses: unknown[];
+  requests: HeadView[];
+  responses: HeadView[];
   bodies: unknown[];
   storedBodies: StoredBodyMetadata[];
   diagnostics: string[];
@@ -72,6 +73,25 @@ interface SessionDetail {
   terminal: string;
   websocket: string | null;
   sequenceLoss: number;
+  autoResponse: AutoResponseMatch | null;
+}
+interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; }
+interface HeadView {
+  boundary: string;
+  method: string | null;
+  target: string | null;
+  status: number | null;
+  protocol: string;
+  headers: HeaderView[];
+}
+interface AutoResponseMatch {
+  ruleId: string;
+  ruleName: string;
+  ruleRevision: number;
+  position: number;
+  assetReference: string;
+  status: number;
+  bodyBytes: number;
 }
 interface StoredBodyMetadata {
   exchangeId: string;
@@ -89,6 +109,7 @@ interface BodyInspection {
   metadata: StoredBodyMetadata;
   representation: string;
   decoded: boolean;
+  textEncoding: string | null;
   display: string;
   displayBytes: number;
   truncated: boolean;
@@ -126,13 +147,53 @@ interface ProductState {
   recentArtifacts: Array<{path: string; kind: string}>;
 }
 interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
+interface AutomationRule {
+  id: string;
+  displayName?: string | null;
+  enabled?: boolean;
+  revision: number;
+  priority: number;
+  matcher: {
+    method: string | null;
+    url?: {kind: 'exact'; value: string} | null;
+    scheme: string | null;
+    host: string | null;
+    port: number | null;
+    pathPrefix: string | null;
+    query: string | null;
+    requestHeaders: Array<{name: string; condition: {kind: string; value?: number[]}}>;
+    responseHeaders: Array<unknown>;
+    responseStatus: number | null;
+    responseStatusClass: number | null;
+  };
+  request: {
+    headers: unknown[];
+    replaceBody: number[] | null;
+    discardBody: boolean;
+    abortReason: string | null;
+    responseAsset: string | null;
+    allowNonIdempotentBodyReplacement: boolean;
+  };
+  response: {headers: unknown[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
+}
 interface AutomationStatus {
   generation: number;
-  rules: Array<Record<string, unknown> & {id: string; revision: number; priority: number}>;
+  rules: AutomationRule[];
   candidateCount: number;
   historyCount: number;
 }
 interface ResponseAsset { id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null; }
+interface CapturedAutoResponseSource {
+  kind: 'captured';
+  sessionId: string;
+  boundary: 'client-response';
+  contentCodings: string[];
+  bodyEditable: boolean;
+  textEncoding: string | null;
+}
+interface ScratchAutoResponseSource { kind: 'scratch'; }
+interface ExistingAutoResponseSource { kind: 'existing'; assetReference: string; }
+type AutoResponseSource = CapturedAutoResponseSource | ScratchAutoResponseSource | ExistingAutoResponseSource;
 type ScriptHandler = 'onRequestHead' | 'onRequestBody' | 'onResponseHead' | 'onResponseBody';
 interface ScriptDraft {
   id: string;
@@ -180,6 +241,9 @@ export function onRequestHead(_context: Context, request: Request): Action {
 }
 `;
 
+const AUTORESPONSE_PRIORITY_BASE = -1_000_000;
+const MAX_AUTORESPONSE_EDIT_BYTES = 16 * 1024 * 1024;
+
 export class TransmogAppShell extends WebUIElement {
   statusLabel!: HTMLSpanElement;
   listenerValue!: HTMLElement;
@@ -203,8 +267,10 @@ export class TransmogAppShell extends WebUIElement {
   selectedMethod!: HTMLElement;
   selectedUrl!: HTMLElement;
   selectedStatus!: HTMLElement;
+  selectedAutoResponseButton!: HTMLButtonElement;
   requestInspectorOutput!: HTMLPreElement;
   responseInspectorOutput!: HTMLPreElement;
+  matchedAutoResponseButton!: HTMLButtonElement;
   bodyBoundary!: HTMLSelectElement;
   bodyRepresentation!: HTMLSelectElement;
   bodyDecoded!: HTMLInputElement;
@@ -215,7 +281,20 @@ export class TransmogAppShell extends WebUIElement {
   breakpointForm!: HTMLFormElement;
   automationForm!: HTMLFormElement;
   autoResponseForm!: HTMLFormElement;
-  responseAssetSelect!: HTMLSelectElement;
+  useSelectedResponseButton!: HTMLButtonElement;
+  autoResponseDropZone!: HTMLDivElement;
+  autoResponseList!: HTMLDivElement;
+  autoResponseEditorTitle!: HTMLElement;
+  autoResponseMethod!: HTMLSelectElement;
+  autoResponseRequestHeadersLabel!: HTMLElement;
+  autoResponseSource!: HTMLElement;
+  autoResponseStatus!: HTMLInputElement;
+  autoResponseMediaType!: HTMLInputElement;
+  autoResponseHeadersLabel!: HTMLElement;
+  autoResponseBody!: HTMLTextAreaElement;
+  capturedResponseOptions!: HTMLElement;
+  autoResponseEditBody!: HTMLInputElement;
+  autoResponsePreserveEncoding!: HTMLInputElement;
   automationOutput!: HTMLPreElement;
   scriptForm!: HTMLFormElement;
   scriptEditor!: HTMLDivElement;
@@ -238,6 +317,12 @@ export class TransmogAppShell extends WebUIElement {
   private scriptRevision = Date.now();
   private sessionLimit = 100;
   private selectedSessionId: string | null = null;
+  private selectedSessionDetail: SessionDetail | null = null;
+  private automationStatus: AutomationStatus | null = null;
+  private autoResponseSourceState: AutoResponseSource | null = null;
+  private editingAutoResponseId: string | null = null;
+  private draggedRuleId: string | null = null;
+  private matchedAutoResponseId: string | null = null;
   private sourceEditor: monaco.editor.IStandaloneCodeEditor | null = null;
   private revisionDiff: monaco.editor.IStandaloneDiffEditor | null = null;
   private diffModels: monaco.editor.ITextModel[] = [];
@@ -262,6 +347,21 @@ export class TransmogAppShell extends WebUIElement {
     this.systemTheme.addEventListener('change', this.systemThemeChanged);
     queueMicrotask(() => {
       this.sessionScroller.addEventListener('scroll', this.sessionScrolled, { passive: true });
+      this.autoResponseDropZone.addEventListener('dragover', (event) => {
+        if (event.dataTransfer?.types.includes('application/x-transmog-session')) event.preventDefault();
+      });
+      this.autoResponseDropZone.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sessionId = event.dataTransfer?.getData('application/x-transmog-session');
+        if (sessionId) void this.beginAutoResponseFromSessionId(sessionId);
+      });
+      const automationLink = this.shadowRoot?.querySelector<HTMLAnchorElement>('a[data-view="automation"]');
+      automationLink?.addEventListener('dragover', (event) => event.preventDefault());
+      automationLink?.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sessionId = event.dataTransfer?.getData('application/x-transmog-session');
+        if (sessionId) void this.beginAutoResponseFromSessionId(sessionId);
+      });
       void this.initializeShell();
       void this.initializeScriptEditor().catch((error: unknown) => {
         this.scriptOutput.textContent = `Script editor initialization failed: ${describeError(error)}`;
@@ -366,7 +466,7 @@ export class TransmogAppShell extends WebUIElement {
         );
       }
       await this.watchSessions();
-      await Promise.all([this.refreshAutomation(), this.refreshResponseAssets()]);
+      await this.refreshAutomation();
     } catch (error: unknown) {
       const message = `Desktop initialization failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
@@ -657,11 +757,14 @@ export class TransmogAppShell extends WebUIElement {
     for (const session of sessions.slice(0, 200)) {
       const row = document.createElement('tr');
       row.tabIndex = 0;
+      row.draggable = true;
+      row.title = 'Select to inspect, or drag to Auto-responses';
       row.dataset.sessionId = session.id;
       row.classList.toggle('selected', this.selectedSessionId === session.id);
+      row.classList.toggle('auto-responded', session.autoResponse !== null);
       row.setAttribute('aria-selected', String(this.selectedSessionId === session.id));
       const values = [
-        session.status?.toString() ?? '—', session.host, session.path, session.protocol,
+        session.autoResponse === null ? session.status?.toString() ?? '—' : `${session.status ?? session.autoResponse.status} · AUTO`, session.host, session.path, session.protocol,
         `${session.durationMs} ms`, `${session.responseBytes} B`,
         `${session.terminal}${session.loss ? ' · loss' : ''}${session.capturing ? ' · capture' : ''}`,
       ];
@@ -682,6 +785,11 @@ export class TransmogAppShell extends WebUIElement {
         row.append(cell);
       }
       row.addEventListener('click', () => { void this.inspectSession(session); });
+      row.addEventListener('dragstart', (event) => {
+        event.dataTransfer?.setData('application/x-transmog-session', session.id);
+        event.dataTransfer?.setData('text/plain', `${session.method} ${session.host}${session.path}`);
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
+      });
       row.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -706,11 +814,17 @@ export class TransmogAppShell extends WebUIElement {
     this.selectedUrl.textContent = `${session.host}${session.path}`;
     this.selectedStatus.textContent = session.status === null ? 'Pending' : `${session.status}`;
     this.selectedStatus.classList.toggle('success', session.status !== null && session.status >= 200 && session.status < 400);
+    this.selectedStatus.classList.remove('auto-response');
+    this.selectedAutoResponseButton.disabled = true;
+    this.useSelectedResponseButton.disabled = true;
+    this.matchedAutoResponseId = null;
+    this.matchedAutoResponseButton.hidden = true;
     this.requestInspectorOutput.textContent = 'Loading bounded request evidence…';
     this.responseInspectorOutput.textContent = 'Loading bounded response evidence…';
     try {
       const detail = await invoke<SessionDetail>('session_detail', { id: session.id });
       this.selectedSessionId = session.id;
+      this.selectedSessionDetail = detail;
       for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
         const selected = row.dataset.sessionId === session.id;
         row.classList.toggle('selected', selected);
@@ -722,13 +836,25 @@ export class TransmogAppShell extends WebUIElement {
         routeSelection: detail.routeSelection,
         routeAttempts: detail.routeAttempts,
       }, null, 2);
-      this.responseInspectorOutput.textContent = JSON.stringify({
+      const autoResponse = detail.autoResponse === null
+        ? null
+        : `AUTO-RESPONSE: “${detail.autoResponse.ruleName}” was the first matching rule and served its saved response without contacting the origin.`;
+      this.selectedStatus.textContent = detail.autoResponse === null
+        ? (session.status === null ? 'Pending' : `${session.status}`)
+        : `${detail.autoResponse.status} · AUTO`;
+      this.selectedStatus.classList.toggle('auto-response', detail.autoResponse !== null);
+      this.matchedAutoResponseId = detail.autoResponse?.ruleId ?? null;
+      this.matchedAutoResponseButton.hidden = detail.autoResponse === null;
+      this.matchedAutoResponseButton.textContent = detail.autoResponse === null
+        ? 'Show matched rule'
+        : `Show “${detail.autoResponse.ruleName}”`;
+      this.responseInspectorOutput.textContent = `${autoResponse === null ? '' : `${autoResponse}\n\n`}${JSON.stringify({
         responses: detail.responses,
         terminal: detail.terminal,
         websocket: detail.websocket,
         diagnostics: detail.diagnostics,
         sequenceLoss: detail.sequenceLoss,
-      }, null, 2);
+      }, null, 2)}`;
       this.bodyBoundary.replaceChildren();
       for (const body of detail.storedBodies) {
         const option = document.createElement('option');
@@ -739,6 +865,9 @@ export class TransmogAppShell extends WebUIElement {
       this.bodyPreviewOutput.textContent = detail.storedBodies.length === 0
         ? 'No retained body boundaries are available.'
         : 'Choose a representation and inspect the selected boundary.';
+      const reusable = this.clientResponseSource(detail) !== null;
+      this.selectedAutoResponseButton.disabled = !reusable;
+      this.useSelectedResponseButton.disabled = !reusable;
     } catch (error: unknown) {
       const message = `Inspector unavailable: ${describeError(error)}`;
       this.requestInspectorOutput.textContent = message;
@@ -748,6 +877,11 @@ export class TransmogAppShell extends WebUIElement {
 
   resumeLatest(): void {
     this.selectedSessionId = null;
+    this.selectedSessionDetail = null;
+    this.matchedAutoResponseId = null;
+    this.matchedAutoResponseButton.hidden = true;
+    this.selectedAutoResponseButton.disabled = true;
+    this.useSelectedResponseButton.disabled = true;
     this.followLatest = true;
     for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
       row.classList.remove('selected');
@@ -1117,10 +1251,13 @@ export class TransmogAppShell extends WebUIElement {
       const previous = current.rules.find((rule) => rule.id === 'desktop-user-agent');
       const rule = {
         id: 'desktop-user-agent',
+        displayName: 'User-Agent override',
+        enabled: true,
         revision: (previous?.revision ?? 0) + 1,
         priority: 0,
         matcher: {
           method: null,
+          url: null,
           scheme: null,
           host,
           port: null,
@@ -1163,86 +1300,335 @@ export class TransmogAppShell extends WebUIElement {
     }
   }
 
-  async activateAutoResponseRule(event: Event): Promise<void> {
+  async beginAutoResponseFromSelected(): Promise<void> {
+    if (this.selectedSessionId === null || this.selectedSessionDetail === null) {
+      this.showNotice('Select a completed response', 'Choose a request in Traffic whose client response body was retained, then try again.', null, null);
+      return;
+    }
+    await this.populateCapturedAutoResponse(this.selectedSessionId, this.selectedSessionDetail);
+  }
+
+  private async beginAutoResponseFromSessionId(sessionId: string): Promise<void> {
+    try {
+      const detail = this.selectedSessionId === sessionId && this.selectedSessionDetail !== null
+        ? this.selectedSessionDetail
+        : await invoke<SessionDetail>('session_detail', { id: sessionId });
+      await this.populateCapturedAutoResponse(sessionId, detail);
+    } catch (error: unknown) {
+      this.showNotice('Response cannot be reused', describeError(error), null, null);
+    }
+  }
+
+  private clientResponseSource(detail: SessionDetail): {request: HeadView; response: HeadView; body: StoredBodyMetadata} | null {
+    const request = detail.requests.find((head) => head.boundary === 'client-request');
+    const response = detail.responses.find((head) => head.boundary === 'client-response');
+    const body = detail.storedBodies.find((candidate) => candidate.boundary === 'client-response');
+    return request !== undefined && response !== undefined && body?.availability === 'complete'
+      ? { request, response, body }
+      : null;
+  }
+
+  private async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail): Promise<void> {
+    const source = this.clientResponseSource(detail);
+    if (source === null || source.request.method === null || source.request.target === null || source.response.status === null) {
+      this.showNotice(
+        'Response cannot be reused',
+        'Auto-responses require the original client request plus a complete retained client-visible response body.',
+        null,
+        null,
+      );
+      return;
+    }
+    this.activateView('automation');
+    this.editingAutoResponseId = null;
+    this.autoResponseForm.reset();
+    const elements = this.autoResponseForm.elements;
+    (elements.namedItem('name') as HTMLInputElement).value = `${source.request.method} ${shortUrl(source.request.target)}`;
+    this.autoResponseMethod.value = source.request.method.toUpperCase();
+    (elements.namedItem('url') as HTMLInputElement).value = source.request.target;
+    this.autoResponseStatus.value = String(source.response.status);
+    this.autoResponseStatus.readOnly = true;
+    this.autoResponseMediaType.value = source.body.mediaType ?? '';
+    this.autoResponseMediaType.readOnly = true;
+    this.setAutoResponseFieldsVisibility(true);
+    (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value = '';
+    this.autoResponseHeadersLabel.hidden = true;
+    this.capturedResponseOptions.hidden = false;
+    this.autoResponseEditBody.checked = false;
+    this.autoResponsePreserveEncoding.checked = true;
+    this.autoResponsePreserveEncoding.disabled = source.body.contentCodings.length === 0;
+    this.autoResponseBody.value = '';
+    this.autoResponseBody.readOnly = true;
+    this.autoResponseEditorTitle.textContent = 'New rule from captured response';
+    this.autoResponseSource.textContent = `Client-visible response ${source.response.status} from ${sessionId}. ${source.body.retainedBytes} encoded bytes retained${source.body.contentCodings.length === 0 ? '' : ` · ${source.body.contentCodings.join(', ')}`}.`;
+    this.autoResponseSourceState = {
+      kind: 'captured',
+      sessionId,
+      boundary: 'client-response',
+      contentCodings: source.body.contentCodings,
+      bodyEditable: false,
+      textEncoding: editableCharacterEncoding(source.body.charset),
+    };
+    this.updateAutoResponseHeaderFilterState();
+    this.updateAutoResponseBodyEditState();
+    this.autoResponseForm.hidden = false;
+    this.autoResponseForm.scrollIntoView({ block: 'nearest' });
+
+    if (source.body.retainedBytes === 0) {
+      this.autoResponseSourceState.bodyEditable = this.autoResponseSourceState.textEncoding !== null;
+      this.updateAutoResponseBodyEditState();
+      return;
+    }
+    if (source.body.retainedBytes > MAX_AUTORESPONSE_EDIT_BYTES) {
+      this.autoResponseSource.textContent += ' The body is too large for decoded editing; exact replay remains available.';
+      return;
+    }
+    try {
+      const inspection = await invoke<BodyInspection>('inspect_body', {
+        request: {
+          sessionId,
+          boundary: 'client-response',
+          representation: 'original-text',
+          decodeContent: true,
+          offset: 0,
+          maxBytes: MAX_AUTORESPONSE_EDIT_BYTES,
+        },
+      });
+      if (!inspection.truncated && inspection.representation === 'original-text' && inspection.textEncoding !== null) {
+        this.autoResponseBody.value = inspection.display;
+        this.autoResponseSourceState.bodyEditable = true;
+        this.autoResponseSourceState.textEncoding = inspection.textEncoding;
+        this.autoResponseSource.textContent += ` Decoded editing will preserve ${inspection.textEncoding}.`;
+        this.updateAutoResponseBodyEditState();
+      } else {
+        this.autoResponseSource.textContent += ' This body is not safely editable as complete decoded text; exact replay remains available.';
+      }
+    } catch {
+      this.autoResponseSource.textContent += ' This body is not safely editable as decoded text; exact replay remains available.';
+    }
+  }
+
+  beginScratchAutoResponse(): void {
+    this.activateView('automation');
+    this.editingAutoResponseId = null;
+    this.autoResponseSourceState = { kind: 'scratch' };
+    this.autoResponseForm.reset();
+    this.autoResponseEditorTitle.textContent = 'New response from scratch';
+    this.autoResponseSource.textContent = 'New authored response. Transmog will repair Content-Length and omit invalid hop-by-hop fields.';
+    this.autoResponseStatus.readOnly = false;
+    this.autoResponseMediaType.readOnly = false;
+    this.setAutoResponseFieldsVisibility(true);
+    this.autoResponseHeadersLabel.hidden = false;
+    this.capturedResponseOptions.hidden = true;
+    this.autoResponseBody.readOnly = false;
+    this.autoResponseBody.value = '';
+    this.updateAutoResponseHeaderFilterState();
+    this.autoResponseForm.hidden = false;
+    this.autoResponseForm.scrollIntoView({ block: 'nearest' });
+  }
+
+  cancelAutoResponseEdit(): void {
+    this.autoResponseForm.hidden = true;
+    this.autoResponseSourceState = null;
+    this.editingAutoResponseId = null;
+  }
+
+  updateAutoResponseHeaderFilterState(): void {
+    const enabled = this.autoResponseMethod.value.toUpperCase() === 'POST';
+    this.autoResponseRequestHeadersLabel.hidden = !enabled;
+    const input = this.autoResponseForm.elements.namedItem('requestHeaders') as HTMLTextAreaElement;
+    input.disabled = !enabled;
+    if (!enabled) input.value = '';
+  }
+
+  updateAutoResponseBodyEditState(): void {
+    const source = this.autoResponseSourceState;
+    const editable = source?.kind === 'captured' && source.bodyEditable;
+    if (!editable) this.autoResponseEditBody.checked = false;
+    this.autoResponseEditBody.disabled = !editable;
+    this.autoResponseBody.readOnly = !this.autoResponseEditBody.checked;
+    this.autoResponsePreserveEncoding.disabled = !this.autoResponseEditBody.checked
+      || source?.kind !== 'captured'
+      || source.contentCodings.length === 0;
+  }
+
+  private setAutoResponseFieldsVisibility(visible: boolean): void {
+    for (const field of [this.autoResponseStatus, this.autoResponseMediaType, this.autoResponseBody]) {
+      const label = field.closest('label');
+      if (label instanceof HTMLElement) label.hidden = !visible;
+    }
+  }
+
+  showMatchedAutoResponse(): void {
+    const ruleId = this.matchedAutoResponseId;
+    if (ruleId === null) return;
+    this.activateView('automation');
+    const card = this.autoResponseList.querySelector<HTMLElement>(`[data-rule-id="${CSS.escape(ruleId)}"]`);
+    if (card === null) {
+      this.showNotice('Historical rule', 'The response records which rule won, but that rule is no longer in the active list.', null, null);
+      return;
+    }
+    card.scrollIntoView({ block: 'center' });
+    card.focus({ preventScroll: true });
+    card.classList.add('matched-rule');
+    window.setTimeout(() => card.classList.remove('matched-rule'), 1600);
+  }
+
+  async saveAutoResponse(event: Event): Promise<void> {
     event.preventDefault();
     const data = new FormData(this.autoResponseForm);
+    const source = this.autoResponseSourceState;
+    if (source === null) return;
+    this.automationOutput.textContent = 'Validating and saving the auto-response…';
+    this.automationOutput.dataset.kind = 'progress';
     try {
-      let assetReference = String(data.get('responseSource') ?? '');
-      if (assetReference.length === 0) {
+      let assetReference: string;
+      if (source.kind === 'existing') {
+        assetReference = source.assetReference;
+      } else {
         const suffix = crypto.randomUUID().replaceAll('-', '');
-        const assetId = `desktop-response-${suffix}`;
-        const asset = await invoke<ResponseAsset>('create_response_asset', {
-          input: {
-            id: assetId,
-            revision: 1,
-            status: Number(data.get('status') ?? 200),
-            headers: [],
-            body: Array.from(new TextEncoder().encode(String(data.get('body') ?? ''))),
-            mediaType: optionalText(data.get('mediaType')),
-          },
-        });
+        const assetId = `autoresponse-${suffix}`;
+        const editedBody = source.kind === 'captured' && this.autoResponseEditBody.checked
+          ? encodeEditedText(String(data.get('body') ?? ''), source.textEncoding)
+          : null;
+        const asset = source.kind === 'captured'
+          ? await invoke<ResponseAsset>('create_response_asset_from_session', {
+              input: {
+                id: assetId,
+                revision: 1,
+                exchangeId: source.sessionId,
+                boundary: source.boundary,
+                decodedBody: editedBody,
+                preserveContentEncoding: this.autoResponsePreserveEncoding.checked,
+              },
+            })
+          : await invoke<ResponseAsset>('create_response_asset', {
+              input: {
+                id: assetId,
+                revision: 1,
+                status: Number(data.get('status') ?? 200),
+                headers: encodeHeaders(parseHeaderLines(String(data.get('responseHeaders') ?? ''))),
+                body: Array.from(new TextEncoder().encode(String(data.get('body') ?? ''))),
+                mediaType: optionalText(data.get('mediaType')),
+              },
+            });
         assetReference = `${asset.id}@${asset.revision}`;
-        await this.refreshResponseAssets(assetReference);
       }
+
       const current = await invoke<AutomationStatus>('automation_status');
-      const previous = current.rules.find((rule) => rule.id === 'desktop-auto-response');
-      const rule = {
-        id: 'desktop-auto-response',
-        revision: (previous?.revision ?? 0) + 1,
-        priority: 0,
+      const existing = this.editingAutoResponseId === null
+        ? undefined
+        : current.rules.find((candidate) => candidate.id === this.editingAutoResponseId);
+      const id = existing?.id ?? `autoresponse-rule-${crypto.randomUUID().replaceAll('-', '')}`;
+      const method = String(data.get('method') ?? '').toUpperCase();
+      const requestHeaders = method === 'POST'
+        ? parseHeaderLines(String(data.get('requestHeaders') ?? '')).map((header) => ({
+            name: header.name,
+            condition: { kind: 'exact', value: Array.from(new TextEncoder().encode(header.value)) },
+          }))
+        : [];
+      const rule: AutomationRule = {
+        id,
+        displayName: String(data.get('name') ?? '').trim(),
+        enabled: true,
+        revision: (existing?.revision ?? 0) + 1,
+        priority: existing?.priority ?? AUTORESPONSE_PRIORITY_BASE,
         matcher: {
-          method: null,
+          method,
+          url: { kind: 'exact', value: String(data.get('url') ?? '').trim() },
           scheme: null,
-          host: optionalText(data.get('host')),
+          host: null,
           port: null,
-          pathPrefix: optionalText(data.get('path')),
+          pathPrefix: null,
           query: null,
-          requestHeaders: [],
+          requestHeaders,
           responseHeaders: [],
           responseStatus: null,
           responseStatusClass: null,
         },
         request: {
-          headers: [],
-          replaceBody: null,
-          discardBody: false,
-          abortReason: null,
-          responseAsset: assetReference,
-          allowNonIdempotentBodyReplacement: false,
+          headers: [], replaceBody: null, discardBody: false, abortReason: null,
+          responseAsset: assetReference, allowNonIdempotentBodyReplacement: false,
         },
         response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
       };
-      const rules = current.rules.filter((candidate) => candidate.id !== rule.id);
-      rules.push(rule);
-      const status = await this.activateRuleSet(rules, current.generation);
+      const ordered = this.autoResponseRules(current).filter((candidate) => candidate.id !== id);
+      if (existing === undefined) ordered.unshift(rule);
+      else ordered.splice(Math.max(0, this.autoResponseRules(current).findIndex((candidate) => candidate.id === id)), 0, rule);
+      const status = await this.activateAutoResponseOrder(current, ordered);
       this.renderAutomation(status);
-      this.diagnostics.textContent = 'Auto-response enabled; new matching requests will not contact the origin.';
+      this.cancelAutoResponseEdit();
+      this.automationOutput.textContent = `Saved “${rule.displayName}”${existing === undefined ? ' at the top' : ''}. The first enabled matching rule will win.`;
+      this.automationOutput.dataset.kind = 'success';
     } catch (error: unknown) {
-      this.automationOutput.textContent = `Auto-response could not be enabled: ${describeError(error)}`;
+      this.automationOutput.textContent = `Auto-response could not be saved: ${describeError(error)}`;
       this.automationOutput.dataset.kind = 'error';
     }
   }
 
-  private async refreshResponseAssets(selected?: string): Promise<void> {
+  private autoResponseRules(status: AutomationStatus): AutomationRule[] {
+    return status.rules
+      .filter((rule) => rule.request.responseAsset !== null)
+      .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+  }
+
+  private async activateAutoResponseOrder(current: AutomationStatus, ordered: AutomationRule[]): Promise<AutomationStatus> {
+    const normalized = ordered.map((rule, index) => {
+      const priority = AUTORESPONSE_PRIORITY_BASE + index;
+      return rule.priority === priority ? rule : { ...rule, revision: rule.revision + 1, priority };
+    });
+    const ids = new Set(normalized.map((rule) => rule.id));
+    const other = current.rules.filter((rule) => rule.request.responseAsset === null && !ids.has(rule.id));
+    return this.activateRuleSet([...normalized, ...other], current.generation);
+  }
+
+  private async mutateAutoResponse(ruleId: string, mutation: 'toggle' | 'remove' | 'up' | 'down'): Promise<void> {
     try {
-      const assets = await invoke<ResponseAsset[]>('response_assets');
-      const current = selected ?? this.responseAssetSelect.value;
-      this.responseAssetSelect.replaceChildren();
-      const create = document.createElement('option');
-      create.value = '';
-      create.textContent = 'Create a new response below';
-      this.responseAssetSelect.append(create);
-      assets.forEach((asset, index) => {
-        const option = document.createElement('option');
-        option.value = `${asset.id}@${asset.revision}`;
-        option.textContent = `Saved response ${index + 1} · ${asset.status} · ${asset.bodyBytes} bytes`;
-        this.responseAssetSelect.append(option);
-      });
-      this.responseAssetSelect.value = current;
+      const current = await invoke<AutomationStatus>('automation_status');
+      const ordered = this.autoResponseRules(current);
+      const index = ordered.findIndex((rule) => rule.id === ruleId);
+      if (index < 0) return;
+      if (mutation === 'remove') ordered.splice(index, 1);
+      else if (mutation === 'toggle') {
+        const rule = ordered[index];
+        if (rule !== undefined) ordered[index] = { ...rule, enabled: !(rule.enabled ?? true), revision: rule.revision + 1 };
+      } else {
+        const destination = mutation === 'up' ? index - 1 : index + 1;
+        if (destination < 0 || destination >= ordered.length) return;
+        [ordered[index], ordered[destination]] = [ordered[destination]!, ordered[index]!];
+      }
+      this.renderAutomation(await this.activateAutoResponseOrder(current, ordered));
     } catch (error: unknown) {
-      this.automationOutput.textContent = `Saved responses are unavailable: ${describeError(error)}`;
+      this.automationOutput.textContent = `Auto-response change failed: ${describeError(error)}`;
       this.automationOutput.dataset.kind = 'error';
     }
+  }
+
+  private editAutoResponse(rule: AutomationRule): void {
+    const url = rule.matcher.url?.kind === 'exact' ? rule.matcher.url.value : '';
+    this.editingAutoResponseId = rule.id;
+    this.autoResponseSourceState = { kind: 'existing', assetReference: rule.request.responseAsset ?? '' };
+    this.autoResponseForm.reset();
+    const elements = this.autoResponseForm.elements;
+    (elements.namedItem('name') as HTMLInputElement).value = rule.displayName ?? 'Auto-response';
+    this.autoResponseMethod.value = rule.matcher.method ?? 'GET';
+    (elements.namedItem('url') as HTMLInputElement).value = url;
+    (elements.namedItem('requestHeaders') as HTMLTextAreaElement).value = rule.matcher.requestHeaders
+      .filter((header) => header.condition.kind === 'exact')
+      .map((header) => `${header.name}: ${new TextDecoder().decode(new Uint8Array(header.condition.value ?? []))}`)
+      .join('\n');
+    this.autoResponseEditorTitle.textContent = `Edit “${rule.displayName ?? 'Auto-response'}”`;
+    this.autoResponseSource.textContent = 'Using the immutable saved response attached to this rule. Criteria can be changed without duplicating its response bytes.';
+    this.autoResponseStatus.readOnly = true;
+    this.autoResponseMediaType.readOnly = true;
+    this.setAutoResponseFieldsVisibility(false);
+    this.autoResponseHeadersLabel.hidden = true;
+    this.capturedResponseOptions.hidden = true;
+    this.autoResponseBody.value = '';
+    this.autoResponseBody.readOnly = true;
+    this.updateAutoResponseHeaderFilterState();
+    this.autoResponseForm.hidden = false;
+    this.autoResponseForm.scrollIntoView({ block: 'nearest' });
   }
 
   async disableBuiltInAutomation(id: string): Promise<void> {
@@ -1273,15 +1659,106 @@ export class TransmogAppShell extends WebUIElement {
   }
 
   private renderAutomation(status: AutomationStatus): void {
+    this.automationStatus = status;
+    this.renderAutoResponseRules(status);
     const actions: string[] = [];
     if (status.rules.some((rule) => rule.id === 'desktop-user-agent')) actions.push('User-Agent override');
-    if (status.rules.some((rule) => rule.id === 'desktop-auto-response')) actions.push('Auto-response');
-    const other = status.rules.filter((rule) => !rule.id.startsWith('desktop-')).length;
+    const autoResponses = this.autoResponseRules(status);
+    if (autoResponses.length > 0) actions.push(`${autoResponses.length} auto-response rule${autoResponses.length === 1 ? '' : 's'}`);
+    const other = status.rules.filter((rule) => !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
     if (other > 0) actions.push(`${other} advanced rule${other === 1 ? '' : 's'}`);
     this.automationOutput.textContent = actions.length === 0
       ? 'No built-in traffic actions are active.'
       : `Active for new requests: ${actions.join(', ')}.`;
     this.automationOutput.dataset.kind = 'success';
+  }
+
+  private renderAutoResponseRules(status: AutomationStatus): void {
+    const rules = this.autoResponseRules(status);
+    this.autoResponseList.replaceChildren();
+    if (rules.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'auto-response-empty';
+      empty.textContent = 'No auto-responses yet. The easiest starting point is a completed request in Traffic.';
+      this.autoResponseList.append(empty);
+      return;
+    }
+    rules.forEach((rule, index) => {
+      const card = document.createElement('article');
+      card.className = 'auto-response-rule';
+      card.tabIndex = -1;
+      card.draggable = true;
+      card.dataset.ruleId = rule.id;
+      card.classList.toggle('disabled', !(rule.enabled ?? true));
+      const handle = document.createElement('span');
+      handle.className = 'drag-handle';
+      handle.textContent = '⋮⋮';
+      handle.title = 'Drag to change first-match order';
+      const order = document.createElement('span');
+      order.className = 'rule-order';
+      order.textContent = String(index + 1);
+      const description = document.createElement('div');
+      description.className = 'rule-description';
+      const name = document.createElement('strong');
+      name.textContent = rule.displayName ?? 'Auto-response';
+      const criteria = document.createElement('small');
+      const url = rule.matcher.url?.kind === 'exact' ? rule.matcher.url.value : 'any URL';
+      const headers = rule.matcher.requestHeaders.length;
+      criteria.textContent = `${rule.matcher.method ?? 'ANY'} ${url}${headers === 0 ? '' : ` · ${headers} exact header match${headers === 1 ? '' : 'es'}`} · saved response`;
+      description.append(name, criteria);
+      const state = document.createElement('span');
+      state.className = 'rule-state';
+      state.textContent = rule.enabled ?? true ? 'Enabled' : 'Disabled';
+      const actions = document.createElement('div');
+      actions.className = 'rule-actions';
+      const button = (label: string, action: () => void, disabled = false): HTMLButtonElement => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'secondary compact-button';
+        item.textContent = label;
+        item.disabled = disabled;
+        item.addEventListener('click', action);
+        return item;
+      };
+      actions.append(
+        button('Edit criteria', () => this.editAutoResponse(rule)),
+        button(rule.enabled ?? true ? 'Disable' : 'Enable', () => { void this.mutateAutoResponse(rule.id, 'toggle'); }),
+        button('↑', () => { void this.mutateAutoResponse(rule.id, 'up'); }, index === 0),
+        button('↓', () => { void this.mutateAutoResponse(rule.id, 'down'); }, index === rules.length - 1),
+        button('Remove', () => { void this.mutateAutoResponse(rule.id, 'remove'); }),
+      );
+      card.append(handle, order, description, state, actions);
+      card.addEventListener('dragstart', (event) => {
+        this.draggedRuleId = rule.id;
+        event.dataTransfer?.setData('application/x-transmog-autoresponse-rule', rule.id);
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      });
+      card.addEventListener('dragover', (event) => {
+        if (this.draggedRuleId !== null && this.draggedRuleId !== rule.id) event.preventDefault();
+      });
+      card.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const dragged = event.dataTransfer?.getData('application/x-transmog-autoresponse-rule') ?? this.draggedRuleId;
+        this.draggedRuleId = null;
+        if (!dragged || dragged === rule.id) return;
+        const current = this.automationStatus;
+        if (current === null) return;
+        const ordered = this.autoResponseRules(current);
+        const from = ordered.findIndex((candidate) => candidate.id === dragged);
+        const to = ordered.findIndex((candidate) => candidate.id === rule.id);
+        if (from < 0 || to < 0) return;
+        const [moved] = ordered.splice(from, 1);
+        if (moved !== undefined) ordered.splice(to, 0, moved);
+        void this.activateAutoResponseOrder(current, ordered)
+          .then((next) => this.renderAutomation(next))
+          .catch((error: unknown) => {
+            this.automationOutput.textContent = `Auto-response reorder failed: ${describeError(error)}`;
+            this.automationOutput.dataset.kind = 'error';
+          });
+      });
+      card.addEventListener('dragend', () => { this.draggedRuleId = null; });
+      this.autoResponseList.append(card);
+    });
   }
 
   async executeComposer(event: Event): Promise<void> {
@@ -1564,6 +2041,86 @@ function parseHeaderLines(value: string): Array<{name: string; value: string}> {
   return value.split(/\r?\n/).filter((line) => line.trim().length > 0).map((line) => {
     const separator = line.indexOf(':');
     if (separator <= 0) throw new Error('each header must use “Name: value”');
-    return { name: line.slice(0, separator).trim(), value: line.slice(separator + 1).trim() };
+    const name = line.slice(0, separator).trim();
+    const fieldValue = line.slice(separator + 1).trim();
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) throw new Error(`invalid HTTP header name: ${name}`);
+    if (/[\x00-\x08\x0a-\x1f\x7f]/.test(fieldValue)) throw new Error(`invalid control character in header: ${name}`);
+    return { name, value: fieldValue };
   });
+}
+
+function encodeHeaders(headers: Array<{name: string; value: string}>): Array<{name: number[]; value: number[]}> {
+  const encoder = new TextEncoder();
+  return headers.map((header) => ({
+    name: Array.from(encoder.encode(header.name)),
+    value: Array.from(encoder.encode(header.value)),
+  }));
+}
+
+function shortUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.host}${url.pathname}${url.search}`.slice(0, 96);
+  } catch {
+    return value.slice(0, 96);
+  }
+}
+
+function editableCharacterEncoding(declared: string | null): string | null {
+  switch (declared?.trim().toLowerCase() ?? 'utf-8') {
+    case 'utf-8': return 'utf-8';
+    case 'us-ascii': return 'us-ascii';
+    case 'utf-16':
+    case 'utf-16le': return 'utf-16le';
+    case 'utf-16be': return 'utf-16be';
+    case 'utf-32':
+    case 'utf-32le': return 'utf-32le';
+    case 'utf-32be': return 'utf-32be';
+    default: return null;
+  }
+}
+
+function encodeEditedText(value: string, encoding: string | null): number[] {
+  if (encoding === null) throw new Error('the captured character encoding cannot be reproduced safely');
+  if (encoding === 'us-ascii') {
+    const bytes = Array.from(value, (character) => character.codePointAt(0) ?? 0);
+    if (bytes.some((byte) => byte > 0x7f)) throw new Error('the edit contains characters that cannot be represented as US-ASCII');
+    return bytes;
+  }
+  if (encoding === 'utf-8' || encoding === 'utf-8-bom') {
+    const bytes = Array.from(new TextEncoder().encode(value));
+    return encoding.endsWith('-bom') ? [0xef, 0xbb, 0xbf, ...bytes] : bytes;
+  }
+  if (encoding.startsWith('utf-16')) {
+    const littleEndian = encoding.includes('le');
+    const bytes: number[] = encoding.endsWith('-bom')
+      ? (littleEndian ? [0xff, 0xfe] : [0xfe, 0xff])
+      : [];
+    for (let index = 0; index < value.length; index += 1) {
+      const unit = value.charCodeAt(index);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = value.charCodeAt(index + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) throw new Error('the edit contains an unpaired Unicode surrogate');
+      } else if (unit >= 0xdc00 && unit <= 0xdfff && !(value.charCodeAt(index - 1) >= 0xd800 && value.charCodeAt(index - 1) <= 0xdbff)) {
+        throw new Error('the edit contains an unpaired Unicode surrogate');
+      }
+      bytes.push(...(littleEndian ? [unit & 0xff, unit >>> 8] : [unit >>> 8, unit & 0xff]));
+    }
+    return bytes;
+  }
+  if (encoding.startsWith('utf-32')) {
+    const littleEndian = encoding.includes('le');
+    const bytes: number[] = encoding.endsWith('-bom')
+      ? (littleEndian ? [0xff, 0xfe, 0x00, 0x00] : [0x00, 0x00, 0xfe, 0xff])
+      : [];
+    for (const character of value) {
+      const scalar = character.codePointAt(0) ?? 0;
+      if (scalar >= 0xd800 && scalar <= 0xdfff) throw new Error('the edit contains an unpaired Unicode surrogate');
+      bytes.push(...(littleEndian
+        ? [scalar & 0xff, (scalar >>> 8) & 0xff, (scalar >>> 16) & 0xff, scalar >>> 24]
+        : [scalar >>> 24, (scalar >>> 16) & 0xff, (scalar >>> 8) & 0xff, scalar & 0xff]));
+    }
+    return bytes;
+  }
+  throw new Error(`unsupported captured character encoding: ${encoding}`);
 }

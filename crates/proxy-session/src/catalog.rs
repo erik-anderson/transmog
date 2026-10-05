@@ -1064,6 +1064,7 @@ mod tests {
             ObserverConfig {
                 interest: ObservationInterest {
                     lifecycle: true,
+                    sensitive_headers: false,
                     request_body: BodyObservation::Full,
                     response_body: BodyObservation::Full,
                 },

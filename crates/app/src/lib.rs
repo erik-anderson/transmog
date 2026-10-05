@@ -42,7 +42,8 @@ pub use diagnostics::{
     SupportBundleResult,
 };
 pub use inspector::{
-    BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView, HeaderView, SessionDetail,
+    AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
+    HeaderView, SessionDetail,
 };
 pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 pub use product_state::{
@@ -487,7 +488,7 @@ impl Application {
     /// # Errors
     /// Incomplete, truncated, lossy, evicted, disabled, invalid, or unavailable
     /// bodies are rejected.
-    pub fn create_response_asset_from_session(
+    pub async fn create_response_asset_from_session(
         &self,
         input: SessionResponseAsset,
     ) -> Result<ResponseAsset, AppError> {
@@ -498,7 +499,53 @@ impl Application {
                 false,
             )
         })?;
-        self.response_assets.create_from_session(body_store, input)
+        let exchange_id = response_assets::parse_exchange_id(&input.exchange_id)?;
+        let boundary = response_assets::parse_response_boundary(&input.boundary)?;
+        let metadata = body_store
+            .metadata(exchange_id)
+            .into_iter()
+            .find(|candidate| candidate.boundary == input.boundary)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "client-visible response body metadata is unavailable",
+                    false,
+                )
+            })?;
+        let mut head = body_store
+            .response_head(exchange_id, boundary)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "client-visible response headers are unavailable",
+                    false,
+                )
+            })?;
+        let encoded_body_override = if let Some(decoded) = input.decoded_body.clone() {
+            if decoded.len() > body_store::MAX_BODY_READ_BYTES {
+                return Err(AppError::new(
+                    ErrorCategory::Limit,
+                    "edited decoded response exceeds the sixteen MiB limit",
+                    false,
+                ));
+            }
+            if input.preserve_content_encoding {
+                Some(inspector::encode_content(&metadata.content_codings, decoded).await?)
+            } else {
+                head.headers.remove_all("content-encoding");
+                Some(decoded)
+            }
+        } else {
+            None
+        };
+        self.response_assets.create_from_session(
+            body_store,
+            input,
+            head.status,
+            &head.headers,
+            metadata.media_type,
+            encoded_body_override,
+        )
     }
 
     /// Returns a bounded point-in-time lifecycle read model.
@@ -669,6 +716,7 @@ impl Application {
                 metadata,
                 representation: "image",
                 decoded,
+                text_encoding: None,
                 display: String::new(),
                 display_bytes,
                 truncated: false,

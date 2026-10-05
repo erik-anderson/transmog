@@ -217,6 +217,7 @@ fn build_components(
             ObserverConfig {
                 interest: ObservationInterest {
                     lifecycle: true,
+                    sensitive_headers: false,
                     request_body: if capture_bodies {
                         BodyObservation::Full
                     } else {

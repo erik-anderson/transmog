@@ -2,9 +2,11 @@ use std::{fmt::Write as _, num::NonZeroUsize};
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use transmog_content::{ContentCodingStack, ContentDecoder, ContentLimits};
-use transmog_core::{BodyFrame, HeaderBlock, HeaderField, observe::ExchangeBoundary};
-use transmog_session::{ApplicationSessionService, BodySnapshot, SessionTerminal};
+use transmog_content::{ContentCodingStack, ContentDecoder, ContentEncoder, ContentLimits};
+use transmog_core::{
+    BodyFrame, HeaderBlock, HeaderField, intercept::HookEffectAction, observe::ExchangeBoundary,
+};
+use transmog_session::{ApplicationSessionService, BodySnapshot, SessionSnapshot, SessionTerminal};
 
 use crate::body_store::MAX_BODY_READ_BYTES;
 use crate::{
@@ -84,6 +86,8 @@ pub struct SessionDetail {
     pub diagnostics: Vec<String>,
     /// Centrally attributed hook effects.
     pub hook_effects: Vec<String>,
+    /// User-facing attribution when a local autoresponse won.
+    pub auto_response: Option<AutoResponseMatchView>,
     /// Selected route and explanation.
     pub route_selection: Option<String>,
     /// Bounded route attempts.
@@ -94,6 +98,26 @@ pub struct SessionDetail {
     pub websocket: Option<String>,
     /// Missing observer sequence count for this exchange.
     pub sequence_loss: u64,
+}
+
+/// Stable user-facing attribution for a locally served autoresponse.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoResponseMatchView {
+    /// Stable internal rule identity used only for navigation.
+    pub rule_id: String,
+    /// Friendly name captured with this exchange.
+    pub rule_name: String,
+    /// Immutable rule revision that made the decision.
+    pub rule_revision: u64,
+    /// One-based evaluation position captured with this exchange.
+    pub position: usize,
+    /// Exact immutable response asset reference.
+    pub asset_reference: String,
+    /// Locally generated response status.
+    pub status: u16,
+    /// Known response bytes, or zero for an unknown streaming length.
+    pub body_bytes: usize,
 }
 
 /// Requested safe representation of retained body bytes.
@@ -147,6 +171,8 @@ pub struct BodyInspection {
     pub representation: &'static str,
     /// Whether content codings were decoded before rendering.
     pub decoded: bool,
+    /// Character encoding used for a returned text representation.
+    pub text_encoding: Option<&'static str>,
     /// Safe text or byte-dump content. Presentation layers must assign this to
     /// `textContent`, never HTML.
     pub display: String,
@@ -282,11 +308,36 @@ pub(crate) fn session_detail(
         stored_bodies,
         diagnostics,
         hook_effects,
+        auto_response: auto_response_match(&snapshot),
         route_selection,
         route_attempts,
         terminal,
         websocket: snapshot.websocket.as_ref().map(bounded_debug),
         sequence_loss: snapshot.sequence_loss,
+    })
+}
+
+pub(crate) fn auto_response_match(snapshot: &SessionSnapshot) -> Option<AutoResponseMatchView> {
+    snapshot.hook_effects.iter().find_map(|effect| {
+        let HookEffectAction::Respond {
+            status, body_bytes, ..
+        } = &effect.action
+        else {
+            return None;
+        };
+        let identity = effect.interceptor.id.as_str();
+        let encoded = identity.strip_prefix("automation/")?;
+        let (rule, asset_reference) = encoded.split_once("/request/asset/")?;
+        let (rule_id, revision) = rule.rsplit_once('@')?;
+        Some(AutoResponseMatchView {
+            rule_id: rule_id.to_owned(),
+            rule_name: effect.interceptor.name.to_string(),
+            rule_revision: revision.parse().ok()?,
+            position: effect.interceptor.chain_position.saturating_add(1),
+            asset_reference: asset_reference.to_owned(),
+            status: *status,
+            body_bytes: *body_bytes,
+        })
     })
 }
 
@@ -320,6 +371,7 @@ pub(crate) async fn inspect_body(
             metadata,
             representation: "metadata",
             decoded: false,
+            text_encoding: None,
             display: String::new(),
             display_bytes: 0,
             truncated: false,
@@ -334,6 +386,7 @@ pub(crate) async fn inspect_body(
             metadata,
             representation: "unavailable",
             decoded: false,
+            text_encoding: None,
             display: String::new(),
             display_bytes: 0,
             truncated: false,
@@ -352,6 +405,7 @@ pub(crate) async fn inspect_body(
             metadata,
             representation: "unavailable",
             decoded: false,
+            text_encoding: None,
             display: String::new(),
             display_bytes: 0,
             truncated: false,
@@ -410,7 +464,7 @@ pub(crate) async fn inspect_body(
     if decoded_truncated {
         bytes.truncate(max_bytes);
     }
-    let (representation, display, warning) = render_body(
+    let (representation, display, warning, text_encoding) = render_body(
         request.representation,
         &bytes,
         metadata.charset.as_deref(),
@@ -425,6 +479,7 @@ pub(crate) async fn inspect_body(
         metadata,
         representation,
         decoded,
+        text_encoding,
         display,
         display_bytes: consumed,
         truncated: next_offset.is_some() || decoded_truncated,
@@ -549,7 +604,10 @@ const fn boundary_name(value: ExchangeBoundary) -> &'static str {
     }
 }
 
-async fn decode_content(codings: &[String], encoded: Vec<u8>) -> Result<Vec<u8>, AppError> {
+pub(crate) async fn decode_content(
+    codings: &[String],
+    encoded: Vec<u8>,
+) -> Result<Vec<u8>, AppError> {
     let field = HeaderField::try_new("content-encoding", codings.join(", ")).map_err(|_| {
         AppError::new(
             ErrorCategory::InvalidInput,
@@ -593,11 +651,70 @@ async fn decode_content(codings: &[String], encoded: Vec<u8>) -> Result<Vec<u8>,
     Ok(current)
 }
 
+pub(crate) async fn encode_content(
+    codings: &[String],
+    decoded: Vec<u8>,
+) -> Result<Vec<u8>, AppError> {
+    if codings.is_empty() {
+        return Ok(decoded);
+    }
+    let field = HeaderField::try_new("content-encoding", codings.join(", ")).map_err(|_| {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "stored content-coding metadata is invalid",
+            false,
+        )
+    })?;
+    let headers = HeaderBlock::from_fields(vec![field]);
+    let default_limits = ContentLimits::default();
+    let edit_limit =
+        NonZeroUsize::new(MAX_BODY_READ_BYTES).expect("the edit hard limit is nonzero");
+    let limits = ContentLimits::new(
+        edit_limit,
+        edit_limit,
+        edit_limit,
+        default_limits.max_decoder_window_bytes(),
+        default_limits.max_expansion_ratio(),
+        default_limits.expansion_slack_bytes(),
+        default_limits.max_coding_layers(),
+    )
+    .with_work_limits(default_limits.work_limits());
+    let stack = ContentCodingStack::from_headers(&headers, limits.max_coding_layers())
+        .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))?;
+    let mut current = decoded;
+    for coding in stack.encode_order() {
+        let mut codec = ContentEncoder::new(coding, limits)
+            .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
+        let mut frames = codec
+            .on_frame(BodyFrame::Data(Bytes::from(current)))
+            .await
+            .map_err(content_encode_error)?;
+        frames.extend(codec.finish().await.map_err(content_encode_error)?);
+        let mut encoded = Vec::new();
+        for frame in frames {
+            if let BodyFrame::Data(bytes) = frame {
+                encoded.extend_from_slice(&bytes);
+            }
+        }
+        current = encoded;
+    }
+    Ok(current)
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn content_decode_error(error: transmog_content::ContentCodecError) -> AppError {
     AppError::new(
         ErrorCategory::InvalidInput,
         format!("content decoding failed: {error}"),
+        false,
+    )
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn content_encode_error(error: transmog_content::ContentCodecError) -> AppError {
+    AppError::new(
+        ErrorCategory::InvalidInput,
+        format!("content encoding failed: {error}"),
         false,
     )
 }
@@ -608,19 +725,23 @@ fn render_body(
     charset: Option<&str>,
     media_type: Option<&str>,
     offset: u64,
-) -> (&'static str, String, Option<String>) {
+) -> (&'static str, String, Option<String>, Option<&'static str>) {
     let text = decode_unicode(bytes, charset);
+    let text_encoding = text
+        .as_ref()
+        .and_then(|_| detect_unicode_encoding(bytes, charset));
     match requested {
-        BodyRepresentation::Bytes => ("bytes", hex_dump(bytes, offset), None),
+        BodyRepresentation::Bytes => ("bytes", hex_dump(bytes, offset), None, None),
         BodyRepresentation::OriginalText => text.map_or_else(
             || {
                 (
                     "unavailable",
                     String::new(),
                     Some("body is not valid presentable Unicode text".to_owned()),
+                    None,
                 )
             },
-            |text| ("original-text", text, None),
+            |text| ("original-text", text, None, text_encoding),
         ),
         BodyRepresentation::Formatted => format_json(text.as_deref()).map_or_else(
             || {
@@ -628,22 +749,50 @@ fn render_body(
                     "unavailable",
                     String::new(),
                     Some("no reviewed formatter accepts this body".to_owned()),
+                    None,
                 )
             },
-            |formatted| ("formatted-json", formatted, None),
+            |formatted| ("formatted-json", formatted, None, text_encoding),
         ),
         BodyRepresentation::Auto => {
             if media_type.is_some_and(is_json_media_type)
                 && let Some(formatted) = format_json(text.as_deref())
             {
-                ("formatted-json", formatted, None)
+                ("formatted-json", formatted, None, text_encoding)
             } else if let Some(text) = text {
-                ("original-text", text, None)
+                ("original-text", text, None, text_encoding)
             } else {
-                ("bytes", hex_dump(bytes, offset), None)
+                ("bytes", hex_dump(bytes, offset), None, None)
             }
         }
         BodyRepresentation::Metadata | BodyRepresentation::Image => unreachable!(),
+    }
+}
+
+fn detect_unicode_encoding(bytes: &[u8], declared: Option<&str>) -> Option<&'static str> {
+    if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        Some("utf-8-bom")
+    } else if bytes.starts_with(&[0xff, 0xfe, 0x00, 0x00]) {
+        Some("utf-32le-bom")
+    } else if bytes.starts_with(&[0x00, 0x00, 0xfe, 0xff]) {
+        Some("utf-32be-bom")
+    } else if bytes.starts_with(&[0xff, 0xfe]) {
+        Some("utf-16le-bom")
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        Some("utf-16be-bom")
+    } else {
+        match declared
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("utf-16" | "utf-16le") => Some("utf-16le"),
+            Some("utf-16be") => Some("utf-16be"),
+            Some("utf-32" | "utf-32le") => Some("utf-32le"),
+            Some("utf-32be") => Some("utf-32be"),
+            Some("us-ascii") => Some("us-ascii"),
+            Some("utf-8") | None => Some("utf-8"),
+            Some(_) => None,
+        }
     }
 }
 
@@ -867,6 +1016,10 @@ mod tests {
             Some("hi")
         );
         assert_eq!(
+            detect_unicode_encoding(&[0xff, 0xfe, b'h', 0], None),
+            Some("utf-16le-bom")
+        );
+        assert_eq!(
             decode_unicode(&[0, 0, 0xfe, 0xff, 0, 0, 0, b'Z'], None).as_deref(),
             Some("Z")
         );
@@ -879,6 +1032,7 @@ mod tests {
         );
         assert_eq!(rendered.0, "formatted-json");
         assert!(rendered.1.contains('\n'));
+        assert_eq!(rendered.3, Some("utf-8"));
         assert!(hex_dump(&[0, b'A', 0xff], 16).starts_with("00000010"));
     }
 
@@ -909,6 +1063,20 @@ mod tests {
                     .await
                     .unwrap(),
                 b"encoded preview"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn autoresponse_edits_restore_every_original_content_coding() {
+        for coding in ["gzip", "deflate", "br", "zstd"] {
+            let encoded = encode_content(&[coding.to_owned()], b"edited response".to_vec())
+                .await
+                .unwrap();
+            assert_ne!(encoded, b"edited response");
+            assert_eq!(
+                decode_content(&[coding.to_owned()], encoded).await.unwrap(),
+                b"edited response"
             );
         }
     }

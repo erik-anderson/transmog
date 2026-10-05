@@ -18,7 +18,7 @@ use transmog_core::{
 };
 use transmog_script::{ScriptResolvedResponse, ScriptResponseAssetResolver};
 
-use crate::{AppError, BodyStore, ErrorCategory};
+use crate::{AppError, BodyAvailability, BodyStore, ErrorCategory};
 
 const ASSET_SCHEMA_VERSION: u32 = 1;
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024;
@@ -117,16 +117,20 @@ pub struct SessionResponseAsset {
     pub id: String,
     /// New immutable revision.
     pub revision: u64,
-    /// HTTP response status.
-    pub status: u16,
-    /// Ordered response headers.
-    pub headers: HeaderBlock,
     /// Source exchange identifier as 32 hexadecimal digits.
     pub exchange_id: String,
-    /// `upstream-response` or `client-response`.
+    /// Response boundary, currently `client-response`.
     pub boundary: String,
-    /// Optional declared media type.
-    pub media_type: Option<String>,
+    /// Optional decoded replacement body edited by the user.
+    #[serde(default)]
+    pub decoded_body: Option<Vec<u8>>,
+    /// Reapply the source response's content-coding stack after an edit.
+    #[serde(default = "default_true")]
+    pub preserve_content_encoding: bool,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -229,37 +233,67 @@ impl ResponseAssetStore {
         &self,
         body_store: &BodyStore,
         input: SessionResponseAsset,
+        status: u16,
+        headers: &HeaderBlock,
+        media_type: Option<String>,
+        encoded_body_override: Option<Vec<u8>>,
     ) -> Result<ResponseAsset, AppError> {
         let exchange_id = parse_exchange_id(&input.exchange_id)?;
-        let boundary = match input.boundary.as_str() {
-            "upstream-response" => ExchangeBoundary::UpstreamResponse,
-            "client-response" => ExchangeBoundary::ClientResponse,
-            _ => return Err(invalid("response asset source boundary is invalid")),
-        };
-        let lease = body_store
-            .open_complete(exchange_id, boundary)
-            .map_err(|_| invalid("response asset requires a complete retained body"))?;
-        if lease.metadata().retained_bytes > MAX_ASSET_BYTES {
+        let boundary = parse_response_boundary(&input.boundary)?;
+        let metadata = body_store
+            .metadata(exchange_id)
+            .into_iter()
+            .find(|candidate| candidate.boundary == input.boundary)
+            .ok_or_else(|| invalid("response asset requires a retained client response"))?;
+        if metadata.availability != BodyAvailability::Complete {
+            return Err(invalid("response asset requires a complete retained body"));
+        }
+        if metadata.retained_bytes > MAX_ASSET_BYTES {
             return Err(AppError::new(
                 ErrorCategory::Limit,
                 "response asset exceeds the one GiB limit",
                 false,
             ));
         }
-        self.create_from_reader(
-            input.id,
-            input.revision,
-            input.status,
-            &input.headers,
-            input
-                .media_type
-                .or_else(|| lease.metadata().media_type.clone()),
-            ResponseAssetProvenance::Session {
-                exchange_id: input.exchange_id,
-                boundary: input.boundary,
-            },
-            lease,
-        )
+        let media_type = media_type.or_else(|| metadata.media_type.clone());
+        let provenance = ResponseAssetProvenance::Session {
+            exchange_id: input.exchange_id,
+            boundary: input.boundary,
+        };
+        match encoded_body_override {
+            Some(body) => self.create_from_reader(
+                input.id,
+                input.revision,
+                status,
+                headers,
+                media_type,
+                provenance,
+                std::io::Cursor::new(body),
+            ),
+            None if metadata.retained_bytes == 0 => self.create_from_reader(
+                input.id,
+                input.revision,
+                status,
+                headers,
+                media_type,
+                provenance,
+                std::io::Cursor::new(Vec::<u8>::new()),
+            ),
+            None => {
+                let lease = body_store
+                    .open_complete(exchange_id, boundary)
+                    .map_err(|_| invalid("response asset requires a complete retained body"))?;
+                self.create_from_reader(
+                    input.id,
+                    input.revision,
+                    status,
+                    headers,
+                    media_type,
+                    provenance,
+                    lease,
+                )
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -644,13 +678,22 @@ fn load_index(root: &Path) -> Result<(u64, BTreeMap<String, ResponseAsset>), App
     Ok((document.generation, assets))
 }
 
-fn parse_exchange_id(id: &str) -> Result<ExchangeId, AppError> {
+pub(crate) fn parse_exchange_id(id: &str) -> Result<ExchangeId, AppError> {
     if id.len() != 32 {
         return Err(invalid("session identifier is invalid"));
     }
     u128::from_str_radix(id, 16)
         .map(ExchangeId)
         .map_err(|_| invalid("session identifier is invalid"))
+}
+
+pub(crate) fn parse_response_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
+    match value {
+        "client-response" => Ok(ExchangeBoundary::ClientResponse),
+        _ => Err(invalid(
+            "response asset source must be the client-visible response",
+        )),
+    }
 }
 
 fn random_hex() -> Result<String, AppError> {
@@ -680,6 +723,16 @@ fn unavailable(message: &'static str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc};
+
+    use transmog_core::{
+        ConnectionId, RequestHead, SessionId, SessionMetadata, StreamId, Target,
+        intercept::{CompletedExchange, ExchangeMetadata},
+        observe::{Observer, ObserverEvent, ObserverEventKind},
+    };
+
+    use crate::{BodyStoreConfig, RetentionMode};
+
     use super::*;
 
     fn root() -> PathBuf {
@@ -748,6 +801,113 @@ mod tests {
             ResponseAssetResolver::resolve(&store, "large@1").unwrap(),
             AutomationResponse::Streaming(_)
         ));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn empty_client_response_can_be_cloned_with_protected_headers() {
+        let root = root();
+        let body_root = root.join("bodies");
+        let body_store = BodyStore::new(BodyStoreConfig {
+            root: body_root,
+            mode: RetentionMode::Circular,
+            max_bytes: 1024,
+            max_body_bytes: 1024,
+            queue_capacity: NonZeroUsize::new(8).unwrap(),
+            max_read_bytes: 1024,
+            retain_requests: false,
+        })
+        .unwrap();
+        let target = Target {
+            scheme: "https".to_owned(),
+            authority: "example.test".to_owned(),
+            host: "example.test".to_owned(),
+            port: 443,
+            path: "/empty".to_owned(),
+            query: None,
+        };
+        let session = SessionMetadata {
+            session_id: SessionId(17),
+            downstream_connection_id: ConnectionId(17),
+            stream_id: StreamId(17),
+            client_addr: "127.0.0.1:1000".parse::<SocketAddr>().unwrap(),
+            proxy_addr: "127.0.0.1:2000".parse::<SocketAddr>().unwrap(),
+            ingress_version: HttpLegVersion::Http1,
+            egress_version: None,
+        };
+        let metadata = Arc::new(ExchangeMetadata::from_session(&session, target.clone()));
+        let response = ResponseHead {
+            status: 204,
+            source_version: HttpLegVersion::Http1,
+            headers: HeaderBlock::from_fields(vec![
+                HeaderField::try_new("set-cookie", "session=secret").unwrap(),
+                HeaderField::try_new("set-cookie", "theme=dark").unwrap(),
+                HeaderField::try_new("content-length", "0").unwrap(),
+            ]),
+        };
+        for event in [
+            ObserverEvent {
+                exchange_id: ExchangeId(17),
+                sequence: 1,
+                kind: ObserverEventKind::ExchangeStarted {
+                    metadata: Arc::clone(&metadata),
+                },
+            },
+            ObserverEvent {
+                exchange_id: ExchangeId(17),
+                sequence: 2,
+                kind: ObserverEventKind::ResponseHeadObserved {
+                    boundary: ExchangeBoundary::ClientResponse,
+                    head: response.clone(),
+                },
+            },
+            ObserverEvent {
+                exchange_id: ExchangeId(17),
+                sequence: 3,
+                kind: ObserverEventKind::Completed(CompletedExchange {
+                    metadata,
+                    request_head: RequestHead {
+                        method: "GET".to_owned(),
+                        target,
+                        source_version: HttpLegVersion::Http1,
+                        headers: HeaderBlock::new(),
+                    },
+                    response_head: response.clone(),
+                }),
+            },
+        ] {
+            Observer::on_event(&body_store, event).await.unwrap();
+        }
+        body_store.flush().unwrap();
+        let store = ResponseAssetStore::load(Some(root.clone())).unwrap();
+        let asset = store
+            .create_from_session(
+                &body_store,
+                SessionResponseAsset {
+                    id: "empty".to_owned(),
+                    revision: 1,
+                    exchange_id: format!("{:032x}", 17),
+                    boundary: "client-response".to_owned(),
+                    decoded_body: None,
+                    preserve_content_encoding: true,
+                },
+                response.status,
+                &response.headers,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(asset.body_bytes, 0);
+        assert_eq!(
+            asset.headers.values("set-cookie").collect::<Vec<_>>(),
+            [&b"session=secret"[..], &b"theme=dark"[..]]
+        );
+        assert_eq!(
+            asset.headers.values("content-length").next(),
+            Some(&b"0"[..])
+        );
+        drop(body_store);
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -75,12 +75,26 @@ pub enum HeaderCondition {
     Regex(String),
 }
 
+/// Match operation for a complete normalized absolute request URL.
+///
+/// The tagged representation deliberately leaves room for bounded regular
+/// expression matching without changing the surrounding rule document.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub enum UrlCondition {
+    /// Case-sensitive comparison with the complete normalized absolute URL.
+    Exact(String),
+}
+
 /// Conservative bounded rule predicate.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleMatcher {
     /// Optional ASCII case-insensitive exact method.
     pub method: Option<String>,
+    /// Optional complete normalized absolute-URL condition.
+    #[serde(default)]
+    pub url: Option<UrlCondition>,
     /// Optional ASCII case-insensitive exact URI scheme.
     pub scheme: Option<String>,
     /// Optional ASCII case-insensitive exact host.
@@ -108,6 +122,9 @@ impl RuleMatcher {
         self.method
             .as_ref()
             .is_none_or(|method| request.method.eq_ignore_ascii_case(method))
+            && self.url.as_ref().is_none_or(|condition| match condition {
+                UrlCondition::Exact(expected) => absolute_url(&request.target) == *expected,
+            })
             && self
                 .scheme
                 .as_ref()
@@ -155,6 +172,12 @@ impl RuleMatcher {
 
     fn overlaps(&self, other: &Self, response: bool) -> bool {
         optional_ascii_values_overlap(self.method.as_deref(), other.method.as_deref())
+            && match (&self.url, &other.url) {
+                (Some(UrlCondition::Exact(left)), Some(UrlCondition::Exact(right))) => {
+                    left == right
+                }
+                _ => true,
+            }
             && optional_ascii_values_overlap(self.scheme.as_deref(), other.scheme.as_deref())
             && optional_ascii_values_overlap(self.host.as_deref(), other.host.as_deref())
             && (self.port.is_none() || other.port.is_none() || self.port == other.port)
@@ -300,6 +323,12 @@ impl ResponseActions {
 pub struct Rule {
     /// Stable identifier used in interceptor audit IDs.
     pub id: String,
+    /// Operator-facing name retained in per-exchange audit evidence.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Whether this rule participates in newly compiled exchange snapshots.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// Monotonic revision included in hook audit identities.
     pub revision: u64,
     /// Higher values take precedence over lower values.
@@ -310,6 +339,10 @@ pub struct Rule {
     pub request: RequestActions,
     /// Response-side actions.
     pub response: ResponseActions,
+}
+
+const fn default_enabled() -> bool {
+    true
 }
 
 /// Successful deterministic compilation.
@@ -388,7 +421,9 @@ pub fn compile_with_assets(
     let mut ids = BTreeSet::new();
     for rule in &rules {
         validate_rule(rule, limits)?;
-        if let Some(asset_id) = &rule.request.response_asset {
+        if rule.enabled
+            && let Some(asset_id) = &rule.request.response_asset
+        {
             resolver
                 .as_ref()
                 .ok_or_else(|| CompileError::ResponseAssetUnavailable(rule.id.clone()))?
@@ -402,10 +437,17 @@ pub fn compile_with_assets(
     reject_ambiguous_conflicts(&rules)?;
 
     let mut registrations = Vec::new();
-    for rule in rules.iter().filter(|rule| !rule.request.is_empty()) {
+    for rule in rules
+        .iter()
+        .filter(|rule| rule.enabled && !rule.request.is_empty())
+    {
         registrations.push(registration(rule, RuleDirection::Request, resolver.clone()));
     }
-    for rule in rules.iter().rev().filter(|rule| !rule.response.is_empty()) {
+    for rule in rules
+        .iter()
+        .rev()
+        .filter(|rule| rule.enabled && !rule.response.is_empty())
+    {
         registrations.push(registration(
             rule,
             RuleDirection::Response,
@@ -436,6 +478,11 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
+        return Err(CompileError::InvalidId(rule.id.clone()));
+    }
+    if rule.display_name.as_ref().is_some_and(|name| {
+        name.is_empty() || name.chars().count() > 128 || name.chars().any(char::is_control)
+    }) {
         return Err(CompileError::InvalidId(rule.id.clone()));
     }
     if rule.revision == 0 {
@@ -510,6 +557,25 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     {
         return Err(CompileError::InvalidPathPrefix(rule.id.clone()));
     }
+    if rule
+        .matcher
+        .url
+        .as_ref()
+        .is_some_and(|condition| match condition {
+            UrlCondition::Exact(value) => {
+                value.is_empty()
+                    || value.len() > 8_192
+                    || value.chars().any(char::is_control)
+                    || value.parse::<http::Uri>().map_or(true, |uri| {
+                        uri.scheme().is_none()
+                            || uri.authority().is_none()
+                            || !uri.path().starts_with('/')
+                    })
+            }
+        })
+    {
+        return Err(CompileError::InvalidMatcher(rule.id.clone()));
+    }
     if rule.matcher.method.as_ref().is_some_and(|value| {
         value.is_empty()
             || value.len() > 32
@@ -579,8 +645,9 @@ fn compile_regex(pattern: &str) -> Result<Regex, regex::Error> {
 }
 
 fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
-    for (index, left) in rules.iter().enumerate() {
-        for right in &rules[index + 1..] {
+    let enabled = rules.iter().filter(|rule| rule.enabled).collect::<Vec<_>>();
+    for (index, left) in enabled.iter().enumerate() {
+        for right in &enabled[index + 1..] {
             if left.priority != right.priority {
                 continue;
             }
@@ -657,6 +724,18 @@ fn optional_ascii_values_overlap(left: Option<&str>, right: Option<&str>) -> boo
         .is_none_or(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
+fn absolute_url(target: &transmog_core::Target) -> String {
+    target.query.as_ref().map_or_else(
+        || format!("{}://{}{}", target.scheme, target.authority, target.path),
+        |query| {
+            format!(
+                "{}://{}{}?{query}",
+                target.scheme, target.authority, target.path
+            )
+        },
+    )
+}
+
 fn prefixes_overlap(left: Option<&str>, right: Option<&str>) -> bool {
     left.zip(right)
         .is_none_or(|(left, right)| left.starts_with(right) || right.starts_with(left))
@@ -687,10 +766,9 @@ fn registration(
             "automation/{}@{}/{suffix}{asset_suffix}",
             rule.id, rule.revision
         ),
-        format!(
-            "automation rule {} revision {} ({suffix})",
-            rule.id, rule.revision
-        ),
+        rule.display_name
+            .clone()
+            .unwrap_or_else(|| format!("Automation rule {}", rule.id)),
         Arc::new(RuleFactory {
             rule: Arc::new(rule.clone()),
             request_regexes: compile_predicates(&rule.matcher.request_headers),
@@ -1031,6 +1109,8 @@ mod tests {
     fn rule(id: &str, priority: i32, value: &str) -> Rule {
         Rule {
             id: id.to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 1,
             priority,
             matcher: RuleMatcher {
@@ -1137,6 +1217,8 @@ mod tests {
     async fn request_body_replacement_defaults_to_idempotent_methods() {
         let body_rule = Rule {
             id: "body".to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 1,
             priority: 1,
             matcher: RuleMatcher::default(),
@@ -1185,6 +1267,8 @@ mod tests {
             .push(HeaderField::try_new("x-environment", "production").unwrap());
         let ua_rule = Rule {
             id: "conditional-ua".to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 42,
             priority: 10,
             matcher: RuleMatcher {
@@ -1233,6 +1317,8 @@ mod tests {
     async fn autoresponse_uses_an_exact_validated_asset_revision_without_an_origin() {
         let asset_rule = Rule {
             id: "auto-response".to_owned(),
+            display_name: Some("Saved response".to_owned()),
+            enabled: true,
             revision: 9,
             priority: 0,
             matcher: RuleMatcher::default(),
@@ -1262,6 +1348,142 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ordered_autoresponses_use_exact_url_and_first_enabled_match_wins() {
+        let response_rule = |id: &str, priority: i32, enabled: bool, url: Option<&str>| Rule {
+            id: id.to_owned(),
+            display_name: Some(id.to_owned()),
+            enabled,
+            revision: 1,
+            priority,
+            matcher: RuleMatcher {
+                method: Some("GET".to_owned()),
+                url: url.map(|value| UrlCondition::Exact(value.to_owned())),
+                ..RuleMatcher::default()
+            },
+            request: RequestActions {
+                response_asset: Some("saved@3".to_owned()),
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        let mut disabled = response_rule(
+            "disabled-first",
+            -30,
+            false,
+            Some("https://example.test/api/items?debug=1"),
+        );
+        disabled.request.response_asset = Some("not-installed@1".to_owned());
+        let compiled = compile_with_assets(
+            vec![
+                disabled,
+                response_rule(
+                    "exact-second",
+                    -20,
+                    true,
+                    Some("https://example.test/api/items?debug=1"),
+                ),
+                response_rule("catch-all-third", -10, true, None),
+            ],
+            AutomationLimits::default(),
+            Some(Arc::new(StaticAssetResolver)),
+        )
+        .unwrap();
+        let factory = InterceptorChainFactory::new(compiled.registrations(), HookLimits::default());
+        let mut matching = request("GET");
+        matching.target.query = Some("debug=1".to_owned());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        assert!(matches!(
+            chain.request_head(matching).await.unwrap(),
+            RequestHeadOutcome::Respond { .. }
+        ));
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "automation/exact-second@1/request/asset/saved@3"
+        );
+
+        let mut different_query = request("GET");
+        different_query.target.query = Some("debug=2".to_owned());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        assert!(matches!(
+            chain.request_head(different_query).await.unwrap(),
+            RequestHeadOutcome::Respond { .. }
+        ));
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "automation/catch-all-third@1/request/asset/saved@3"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_autoresponse_matches_original_request_headers_before_mutations() {
+        let autoresponse = Rule {
+            id: "post-response".to_owned(),
+            display_name: Some("POST response".to_owned()),
+            enabled: true,
+            revision: 1,
+            priority: -20,
+            matcher: RuleMatcher {
+                method: Some("POST".to_owned()),
+                url: Some(UrlCondition::Exact(
+                    "https://example.test/api/items".to_owned(),
+                )),
+                request_headers: vec![HeaderPredicate {
+                    name: "x-mode".to_owned(),
+                    condition: HeaderCondition::Exact(b"original".to_vec()),
+                }],
+                ..RuleMatcher::default()
+            },
+            request: RequestActions {
+                response_asset: Some("saved@3".to_owned()),
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        let later_mutation = Rule {
+            id: "later-mutation".to_owned(),
+            display_name: Some("Later mutation".to_owned()),
+            enabled: true,
+            revision: 1,
+            priority: -10,
+            matcher: RuleMatcher::default(),
+            request: RequestActions {
+                headers: vec![HeaderOperation::set("x-mode", "modified").unwrap()],
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        let compiled = compile_with_assets(
+            vec![later_mutation, autoresponse],
+            AutomationLimits::default(),
+            Some(Arc::new(StaticAssetResolver)),
+        )
+        .unwrap();
+        let factory = InterceptorChainFactory::new(compiled.registrations(), HookLimits::default());
+        let mut post = request("POST");
+        post.headers
+            .push(HeaderField::try_new("x-mode", "original").unwrap());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        assert!(matches!(
+            chain.request_head(post).await.unwrap(),
+            RequestHeadOutcome::Respond { .. }
+        ));
+        assert_eq!(chain.hook_effects().len(), 1);
+        assert_eq!(
+            chain.hook_effects()[0].interceptor.id.as_str(),
+            "automation/post-response@1/request/asset/saved@3"
+        );
+
+        let mut get = request("GET");
+        get.headers
+            .push(HeaderField::try_new("x-mode", "original").unwrap());
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        assert!(matches!(
+            chain.request_head(get).await.unwrap(),
+            RequestHeadOutcome::Continue { .. }
+        ));
+    }
+
     #[test]
     fn ambiguous_equal_priority_conflicts_are_rejected() {
         let error = compile(
@@ -1286,8 +1508,17 @@ mod tests {
         second.matcher.method = Some("POST".to_owned());
         assert!(compile(vec![first, second], AutomationLimits::default()).is_ok());
 
+        let mut relative_url = rule("relative", 2, "value");
+        relative_url.matcher.url = Some(UrlCondition::Exact("/not-absolute".to_owned()));
+        assert_eq!(
+            compile(vec![relative_url], AutomationLimits::default()).unwrap_err(),
+            CompileError::InvalidMatcher("relative".to_owned())
+        );
+
         let oversized = Rule {
             id: "oversized".to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 1,
             priority: 0,
             matcher: RuleMatcher::default(),

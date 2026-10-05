@@ -74,6 +74,7 @@
                 <span w-ref="{selectedMethod}" class="method-badge">—</span>
                 <strong w-ref="{selectedUrl}" id="inspector-heading">Select a request</strong>
                 <span w-ref="{selectedStatus}" class="status-badge">No response</span>
+                <button w-ref="{selectedAutoResponseButton}" type="button" class="secondary compact-button" @click="{beginAutoResponseFromSelected()}" disabled>Create auto-response</button>
               </header>
               <div class="exchange-inspector">
                 <section class="message-pane request-pane" aria-labelledby="request-heading">
@@ -81,7 +82,7 @@
                   <pre w-ref="{requestInspectorOutput}" tabindex="0">Select a session to inspect its request.</pre>
                 </section>
                 <section class="message-pane response-pane" aria-labelledby="response-heading">
-                  <header><h2 id="response-heading">Response</h2><span>Original · formatted · bytes · image</span></header>
+                  <header><h2 id="response-heading">Response</h2><span>Original · formatted · bytes · image</span><button w-ref="{matchedAutoResponseButton}" type="button" class="secondary compact-button matched-rule-button" @click="{showMatchedAutoResponse()}" hidden>Show matched rule</button></header>
                   <pre w-ref="{responseInspectorOutput}" tabindex="0">Select a session to inspect its response.</pre>
                   <div class="body-toolbar" aria-label="Response body representation">
                     <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><option value="">Select a session first</option></select></label>
@@ -134,21 +135,48 @@
                   </div>
                 </form>
               </details>
-              <details class="automation-card">
-                <summary><span><strong>Auto-respond</strong><small>Return a saved response without contacting the origin.</small></span></summary>
-                <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(e)}" class="composer-form">
-                  <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-                  <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
-                  <label>Response <select w-ref="{responseAssetSelect}" name="responseSource"><option value="">Create a new response below</option></select></label>
-                  <label>Response status <input name="status" type="number" min="200" max="599" value="200" required></label>
-                  <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
-                  <label>Response body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
+              <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
+                <header class="auto-response-header">
+                  <div>
+                    <h2 id="autoresponder-heading">Auto-responses</h2>
+                    <p>Serve a saved response without contacting the origin. Rules are checked from top to bottom; the first enabled match wins.</p>
+                  </div>
                   <div class="actions">
-                    <button type="submit">Save and enable response</button>
-                    <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-auto-response')}">Disable</button>
+                    <button w-ref="{useSelectedResponseButton}" type="button" @click="{beginAutoResponseFromSelected()}" disabled>Use selected response</button>
+                    <button type="button" class="secondary" @click="{beginScratchAutoResponse()}">Create from scratch</button>
+                  </div>
+                </header>
+                <div w-ref="{autoResponseDropZone}" class="auto-response-drop-zone" tabindex="0">
+                  Drop a captured request here, or select one in Traffic and choose “Create auto-response”.
+                </div>
+                <div w-ref="{autoResponseList}" class="auto-response-list" aria-live="polite"></div>
+                <form w-ref="{autoResponseForm}" @submit="{saveAutoResponse(e)}" class="auto-response-editor" hidden>
+                  <header>
+                    <div><span class="section-label">Rule editor</span><h3 w-ref="{autoResponseEditorTitle}">New auto-response</h3></div>
+                    <button type="button" class="secondary compact-button" @click="{cancelAutoResponseEdit()}">Cancel</button>
+                  </header>
+                  <label>Rule name <input name="name" maxlength="128" required placeholder="Offline account response"></label>
+                  <label>Method <select w-ref="{autoResponseMethod}" name="method" @change="{updateAutoResponseHeaderFilterState()}"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
+                  <label class="wide-field">Exact URL <input name="url" type="url" maxlength="8192" required placeholder="https://example.test/api/account"></label>
+                  <label w-ref="{autoResponseRequestHeadersLabel}" class="wide-field">Request headers that must match (POST only; one <code>Name: value</code> per line)<textarea name="requestHeaders" placeholder="Content-Type: application/json"></textarea></label>
+                  <section class="auto-response-source wide-field">
+                    <strong>Response source</strong>
+                    <p w-ref="{autoResponseSource}">Create a response from scratch.</p>
+                  </section>
+                  <label>Response status <input w-ref="{autoResponseStatus}" name="status" type="number" min="200" max="599" value="200" required></label>
+                  <label>Content type <input w-ref="{autoResponseMediaType}" name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
+                  <label w-ref="{autoResponseHeadersLabel}" class="wide-field">Response headers (one <code>Name: value</code> per line)<textarea name="responseHeaders"></textarea></label>
+                  <label class="wide-field">Response body <textarea w-ref="{autoResponseBody}" name="body" maxlength="16777216"></textarea></label>
+                  <div w-ref="{capturedResponseOptions}" class="captured-response-options wide-field" hidden>
+                    <label><input w-ref="{autoResponseEditBody}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Replace the captured response body with the decoded text above</label>
+                    <label><input w-ref="{autoResponsePreserveEncoding}" name="preserveEncoding" type="checkbox" checked> Re-encode edits using the captured response’s original content encoding</label>
+                  </div>
+                  <div class="actions wide-field">
+                    <button type="submit">Save rule</button>
+                    <button type="button" class="secondary" @click="{cancelAutoResponseEdit()}">Cancel</button>
                   </div>
                 </form>
-              </details>
+              </section>
             </div>
             <output w-ref="{automationOutput}" class="operation-status" aria-live="polite">No built-in traffic actions are active.</output>
             <section class="script-workspace" aria-labelledby="script-heading">

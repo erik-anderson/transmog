@@ -6088,6 +6088,7 @@ name = "transmog-automation"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "http",
  "regex",
  "serde",
  "thiserror 2.0.21",

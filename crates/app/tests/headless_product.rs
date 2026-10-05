@@ -347,6 +347,8 @@ fn activate_native_rules(application: &Application, small: &str, large: &str) {
     let rules = vec![
         Rule {
             id: "phase9-native-ua".to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 1,
             priority: 100,
             matcher: RuleMatcher {
@@ -367,6 +369,8 @@ fn activate_native_rules(application: &Application, small: &str, large: &str) {
         autoresponse_rule("phase9-large-response", "/auto/large", large),
         Rule {
             id: "phase9-body-replacement".to_owned(),
+            display_name: None,
+            enabled: true,
             revision: 1,
             priority: 100,
             matcher: RuleMatcher {
@@ -394,6 +398,8 @@ fn activate_native_rules(application: &Application, small: &str, large: &str) {
 fn autoresponse_rule(id: &str, path: &str, asset: &str) -> Rule {
     Rule {
         id: id.to_owned(),
+        display_name: None,
+        enabled: true,
         revision: 1,
         priority: 100,
         matcher: RuleMatcher {
