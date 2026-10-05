@@ -6,9 +6,36 @@
 //! future command-line frontends. It deliberately has no Tauri, `WebUI`,
 //! `WebView`, or operating-system dependency.
 
+mod artifacts;
+mod breakpoints;
+mod composer;
+mod inspector;
+mod lifecycle;
+mod sessions;
+
+use std::sync::Arc;
+
+pub use artifacts::{
+    CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
+    ExportResult, ImportRequest,
+};
+pub use breakpoints::{
+    BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
+};
+pub use composer::{
+    ComposerHeader, ComposerRequest, ComposerResult, ComposerSnapshot, SystemReplayExecutor,
+};
+pub use inspector::{BodyView, HeaderView, SessionDetail};
+pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 use serde::Serialize;
+pub use sessions::{
+    SessionHint, SessionPage, SessionQueryInput, SessionSummary, SessionUpdateSubscription,
+};
 use thiserror::Error;
-use transmog_session::{ApplicationSessionService, ServiceConfig, ServiceError, ServiceStatus};
+use transmog_session::{
+    ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
+    ServiceStatus,
+};
 
 /// Stable application failure category suitable for presentation boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -42,7 +69,11 @@ pub struct AppError {
 }
 
 impl AppError {
-    fn new(category: ErrorCategory, message: impl Into<String>, retryable: bool) -> Self {
+    pub(crate) fn new(
+        category: ErrorCategory,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
         let message = message.into().chars().take(512).collect();
         Self {
             category,
@@ -99,16 +130,31 @@ pub struct AppStatus {
 }
 
 /// Construction settings for the application facade.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct AppConfig {
     /// Session-service limits and same-build identity.
     pub service: ServiceConfig,
+    /// Route-aware executor shared by composer/replay operations.
+    pub replay_executor: Option<Arc<dyn ReplayExecutor>>,
+}
+
+impl std::fmt::Debug for AppConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AppConfig")
+            .field("service", &self.service)
+            .field("replay_executor", &self.replay_executor.is_some())
+            .finish()
+    }
 }
 
 /// Cloneable owner of authoritative application state.
 #[derive(Clone)]
 pub struct Application {
     service: ApplicationSessionService,
+    cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
+    breakpoints: breakpoints::BreakpointManager,
+    composer: composer::ComposerManager,
 }
 
 impl std::fmt::Debug for Application {
@@ -127,8 +173,13 @@ impl Application {
     ///
     /// Returns a bounded application error if the owned service cannot start.
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let build_id = Arc::clone(&config.service.control_build_id);
+        let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         Ok(Self {
-            service: ApplicationSessionService::new(config.service).map_err(AppError::from)?,
+            service: service.clone(),
+            cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
+            breakpoints: breakpoints::BreakpointManager::new(service, build_id),
+            composer: composer::ComposerManager::new(config.replay_executor),
         })
     }
 
@@ -177,7 +228,161 @@ impl Application {
     ///
     /// Returns a retryable safe error when drain or restoration fails.
     pub async fn shutdown(&self) -> Result<(), AppError> {
+        self.breakpoints.disable().await;
         self.service.stop().await.map_err(AppError::from)
+    }
+
+    /// Binds and starts the product proxy using validated local CA material.
+    ///
+    /// The optional host adapter is caller-owned so this crate remains
+    /// operating-system independent.
+    ///
+    /// # Errors
+    /// Returns a bounded validation, bind, lifecycle, or host failure.
+    pub async fn start_proxy(
+        &self,
+        request: ProxyStartRequest,
+        host: Option<Arc<dyn HostIntegration>>,
+    ) -> Result<AppStatus, AppError> {
+        lifecycle::start_proxy(&self.service, request, host).await?;
+        Ok(self.status())
+    }
+
+    /// Retries an exact host restore retained after a failed stop.
+    ///
+    /// # Errors
+    /// Returns a retryable bounded restoration failure.
+    pub async fn retry_host_restore(&self) -> Result<AppStatus, AppError> {
+        self.service
+            .retry_host_restore()
+            .await
+            .map_err(AppError::from)?;
+        Ok(self.status())
+    }
+
+    /// Creates a new application-owned interception CA without overwriting files.
+    ///
+    /// # Errors
+    /// Returns a validation, destination, generation, or durable-write failure.
+    pub async fn create_ca(&self, request: CaCreateRequest) -> Result<CaIdentity, AppError> {
+        lifecycle::create_ca(request).await
+    }
+
+    /// Queries one bounded authoritative page of live sessions.
+    ///
+    /// # Errors
+    /// Returns invalid filters, page sizes, cursors, or token-generation failures.
+    pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
+        sessions::query_sessions(&self.service, &self.cursors, query)
+    }
+
+    /// Opens a bounded hint-only subscription for presentation refreshes.
+    ///
+    /// # Errors
+    /// Returns a finite subscriber-limit failure.
+    pub fn subscribe_session_updates(&self) -> Result<SessionUpdateSubscription, AppError> {
+        sessions::subscribe(&self.service)
+    }
+
+    /// Returns one bounded, display-safe session inspector read model.
+    ///
+    /// # Errors
+    /// Returns an invalid identifier or unavailable/evicted session error.
+    pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
+        inspector::session_detail(&self.service, id)
+    }
+
+    /// Attaches the exclusive same-build breakpoint controller.
+    ///
+    /// # Errors
+    /// Returns a configuration, exclusivity, negotiation, or runtime failure.
+    pub fn enable_breakpoints(
+        &self,
+        settings: &BreakpointSettings,
+    ) -> Result<BreakpointStatus, AppError> {
+        self.breakpoints.enable(settings)
+    }
+
+    /// Detaches control and fails all unresolved decisions closed.
+    pub async fn disable_breakpoints(&self) -> BreakpointStatus {
+        self.breakpoints.disable().await
+    }
+
+    /// Returns bounded paused exchanges awaiting an operator decision.
+    pub fn paused_exchanges(&self) -> BreakpointStatus {
+        self.breakpoints.status()
+    }
+
+    /// Submits one correlated, phase-valid breakpoint action.
+    ///
+    /// # Errors
+    /// Returns a stale, invalid, oversized, or failed reply.
+    pub fn decide_breakpoint(
+        &self,
+        decision: BreakpointDecision,
+    ) -> Result<BreakpointStatus, AppError> {
+        self.breakpoints.decide(decision)
+    }
+
+    /// Validates and executes a composer request through the configured
+    /// canonical route-aware replay executor.
+    ///
+    /// # Errors
+    /// Returns a validation, acknowledgement, timeout, bounds, or execution failure.
+    pub async fn execute_composer(
+        &self,
+        request: ComposerRequest,
+    ) -> Result<ComposerResult, AppError> {
+        self.composer.execute(&self.service, request).await
+    }
+
+    /// Returns a bounded newest-first replay history without credential values.
+    pub fn composer_history(&self) -> Vec<ComposerSnapshot> {
+        self.composer.history()
+    }
+
+    /// Starts a create-new streaming native capture.
+    ///
+    /// # Errors
+    /// Returns invalid quota, destination, state, queue, or writer failures.
+    pub async fn start_capture(
+        &self,
+        request: CaptureStartRequest,
+    ) -> Result<CaptureReadModel, AppError> {
+        artifacts::start_capture(&self.service, request).await
+    }
+
+    /// Seals and stops the active native capture.
+    ///
+    /// # Errors
+    /// Returns capture state, queue, or durable finalization failures.
+    pub async fn stop_capture(&self) -> Result<CaptureReadModel, AppError> {
+        artifacts::stop_capture(&self.service).await
+    }
+
+    /// Returns current native capture state.
+    pub fn capture_status(&self) -> CaptureReadModel {
+        artifacts::capture_status(&self.service)
+    }
+
+    /// Recovers and summarizes a bounded native capture, including a valid
+    /// prefix after an interrupted final frame.
+    ///
+    /// # Errors
+    /// Returns path, format, checksum, or configured bound failures.
+    pub async fn import_capture(
+        &self,
+        request: ImportRequest,
+    ) -> Result<CaptureSummaryView, AppError> {
+        artifacts::import_capture(request).await
+    }
+
+    /// Exports a recovered native capture to streaming JSONL or finalized SAZ.
+    ///
+    /// # Errors
+    /// Returns path, create-new, recovery, quota, or format failures.
+    pub async fn export_capture(&self, request: ExportRequest) -> Result<ExportResult, AppError> {
+        artifacts::export_capture(request).await
     }
 }
 

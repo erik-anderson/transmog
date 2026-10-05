@@ -4253,11 +4253,24 @@ dependencies = [
 name = "transmog-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "getrandom 0.4.3",
+ "http",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "transmog-capture",
+ "transmog-content",
+ "transmog-control-model",
+ "transmog-control-transport",
+ "transmog-core",
+ "transmog-http",
+ "transmog-runtime",
+ "transmog-saz",
  "transmog-session",
+ "transmog-tls",
 ]
 
 [[package]]
@@ -4344,8 +4357,11 @@ version = "0.1.0"
 dependencies = [
  "tauri",
  "tauri-build",
+ "tokio",
  "transmog-app",
  "transmog-app-webui",
+ "transmog-host-windows",
+ "transmog-session",
 ]
 
 [[package]]
@@ -4360,6 +4376,16 @@ dependencies = [
  "tracing",
  "transmog-core",
  "transmog-tls",
+]
+
+[[package]]
+name = "transmog-host-windows"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "transmog-session",
 ]
 
 [[package]]

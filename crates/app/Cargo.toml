@@ -8,11 +8,24 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bytes.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+transmog-content = { version = "=0.1.0", path = "../proxy-content" }
+transmog-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
+transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
+transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-http = { version = "=0.1.0", path = "../proxy-http" }
+transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.0", path = "../proxy-saz" }
 transmog-session = { version = "=0.1.0", path = "../proxy-session" }
+transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 
 [lints]
 workspace = true

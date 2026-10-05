@@ -25,11 +25,98 @@
           <p class="section-label">Live workspace</p>
           <h2 id="traffic-heading">Sessions</h2>
           <p>Authoritative session queries will appear here as the proxy starts.</p>
+          <form w-ref="{proxyForm}" @submit="{startProxy(event)}">
+            <label>CA certificate <input name="certificate" value="transmog-ca.pem" required></label>
+            <label>CA private key <input name="privateKey" value="transmog-ca.key" required></label>
+            <label><input name="systemProxy" type="checkbox"> Configure the current-user system proxy</label>
+            <div class="actions">
+              <button type="submit">Start proxy</button>
+              <button type="button" class="secondary" @click="{stopProxy()}">Stop</button>
+              <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
+            </div>
+          </form>
+          <form w-ref="{filterForm}" @submit="{refreshSessions(event)}" class="filters">
+            <label>Method <input name="method" maxlength="32" placeholder="GET"></label>
+            <label>Host <input name="host" maxlength="255" placeholder="example.test"></label>
+            <button type="submit" class="secondary">Refresh sessions</button>
+            <button type="button" class="secondary" @click="{watchSessions()}">Watch live</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Method</th><th>Host</th><th>Path</th><th>Protocol</th><th>Status</th><th>Duration</th><th>Bytes</th><th>State</th></tr></thead>
+              <tbody w-ref="{sessionRows}"><tr><td colspan="8">No sessions loaded.</td></tr></tbody>
+            </table>
+          </div>
+          <button w-ref="{nextButton}" type="button" class="secondary" @click="{nextSessions()}" disabled>Next page</button>
+          <section class="inspector" aria-labelledby="inspector-heading">
+            <h3 id="inspector-heading">Inspector</h3>
+            <pre w-ref="{inspectorOutput}" tabindex="0">Select a session to inspect bounded evidence.</pre>
+          </section>
         </div>
         <dl>
           <div><dt>Listener</dt><dd w-ref="{listenerValue}">{{listener}}</dd></div>
           <div><dt>Retention</dt><dd>Metadata only</dd></div>
         </dl>
+      </section>
+      <section id="breakpoints" class="workspace full" aria-labelledby="breakpoints-heading">
+        <div>
+          <p class="section-label">Hooks v2</p>
+          <h2 id="breakpoints-heading">Break and modify</h2>
+          <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is attributed to <code>transmog.session.interactive-control</code>.</p>
+          <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(event)}" class="phase-form">
+            <label><input name="requestHead" type="checkbox" checked> Request head</label>
+            <label><input name="requestBody" type="checkbox"> Request body</label>
+            <label><input name="responseHead" type="checkbox" checked> Response head</label>
+            <label><input name="responseBody" type="checkbox"> Response body</label>
+            <button type="submit">Enable selected phases</button>
+            <button type="button" class="secondary" @click="{disableBreakpoints()}">Disable</button>
+            <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
+          </form>
+          <div w-ref="{pausedList}" class="paused-list" aria-live="polite">No paused exchanges.</div>
+        </div>
+      </section>
+      <section id="composer" class="workspace full" aria-labelledby="composer-heading">
+        <div>
+          <p class="section-label">Canonical replay</p>
+          <h2 id="composer-heading">Composer</h2>
+          <form w-ref="{composerForm}" @submit="{executeComposer(event)}" class="composer-form">
+            <label>Method <input name="method" value="GET" maxlength="32" required></label>
+            <label>Absolute URL <input name="url" type="url" value="https://example.com/" required></label>
+            <label>Headers (one <code>Name: value</code> per line) <textarea name="headers"></textarea></label>
+            <label>Body <textarea name="body"></textarea></label>
+            <label><input name="bodyHex" type="checkbox"> Body is hexadecimal</label>
+            <label><input name="nonIdempotent" type="checkbox"> I acknowledge non-idempotent replay risk</label>
+            <label><input name="credentials" type="checkbox"> I explicitly supplied and authorize credential headers</label>
+            <button type="submit">Execute replay</button>
+          </form>
+          <pre w-ref="{composerOutput}" tabindex="0">No replay executed.</pre>
+        </div>
+      </section>
+      <section id="captures" class="workspace full" aria-labelledby="captures-heading">
+        <div>
+          <p class="section-label">Durable evidence</p>
+          <h2 id="captures-heading">Capture, import, and export</h2>
+          <form w-ref="{captureForm}" @submit="{startCapture(event)}">
+            <label>Native capture path <input name="capturePath" value="session.tmcap" required></label>
+            <label>Quota bytes <input name="quota" type="number" min="1025" max="4294967296" value="1073741824" required></label>
+            <label><input name="bodies" type="checkbox"> Retain bounded redacted body samples</label>
+            <div class="actions">
+              <button type="submit">Start capture</button>
+              <button type="button" class="secondary" @click="{stopCapture()}">Seal capture</button>
+              <button type="button" class="secondary" @click="{refreshCapture()}">Status</button>
+            </div>
+          </form>
+          <form w-ref="{artifactForm}" @submit="{inspectCapture(event)}">
+            <label>Native source <input name="source" value="session.tmcap" required></label>
+            <label>Export destination <input name="destination" value="session.jsonl" required></label>
+            <label>Format <select name="format"><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
+            <div class="actions">
+              <button type="submit" class="secondary">Inspect/recover</button>
+              <button type="button" @click="{exportCapture()}">Export create-new</button>
+            </div>
+          </form>
+          <pre w-ref="{captureOutput}" tabindex="0">Capture is idle.</pre>
+        </div>
       </section>
       <section class="diagnostics" aria-labelledby="diagnostics-heading">
         <h2 id="diagnostics-heading">Diagnostics</h2>

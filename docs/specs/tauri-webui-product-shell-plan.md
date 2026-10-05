@@ -1,6 +1,6 @@
 # Plan: Tauri and WebUI product shell
 
-Status: active; Phases 0-1 completed on 2026-10-04
+Status: active; Phases 0-7 completed on 2026-10-04
 Audience: maintainers, product-shell authors, security reviewers, and release
 engineers
 Depends on: the completed application/session service, native capture, SAZ
@@ -300,6 +300,14 @@ release desktop builds use identical generated assets and a strict CSP.
 
 ### Phase 2: Proxy lifecycle and Windows setup
 
+Status: complete. The application facade owns validated bind/start/stop/retry
+operations and explicit create-new CA generation. `transmog-host-windows`
+provides a caller-owned current-user adapter with exact state snapshots, a
+durable recovery journal, rollback on partial apply, idempotent restoration,
+and explicit exact-thumbprint certificate-store actions. The desktop supports
+manual proxy configuration and opt-in system configuration; automated tests
+use an injected fake backend and never touch the registry or trust store.
+
 Expose start, stop, status, listener endpoint, failure, and recovery actions.
 Implement the Windows host adapter, explicit CA workflow, exact proxy restore,
 crash journal, and first-run prerequisites. Keep a manual-configuration mode
@@ -310,6 +318,12 @@ recovery, and user cancellation are deterministic. Fake-host tests cover all
 branches and an opt-in Windows smoke test restores the exact prior state.
 
 ### Phase 3: Live session browser
+
+Status: complete. The application exposes capped authoritative queries with
+validated filters and a bounded opaque-cursor registry. Rows include protocol,
+status, timing, byte counts, capture state, terminal state, and per-exchange
+sequence loss. The desktop coalesces lossy hints for 75 ms and always refreshes
+by query; a 10,000-session test exercises the configured catalog maximum.
 
 Render a bounded paged table with method, host, path, protocol, status,
 duration, byte counts, terminal state, capture state, and visible loss markers.
@@ -323,6 +337,13 @@ memory, DOM-node, render, and IPC budgets.
 
 ### Phase 4: Inspectors and safe body viewing
 
+Status: complete. Bounded inspector DTOs preserve explicit observation
+boundaries, duplicate headers, trailers, routes, hook attribution,
+diagnostics, terminal state, and WebSocket evidence. Arbitrary bytes use an
+explicit text/hex/missing representation with truncation and loss flags.
+Captured values reach the DOM only through `textContent`; hostile and binary
+unit tests guard this contract.
+
 Add request/response overview, original and effective heads, trailers, route
 attempts, hook effects, diagnostics, timing, content-coding information,
 WebSocket evidence, and bounded body views. Make truncation, redaction, missing
@@ -335,6 +356,13 @@ without script execution, layout breakage, or unbounded allocation.
 
 ### Phase 5: Break and modify
 
+Status: complete. The application owns an exclusive same-build controller,
+finite phase and body settings, a bounded paused-decision map, stale-action and
+phase validation, and continue/abort/head/body replacement. Disabling,
+shutdown, queue loss, timeout, and controller loss drop single-use reply
+capabilities and therefore use the transport's fail-closed behavior. Effects
+retain the stable `transmog.session.interactive-control` hook identity.
+
 Attach the exclusive controller through the application facade. Add explicit
 phase enablement, paused-exchange state, deadlines, continue, abort, head edit,
 and decoded body replacement. Present audit attribution and validate every edit
@@ -346,6 +374,13 @@ fail-closed and isolation contracts.
 
 ### Phase 6: Composer and replay
 
+Status: complete. A structured composer validates absolute targets, headers,
+hex or UTF-8 bodies, credential acknowledgement, and non-idempotent risk in
+Rust. Desktop replay uses the same canonical `transmog-http` TLS-verifying
+origin client and route policy family rather than WebView networking. Replay
+still passes through the session service's cancellation, timeout, and response
+bounds and records bounded redaction-safe local history.
+
 Add a structured request composer over `ReplayRequest`. Require visible
 acknowledgement for non-idempotent requests and credential-bearing headers.
 Execute through the application's normal route and upstream policy, never a
@@ -356,6 +391,13 @@ bounds, history drafts, and replay attribution have deterministic Rust and
 end-to-end tests.
 
 ### Phase 7: Capture, import, and export
+
+Status: complete. The application exposes quota-bound streaming native capture,
+status, sealing, bounded native recovery/import, create-new streaming JSONL,
+and finalized strict or extended SAZ export. Interrupted native tails recover
+their valid prefix; failed exports remove only the newly created partial file;
+SAZ results disclose incomplete/skipped sessions and the evidence the format
+cannot preserve.
 
 Add native streaming capture start/stop/status, quota selection, failure
 reporting, and finalization. Add streaming JSON-lines export and finalized SAZ
@@ -453,21 +495,21 @@ validation stays enabled.
 ## Definition of done
 
 - [x] Tauri/WebUI delivery ADR and offline packaged spike pass on WebView2.
-- [ ] Layering prevents Tauri, WebUI, and platform APIs from entering proxy
+- [x] Layering prevents Tauri, WebUI, and platform APIs from entering proxy
       libraries or `transmog-session`.
-- [ ] Rust owns authoritative state, validation, rendering, and product
+- [x] Rust owns authoritative state, validation, rendering, and product
       operations; authored browser code is TypeScript-only and minimal.
 - [x] Custom protocol, CSP, Trusted Types decision, navigation, and Tauri
       capabilities pass a security review.
-- [ ] Proxy lifecycle and exact Windows host restoration survive normal exit,
+- [x] Proxy lifecycle and exact Windows host restoration survive normal exit,
       failed stop, restart, and crash recovery.
-- [ ] Live session browsing remains bounded and recovers after every visible
+- [x] Live session browsing remains bounded and recovers after every visible
       loss mode.
-- [ ] Inspectors safely represent redaction, truncation, binary content,
+- [x] Inspectors safely represent redaction, truncation, binary content,
       content codings, WebSocket evidence, and audit attribution.
-- [ ] Breakpoint edits and replay use existing service/core paths and their
+- [x] Breakpoint edits and replay use existing service/core paths and their
       fail-closed safety contracts.
-- [ ] Native capture, streaming export, and SAZ compatibility export work from
+- [x] Native capture, streaming export, and SAZ compatibility export work from
       the application without making the UI authoritative.
 - [ ] Windows accessibility, packaging, offline startup, soak, and clean-machine
       end-to-end gates pass.
