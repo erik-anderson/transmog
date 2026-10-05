@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
+    time::SystemTime,
 };
 
 use bytes::{Bytes, BytesMut};
@@ -110,6 +111,8 @@ pub struct SessionSnapshot {
     pub metadata: Arc<ExchangeMetadata>,
     /// Last accepted observer sequence.
     pub last_sequence: u64,
+    /// Count of observer sequence values known to be missing for this exchange.
+    pub sequence_loss: u64,
     /// Heads observed at request boundaries.
     pub request_heads: Vec<ObservedRequestHead>,
     /// Heads observed at response boundaries.
@@ -126,6 +129,8 @@ pub struct SessionSnapshot {
     pub route_attempts: Vec<ObservedRouteAttempt>,
     /// Terminal result, when known.
     pub terminal: Option<SessionTerminal>,
+    /// Wall-clock time at which a terminal event reached the catalog.
+    pub terminal_at: Option<SystemTime>,
     /// Terminal relay evidence when the exchange upgraded to WebSocket.
     pub websocket: Option<WebSocketSessionEvidence>,
 }
@@ -250,6 +255,7 @@ struct MutableBody {
 struct MutableSession {
     metadata: Arc<ExchangeMetadata>,
     last_sequence: u64,
+    sequence_loss: u64,
     request_heads: Vec<ObservedRequestHead>,
     response_heads: Vec<ObservedResponseHead>,
     bodies: Vec<MutableBody>,
@@ -259,6 +265,7 @@ struct MutableSession {
     route_selection: Option<(Arc<str>, Arc<str>)>,
     route_attempts: Vec<ObservedRouteAttempt>,
     terminal: Option<SessionTerminal>,
+    terminal_at: Option<SystemTime>,
     websocket: Option<WebSocketSessionEvidence>,
 }
 
@@ -268,6 +275,7 @@ impl MutableSession {
             exchange_id: self.metadata.exchange_id,
             metadata: Arc::clone(&self.metadata),
             last_sequence: self.last_sequence,
+            sequence_loss: self.sequence_loss,
             request_heads: self.request_heads.clone(),
             response_heads: self.response_heads.clone(),
             bodies: self
@@ -286,6 +294,7 @@ impl MutableSession {
             route_selection: self.route_selection.clone(),
             route_attempts: self.route_attempts.clone(),
             terminal: self.terminal.clone(),
+            terminal_at: self.terminal_at,
             websocket: self.websocket.clone(),
         }
     }
@@ -354,6 +363,7 @@ impl SessionCatalog {
                 MutableSession {
                     metadata: Arc::clone(metadata),
                     last_sequence: 0,
+                    sequence_loss: 0,
                     request_heads: Vec::with_capacity(2),
                     response_heads: Vec::with_capacity(2),
                     bodies: Vec::with_capacity(4),
@@ -363,6 +373,7 @@ impl SessionCatalog {
                     route_selection: None,
                     route_attempts: Vec::new(),
                     terminal: None,
+                    terminal_at: None,
                     websocket: None,
                 },
             );
@@ -384,10 +395,11 @@ impl SessionCatalog {
             return CatalogApply::PostTerminal;
         }
         if event.sequence > last_sequence.saturating_add(1) {
-            state.counters.sequence_gaps = state
-                .counters
-                .sequence_gaps
-                .saturating_add(event.sequence - last_sequence - 1);
+            let missing = event.sequence - last_sequence - 1;
+            state.counters.sequence_gaps = state.counters.sequence_gaps.saturating_add(missing);
+            if let Some(session) = state.by_id.get_mut(&exchange_id) {
+                session.sequence_loss = session.sequence_loss.saturating_add(missing);
+            }
         }
 
         let mut detail_dropped = 0_u64;
@@ -624,9 +636,11 @@ fn apply_kind(
         }
         ObserverEventKind::Completed(completed) => {
             session.terminal = Some(SessionTerminal::Completed(completed));
+            session.terminal_at = Some(SystemTime::now());
         }
         ObserverEventKind::Failed(failure) => {
             session.terminal = Some(SessionTerminal::Failed(failure));
+            session.terminal_at = Some(SystemTime::now());
         }
     }
 }
