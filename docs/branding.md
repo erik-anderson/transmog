@@ -14,7 +14,10 @@ Developer-facing identifiers follow their ecosystem conventions:
 - test configuration uses `TRANSMOG_*` environment variables;
 - the embedded application origin is `transmog-ui://localhost`, mapped by
   WebView2 to `http://transmog-ui.localhost`;
-- the Tauri application identifier is `com.erikanderson.transmog`.
+- the Tauri application identifier is `app.transmog.desktop`;
+- Windows application state, diagnostics, CA material, and WebView2 data live
+  under the single user-visible `%LOCALAPPDATA%\Transmog` folder. The package
+  identifier must not be used as an application-data folder name.
 
 Native captures use the `.tmcap` extension and `TMCAP01` preamble. Extended SAZ
 exports use `transmog/manifest.json` and the `transmog-saz-extension-v1` format

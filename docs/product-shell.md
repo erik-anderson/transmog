@@ -19,6 +19,12 @@ or WebUI.
 - Session pages contain at most the service-configured maximum (200 by
   default). Refresh notifications are lossy hints; the catalog query is always
   authoritative.
+- The primary desktop canvas is a fixed-viewport traffic workspace: an
+  internally scrolling request list remains visible above a persistent split
+  request/response inspector. Tool views use the left rail and scroll only
+  inside the application viewport; the document root never scrolls.
+- The `system` theme follows the host light/dark preference live. Explicit
+  light and dark choices override it and keep Monaco aligned with the shell.
 - Body retention remains metadata-only by default. Text, binary, missing,
   truncated, redacted, and lossy evidence are distinct inspector states.
 - Interactive breakpoints use one same-build controller. Closing the window,

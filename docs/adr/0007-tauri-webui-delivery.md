@@ -35,10 +35,15 @@ local adapter.
   the restrictive CSP as a response header. Keep Tauri's static `app.security.csp`
   unset because it does not govern custom-protocol responses and cannot carry
   the per-render nonce.
-- Enforce `require-trusted-types-for 'script'` with the sole `webui` policy.
-  Serve no remote subresources and allow navigation only to the custom
-  application origin that Tauri exposes on the current platform. Deny new
-  windows.
+- Enforce `require-trusted-types-for 'script'` with the `webui` policy and one
+  app-created `monaco` policy. The Monaco policy is shared across the editor's
+  internal policy requests, permits HTML only for the pinned local editor
+  renderer, and restricts worker script URLs to app-owned same-origin
+  `/monaco-*` assets. Monaco's runtime-generated CSS and bundled data-font are
+  the only reasons `style-src 'unsafe-inline'` and `font-src data:` are present;
+  inline scripts and evaluation remain forbidden. Serve no remote
+  subresources, allow navigation only to the custom application origin that
+  Tauri exposes on the current platform, and deny new windows.
 - Use same-origin custom-protocol fetch only for explicitly allowlisted,
   app-owned resources such as the Phase 0 delivery probe. Use typed Tauri
   commands for bounded authoritative queries and mutations. Use bounded

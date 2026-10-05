@@ -42,6 +42,16 @@ it are non-fatal. Messages containing credential-bearing header names,
 cookies, passwords, bearer credentials, private-key markers, or local paths
 are replaced before either sink sees them.
 
+The Windows desktop always configures this sink as
+`%LOCALAPPDATA%\Transmog\diagnostics.jsonl` and writes a startup event as soon
+as the application facade initializes. Command dispatch, proxy lifecycle,
+Windows host integration, certificate create/trust/remove outcomes,
+live-session subscription, and bounded frontend exceptions are recorded
+there. A prior `diagnostics.jsonl` rotates to
+`diagnostics.jsonl.1`; neither file contains captured traffic. The Settings and
+support view displays the exact active path so support reports do not depend on
+knowing the Tauri package identifier.
+
 The diagnostics report includes the Transmog version, selected dependency
 versions, OS/architecture, the native WebView runtime version, the state schema,
 and the bounded event list. It contains no captured traffic.

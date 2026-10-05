@@ -8,6 +8,13 @@ import { esbuildProjection } from '@microsoft/webui/projection.js';
 const check = process.argv.includes('--check');
 const workingDirectory = fileURLToPath(new URL('./', import.meta.url));
 const outputDirectory = fileURLToPath(new URL('./dist/', import.meta.url));
+const shellTemplate = await readFile(
+  join(workingDirectory, 'src/transmog-app-shell/transmog-app-shell.html'),
+  'utf8'
+);
+if (shellTemplate.includes('(event)')) {
+  throw new Error('WebUI event handlers must pass the reserved event token `e`, not `event`');
+}
 const expected = check
   ? new Map(await Promise.all(
       ['app.css', 'app.js', 'monaco-editor.worker.js', 'monaco-ts.worker.js', 'webui-projection.json'].map(async (filename) => [

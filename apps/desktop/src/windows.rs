@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use serde::Serialize;
 use tauri::{
     Manager, State, WebviewWindowBuilder,
     http::{Request, Response, StatusCode, header},
@@ -19,12 +20,12 @@ use transmog_app::{
     AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
     BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticsReport,
-    ExportFormat, ExportRequest, ExportResult, ImportRequest, ImportResponseAsset, ProductState,
-    ProxyRoute, ProxyStartRequest, ResponseAsset, RuntimeDiagnostics, ScriptAction,
-    ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus, SessionDetail, SessionHint,
-    SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
-    SupportBundleResult, SystemReplayExecutor, WindowState,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
+    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
+    RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus,
+    SessionDetail, SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset,
+    SupportBundleRequest, SupportBundleResult, SystemReplayExecutor, WindowState,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -39,6 +40,20 @@ struct DesktopState {
     application: Application,
     host: Arc<WindowsProxyIntegration>,
     owned_certificate: OwnedCertificateRegistry,
+    ca_certificate_path: PathBuf,
+    ca_private_key_path: PathBuf,
+    diagnostics_path: PathBuf,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopBootstrap {
+    ca_certificate_path: PathBuf,
+    ca_private_key_path: PathBuf,
+    ca_files_present: bool,
+    owned_ca_sha256: Option<String>,
+    owned_ca_trusted: bool,
+    diagnostics_path: PathBuf,
 }
 
 #[tauri::command]
@@ -58,6 +73,46 @@ fn save_product_state(
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     state.application.save_product_state(product_state)
+}
+
+#[tauri::command]
+fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap, String> {
+    let owned_ca_sha256 = state
+        .owned_certificate
+        .owned_thumbprint()
+        .map_err(|error| error.to_string())?;
+    let owned_ca_trusted = owned_ca_sha256
+        .as_deref()
+        .map(|sha256| CurrentUserCertificateStore.contains(sha256))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or(false);
+    Ok(DesktopBootstrap {
+        ca_certificate_path: state.ca_certificate_path.clone(),
+        ca_private_key_path: state.ca_private_key_path.clone(),
+        ca_files_present: state.ca_certificate_path.is_file()
+            && state.ca_private_key_path.is_file(),
+        owned_ca_sha256,
+        owned_ca_trusted,
+        diagnostics_path: state.diagnostics_path.clone(),
+    })
+}
+
+#[tauri::command]
+fn record_frontend_diagnostic(code: String, message: String, state: State<'_, DesktopState>) {
+    let code = if code.len() <= 64
+        && !code.is_empty()
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    {
+        code
+    } else {
+        "invalid-frontend-code".to_owned()
+    };
+    state
+        .application
+        .record_diagnostic(DiagnosticLevel::Error, "desktop-webview", &code, &message);
 }
 
 #[tauri::command]
@@ -210,6 +265,16 @@ async fn start_proxy(
     configure_system_proxy: bool,
     state: State<'_, DesktopState>,
 ) -> Result<AppStatus, AppError> {
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "desktop",
+        "proxy-start-requested",
+        if configure_system_proxy {
+            "proxy start requested with current-user Windows proxy integration"
+        } else {
+            "proxy start requested in manual client configuration mode"
+        },
+    );
     let host = configure_system_proxy
         .then(|| Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
     state.application.start_proxy(request, host).await
@@ -241,38 +306,89 @@ fn install_certificate(
     sha256: String,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
-    let newly_claimed = state
-        .owned_certificate
-        .claim(&sha256)
-        .map_err(|error| error.to_string())?;
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "certificate",
+        "trust-requested",
+        "current-user interception CA trust requested",
+    );
+    let newly_claimed = match state.owned_certificate.claim(&sha256) {
+        Ok(newly_claimed) => newly_claimed,
+        Err(error) => {
+            let message = error.to_string();
+            state.application.record_diagnostic(
+                DiagnosticLevel::Error,
+                "certificate",
+                "ownership-claim-failed",
+                &message,
+            );
+            return Err(message);
+        }
+    };
     if let Err(error) = CurrentUserCertificateStore.install(&path, &sha256) {
         if newly_claimed {
             let _ = state.owned_certificate.clear(&sha256);
         }
-        return Err(error.to_string());
+        let message = error.to_string();
+        state.application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "trust-failed",
+            &message,
+        );
+        return Err(message);
     }
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "certificate",
+        "trust-succeeded",
+        "current-user interception CA trust succeeded",
+    );
     Ok(())
 }
 
 #[tauri::command]
 fn remove_certificate(sha256: String, state: State<'_, DesktopState>) -> Result<(), String> {
-    if state
-        .owned_certificate
-        .owned_thumbprint()
-        .map_err(|error| error.to_string())?
-        .is_none_or(|owned| !owned.eq_ignore_ascii_case(&sha256))
-    {
-        return Err(
-            "certificate is not recorded as owned by this Transmog installation".to_owned(),
-        );
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "certificate",
+        "remove-requested",
+        "current-user interception CA removal requested",
+    );
+    let result = (|| {
+        if state
+            .owned_certificate
+            .owned_thumbprint()
+            .map_err(|error| error.to_string())?
+            .is_none_or(|owned| !owned.eq_ignore_ascii_case(&sha256))
+        {
+            return Err(
+                "certificate is not recorded as owned by this Transmog installation".to_owned(),
+            );
+        }
+        CurrentUserCertificateStore
+            .remove(&sha256)
+            .map_err(|error| error.to_string())?;
+        state
+            .owned_certificate
+            .clear(&sha256)
+            .map_err(|error| error.to_string())
+    })();
+    match &result {
+        Ok(()) => state.application.record_diagnostic(
+            DiagnosticLevel::Info,
+            "certificate",
+            "remove-succeeded",
+            "current-user interception CA removal succeeded",
+        ),
+        Err(error) => state.application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "remove-failed",
+            error,
+        ),
     }
-    CurrentUserCertificateStore
-        .remove(&sha256)
-        .map_err(|error| error.to_string())?;
-    state
-        .owned_certificate
-        .clear(&sha256)
-        .map_err(|error| error.to_string())
+    result
 }
 
 #[tauri::command]
@@ -280,18 +396,45 @@ async fn create_ca(
     request: CaCreateRequest,
     state: State<'_, DesktopState>,
 ) -> Result<CaIdentity, String> {
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "certificate",
+        "create-requested",
+        "durable interception CA creation requested",
+    );
     let private_key_path = request.private_key_path.clone();
-    let identity = state
-        .application
-        .create_ca(request)
-        .await
-        .map_err(|error| error.to_string())?;
-    CurrentUserKeyProtection
-        .protect(&private_key_path)
-        .map_err(|error| format!("CA was created but private-key protection failed: {error}"))?;
+    let identity = match state.application.create_ca(request).await {
+        Ok(identity) => identity,
+        Err(error) => {
+            let message = error.to_string();
+            state.application.record_diagnostic(
+                DiagnosticLevel::Error,
+                "certificate",
+                "create-failed",
+                &message,
+            );
+            return Err(message);
+        }
+    };
+    if let Err(error) = CurrentUserKeyProtection.protect(&private_key_path) {
+        let message = format!("CA was created but private-key protection failed: {error}");
+        state.application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "key-protection-failed",
+            &message,
+        );
+        return Err(message);
+    }
     state
         .application
         .remember_artifact(identity.certificate_path.clone(), ArtifactKind::Certificate);
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "certificate",
+        "create-succeeded",
+        "durable interception CA creation and private-key protection succeeded",
+    );
     Ok(identity)
 }
 
@@ -321,6 +464,12 @@ fn watch_sessions(
     on_event: Channel<SessionHint>,
     state: State<'_, DesktopState>,
 ) -> Result<(), AppError> {
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "desktop",
+        "session-watch-requested",
+        "live session refresh requested",
+    );
     let mut updates = state.application.subscribe_session_updates()?;
     tauri::async_runtime::spawn(async move {
         while let Ok(mut hint) = updates.recv().await {
@@ -343,6 +492,12 @@ fn watch_sessions(
             }
         }
     });
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "desktop",
+        "session-watch-started",
+        "live session refresh channel started",
+    );
     Ok(())
 }
 
@@ -471,6 +626,10 @@ pub fn run() {
     ));
     let owned_certificate =
         OwnedCertificateRegistry::new(state_root.join("certificate-ownership-v1.json"));
+    let ca_certificate_path = state_root.join("interception-ca.pem");
+    let ca_private_key_path = state_root.join("interception-ca.key");
+    let diagnostics_path = state_root.join("diagnostics.jsonl");
+    let webview_data_path = state_root.join("WebView2");
     let protocol_application = application.clone();
     let preview_application = application.clone();
     let close_application = application.clone();
@@ -491,6 +650,9 @@ pub fn run() {
             application: application.clone(),
             host,
             owned_certificate,
+            ca_certificate_path,
+            ca_private_key_path,
+            diagnostics_path,
         })
         .register_uri_scheme_protocol("transmog-ui", move |_context, request: Request<Vec<u8>>| {
             let view = ShellView::from(&protocol_application.status());
@@ -510,6 +672,8 @@ pub fn run() {
             app_status,
             product_state,
             save_product_state,
+            desktop_bootstrap,
+            record_frontend_diagnostic,
             automation_status,
             validate_automation,
             activate_automation,
@@ -551,7 +715,7 @@ pub fn run() {
             import_capture,
             export_capture
         ])
-        .setup(move |app| Ok(create_main_window(app, initial_window)?))
+        .setup(move |app| Ok(create_main_window(app, initial_window, webview_data_path)?))
         .on_window_event(move |window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && !close_guard.swap(true, Ordering::AcqRel)
@@ -725,13 +889,18 @@ fn is_owned_preference_generation(name: &str) -> bool {
         .is_some_and(|value| value.len() == 20 && value.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn create_main_window(app: &tauri::App, initial: WindowState) -> tauri::Result<()> {
+fn create_main_window(
+    app: &tauri::App,
+    initial: WindowState,
+    webview_data_path: PathBuf,
+) -> tauri::Result<()> {
     let url =
         tauri::Url::parse("transmog-ui://localhost/").expect("fixed application URL must parse");
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
         .title("Transmog")
         .inner_size(f64::from(initial.width), f64::from(initial.height))
         .min_inner_size(760.0, 520.0)
+        .data_directory(webview_data_path)
         .on_navigation(is_allowed_navigation)
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
     if let (Some(x), Some(y)) = (initial.x, initial.y) {

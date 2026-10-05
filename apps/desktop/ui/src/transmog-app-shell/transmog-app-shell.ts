@@ -2,6 +2,20 @@ import { WebUIElement } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { ModuleKind, ModuleResolutionKind, ScriptTarget, monaco, typescriptDefaults } from '../monaco.js';
 
+function reportUnhandledFrontendIssue(code: string, value: unknown): void {
+  void invoke<void>('record_frontend_diagnostic', {
+    code,
+    message: describeError(value),
+  }).catch(() => undefined);
+}
+
+window.addEventListener('error', (event) => {
+  reportUnhandledFrontendIssue('unhandled-error', event.error ?? event.message);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  reportUnhandledFrontendIssue('unhandled-rejection', event.reason);
+});
+
 type Lifecycle = 'stopped' | 'running' | 'stopping' | 'failed';
 
 interface AppStatus {
@@ -11,6 +25,14 @@ interface AppStatus {
   hostRestorePending: boolean;
 }
 interface CaIdentity { sha256: string; certificatePath: string; }
+interface DesktopBootstrap {
+  caCertificatePath: string;
+  caPrivateKeyPath: string;
+  caFilesPresent: boolean;
+  ownedCaSha256: string | null;
+  ownedCaTrusted: boolean;
+  diagnosticsPath: string;
+}
 
 interface SessionSummary {
   id: string;
@@ -162,11 +184,21 @@ export class TransmogAppShell extends WebUIElement {
   listenerValue!: HTMLElement;
   diagnostics!: HTMLOutputElement;
   proxyForm!: HTMLFormElement;
+  proxyControls!: HTMLFieldSetElement;
+  proxyOutput!: HTMLOutputElement;
+  sessionOutput!: HTMLOutputElement;
+  watchButton!: HTMLButtonElement;
+  caCertificate!: HTMLInputElement;
+  caPrivateKey!: HTMLInputElement;
   caThumbprint!: HTMLInputElement;
   filterForm!: HTMLFormElement;
   sessionRows!: HTMLTableSectionElement;
   nextButton!: HTMLButtonElement;
-  inspectorOutput!: HTMLPreElement;
+  selectedMethod!: HTMLElement;
+  selectedUrl!: HTMLElement;
+  selectedStatus!: HTMLElement;
+  requestInspectorOutput!: HTMLPreElement;
+  responseInspectorOutput!: HTMLPreElement;
   bodyBoundary!: HTMLSelectElement;
   bodyRepresentation!: HTMLSelectElement;
   bodyDecoded!: HTMLInputElement;
@@ -191,6 +223,7 @@ export class TransmogAppShell extends WebUIElement {
   settingsForm!: HTMLFormElement;
   supportForm!: HTMLFormElement;
   supportOutput!: HTMLPreElement;
+  diagnosticsPath!: HTMLElement;
   private nextCursor: string | null = null;
   private watching = false;
   private selectedSessionId: string | null = null;
@@ -199,13 +232,35 @@ export class TransmogAppShell extends WebUIElement {
   private diffModels: monaco.editor.ITextModel[] = [];
   private breakpointEditors: monaco.editor.IStandaloneCodeEditor[] = [];
   private candidate: ScriptCandidate | null = null;
+  private readonly systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+  private readonly systemThemeChanged = (): void => {
+    if (this.dataset.theme === 'system') this.applyMonacoTheme('system');
+  };
 
   connectedCallback(): void {
     super.connectedCallback();
-    queueMicrotask(() => { void this.initializeScriptEditor(); });
+    this.lockRootViewport();
+    this.systemTheme.addEventListener('change', this.systemThemeChanged);
+    queueMicrotask(() => {
+      void this.initializeShell();
+      void this.initializeScriptEditor().catch((error: unknown) => {
+        this.scriptOutput.textContent = `Script editor initialization failed: ${describeError(error)}`;
+        void this.reportFrontendIssue('script-editor-initialization-failed', error);
+      });
+    });
+  }
+
+  private lockRootViewport(): void {
+    for (const root of [document.documentElement, document.body]) {
+      root.style.width = '100%';
+      root.style.height = '100%';
+      root.style.margin = '0';
+      root.style.overflow = 'hidden';
+    }
   }
 
   disconnectedCallback(): void {
+    this.systemTheme.removeEventListener('change', this.systemThemeChanged);
     for (const editor of this.breakpointEditors) editor.dispose();
     this.breakpointEditors = [];
     this.revisionDiff?.dispose();
@@ -243,11 +298,72 @@ export class TransmogAppShell extends WebUIElement {
       ariaLabel: 'Traffic script TypeScript source',
       minimap: { enabled: false },
       tabFocusMode: true,
-      theme: 'vs-dark',
+      theme: this.monacoTheme(),
     });
     this.sourceEditor.onDidChangeModelContent(() => { this.candidate = null; });
     this.scriptOutput.textContent = 'Ready. Monaco diagnostics are advisory; Rust validation is authoritative.';
     await this.refreshScripts();
+  }
+
+  private async initializeShell(): Promise<void> {
+    this.setProxyOutput('Loading durable proxy state…', 'progress');
+    try {
+      const [bootstrap, productState, status] = await Promise.all([
+        invoke<DesktopBootstrap>('desktop_bootstrap'),
+        invoke<ProductState>('product_state'),
+        invoke<AppStatus>('app_status'),
+      ]);
+      this.caCertificate.value = bootstrap.caCertificatePath;
+      this.caPrivateKey.value = bootstrap.caPrivateKeyPath;
+      this.caThumbprint.value = bootstrap.ownedCaSha256 ?? '';
+      this.diagnosticsPath.textContent = bootstrap.diagnosticsPath;
+      this.applyTheme(productState.preferences.theme);
+      this.populateSettings(productState);
+      const systemProxy = this.proxyForm.elements.namedItem('systemProxy') as HTMLInputElement;
+      systemProxy.checked = productState.preferences.configureSystemProxy;
+      this.renderAppStatus(status);
+      const certificate = bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent
+        ? `Owned CA ${bootstrap.ownedCaSha256} is remembered, but its app-managed files are missing. Remove exact CA, then create and trust a new durable CA.`
+        : bootstrap.ownedCaSha256 === null
+          ? 'No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS.'
+          : bootstrap.ownedCaTrusted
+            ? `Owned CA ${bootstrap.ownedCaSha256} is present in current-user trust.`
+            : `Owned CA ${bootstrap.ownedCaSha256} is not present in current-user trust.`;
+      const ready = bootstrap.caFilesPresent && bootstrap.ownedCaTrusted;
+      this.setProxyOutput(`${certificate} Diagnostic log: ${bootstrap.diagnosticsPath}`, ready ? 'success' : bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent ? 'error' : 'progress');
+      await this.refreshSessions();
+    } catch (error: unknown) {
+      const message = `Desktop initialization failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
+      await this.reportFrontendIssue('desktop-initialization-failed', error);
+    } finally {
+      this.proxyControls.disabled = false;
+    }
+  }
+
+  showView(event: Event): void {
+    event.preventDefault();
+    const link = event.currentTarget as HTMLAnchorElement;
+    const view = link.dataset.view;
+    if (view === undefined) return;
+    for (const candidate of this.shadowRoot?.querySelectorAll<HTMLAnchorElement>('.rail a[data-view]') ?? []) {
+      const active = candidate.dataset.view === view;
+      candidate.classList.toggle('active', active);
+      if (active) candidate.setAttribute('aria-current', 'page');
+      else candidate.removeAttribute('aria-current');
+    }
+    for (const section of this.shadowRoot?.querySelectorAll<HTMLElement>('.app-view') ?? []) {
+      const active = section.id === view;
+      section.hidden = !active;
+      section.classList.toggle('active', active);
+    }
+    if (view === 'automation') {
+      requestAnimationFrame(() => {
+        this.sourceEditor?.layout();
+        this.revisionDiff?.layout();
+      });
+    }
   }
 
   private ensureMonacoStyles(): void {
@@ -259,12 +375,18 @@ export class TransmogAppShell extends WebUIElement {
     this.shadowRoot?.append(link);
   }
 
-  async startProxy(event: Event): Promise<void> {
-    event.preventDefault();
+  async startProxy(event?: Event): Promise<void> {
+    event?.preventDefault();
     const data = new FormData(this.proxyForm);
-    this.diagnostics.textContent = 'Starting the proxy…';
+    const configureSystemProxy = data.get('systemProxy') === 'on';
+    this.setProxyOutput(
+      configureSystemProxy
+        ? 'Starting the proxy and applying current-user Windows proxy settings…'
+        : 'Starting the proxy in manual client-configuration mode…',
+      'progress',
+    );
     try {
-      await invoke<AppStatus>('start_proxy', {
+      const status = await invoke<AppStatus>('start_proxy', {
         request: {
           caCertificatePath: String(data.get('certificate') ?? ''),
           caPrivateKeyPath: String(data.get('privateKey') ?? ''),
@@ -272,11 +394,21 @@ export class TransmogAppShell extends WebUIElement {
           route: 'auto',
           allowRemoteClients: false,
         },
-        configureSystemProxy: data.get('systemProxy') === 'on',
+        configureSystemProxy,
       });
-      await this.refreshStatus();
+      this.renderAppStatus(status);
+      await this.persistSystemProxyPreference(configureSystemProxy);
+      const listener = status.listener ?? 'an unknown listener';
+      this.setProxyOutput(
+        configureSystemProxy
+          ? `Proxy listening at ${listener}. The current-user Windows proxy is configured; Chrome traffic should now appear below.`
+          : `Proxy listening at ${listener} in manual mode. Configure the client to use this HTTP/HTTPS proxy; Chrome is not changed automatically.`,
+        'success',
+      );
     } catch (error: unknown) {
-      this.diagnostics.textContent = `Start failed: ${describeError(error)}`;
+      const message = `Start failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -292,9 +424,13 @@ export class TransmogAppShell extends WebUIElement {
         },
       });
       this.caThumbprint.value = identity.sha256;
-      this.diagnostics.textContent = `CA created with a current-user-only private-key ACL. SHA-256 ${identity.sha256}`;
+      const message = `CA created with a current-user-only private-key ACL. SHA-256 ${identity.sha256}. Trust the public CA before intercepting HTTPS.`;
+      this.setProxyOutput(message, 'success');
+      this.diagnostics.textContent = message;
     } catch (error: unknown) {
-      this.diagnostics.textContent = `CA creation failed: ${describeError(error)}`;
+      const message = `CA creation failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -305,9 +441,13 @@ export class TransmogAppShell extends WebUIElement {
         path: String(data.get('certificate') ?? ''),
         sha256: String(data.get('thumbprint') ?? ''),
       });
-      this.diagnostics.textContent = 'The exact public CA is trusted for the current user.';
+      const message = 'The exact public CA is trusted for the current user and its SHA-256 identity will be restored after restart.';
+      this.setProxyOutput(message, 'success');
+      this.diagnostics.textContent = message;
     } catch (error: unknown) {
-      this.diagnostics.textContent = `CA installation failed: ${describeError(error)}`;
+      const message = `CA installation failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -315,30 +455,41 @@ export class TransmogAppShell extends WebUIElement {
     const data = new FormData(this.proxyForm);
     try {
       await invoke<void>('remove_certificate', { sha256: String(data.get('thumbprint') ?? '') });
-      this.diagnostics.textContent = 'The exact public CA was removed from current-user trust.';
+      const message = 'The exact public CA was removed from current-user trust. The CA files were retained.';
+      this.setProxyOutput(message, 'success');
+      this.diagnostics.textContent = message;
     } catch (error: unknown) {
-      this.diagnostics.textContent = `CA removal failed: ${describeError(error)}`;
+      const message = `CA removal failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
   async stopProxy(): Promise<void> {
-    this.diagnostics.textContent = 'Stopping and restoring host settings…';
+    this.setProxyOutput('Stopping and restoring host settings…', 'progress');
     try {
-      await invoke<AppStatus>('stop_application');
-      await this.refreshStatus();
+      const status = await invoke<AppStatus>('stop_application');
+      this.renderAppStatus(status);
+      this.setProxyOutput('Proxy stopped and any current-user Windows proxy changes were restored.', 'success');
     } catch (error: unknown) {
-      this.diagnostics.textContent = `Stop failed: ${describeError(error)}`;
+      const message = `Stop failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
   async recoverProxy(): Promise<void> {
     try {
       const restored = await invoke<boolean>('recover_windows_proxy');
-      this.diagnostics.textContent = restored
+      const message = restored
         ? 'The exact journaled Windows proxy settings were restored.'
         : 'No Windows proxy recovery journal was present.';
+      this.setProxyOutput(message, 'success');
+      this.diagnostics.textContent = message;
     } catch (error: unknown) {
-      this.diagnostics.textContent = `Recovery failed: ${describeError(error)}`;
+      const message = `Recovery failed: ${describeError(error)}`;
+      this.setProxyOutput(message, 'error');
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -358,9 +509,15 @@ export class TransmogAppShell extends WebUIElement {
       this.renderSessions(page.sessions);
       this.nextCursor = page.nextCursor;
       this.nextButton.disabled = page.nextCursor === null;
-      this.diagnostics.textContent = `Loaded ${page.sessions.length} sessions · evicted ${page.evicted} · gaps ${page.sequenceGaps} · subscriber lag ${page.subscriberLag}`;
+      const message = `Loaded ${page.sessions.length} sessions · evicted ${page.evicted} · gaps ${page.sequenceGaps} · subscriber lag ${page.subscriberLag}`;
+      this.sessionOutput.textContent = message;
+      this.sessionOutput.dataset.kind = 'success';
+      this.diagnostics.textContent = message;
     } catch (error: unknown) {
-      this.diagnostics.textContent = `Session query failed: ${describeError(error)}`;
+      const message = `Session query failed: ${describeError(error)}`;
+      this.sessionOutput.textContent = message;
+      this.sessionOutput.dataset.kind = 'error';
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -369,16 +526,31 @@ export class TransmogAppShell extends WebUIElement {
   }
 
   async watchSessions(): Promise<void> {
-    if (this.watching) return;
+    if (this.watching) {
+      this.sessionOutput.textContent = 'Live session refresh is already enabled.';
+      this.sessionOutput.dataset.kind = 'success';
+      return;
+    }
     this.watching = true;
+    this.watchButton.disabled = true;
+    this.sessionOutput.textContent = 'Enabling live session refresh…';
+    this.sessionOutput.dataset.kind = 'progress';
     const onEvent = new Channel<SessionHint>();
     onEvent.onmessage = () => { void this.refreshSessions(); };
     try {
       await invoke<void>('watch_sessions', { onEvent });
+      await this.refreshSessions();
+      this.watchButton.textContent = 'Watching live';
+      this.sessionOutput.textContent = 'Live session refresh enabled. Waiting for proxied traffic.';
+      this.sessionOutput.dataset.kind = 'success';
       this.diagnostics.textContent = 'Live session refresh enabled.';
     } catch (error: unknown) {
       this.watching = false;
-      this.diagnostics.textContent = `Live refresh failed: ${describeError(error)}`;
+      this.watchButton.disabled = false;
+      const message = `Live refresh failed: ${describeError(error)}`;
+      this.sessionOutput.textContent = message;
+      this.sessionOutput.dataset.kind = 'error';
+      this.diagnostics.textContent = message;
     }
   }
 
@@ -395,10 +567,13 @@ export class TransmogAppShell extends WebUIElement {
     }
     for (const session of sessions.slice(0, 200)) {
       const row = document.createElement('tr');
+      row.tabIndex = 0;
+      row.dataset.sessionId = session.id;
+      row.classList.toggle('selected', this.selectedSessionId === session.id);
+      row.setAttribute('aria-selected', String(this.selectedSessionId === session.id));
       const values = [
-        session.host, session.path, session.protocol,
-        session.status?.toString() ?? '—', `${session.durationMs} ms`,
-        `${session.requestBytes} ↑ / ${session.responseBytes} ↓`,
+        session.status?.toString() ?? '—', session.host, session.path, session.protocol,
+        `${session.durationMs} ms`, `${session.responseBytes} B`,
         `${session.terminal}${session.loss ? ' · loss' : ''}${session.capturing ? ' · capture' : ''}`,
       ];
       const methodCell = document.createElement('td');
@@ -406,7 +581,10 @@ export class TransmogAppShell extends WebUIElement {
       inspect.type = 'button';
       inspect.className = 'session-link';
       inspect.textContent = session.method;
-      inspect.addEventListener('click', () => { void this.inspectSession(session.id); });
+      inspect.addEventListener('click', (event) => {
+        event.stopPropagation();
+        void this.inspectSession(session);
+      });
       methodCell.append(inspect);
       row.append(methodCell);
       for (const value of values) {
@@ -414,16 +592,45 @@ export class TransmogAppShell extends WebUIElement {
         cell.textContent = value;
         row.append(cell);
       }
+      row.addEventListener('click', () => { void this.inspectSession(session); });
+      row.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          void this.inspectSession(session);
+        }
+      });
       this.sessionRows.append(row);
     }
   }
 
-  private async inspectSession(id: string): Promise<void> {
-    this.inspectorOutput.textContent = 'Loading bounded evidence…';
+  private async inspectSession(session: SessionSummary): Promise<void> {
+    this.selectedMethod.textContent = session.method;
+    this.selectedUrl.textContent = `${session.host}${session.path}`;
+    this.selectedStatus.textContent = session.status === null ? 'Pending' : `${session.status}`;
+    this.selectedStatus.classList.toggle('success', session.status !== null && session.status >= 200 && session.status < 400);
+    this.requestInspectorOutput.textContent = 'Loading bounded request evidence…';
+    this.responseInspectorOutput.textContent = 'Loading bounded response evidence…';
     try {
-      const detail = await invoke<SessionDetail>('session_detail', { id });
-      this.selectedSessionId = id;
-      this.inspectorOutput.textContent = JSON.stringify(detail, null, 2);
+      const detail = await invoke<SessionDetail>('session_detail', { id: session.id });
+      this.selectedSessionId = session.id;
+      for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
+        const selected = row.dataset.sessionId === session.id;
+        row.classList.toggle('selected', selected);
+        row.setAttribute('aria-selected', String(selected));
+      }
+      this.requestInspectorOutput.textContent = JSON.stringify({
+        requests: detail.requests,
+        hookEffects: detail.hookEffects,
+        routeSelection: detail.routeSelection,
+        routeAttempts: detail.routeAttempts,
+      }, null, 2);
+      this.responseInspectorOutput.textContent = JSON.stringify({
+        responses: detail.responses,
+        terminal: detail.terminal,
+        websocket: detail.websocket,
+        diagnostics: detail.diagnostics,
+        sequenceLoss: detail.sequenceLoss,
+      }, null, 2);
       this.bodyBoundary.replaceChildren();
       for (const body of detail.storedBodies) {
         const option = document.createElement('option');
@@ -435,7 +642,9 @@ export class TransmogAppShell extends WebUIElement {
         ? 'No retained body boundaries are available.'
         : 'Choose a representation and inspect the selected boundary.';
     } catch (error: unknown) {
-      this.inspectorOutput.textContent = `Inspector unavailable: ${describeError(error)}`;
+      const message = `Inspector unavailable: ${describeError(error)}`;
+      this.requestInspectorOutput.textContent = message;
+      this.responseInspectorOutput.textContent = message;
     }
   }
 
@@ -533,7 +742,7 @@ export class TransmogAppShell extends WebUIElement {
         ariaLabel: `Edit paused ${paused.phase}`,
         minimap: { enabled: false },
         tabFocusMode: true,
-        theme: 'vs-dark',
+        theme: this.monacoTheme(),
       });
       this.breakpointEditors.push(editor);
       const actions = document.createElement('div');
@@ -669,7 +878,7 @@ export class TransmogAppShell extends WebUIElement {
         accessibilitySupport: 'on',
         ariaLabel: 'Active revision and current draft comparison',
         readOnly: true,
-        theme: 'vs-dark',
+        theme: this.monacoTheme(),
       });
       const [original, modified] = this.diffModels;
       if (original === undefined || modified === undefined) throw new Error('revision comparison models were not created');
@@ -965,13 +1174,8 @@ export class TransmogAppShell extends WebUIElement {
   async loadSettings(): Promise<void> {
     try {
       const state = await invoke<ProductState>('product_state');
-      const elements = this.settingsForm.elements;
-      (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
-      (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
-      (elements.namedItem('defaultSystemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
-      (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
-      (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
-      (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
+      this.populateSettings(state);
+      this.applyTheme(state.preferences.theme);
       this.supportOutput.textContent = `Loaded schema ${state.schemaVersion}; ${state.recentArtifacts.length} recent artifact reference(s).`;
     } catch (error: unknown) {
       this.supportOutput.textContent = `Settings load failed: ${describeError(error)}`;
@@ -990,6 +1194,8 @@ export class TransmogAppShell extends WebUIElement {
       state.privacy.rememberRecentArtifacts = data.get('rememberArtifacts') === 'on';
       state.privacy.includePathsInSupportBundles = data.get('supportPaths') === 'on';
       const saved = await invoke<ProductState>('save_product_state', { productState: state });
+      this.populateSettings(saved);
+      this.applyTheme(saved.preferences.theme);
       this.supportOutput.textContent = `Saved product-state schema ${saved.schemaVersion}.`;
     } catch (error: unknown) {
       this.supportOutput.textContent = `Settings save failed: ${describeError(error)}`;
@@ -1031,14 +1237,73 @@ export class TransmogAppShell extends WebUIElement {
   async refreshStatus(): Promise<void> {
     try {
       const status = await invoke<AppStatus>('app_status');
-      this.statusLabel.textContent = lifecycleLabel(status.lifecycle);
-      this.listenerValue.textContent = status.listener ?? 'Not listening';
-      this.diagnostics.textContent = status.hostRestorePending
-        ? 'Host restoration is pending and must be retried before restart.'
-        : status.summary;
-      this.shadowRoot?.querySelector('.status')?.setAttribute('data-lifecycle', status.lifecycle);
+      this.renderAppStatus(status);
     } catch (error: unknown) {
       this.diagnostics.textContent = `Status unavailable: ${describeError(error)}`;
+    }
+  }
+
+  private renderAppStatus(status: AppStatus): void {
+    this.statusLabel.textContent = lifecycleLabel(status.lifecycle);
+    this.listenerValue.textContent = status.listener ?? 'Not listening';
+    this.diagnostics.textContent = status.hostRestorePending
+      ? 'Host restoration is pending and must be retried before restart.'
+      : status.summary;
+    this.shadowRoot?.querySelector('.status')?.setAttribute('data-lifecycle', status.lifecycle);
+  }
+
+  private populateSettings(state: ProductState): void {
+    const elements = this.settingsForm.elements;
+    (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
+    (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
+    (elements.namedItem('defaultSystemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
+    (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
+    (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
+    (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
+    (this.proxyForm.elements.namedItem('systemProxy') as HTMLInputElement).checked = state.preferences.configureSystemProxy;
+  }
+
+  private applyTheme(theme: ProductState['preferences']['theme']): void {
+    this.dataset.theme = theme;
+    this.applyMonacoTheme(theme);
+  }
+
+  private applyMonacoTheme(theme: ProductState['preferences']['theme']): void {
+    const dark = theme === 'dark' || (theme === 'system' && this.systemTheme.matches);
+    monaco.editor.setTheme(dark ? 'vs-dark' : 'vs');
+  }
+
+  private monacoTheme(): 'vs' | 'vs-dark' {
+    const theme = this.dataset.theme as ProductState['preferences']['theme'] | undefined;
+    return theme === 'dark' || ((theme === undefined || theme === 'system') && this.systemTheme.matches)
+      ? 'vs-dark'
+      : 'vs';
+  }
+
+  private setProxyOutput(message: string, kind: 'progress' | 'success' | 'error'): void {
+    this.proxyOutput.textContent = message;
+    this.proxyOutput.dataset.kind = kind;
+  }
+
+  private async persistSystemProxyPreference(enabled: boolean): Promise<void> {
+    try {
+      const state = await invoke<ProductState>('product_state');
+      if (state.preferences.configureSystemProxy === enabled) return;
+      state.preferences.configureSystemProxy = enabled;
+      await invoke<ProductState>('save_product_state', { productState: state });
+      const setting = this.settingsForm.elements.namedItem('defaultSystemProxy') as HTMLInputElement;
+      setting.checked = enabled;
+    } catch (error: unknown) {
+      this.diagnostics.textContent = `Proxy is running, but the startup-mode preference was not saved: ${describeError(error)}`;
+      await this.reportFrontendIssue('proxy-preference-save-failed', error);
+    }
+  }
+
+  private async reportFrontendIssue(code: string, error: unknown): Promise<void> {
+    try {
+      await invoke<void>('record_frontend_diagnostic', { code, message: describeError(error) });
+    } catch {
+      // The startup log remains useful even when the IPC bridge itself failed.
     }
   }
 }
@@ -1057,6 +1322,15 @@ function lifecycleLabel(lifecycle: Lifecycle): string {
 function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
+  if (typeof error === 'object' && error !== null) {
+    const message = (error as {message?: unknown}).message;
+    if (typeof message === 'string') return message;
+    try {
+      return JSON.stringify(error).slice(0, 512);
+    } catch {
+      return 'unserializable failure';
+    }
+  }
   return 'unknown failure';
 }
 

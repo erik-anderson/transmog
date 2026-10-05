@@ -2,14 +2,14 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Transmog",
   "version": "0.1.0",
-  "identifier": "com.erikanderson.transmog",
+  "identifier": "app.transmog.desktop",
   "build": {
     "frontendDist": "ui/dist"
   },
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost",
+      "csp": null,
       "capabilities": ["main"]
     }
   },

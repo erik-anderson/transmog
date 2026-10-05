@@ -42,6 +42,8 @@ WebView2 DevTools port, then run `npm run smoke:webview -- --port 9333` from
 until a human explicitly enables it.
 
 Use `scripts/test-windows-desktop.ps1` for accessibility, high contrast/DPI,
-localization-length, memory/soak, and single-instance gates. Use
+localization-length, memory/soak, and single-instance gates. Pass
+`-ScreenshotPath C:\path\to\traffic.png` to capture the fixed-viewport traffic
+workspace from the same real WebView2 run. Use
 `scripts/package-windows.ps1` for unsigned development or signed release NSIS
 bundles. See [`docs/windows-release.md`](../../docs/windows-release.md).

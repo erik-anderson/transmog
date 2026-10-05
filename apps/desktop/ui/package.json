@@ -15,6 +15,7 @@
     "monaco-editor": "0.57.0"
   },
   "devDependencies": {
+    "@types/trusted-types": "2.0.7",
     "@microsoft/webui": "0.0.30",
     "@tauri-apps/cli": "2.12.1",
     "esbuild": "0.28.2",

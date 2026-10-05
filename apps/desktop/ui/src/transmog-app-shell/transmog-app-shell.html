@@ -1,239 +1,286 @@
 <template shadowrootmode="open">
   <div class="shell">
-    <header class="masthead">
-      <div>
-        <p class="eyebrow">Transmog</p>
-        <h1>{{heading}}</h1>
-        <p class="lede">{{summary}}</p>
+    <header class="topbar">
+      <div class="brand" aria-label="Transmog">
+        <span class="brand-mark" aria-hidden="true">T</span>
+        <span>Transmog</span>
       </div>
-      <div class="status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
+      <p class="top-summary">{{heading}}</p>
+      <div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
-        <span w-ref="{statusLabel}">{{lifecycleLabel}}</span>
+        <strong w-ref="{statusLabel}">{{lifecycleLabel}}</strong>
+        <span class="listener-value" w-ref="{listenerValue}">{{listener}}</span>
+      </div>
+      <div class="top-actions">
+        <button type="button" class="compact-button" @click="{startProxy(e)}">Start proxy</button>
+        <button type="button" class="compact-button secondary" @click="{stopProxy()}">Stop</button>
       </div>
     </header>
 
-    <nav aria-label="Primary">
-      <a href="#traffic" aria-current="page">Traffic</a>
-      <a href="#breakpoints">Breakpoints</a>
-      <a href="#automation">Automation</a>
-      <a href="#composer">Composer</a>
-      <a href="#captures">Captures</a>
-      <a href="#settings">Settings &amp; support</a>
-    </nav>
+    <div class="app-body">
+      <nav class="rail" aria-label="Primary">
+        <a href="#traffic" class="active" data-view="traffic" aria-current="page" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">↕</span><span class="nav-label">Traffic</span></a>
+        <a href="#breakpoints" data-view="breakpoints" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">Ⅱ</span><span class="nav-label">Breakpoints</span></a>
+        <a href="#automation" data-view="automation" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Automation</span></a>
+        <a href="#composer" data-view="composer" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">›_</span><span class="nav-label">Composer</span></a>
+        <a href="#captures" data-view="captures" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">▣</span><span class="nav-label">Captures</span></a>
+        <span class="nav-spacer"></span>
+        <a href="#settings" data-view="settings" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></a>
+      </nav>
 
-    <main>
-      <section id="traffic" class="workspace" aria-labelledby="traffic-heading">
-        <div>
-          <p class="section-label">Live workspace</p>
-          <h2 id="traffic-heading">Sessions</h2>
-          <p>Authoritative session queries will appear here as the proxy starts.</p>
-          <form w-ref="{proxyForm}" @submit="{startProxy(event)}">
-            <label>CA certificate <input name="certificate" value="transmog-ca.pem" required></label>
-            <label>CA private key <input name="privateKey" value="transmog-ca.key" required></label>
-            <label>CA SHA-256 <input w-ref="{caThumbprint}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
-            <label><input name="systemProxy" type="checkbox"> Configure the current-user system proxy</label>
-            <div class="actions">
-              <button type="button" class="secondary" @click="{createCa()}">Create durable CA</button>
-              <button type="button" class="secondary" @click="{installCa()}">Trust public CA</button>
-              <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
-              <button type="submit">Start proxy</button>
-              <button type="button" class="secondary" @click="{stopProxy()}">Stop</button>
-              <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
+      <main>
+        <section id="traffic" class="app-view traffic-view active" aria-labelledby="traffic-heading">
+          <header class="view-toolbar">
+            <div class="view-title">
+              <h1 id="traffic-heading">Traffic</h1>
+              <span>Live requests and responses</span>
             </div>
-          </form>
-          <form w-ref="{filterForm}" @submit="{refreshSessions(event)}" class="filters">
-            <label>Method <input name="method" maxlength="32" placeholder="GET"></label>
-            <label>Host <input name="host" maxlength="255" placeholder="example.test"></label>
-            <button type="submit" class="secondary">Refresh sessions</button>
-            <button type="button" class="secondary" @click="{watchSessions()}">Watch live</button>
-          </form>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Method</th><th>Host</th><th>Path</th><th>Protocol</th><th>Status</th><th>Duration</th><th>Bytes</th><th>State</th></tr></thead>
-              <tbody w-ref="{sessionRows}"><tr><td colspan="8">No sessions loaded.</td></tr></tbody>
-            </table>
+            <form w-ref="{filterForm}" @submit="{refreshSessions(e)}" class="filters">
+              <label><span class="sr-only">Method</span><input name="method" maxlength="32" placeholder="Method"></label>
+              <label><span class="sr-only">Host</span><input name="host" maxlength="255" placeholder="Filter host"></label>
+              <button type="submit" class="secondary compact-button">Refresh</button>
+              <button w-ref="{watchButton}" type="button" class="secondary compact-button" @click="{watchSessions()}">Watch live</button>
+            </form>
+          </header>
+          <output w-ref="{sessionOutput}" class="session-status" aria-live="polite">Live refresh is off.</output>
+
+          <div class="traffic-workspace">
+            <section class="session-list-pane" aria-label="Captured sessions">
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Method</th><th>Status</th><th>Host</th><th>Path and query</th><th>Protocol</th><th>Duration</th><th>Response</th><th>State</th></tr></thead>
+                  <tbody w-ref="{sessionRows}"><tr><td colspan="8" class="empty-cell">No sessions loaded.</td></tr></tbody>
+                </table>
+              </div>
+              <div class="list-footer">
+                <span>Newest matching sessions</span>
+                <button w-ref="{nextButton}" type="button" class="secondary compact-button" @click="{nextSessions()}" disabled>Next page</button>
+              </div>
+            </section>
+
+            <section class="details-pane" aria-labelledby="inspector-heading">
+              <header class="selection-bar">
+                <span w-ref="{selectedMethod}" class="method-badge">—</span>
+                <strong w-ref="{selectedUrl}" id="inspector-heading">Select a request</strong>
+                <span w-ref="{selectedStatus}" class="status-badge">No response</span>
+              </header>
+              <div class="exchange-inspector">
+                <section class="message-pane request-pane" aria-labelledby="request-heading">
+                  <header><h2 id="request-heading">Request</h2><span>Headers · body · hook effects</span></header>
+                  <pre w-ref="{requestInspectorOutput}" tabindex="0">Select a session to inspect its request.</pre>
+                </section>
+                <section class="message-pane response-pane" aria-labelledby="response-heading">
+                  <header><h2 id="response-heading">Response</h2><span>Original · formatted · bytes · image</span></header>
+                  <pre w-ref="{responseInspectorOutput}" tabindex="0">Select a session to inspect its response.</pre>
+                  <div class="body-toolbar" aria-label="Response body representation">
+                    <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><option value="">Select a session first</option></select></label>
+                    <label>View <select w-ref="{bodyRepresentation}"><option value="auto">Auto</option><option value="original-text">Original text</option><option value="formatted">Formatted</option><option value="bytes">Bytes</option><option value="metadata">Metadata only</option><option value="image">Image</option></select></label>
+                    <label>Limit <input w-ref="{bodyMaxBytes}" type="number" min="1" max="16777216" value="262144"></label>
+                    <label class="checkbox-label"><input w-ref="{bodyDecoded}" type="checkbox"> Decode</label>
+                    <button type="button" class="secondary compact-button" @click="{inspectBody()}">Inspect body</button>
+                  </div>
+                  <pre w-ref="{bodyPreviewOutput}" class="body-preview" tabindex="0">No body selected.</pre>
+                  <img w-ref="{bodyImagePreview}" class="body-image-preview" alt="Normalized response image preview" hidden>
+                </section>
+              </div>
+            </section>
           </div>
-          <button w-ref="{nextButton}" type="button" class="secondary" @click="{nextSessions()}" disabled>Next page</button>
-          <section class="inspector" aria-labelledby="inspector-heading">
-            <h3 id="inspector-heading">Inspector</h3>
-            <pre w-ref="{inspectorOutput}" tabindex="0">Select a session to inspect bounded evidence.</pre>
-            <div class="filters" aria-label="Response body representation">
-              <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><option value="">Select a session first</option></select></label>
-              <label>View <select w-ref="{bodyRepresentation}"><option value="auto">Auto</option><option value="original-text">Original text</option><option value="formatted">Formatted</option><option value="bytes">Bytes</option><option value="metadata">Metadata only</option><option value="image">Image</option></select></label>
-              <label>Preview bytes <input w-ref="{bodyMaxBytes}" type="number" min="1" max="16777216" value="262144"></label>
-              <label><input w-ref="{bodyDecoded}" type="checkbox"> Decode content coding</label>
-              <button type="button" class="secondary" @click="{inspectBody()}">Inspect body</button>
-            </div>
-            <pre w-ref="{bodyPreviewOutput}" tabindex="0">No body selected.</pre>
-            <img w-ref="{bodyImagePreview}" class="body-image-preview" alt="Normalized response image preview" hidden>
-          </section>
-        </div>
-        <dl>
-          <div><dt>Listener</dt><dd w-ref="{listenerValue}">{{listener}}</dd></div>
-          <div><dt>Retention</dt><dd>Responses · circular · 1 GiB</dd></div>
-        </dl>
-      </section>
-      <section id="breakpoints" class="workspace full" aria-labelledby="breakpoints-heading">
-        <div>
-          <p class="section-label">Hooks v2</p>
-          <h2 id="breakpoints-heading">Break and modify</h2>
-          <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is attributed to <code>transmog.session.interactive-control</code>.</p>
-          <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(event)}" class="phase-form">
-            <label><input name="requestHead" type="checkbox" checked> Request head</label>
-            <label><input name="requestBody" type="checkbox"> Request body</label>
-            <label><input name="responseHead" type="checkbox" checked> Response head</label>
-            <label><input name="responseBody" type="checkbox"> Response body</label>
-            <button type="submit">Enable selected phases</button>
-            <button type="button" class="secondary" @click="{disableBreakpoints()}">Disable</button>
-            <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
-          </form>
-          <div w-ref="{pausedList}" class="paused-list" aria-live="polite">No paused exchanges.</div>
-        </div>
-      </section>
-      <section id="automation" class="workspace full" aria-labelledby="automation-heading">
-        <div>
-          <p class="section-label">Native Hooks v2 rules</p>
-          <h2 id="automation-heading">Conditional automation</h2>
-          <p>Validate first, then atomically activate for newly admitted exchanges. Active exchanges keep their original rule snapshot and audit IDs include the exact rule revision.</p>
-          <form w-ref="{automationForm}" @submit="{activateUserAgentRule(event)}" class="composer-form">
-            <label>Rule ID <input name="ruleId" value="conditional-user-agent" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
-            <label>Revision <input name="revision" type="number" min="1" value="1" required></label>
-            <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-            <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
-            <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
-            <button type="submit">Validate and activate</button>
-            <button type="button" class="secondary" @click="{refreshAutomation()}">Refresh active rules</button>
-          </form>
-          <h3>Saved and authored responses</h3>
-          <form w-ref="{responseAssetForm}" @submit="{createResponseAsset(event)}" class="composer-form">
-            <label>Asset ID <input name="assetId" value="saved-response" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
-            <label>Revision <input name="assetRevision" type="number" min="1" value="1" required></label>
-            <label>Status <input name="status" type="number" min="200" max="599" value="200" required></label>
-            <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
-            <label>Body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
-            <button type="submit">Create immutable asset</button>
-          </form>
-          <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(event)}" class="composer-form">
-            <label>Rule ID <input name="ruleId" value="auto-response" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
-            <label>Rule revision <input name="revision" type="number" min="1" value="1" required></label>
-            <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-            <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
-            <label>Exact asset reference <input name="assetRef" value="saved-response@1" maxlength="258" required></label>
-            <button type="submit">Activate autoresponse</button>
-          </form>
-          <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
-          <section class="script-workspace" aria-labelledby="script-heading">
-            <p class="section-label">Sandboxed TypeScript</p>
-            <h3 id="script-heading">Traffic scripts</h3>
-            <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Activate atomically applies the exact validated revision to newly admitted exchanges.</p>
-            <form w-ref="{scriptForm}" @submit="{validateScript(event)}" class="script-form">
-              <label>Script ID <input name="scriptId" value="conditional-user-agent-script" pattern="[A-Za-z0-9._-]+" maxlength="128" required></label>
-              <label>Revision <input name="scriptRevision" type="number" min="1" value="1" required></label>
-              <label>Host prefilter <input name="scriptHost" value="example.test" maxlength="255"></label>
-              <label>Path prefix <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
-              <label>Priority <input name="scriptPriority" type="number" value="0" required></label>
-              <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096"></label>
-              <fieldset>
-                <legend>Capabilities</legend>
-                <label><input name="readBodies" type="checkbox"> Read bounded bodies</label>
-                <label><input name="writeBody" type="checkbox"> Replace bodies</label>
-                <label><input name="respond" type="checkbox"> Select response assets</label>
-                <label><input name="abort" type="checkbox" checked> Abort requests</label>
-                <label><input name="sensitive" type="checkbox"> Read sensitive headers</label>
-              </fieldset>
-              <div class="script-actions actions">
-                <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
-                <button type="submit">Validate</button>
-                <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
-                <button type="button" class="secondary" @click="{activateScript()}">Activate</button>
-                <button type="button" class="secondary" @click="{disableScript()}">Disable active</button>
-                <button type="button" class="secondary" @click="{compareActiveScript()}">Compare active</button>
+        </section>
+
+        <section id="breakpoints" class="app-view tool-view" aria-labelledby="breakpoints-heading" hidden>
+          <div class="tool-page">
+            <p class="section-label">Hooks v2</p>
+            <h1 id="breakpoints-heading">Break and modify</h1>
+            <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is attributed to <code>transmog.session.interactive-control</code>.</p>
+            <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(e)}" class="phase-form">
+              <label><input name="requestHead" type="checkbox" checked> Request head</label>
+              <label><input name="requestBody" type="checkbox"> Request body</label>
+              <label><input name="responseHead" type="checkbox" checked> Response head</label>
+              <label><input name="responseBody" type="checkbox"> Response body</label>
+              <button type="submit">Enable selected phases</button>
+              <button type="button" class="secondary" @click="{disableBreakpoints()}">Disable</button>
+              <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
+            </form>
+            <div w-ref="{pausedList}" class="paused-list" aria-live="polite">No paused exchanges.</div>
+          </div>
+        </section>
+
+        <section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" hidden>
+          <div class="tool-page">
+            <p class="section-label">Native Hooks v2 rules</p>
+            <h1 id="automation-heading">Conditional automation</h1>
+            <p>Validate first, then atomically activate for newly admitted exchanges. Active exchanges keep their original rule snapshot and audit IDs include the exact rule revision.</p>
+            <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
+              <label>Rule ID <input name="ruleId" value="conditional-user-agent" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
+              <label>Revision <input name="revision" type="number" min="1" value="1" required></label>
+              <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+              <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
+              <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
+              <button type="submit">Validate and activate</button>
+              <button type="button" class="secondary" @click="{refreshAutomation()}">Refresh active rules</button>
+            </form>
+            <h2>Saved and authored responses</h2>
+            <form w-ref="{responseAssetForm}" @submit="{createResponseAsset(e)}" class="composer-form">
+              <label>Asset ID <input name="assetId" value="saved-response" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
+              <label>Revision <input name="assetRevision" type="number" min="1" value="1" required></label>
+              <label>Status <input name="status" type="number" min="200" max="599" value="200" required></label>
+              <label>Content type <input name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
+              <label>Body <textarea name="body" maxlength="16777216">Saved response from Transmog</textarea></label>
+              <button type="submit">Create immutable asset</button>
+            </form>
+            <form w-ref="{autoResponseForm}" @submit="{activateAutoResponseRule(e)}" class="composer-form">
+              <label>Rule ID <input name="ruleId" value="auto-response" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
+              <label>Rule revision <input name="revision" type="number" min="1" value="1" required></label>
+              <label>Host (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+              <label>Path prefix (optional) <input name="path" maxlength="2048" placeholder="/offline"></label>
+              <label>Exact asset reference <input name="assetRef" value="saved-response@1" maxlength="258" required></label>
+              <button type="submit">Activate autoresponse</button>
+            </form>
+            <pre w-ref="{automationOutput}" tabindex="0">No native rules are active.</pre>
+            <section class="script-workspace" aria-labelledby="script-heading">
+              <p class="section-label">Sandboxed TypeScript</p>
+              <h2 id="script-heading">Traffic scripts</h2>
+              <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Activate atomically applies the exact validated revision to newly admitted exchanges.</p>
+              <form w-ref="{scriptForm}" @submit="{validateScript(e)}" class="script-form">
+                <label>Script ID <input name="scriptId" value="conditional-user-agent-script" pattern="[A-Za-z0-9._\-]+" maxlength="128" required></label>
+                <label>Revision <input name="scriptRevision" type="number" min="1" value="1" required></label>
+                <label>Host prefilter <input name="scriptHost" value="example.test" maxlength="255"></label>
+                <label>Path prefix <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
+                <label>Priority <input name="scriptPriority" type="number" value="0" required></label>
+                <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096"></label>
+                <fieldset>
+                  <legend>Capabilities</legend>
+                  <label><input name="readBodies" type="checkbox"> Read bounded bodies</label>
+                  <label><input name="writeBody" type="checkbox"> Replace bodies</label>
+                  <label><input name="respond" type="checkbox"> Select response assets</label>
+                  <label><input name="abort" type="checkbox" checked> Abort requests</label>
+                  <label><input name="sensitive" type="checkbox"> Read sensitive headers</label>
+                </fieldset>
+                <div class="script-actions actions">
+                  <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
+                  <button type="submit">Validate</button>
+                  <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
+                  <button type="button" class="secondary" @click="{activateScript()}">Activate</button>
+                  <button type="button" class="secondary" @click="{disableScript()}">Disable active</button>
+                  <button type="button" class="secondary" @click="{compareActiveScript()}">Compare active</button>
+                </div>
+              </form>
+              <div class="editor-label">TypeScript source <span>Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement</span></div>
+              <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
+              <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison" hidden></div>
+              <pre w-ref="{scriptOutput}" tabindex="0" aria-live="polite">Script editor is loading…</pre>
+            </section>
+          </div>
+        </section>
+
+        <section id="composer" class="app-view tool-view" aria-labelledby="composer-heading" hidden>
+          <div class="tool-page narrow-page">
+            <p class="section-label">Canonical replay</p>
+            <h1 id="composer-heading">Composer</h1>
+            <form w-ref="{composerForm}" @submit="{executeComposer(e)}" class="composer-form">
+              <label>Method <input name="method" value="GET" maxlength="32" required></label>
+              <label>Absolute URL <input name="url" type="url" value="https://example.com/" required></label>
+              <label>Headers (one <code>Name: value</code> per line) <textarea name="headers"></textarea></label>
+              <label>Body <textarea name="body"></textarea></label>
+              <label><input name="bodyHex" type="checkbox"> Body is hexadecimal</label>
+              <label><input name="nonIdempotent" type="checkbox"> I acknowledge non-idempotent replay risk</label>
+              <label><input name="credentials" type="checkbox"> I explicitly supplied and authorize credential headers</label>
+              <button type="submit">Execute replay</button>
+            </form>
+            <pre w-ref="{composerOutput}" tabindex="0">No replay executed.</pre>
+          </div>
+        </section>
+
+        <section id="captures" class="app-view tool-view" aria-labelledby="captures-heading" hidden>
+          <div class="tool-page narrow-page">
+            <p class="section-label">Durable evidence</p>
+            <h1 id="captures-heading">Capture, import, and export</h1>
+            <form w-ref="{captureForm}" @submit="{startCapture(e)}">
+              <label>Native capture path <input name="capturePath" value="session.tmcap" required></label>
+              <label>Quota bytes <input name="quota" type="number" min="1025" max="4294967296" value="1073741824" required></label>
+              <label><input name="bodies" type="checkbox"> Retain bounded redacted body samples</label>
+              <div class="actions">
+                <button type="submit">Start capture</button>
+                <button type="button" class="secondary" @click="{stopCapture()}">Seal capture</button>
+                <button type="button" class="secondary" @click="{refreshCapture()}">Status</button>
               </div>
             </form>
-            <div class="editor-label">TypeScript source <span>Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement</span></div>
-            <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
-            <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison" hidden></div>
-            <pre w-ref="{scriptOutput}" tabindex="0" aria-live="polite">Script editor is loading…</pre>
-          </section>
-        </div>
-      </section>
-      <section id="composer" class="workspace full" aria-labelledby="composer-heading">
-        <div>
-          <p class="section-label">Canonical replay</p>
-          <h2 id="composer-heading">Composer</h2>
-          <form w-ref="{composerForm}" @submit="{executeComposer(event)}" class="composer-form">
-            <label>Method <input name="method" value="GET" maxlength="32" required></label>
-            <label>Absolute URL <input name="url" type="url" value="https://example.com/" required></label>
-            <label>Headers (one <code>Name: value</code> per line) <textarea name="headers"></textarea></label>
-            <label>Body <textarea name="body"></textarea></label>
-            <label><input name="bodyHex" type="checkbox"> Body is hexadecimal</label>
-            <label><input name="nonIdempotent" type="checkbox"> I acknowledge non-idempotent replay risk</label>
-            <label><input name="credentials" type="checkbox"> I explicitly supplied and authorize credential headers</label>
-            <button type="submit">Execute replay</button>
-          </form>
-          <pre w-ref="{composerOutput}" tabindex="0">No replay executed.</pre>
-        </div>
-      </section>
-      <section id="captures" class="workspace full" aria-labelledby="captures-heading">
-        <div>
-          <p class="section-label">Durable evidence</p>
-          <h2 id="captures-heading">Capture, import, and export</h2>
-          <form w-ref="{captureForm}" @submit="{startCapture(event)}">
-            <label>Native capture path <input name="capturePath" value="session.tmcap" required></label>
-            <label>Quota bytes <input name="quota" type="number" min="1025" max="4294967296" value="1073741824" required></label>
-            <label><input name="bodies" type="checkbox"> Retain bounded redacted body samples</label>
-            <div class="actions">
-              <button type="submit">Start capture</button>
-              <button type="button" class="secondary" @click="{stopCapture()}">Seal capture</button>
-              <button type="button" class="secondary" @click="{refreshCapture()}">Status</button>
+            <form w-ref="{artifactForm}" @submit="{inspectCapture(e)}">
+              <label>Native source <input name="source" value="session.tmcap" required></label>
+              <label>Export destination <input name="destination" value="session.jsonl" required></label>
+              <label>Format <select name="format"><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
+              <div class="actions">
+                <button type="submit" class="secondary">Inspect/recover</button>
+                <button type="button" @click="{exportCapture()}">Export create-new</button>
+              </div>
+            </form>
+            <pre w-ref="{captureOutput}" tabindex="0">Capture is idle.</pre>
+          </div>
+        </section>
+
+        <section id="settings" class="app-view tool-view" aria-labelledby="settings-heading" hidden>
+          <div class="tool-page settings-page">
+            <p class="section-label">Local product state</p>
+            <h1 id="settings-heading">Settings and support</h1>
+            <div class="settings-grid">
+              <section class="settings-card">
+                <h2>Proxy and interception certificate</h2>
+                <form w-ref="{proxyForm}" @submit="{startProxy(e)}">
+                  <fieldset w-ref="{proxyControls}" class="proxy-controls" disabled>
+                    <label>CA certificate <input w-ref="{caCertificate}" name="certificate" required></label>
+                    <label>CA private key <input w-ref="{caPrivateKey}" name="privateKey" required></label>
+                    <label>CA SHA-256 <input w-ref="{caThumbprint}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
+                    <label><input name="systemProxy" type="checkbox"> Configure the current-user Windows proxy for this run</label>
+                    <div class="actions">
+                      <button type="button" class="secondary" @click="{createCa()}">Create durable CA</button>
+                      <button type="button" class="secondary" @click="{installCa()}">Trust public CA</button>
+                      <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
+                      <button type="submit">Start proxy</button>
+                      <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
+                    </div>
+                  </fieldset>
+                  <output w-ref="{proxyOutput}" class="operation-status" aria-live="polite">Loading durable proxy state…</output>
+                </form>
+              </section>
+              <section class="settings-card">
+                <h2>Preferences and privacy</h2>
+                <p>Live traffic and breakpoint decisions are never settings.</p>
+                <form w-ref="{settingsForm}" @submit="{saveSettings(e)}">
+                  <label>Theme <select name="theme"><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+                  <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
+                  <label><input name="defaultSystemProxy" type="checkbox"> Configure the system proxy by default</label>
+                  <label><input name="defaultBodies" type="checkbox" checked> Retain response bodies in the one-GiB circular cache</label>
+                  <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
+                  <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
+                  <div class="actions">
+                    <button type="button" class="secondary" @click="{loadSettings()}">Load settings</button>
+                    <button type="submit">Save settings</button>
+                  </div>
+                </form>
+              </section>
+              <section class="settings-card support-card">
+                <h2>Diagnostics and support</h2>
+                <form w-ref="{supportForm}" @submit="{createSupportBundle(e)}">
+                  <label>New support bundle <input name="destination" value="transmog-support.zip" required></label>
+                  <label><input name="includePaths" type="checkbox"> Include recent paths if the saved privacy setting permits it</label>
+                  <div class="actions">
+                    <button type="button" class="secondary" @click="{refreshDiagnostics()}">Refresh redacted diagnostics</button>
+                    <button type="button" class="secondary" @click="{prepareUpdate()}">Prepare safe update handoff</button>
+                    <button type="submit">Create support bundle</button>
+                  </div>
+                </form>
+                <p>Diagnostic log: <code w-ref="{diagnosticsPath}">%LOCALAPPDATA%\Transmog\diagnostics.jsonl</code></p>
+                <pre w-ref="{supportOutput}" tabindex="0">Diagnostics have not been loaded.</pre>
+              </section>
             </div>
-          </form>
-          <form w-ref="{artifactForm}" @submit="{inspectCapture(event)}">
-            <label>Native source <input name="source" value="session.tmcap" required></label>
-            <label>Export destination <input name="destination" value="session.jsonl" required></label>
-            <label>Format <select name="format"><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
-            <div class="actions">
-              <button type="submit" class="secondary">Inspect/recover</button>
-              <button type="button" @click="{exportCapture()}">Export create-new</button>
-            </div>
-          </form>
-          <pre w-ref="{captureOutput}" tabindex="0">Capture is idle.</pre>
-        </div>
-      </section>
-      <section id="settings" class="workspace full" aria-labelledby="settings-heading">
-        <div>
-          <p class="section-label">Local product state</p>
-          <h2 id="settings-heading">Settings and support</h2>
-          <p>Only versioned preferences, window state, explicit privacy choices, and opted-in recent artifact references are persisted. Live traffic and breakpoint decisions are never settings.</p>
-          <form w-ref="{settingsForm}" @submit="{saveSettings(event)}">
-            <label>Theme <select name="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-            <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
-            <label><input name="defaultSystemProxy" type="checkbox"> Configure the system proxy by default</label>
-            <label><input name="defaultBodies" type="checkbox" checked> Retain response bodies in the one-GiB circular cache</label>
-            <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
-            <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
-            <div class="actions">
-              <button type="button" class="secondary" @click="{loadSettings()}">Load settings</button>
-              <button type="submit">Save settings</button>
-            </div>
-          </form>
-          <form w-ref="{supportForm}" @submit="{createSupportBundle(event)}">
-            <label>New support bundle <input name="destination" value="transmog-support.zip" required></label>
-            <label><input name="includePaths" type="checkbox"> Include recent paths if the saved privacy setting permits it</label>
-            <div class="actions">
-              <button type="button" class="secondary" @click="{refreshDiagnostics()}">Refresh redacted diagnostics</button>
-              <button type="button" class="secondary" @click="{prepareUpdate()}">Prepare safe update handoff</button>
-              <button type="submit">Create support bundle</button>
-            </div>
-          </form>
-          <pre w-ref="{supportOutput}" tabindex="0">Diagnostics have not been loaded.</pre>
-        </div>
-      </section>
-      <section class="diagnostics" aria-labelledby="diagnostics-heading">
-        <h2 id="diagnostics-heading">Diagnostics</h2>
-        <output w-ref="{diagnostics}" aria-live="polite">Application facade ready.</output>
-        <button type="button" @click="{refreshStatus()}">Refresh status</button>
-      </section>
-    </main>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer class="app-footer">
+      <output w-ref="{diagnostics}" class="global-diagnostics" aria-live="polite">Application facade ready.</output>
+      <button type="button" class="status-refresh" @click="{refreshStatus()}">Refresh status</button>
+    </footer>
   </div>
 </template>

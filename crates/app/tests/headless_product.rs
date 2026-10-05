@@ -3,7 +3,7 @@
 //! The repository interop driver supplies a standalone curl client, a pinned
 //! Nginx origin, and the exact packaged sandbox helpers. Keeping this test in
 //! `transmog-app` proves that the product workflow does not depend on Tauri,
-//! WebView2, Monaco, or any presentation-layer state.
+//! `WebView2`, Monaco, or any presentation-layer state.
 
 use std::{
     collections::BTreeSet,
@@ -37,6 +37,7 @@ static CURL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through scripts/test-interop.ps1 with Docker and packaged helpers"]
+#[allow(clippy::too_many_lines)]
 async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let environment = Environment::from_process();
     let workspace = TestWorkspace::new();

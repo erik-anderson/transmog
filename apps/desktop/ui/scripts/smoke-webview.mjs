@@ -1,9 +1,12 @@
+import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
 
 const portArgument = process.argv.findIndex((value) => value === '--port');
 const port = portArgument >= 0 ? process.argv[portArgument + 1] : '9333';
 const soakArgument = process.argv.findIndex((value) => value === '--soak-minutes');
 const soakMinutes = soakArgument >= 0 ? Number(process.argv[soakArgument + 1]) : 0;
+const screenshotArgument = process.argv.findIndex((value) => value === '--screenshot');
+const screenshotPath = screenshotArgument >= 0 ? process.argv[screenshotArgument + 1] : undefined;
 if (port === undefined || !/^\d{1,5}$/.test(port)) {
   throw new Error('usage: npm run smoke:webview -- --port <loopback DevTools port>');
 }
@@ -92,7 +95,7 @@ try {
       const element = document.querySelector('transmog-app-shell');
       const button = [...(element?.shadowRoot?.querySelectorAll('button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Refresh status');
-      const output = element?.shadowRoot?.querySelector('output');
+      const output = element?.shadowRoot?.querySelector('.global-diagnostics');
       if (!(button instanceof HTMLButtonElement) || !(output instanceof HTMLOutputElement)) {
         throw new Error('hydrated application controls were not found');
       }
@@ -104,8 +107,43 @@ try {
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
+      const statusText = output.textContent;
+      const filter = element.shadowRoot.querySelector('form.filters');
+      const sessionOutput = element.shadowRoot.querySelector('.session-status');
+      if (!(filter instanceof HTMLFormElement) || !(sessionOutput instanceof HTMLOutputElement)) {
+        throw new Error('session submission controls were not found');
+      }
+      sessionOutput.textContent = 'Submitting session query…';
+      filter.requestSubmit();
+      const submissionDeadline = performance.now() + 10_000;
+      while (!sessionOutput.textContent?.startsWith('Loaded ')) {
+        if (performance.now() >= submissionDeadline) {
+          throw new Error('WebUI form submission timed out');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const settingsLink = element.shadowRoot.querySelector('a[data-view="settings"]');
+      const trafficLink = element.shadowRoot.querySelector('a[data-view="traffic"]');
+      if (!(settingsLink instanceof HTMLAnchorElement) || !(trafficLink instanceof HTMLAnchorElement)) {
+        throw new Error('application navigation was not found');
+      }
+      settingsLink.click();
+      const settingsVisible = !element.shadowRoot.querySelector('#settings').hidden
+        && element.shadowRoot.querySelector('#traffic').hidden;
+      trafficLink.click();
+      const rootLayout = {
+        documentClientHeight: document.documentElement.clientHeight,
+        documentScrollHeight: document.documentElement.scrollHeight,
+        bodyClientHeight: document.body.clientHeight,
+        bodyScrollHeight: document.body.scrollHeight,
+        hostOverflow: getComputedStyle(element).overflow,
+        shellHeight: element.shadowRoot.querySelector('.shell').getBoundingClientRect().height,
+        activeView: element.shadowRoot.querySelector('.app-view.active')?.id,
+        settingsVisible
+      };
       return {
-        text: output.textContent,
+        text: statusText,
+        formSubmission: sessionOutput.textContent,
         title: document.title,
         url: location.href,
         readyState: document.readyState,
@@ -117,27 +155,47 @@ try {
           headings: element.shadowRoot.querySelectorAll('h1, h2, h3').length
         },
         unnamedControls: [...element.shadowRoot.querySelectorAll('button, input, select, textarea, a[href]')]
+          .filter((control) => control.getAttribute('aria-hidden') !== 'true')
           .filter((control) => {
             const labelledBy = control.getAttribute('aria-labelledby');
             const labelledText = labelledBy === null ? '' : element.shadowRoot.getElementById(labelledBy)?.textContent;
             const labelText = control.closest('label')?.textContent;
             return ![control.getAttribute('aria-label'), labelledText, labelText, control.textContent, control.getAttribute('title')]
               .some((value) => value?.trim());
-          }).length,
+          })
+          .map((control) => ({ tag: control.tagName, className: control.className, outerHTML: control.outerHTML.slice(0, 300) })),
+        rootLayout,
+        themePreference: element.dataset.theme,
         startupMs: performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd ?? 0
       };
     })()
   `);
 
   assert(result.text === 'Proxy stopped', `typed status command failed: ${result.text}`);
+  assert(result.formSubmission.startsWith('Loaded '), `WebUI event binding failed: ${result.formSubmission}`);
   assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
   assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
   assert(result.cspViolations.length === 0, `CSP violations: ${JSON.stringify(result.cspViolations)}`);
   assert(result.landmarks.nav === 1 && result.landmarks.main === 1 && result.landmarks.headings >= 6,
     `semantic landmarks missing: ${JSON.stringify(result.landmarks)}`);
-  assert(result.unnamedControls === 0, `${result.unnamedControls} interactive controls have no accessible name`);
+  assert(result.unnamedControls.length === 0, `interactive controls have no accessible name: ${JSON.stringify(result.unnamedControls)}`);
+  assert(result.rootLayout.settingsVisible, `navigation did not switch bounded views: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.rootLayout.activeView === 'traffic', `traffic view did not restore: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.rootLayout.hostOverflow === 'hidden', `application host can scroll: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.rootLayout.documentScrollHeight <= result.rootLayout.documentClientHeight + 1,
+    `document root can scroll: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.rootLayout.bodyScrollHeight <= result.rootLayout.bodyClientHeight + 1,
+    `document body can scroll: ${JSON.stringify(result.rootLayout)}`);
+  assert(result.rootLayout.shellHeight <= result.rootLayout.documentClientHeight + 1,
+    `application shell exceeds the viewport: ${JSON.stringify(result.rootLayout)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
+
+  if (screenshotPath !== undefined) {
+    const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+    result.screenshot = screenshotPath;
+  }
 
   const accessibility = await call('Accessibility.getFullAXTree');
   const unnamedAxControls = accessibility.nodes.filter((node) =>
@@ -156,15 +214,32 @@ try {
   });
   const contrast = await evaluate(`(() => {
     const root = document.querySelector('transmog-app-shell').shadowRoot;
-    const panel = root.querySelector('.workspace');
+    const panel = root.querySelector('.rail');
     const button = root.querySelector('button');
     return {
-      panelBorder: getComputedStyle(panel).borderTopStyle,
+      panelBorder: getComputedStyle(panel).borderRightStyle,
       transition: getComputedStyle(button).transitionDuration
     };
   })()`);
   assert(contrast.panelBorder !== 'none', 'forced-colors removed panel boundaries');
   assert(contrast.transition === '0s', `reduced motion still animates: ${contrast.transition}`);
+
+  await call('Emulation.setEmulatedMedia', {
+    media: 'screen',
+    features: [{ name: 'prefers-color-scheme', value: 'dark' }]
+  });
+  const darkCanvas = await evaluate(`(() => {
+    const shell = document.querySelector('transmog-app-shell');
+    shell.dataset.theme = 'system';
+    return getComputedStyle(shell).getPropertyValue('--canvas').trim();
+  })()`);
+  await call('Emulation.setEmulatedMedia', {
+    media: 'screen',
+    features: [{ name: 'prefers-color-scheme', value: 'light' }]
+  });
+  const lightCanvas = await evaluate(`(() => getComputedStyle(document.querySelector('transmog-app-shell')).getPropertyValue('--canvas').trim())()`);
+  assert(darkCanvas !== lightCanvas, `system color scheme did not change application palette: ${darkCanvas}`);
+  result.systemTheme = { darkCanvas, lightCanvas };
 
   await call('Emulation.setDeviceMetricsOverride', {
     width: 760, height: 520, deviceScaleFactor: 2, mobile: false
@@ -177,11 +252,14 @@ try {
       viewport: document.documentElement.clientWidth,
       shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
       headingHeight: heading.getBoundingClientRect().height,
-      controlsVisible: [...root.querySelectorAll('button')].every((button) => button.getBoundingClientRect().height > 0)
+      controlsVisible: [...root.querySelectorAll('.app-view.active button, .topbar button, .app-footer button')]
+        .every((button) => button.getBoundingClientRect().height > 0),
+      rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
     };
   })()`);
   assert(scaled.shellWidth <= scaled.viewport + 1, `200% DPI shell overflow: ${JSON.stringify(scaled)}`);
   assert(scaled.headingHeight > 0 && scaled.controlsVisible, 'long localized text hid interactive UI');
+  assert(scaled.rootScroll <= 1, `200% DPI introduced root scrolling: ${JSON.stringify(scaled)}`);
   await call('Emulation.clearDeviceMetricsOverride');
   await call('Emulation.setEmulatedMedia', { media: 'screen', features: [] });
 

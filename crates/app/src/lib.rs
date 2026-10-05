@@ -252,6 +252,12 @@ impl Application {
         let build_id = Arc::clone(&config.service.control_build_id);
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
+        diagnostics.record(
+            diagnostics::DiagnosticLevel::Info,
+            "application",
+            "startup",
+            "Transmog application initialized",
+        );
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
         if let Some(store) = &body_store {
@@ -329,6 +335,23 @@ impl Application {
     pub fn diagnostics(&self, runtime: RuntimeDiagnostics) -> DiagnosticsReport {
         self.diagnostics
             .report(runtime, &self.product_state.snapshot())
+    }
+
+    /// Records one bounded, redacted operational event from a presentation
+    /// adapter.
+    ///
+    /// Presentation layers use this for events that occur outside the
+    /// UI-neutral application operations, such as `WebView` failures or native
+    /// command dispatch. Messages pass through the same bounds and redaction
+    /// policy as application-owned diagnostics.
+    pub fn record_diagnostic(
+        &self,
+        level: DiagnosticLevel,
+        component: &str,
+        code: &str,
+        message: &str,
+    ) {
+        self.diagnostics.record(level, component, code, message);
     }
 
     /// Creates a privacy-safe, create-new support bundle.
@@ -774,6 +797,32 @@ mod tests {
         let json = serde_json::to_value(application.status()).unwrap();
         assert_eq!(json["lifecycle"], "stopped");
         assert!(json.get("tauri").is_none());
+    }
+
+    #[test]
+    fn configured_diagnostic_sink_exists_at_startup_and_records_adapter_events() {
+        let path = std::env::temp_dir().join(format!(
+            "transmog-application-startup-diagnostics-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let application = Application::new(AppConfig {
+            diagnostics_log_path: Some(path.clone()),
+            ..AppConfig::default()
+        })
+        .unwrap();
+
+        let startup = std::fs::read_to_string(&path).unwrap();
+        assert!(startup.contains("\"code\":\"startup\""));
+        application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "desktop-webview",
+            "form-handler-failed",
+            "safe frontend failure",
+        );
+        let events = std::fs::read_to_string(&path).unwrap();
+        assert!(events.contains("\"code\":\"form-handler-failed\""));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[tokio::test]

@@ -21,7 +21,7 @@ const MONACO_TYPESCRIPT_WORKER: &[u8] =
     include_bytes!("../../../apps/desktop/ui/dist/monaco-ts.worker.js");
 const APP_ICON: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.ico");
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
-const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self'; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui";
+const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui monaco";
 
 /// Complete bounded state used to render the application shell.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -255,7 +255,9 @@ mod tests {
         assert!(html.contains("transmog-app-shell"));
         assert!(html.contains("id=\"webui-data\""));
         assert!(csp.contains("require-trusted-types-for 'script'"));
-        assert!(!csp.contains("unsafe-inline"));
+        assert!(csp.contains("trusted-types webui monaco"));
+        assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
+        assert!(csp.contains("font-src data:"));
         assert!(!csp.contains("unsafe-eval"));
         assert!(csp.contains("worker-src 'self'"));
         for path in [

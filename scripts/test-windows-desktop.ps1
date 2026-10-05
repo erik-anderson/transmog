@@ -2,6 +2,7 @@ param(
     [ValidateRange(0, 240)]
     [int]$SoakMinutes = 0,
     [int]$DevToolsPort = 9333,
+    [string]$ScreenshotPath,
     [switch]$SkipReleaseBuild
 )
 
@@ -47,7 +48,11 @@ try {
     $startingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
     Push-Location $desktopUi
     try {
-        npm run smoke:webview -- --port $DevToolsPort --soak-minutes $SoakMinutes
+        $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', "$SoakMinutes")
+        if ($ScreenshotPath) {
+            $smokeArguments += @('--screenshot', $ScreenshotPath)
+        }
+        & npm @smokeArguments
     } finally {
         Pop-Location
     }
