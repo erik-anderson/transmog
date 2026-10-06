@@ -1,86 +1,126 @@
 # Transmog
 
-**Transmog** is a library-first, explicit intercepting proxy for inspecting and
-modifying HTTP/1.1, HTTP/2, and HTTP/3 origin exchanges. Browser traffic enters
-through an HTTP proxy (including intercepted `CONNECT`); HTTP/3 is an origin
-egress protocol, not browser-to-proxy QUIC.
+<p align="center">
+  <img src="apps/desktop/icons/transmog-logo.svg" width="160" alt="Transmog logo">
+</p>
 
-The [documentation index](docs/README.md) separates current behavior,
-architectural decisions, operational guidance, and the future-only
-[roadmap](docs/roadmap.md). Start with [architecture](docs/architecture.md) for
-the layer model, [building](docs/building.md) and [testing](docs/testing.md) for
-development, or [the desktop guide](apps/desktop/README.md) for the Windows
-application.
+**See what your apps send. Stop traffic in flight. Change it. Replay it.**
 
-## Local verification
+Transmog is a Windows-first web debugging proxy that turns HTTP traffic into a
+live, inspectable workspace. Capture requests as they happen, select any
+exchange to explore its request and response, pause traffic at breakpoints,
+override behavior with reusable rules, and keep a durable record when the
+interesting bug finally appears.
+
+The desktop experience is the product: a focused traffic list and split
+request/response inspector, backed by a carefully layered Rust proxy engine.
+Those layers also provide reusable crates for applications that need the same
+interception, content-processing, automation, or capture capabilities without
+the Transmog UI.
+
+> Transmog is under active development. The desktop application is currently
+> qualified on Windows and uses the system's Evergreen WebView2 runtime.
+
+## What you can do
+
+- **Watch traffic live.** Transmog follows new exchanges automatically and
+  keeps capture running when you pin a request or scroll back to investigate.
+- **Inspect the whole exchange.** Compare request and response metadata, view
+  decoded text, inspect bounded binary data, and safely preview raster images
+  and SVGs.
+- **Break and modify.** Pause matching requests or responses, inspect their
+  state, edit them, continue them, or fail them explicitly.
+- **Build discoverable automation.** Apply conditional header changes, compose
+  built-in actions, or use sandboxed scripts when a rule needs more control.
+  Every traffic-changing hook leaves audit evidence.
+- **Serve auto-responses.** Start from a captured response or create one from
+  scratch, edit its matching criteria, and reorder rules using first-match-wins
+  semantics. Traffic clearly identifies the rule that answered it.
+- **Find the caller.** On supported local platforms, traffic records include
+  the originating process name and PID; non-loopback clients are identified as
+  remote.
+- **Capture once, analyze later.** Stream to the native checksummed `.tmcap`
+  format, export JSONL, or produce finalized Fiddler-compatible SAZ archives.
+- **Debug modern web traffic.** Intercept HTTP/1.1 and HTTP/2 over an explicit
+  proxy, inspect HTTP/1.1 WebSockets, and use HTTP/3 for supported origin
+  egress. Content processing supports gzip, Brotli, DEFLATE, and zstd.
+
+Transmog is intentionally conservative around privileged behavior. It binds to
+loopback by default, guides the user through HTTPS interception setup, verifies
+the selected root certificate before starting, and restores the previous
+per-user Windows proxy settings when it stops. Abrupt-exit recovery is journaled
+for the next launch.
+
+## Try the Windows app
+
+The repository currently builds the application from source. Install the
+[Windows prerequisites](docs/building.md#windows), then validate and build the
+checked-in application:
 
 ```powershell
 pwsh ./scripts/dev-env.ps1 -Check
-pwsh ./scripts/test.ps1
-# Real curl and Chromium through the proxy to pinned third-party servers:
-pwsh ./scripts/test-interop.ps1
+pwsh ./scripts/build-desktop.ps1 -Configuration Debug -LockedDependencies
+. ./scripts/dev-env.ps1
+cargo run --locked -p transmog-desktop
 ```
 
-`test.ps1` configures the pinned native environment, then runs format, strict
-clippy, the locked workspace tests, `cargo deny`, the single-TLS graph check,
-and supply-chain artifact generation.
+On first launch:
 
-`test-interop.ps1` is the opt-in, local external-process compatibility gate.
-It publishes digest-pinned Nginx, Apache, and Caddy only on ephemeral loopback
-ports. Standalone curl proves HTTP/1.1 plus verified HTTP/2 and HTTP/3 origin
-egress; Playwright-managed Chromium proves normal navigation, every supported
-HTTP content coding (including a four-layer stack), and a WebSocket echo through
-the browser's `CONNECT` behavior. Before that matrix, curl drives the real
-headless application service through native rules, sandboxed scripts,
-breakpoints, response assets, retained-body inspection and eviction, isolated
-image preview, capture/export, and restart persistence. Every case requires
-proxy modification or terminal exchange evidence so client bypass cannot
-produce a false pass. The runner uses an ephemeral CA in process and does not
-install a certificate or modify an OS trust store.
+1. Choose **Set up HTTPS interception** and approve the Windows current-user
+   root-certificate prompt.
+2. Choose **Start proxy**. Transmog starts live capture and applies its
+   loopback endpoint to the current user's Windows proxy settings.
+3. Use a browser or application normally; its captured traffic appears in the
+   Traffic workspace.
+4. Choose **Stop proxy** when finished to restore the previous proxy settings.
 
-The primary build profile is **Windows LLVM/Ninja**: Clang compiles native code,
-`llvm-lib` archives it, Ninja executes native builds, and the Windows SDK
-provides the final linker and platform libraries. Rust's technical target triple
-still ends in `-msvc` because that names the Windows ABI, not the selected C/C++
-compiler. BoringSSL additionally requires CMake and NASM. Run
-`pwsh ./scripts/dev-env.ps1 -Check` to validate the complete toolchain.
-
-Release preparation generates the locked third-party notice inventory and a
-CycloneDX 1.5 SBOM:
+To create an unsigned installer for testing on another Windows machine:
 
 ```powershell
-pwsh ./scripts/generate-supply-chain-artifacts.ps1
+pwsh ./scripts/package-windows.ps1 -UnsignedDevelopment
 ```
 
-The live Chromium gate needs a one-time, interactive current-user CA setup;
-subsequent runs only verify it read-only and are non-interactive:
+The installer is for development evaluation and is not code-signed. See the
+[desktop guide](apps/desktop/README.md) and
+[Windows release guide](docs/windows-release.md) for packaging and qualification
+details.
 
-```powershell
-pwsh ./scripts/setup-live-test-ca.ps1
-pwsh ./scripts/test-live.ps1
-# Explicit teardown when live testing is no longer needed:
-pwsh ./scripts/remove-live-test-ca.ps1
-```
+## Clean layers, reusable engine
 
-## Run the proxy
+Transmog keeps the desktop, application services, automation, protocol
+adapters, and canonical exchange engine in separate layers with dependencies
+pointing inward. UI and persistence types do not leak into the proxy core, and
+transport-specific objects do not leak into interception hooks.
 
-Create an operator-controlled CA and apply a user-only ACL to its private key:
+That design makes the lower layers useful on their own:
+
+- embed the proxy runtime with application-provided hooks, routing, trust,
+  upstream services, and bounded observers;
+- reuse streaming content decoding and re-encoding independently of the UI;
+- consume the session/application facade from another front end or a future
+  command-line workflow; and
+- write native TMCap captures or finalized SAZ exports from an owned
+  application.
+
+Start with the [architecture overview](docs/architecture.md) and
+[embedding guide](docs/embedding.md). The [documentation index](docs/README.md)
+separates current behavior, architectural decisions, operational guidance, and
+the [future roadmap](docs/roadmap.md).
+
+## Headless proxy and capture tools
+
+The lower-level CLI can run the proxy without the desktop shell. Create and
+trust an operator-controlled CA, then start a loopback listener:
 
 ```powershell
 pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./transmog-ca.pem -PrivateKeyPath ./transmog-ca.key
 pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./transmog-ca.pem
+cargo run --locked -p transmog -- serve --ca-cert ./transmog-ca.pem --ca-key ./transmog-ca.key --listen 127.0.0.1:8080 --route auto
 ```
 
-Run the loopback proxy with a forced egress protocol or `auto`:
-
-```powershell
-cargo run --locked -p transmog -- serve --ca-cert ./transmog-ca.pem --ca-key ./transmog-ca.key --listen 127.0.0.1:8080 --route h2
-```
-
-Add `--capture ./session.tmcap` to stream redacted metadata to the native,
-checksummed capture format. Body bytes remain excluded unless
-`--capture-bodies` is also supplied. Existing output files are never
-overwritten. Headless inspection and conversion use the same capture library:
+Add `--capture ./session.tmcap` to stream redacted metadata, and opt into body
+capture with `--capture-bodies`. Existing output files are never overwritten.
+Captured sessions can be inspected, validated, or converted without the UI:
 
 ```powershell
 cargo run --locked -p transmog -- capture inspect --input ./session.tmcap
@@ -89,25 +129,45 @@ cargo run --locked -p transmog -- capture export --input ./session.tmcap --forma
 cargo run --locked -p transmog -- capture export --input ./session.tmcap --format saz --output ./session.saz
 ```
 
-SAZ is a finalized compatibility export, not the live storage format. Strict
-mode emits conventional Fiddler archive members; `saz-extended` additionally
-includes a namespaced fidelity manifest. Missing body bytes and observer loss
-are marked as incomplete rather than silently presented as complete.
-
-Configure the browser's HTTP proxy to the printed `LISTEN_ADDR`. HTTPS is
-intercepted through `CONNECT`; HTTP/3 is origin egress only. When finished,
-remove exactly the installed current-user root using the SHA-256 value printed
-by the install command:
+When finished, remove the exact installed current-user root using the SHA-256
+identity printed by the install command:
 
 ```powershell
 pwsh ./scripts/uninstall-ca-user.ps1 -Sha256 <64-hex-digit-value>
 ```
 
+## Development and verification
+
+The primary build profile is Windows with LLVM and Ninja: Clang compiles native
+code, `llvm-lib` archives it, Ninja executes native builds, and the Windows SDK
+provides platform libraries and the linker. BoringSSL additionally requires
+CMake and NASM.
+
+Run the complete local gate with:
+
+```powershell
+pwsh ./scripts/test.ps1
+```
+
+The opt-in interoperability suite drives the real proxy with standalone curl,
+Chromium, and digest-pinned Nginx, Apache, and Caddy endpoints:
+
+```powershell
+pwsh ./scripts/test-interop.ps1
+```
+
+See [build prerequisites](docs/building.md), [testing](docs/testing.md), and
+[current limitations](docs/limitations.md) for the supported matrix and exact
+boundaries.
+
 ## Security
 
-The proxy binds only to loopback by default. Installing its CA grants the proxy
-the ability to read TLS traffic; CA installation is always explicit and must be
-reversed with the matching uninstall command. Private keys and traffic bodies
-are never logged by default.
+Installing a local CA grants Transmog the ability to read TLS traffic from
+clients that trust it. Protect its private key, use it only on systems and
+traffic you are authorized to inspect, and remove the exact root when it is no
+longer needed. Private keys and traffic bodies are never written to diagnostics
+by default.
 
-Licensed under the MIT License.
+## License
+
+Transmog is licensed under the [MIT License](LICENSE).

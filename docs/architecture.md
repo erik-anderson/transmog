@@ -1,6 +1,7 @@
 # Architecture
 
-Transmog is a library-first exchange engine with an explicit-proxy listener.
+Transmog is a desktop web-debugging application built over a layered exchange
+engine and explicit-proxy listener.
 Browser traffic currently enters as plain absolute-form HTTP or as HTTP/1.1 or
 HTTP/2 inside an intercepted `CONNECT`. HTTP/3 is an origin egress protocol;
 the project does not claim to intercept a browser's native QUIC packets.
