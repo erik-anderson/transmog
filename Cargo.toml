@@ -34,7 +34,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/erik-anderson/Transmog"
+repository = "https://github.com/erik-anderson/transmog"
 
 [workspace.dependencies]
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }

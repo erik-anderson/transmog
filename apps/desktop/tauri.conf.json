@@ -17,7 +17,7 @@
     "active": true,
     "targets": ["nsis"],
     "publisher": "Erik Anderson",
-    "homepage": "https://github.com/erik-anderson/Transmog",
+    "homepage": "https://github.com/erik-anderson/transmog",
     "copyright": "Copyright © 2026 Erik Anderson",
     "license": "MIT",
     "category": "DeveloperTool",
