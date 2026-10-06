@@ -692,7 +692,8 @@ impl Application {
     /// Returns one bounded, display-safe session inspector read model.
     ///
     /// # Errors
-    /// Returns an invalid identifier or unavailable/evicted session error.
+    /// Returns an invalid identifier, unavailable/evicted session, or body
+    /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
         inspector::session_detail(&self.service, self.body_store.as_ref(), id)
     }

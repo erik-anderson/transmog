@@ -160,15 +160,18 @@ pub(crate) async fn start_proxy(
             )
         })?,
     );
-    let mut components = service.prepare_components(
-        ProxyComponents::new(hooks, certificates).with_content_policy(
-            ContentPolicy::preserve_original_output(ContentLimits::default()),
-        ),
+    let mut components = ProxyComponents::new(hooks, certificates).with_content_policy(
+        ContentPolicy::preserve_original_output(ContentLimits::default()),
     );
     if let Some(body_store) = body_store {
         components =
             components.with_observer(Arc::new(body_store.clone()), body_store.observer_config());
     }
+    // Enqueue each event for body retention before the session catalog. This
+    // narrows the terminal-publication race; completed detail reads then flush
+    // accepted body work, and the presentation layer handles the remaining
+    // cross-dispatcher scheduling window with a bounded refresh.
+    let components = service.prepare_components(components);
     let server = ProxyServer::bind_with_components(config, trust, components)
         .await
         .map_err(|_| {

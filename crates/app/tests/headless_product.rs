@@ -20,7 +20,7 @@ use transmog_app::{
     BodyInspectionRequest, BodyRepresentation, BodyStoreConfig, BreakpointDecision,
     BreakpointPhaseInput, BreakpointSettings, CaptureStartRequest, ExportFormat, ExportRequest,
     ImportResponseAsset, ProxyRoute, ProxyStartRequest, RetentionMode, ScriptDraft, SessionDetail,
-    SessionQueryInput,
+    SessionQueryInput, SessionResponseAsset,
 };
 use transmog_automation::{
     HeaderCondition, HeaderOperation, HeaderPredicate, RequestActions, ResponseActions, Rule,
@@ -173,7 +173,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     assert_success(&changed);
     assert_eq!(changed.body, b"phase9-effective-body\n");
     let changed_detail = wait_for_session(&application, "/body/modify", "completed").await;
-    wait_for_complete_bodies(&application, &changed_detail.id).await;
+    assert_complete_response_bodies(&changed_detail);
     let original = application
         .inspect_body(inspection(&changed_detail.id, "upstream-response"))
         .await
@@ -185,6 +185,19 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     assert!(original.display.contains("data-origin=\"nginx\""));
     assert_eq!(effective.display, "phase9-effective-body\n");
     assert_ne!(original.metadata.sha256, effective.metadata.sha256);
+    let captured = application
+        .create_response_asset_from_session(SessionResponseAsset {
+            id: "phase9-captured".to_owned(),
+            revision: 1,
+            exchange_id: changed_detail.id.clone(),
+            boundary: "client-response".to_owned(),
+            decoded_body: None,
+            preserve_content_encoding: true,
+        })
+        .await
+        .expect("a just-completed client response should be immediately reusable");
+    assert_eq!(captured.status, changed.status);
+    assert_eq!(captured.body_bytes, changed.body.len() as u64);
 
     let image = curl(
         &environment,
@@ -197,7 +210,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     assert_success(&image);
     assert!(image.body.starts_with(b"\x89PNG\r\n\x1a\n"));
     let image_detail = wait_for_session(&application, "/image.png", "completed").await;
-    wait_for_complete_bodies(&application, &image_detail.id).await;
+    assert_complete_response_bodies(&image_detail);
     let preview = application
         .inspect_body(BodyInspectionRequest {
             session_id: image_detail.id.clone(),
@@ -278,7 +291,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let restarted = Application::new(workspace.config(&environment)).unwrap();
     assert_eq!(restarted.automation_status().rules.len(), 4);
     assert_eq!(restarted.script_status().active.len(), 1);
-    assert_eq!(restarted.response_assets().len(), 2);
+    assert_eq!(restarted.response_assets().len(), 3);
     let restarted_listener = start(&restarted, &environment).await;
     let after_restart = curl(
         &environment,
@@ -515,21 +528,29 @@ async fn wait_for_session(application: &Application, path: &str, terminal: &str)
     panic!("timed out waiting for {terminal} session at {path}");
 }
 
-async fn wait_for_complete_bodies(application: &Application, session_id: &str) {
-    for _ in 0..400 {
-        let detail = application.session_detail(session_id).unwrap();
-        let original = detail.stored_bodies.iter().any(|body| {
-            body.boundary == "upstream-response" && body.availability == BodyAvailability::Complete
-        });
-        let effective = detail.stored_bodies.iter().any(|body| {
-            body.boundary == "client-response" && body.availability == BodyAvailability::Complete
-        });
-        if original && effective {
-            return;
-        }
-        sleep(Duration::from_millis(25)).await;
+fn assert_complete_response_bodies(detail: &SessionDetail) {
+    assert!(
+        detail
+            .requests
+            .iter()
+            .any(|head| head.boundary == "client-request"),
+        "completed session detail did not expose its client request: {detail:#?}"
+    );
+    assert!(
+        detail
+            .responses
+            .iter()
+            .any(|head| head.boundary == "client-response"),
+        "completed session detail did not expose its client response: {detail:#?}"
+    );
+    for boundary in ["upstream-response", "client-response"] {
+        assert!(
+            detail.stored_bodies.iter().any(|body| {
+                body.boundary == boundary && body.availability == BodyAvailability::Complete
+            }),
+            "completed session detail did not synchronize {boundary}: {detail:#?}"
+        );
     }
-    panic!("timed out waiting for complete retained response boundaries");
 }
 
 async fn wait_for_eviction(application: &Application) {

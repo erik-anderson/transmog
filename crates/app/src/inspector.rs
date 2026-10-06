@@ -210,6 +210,17 @@ pub(crate) fn session_detail(
                 false,
             )
         })?;
+    if snapshot.terminal.is_some()
+        && let Some(store) = body_store
+    {
+        store.flush().map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "response body metadata is temporarily unavailable",
+                true,
+            )
+        })?;
+    }
 
     let requests = snapshot
         .request_heads
@@ -969,7 +980,6 @@ fn display_bytes(bytes: &[u8]) -> (String, bool) {
 fn display_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .chars()
-        .flat_map(char::escape_default)
         .take(MAX_FIELD_CHARS)
         .collect()
 }
@@ -979,7 +989,13 @@ fn bounded_debug(value: &impl std::fmt::Debug) -> String {
 }
 
 fn boundary(value: ExchangeBoundary) -> String {
-    format!("{value:?}")
+    match value {
+        ExchangeBoundary::ClientRequest => "client-request",
+        ExchangeBoundary::UpstreamRequest => "upstream-request",
+        ExchangeBoundary::UpstreamResponse => "upstream-response",
+        ExchangeBoundary::ClientResponse => "client-response",
+    }
+    .to_owned()
 }
 
 #[cfg(test)]
@@ -990,7 +1006,7 @@ mod tests {
 
     #[test]
     fn hostile_text_and_binary_are_explicit_and_bounded() {
-        assert_eq!(display_text(b"<script>\n"), "<script>\\n");
+        assert_eq!(display_text(b"<script>\n"), "<script>\n");
         let (binary, is_binary) = display_bytes(&[0, 0xff, b'<']);
         assert!(is_binary);
         assert_eq!(binary, "00 ff 3c");
@@ -1007,6 +1023,44 @@ mod tests {
         let view = headers(&block);
         assert_eq!(view.len(), 2);
         assert!(view.iter().all(|field| field.sensitive));
+    }
+
+    #[test]
+    fn quoted_header_values_are_escaped_only_by_json_serialization() {
+        let block = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("sec-ch-ua-platform", r#""Windows""#).unwrap(),
+            HeaderField::try_new(
+                "sec-ch-ua",
+                r#""Chromium";v="154", "Google Chrome";v="154""#,
+            )
+            .unwrap(),
+        ]);
+        let view = headers(&block);
+        assert_eq!(view[0].value, r#""Windows""#);
+        assert_eq!(
+            view[1].value,
+            r#""Chromium";v="154", "Google Chrome";v="154""#
+        );
+        let json = serde_json::to_string(&view).unwrap();
+        assert!(json.contains(r#""value":"\"Windows\"""#));
+        assert!(!json.contains(r#""value":"\\\"Windows\\\"""#));
+    }
+
+    #[test]
+    fn head_boundaries_match_stored_body_boundary_identifiers() {
+        assert_eq!(boundary(ExchangeBoundary::ClientRequest), "client-request");
+        assert_eq!(
+            boundary(ExchangeBoundary::UpstreamRequest),
+            "upstream-request"
+        );
+        assert_eq!(
+            boundary(ExchangeBoundary::UpstreamResponse),
+            "upstream-response"
+        );
+        assert_eq!(
+            boundary(ExchangeBoundary::ClientResponse),
+            "client-response"
+        );
     }
 
     #[test]

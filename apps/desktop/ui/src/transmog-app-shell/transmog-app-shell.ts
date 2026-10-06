@@ -824,13 +824,14 @@ export class TransmogAppShell extends WebUIElement {
     this.selectedStatus.classList.toggle('success', session.status !== null && session.status >= 200 && session.status < 400);
     this.selectedStatus.classList.remove('auto-response');
     this.selectedAutoResponseButton.disabled = true;
+    this.selectedAutoResponseButton.title = 'Checking whether the completed response can be reused…';
     this.useSelectedResponseButton.disabled = true;
     this.matchedAutoResponseId = null;
     this.matchedAutoResponseButton.hidden = true;
     this.requestInspectorOutput.textContent = 'Loading bounded request evidence…';
     this.responseInspectorOutput.textContent = 'Loading bounded response evidence…';
     try {
-      const detail = await invoke<SessionDetail>('session_detail', { id: session.id });
+      const detail = await this.loadSessionDetail(session.id, session.terminal === 'completed');
       this.selectedSessionId = session.id;
       this.selectedSessionDetail = detail;
       for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
@@ -875,6 +876,9 @@ export class TransmogAppShell extends WebUIElement {
         : 'Choose a representation and inspect the selected boundary.';
       const reusable = this.clientResponseSource(detail) !== null;
       this.selectedAutoResponseButton.disabled = !reusable;
+      this.selectedAutoResponseButton.title = reusable
+        ? 'Create an auto-response rule from this client-visible response'
+        : this.autoResponseUnavailableReason(detail);
       this.useSelectedResponseButton.disabled = !reusable;
     } catch (error: unknown) {
       const message = `Inspector unavailable: ${describeError(error)}`;
@@ -889,6 +893,7 @@ export class TransmogAppShell extends WebUIElement {
     this.matchedAutoResponseId = null;
     this.matchedAutoResponseButton.hidden = true;
     this.selectedAutoResponseButton.disabled = true;
+    this.selectedAutoResponseButton.removeAttribute('title');
     this.useSelectedResponseButton.disabled = true;
     this.followLatest = true;
     for (const row of this.sessionRows.querySelectorAll<HTMLTableRowElement>('tr[data-session-id]')) {
@@ -1321,13 +1326,27 @@ export class TransmogAppShell extends WebUIElement {
 
   private async beginAutoResponseFromSessionId(sessionId: string): Promise<void> {
     try {
-      const detail = this.selectedSessionId === sessionId && this.selectedSessionDetail !== null
-        ? this.selectedSessionDetail
-        : await invoke<SessionDetail>('session_detail', { id: sessionId });
+      const detail = await this.loadSessionDetail(sessionId, true);
+      if (this.selectedSessionId === sessionId) this.selectedSessionDetail = detail;
       await this.populateCapturedAutoResponse(sessionId, detail);
     } catch (error: unknown) {
       this.showNotice('Response cannot be reused', describeError(error), null, null);
     }
+  }
+
+  private async loadSessionDetail(sessionId: string, waitForCompletedBody: boolean): Promise<SessionDetail> {
+    const attempts = waitForCompletedBody ? 20 : 1;
+    let detail: SessionDetail | null = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      detail = await invoke<SessionDetail>('session_detail', { id: sessionId });
+      const body = detail.storedBodies.find((candidate) => candidate.boundary === 'client-response');
+      const bodyFinalized = body !== undefined && body.availability !== 'capturing';
+      if (detail.terminal !== 'completed' || bodyFinalized) {
+        return detail;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 10));
+    }
+    return detail!;
   }
 
   private clientResponseSource(detail: SessionDetail): {request: HeadView; response: HeadView; body: StoredBodyMetadata} | null {
@@ -1339,12 +1358,27 @@ export class TransmogAppShell extends WebUIElement {
       : null;
   }
 
+  private autoResponseUnavailableReason(detail: SessionDetail): string {
+    if (!detail.requests.some((head) => head.boundary === 'client-request')) {
+      return 'The original client request is unavailable.';
+    }
+    if (!detail.responses.some((head) => head.boundary === 'client-response')) {
+      return 'The client-visible response has not completed.';
+    }
+    const body = detail.storedBodies.find((candidate) => candidate.boundary === 'client-response');
+    if (body === undefined) return 'The client-visible response body metadata is unavailable.';
+    if (body.availability !== 'complete') {
+      return body.reason ?? `The client-visible response body is ${body.availability} and cannot be replayed exactly.`;
+    }
+    return 'The captured request or response is incomplete.';
+  }
+
   private async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail): Promise<void> {
     const source = this.clientResponseSource(detail);
     if (source === null || source.request.method === null || source.request.target === null || source.response.status === null) {
       this.showNotice(
         'Response cannot be reused',
-        'Auto-responses require the original client request plus a complete retained client-visible response body.',
+        this.autoResponseUnavailableReason(detail),
         null,
         null,
       );

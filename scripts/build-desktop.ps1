@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $uiDirectory = Join-Path $repositoryRoot 'apps\desktop\ui'
+. (Join-Path $PSScriptRoot 'dev-env.ps1')
 
 Push-Location $uiDirectory
 try {

@@ -216,6 +216,11 @@ try {
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
           noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
           sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement,
+          completedResponseReusable: element.clientResponseSource({
+            requests: [{ boundary: 'client-request', method: 'GET', target: 'http://example.test/' }],
+            responses: [{ boundary: 'client-response', status: 200 }],
+            storedBodies: [{ boundary: 'client-response', availability: 'complete' }]
+          }) !== null,
           callerColumn: [...element.shadowRoot.querySelectorAll('th')]
             .some((heading) => heading.textContent?.trim() === 'Caller'),
           brandIconLoaded: (() => {
@@ -263,7 +268,7 @@ try {
     && result.ux.internalAutomationFields === 0,
     `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
   assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
-    && result.ux.callerColumn && result.ux.brandIconLoaded,
+    && result.ux.completedResponseReusable && result.ux.callerColumn && result.ux.brandIconLoaded,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
