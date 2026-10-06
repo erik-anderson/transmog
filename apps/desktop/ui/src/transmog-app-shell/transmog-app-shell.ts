@@ -35,8 +35,15 @@ interface DesktopBootstrap {
   diagnosticsPath: string;
 }
 
+interface ClientIdentity {
+  kind: 'local-process' | 'local-unknown' | 'remote';
+  processName: string | null;
+  processId: number | null;
+}
+
 interface SessionSummary {
   id: string;
+  caller: ClientIdentity;
   method: string;
   host: string;
   path: string;
@@ -62,6 +69,7 @@ interface SessionPage {
 interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 interface SessionDetail {
   id: string;
+  caller: ClientIdentity;
   requests: HeadView[];
   responses: HeadView[];
   bodies: unknown[];
@@ -746,7 +754,7 @@ export class TransmogAppShell extends WebUIElement {
     if (sessions.length === 0) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 8;
+      cell.colSpan = 9;
       cell.textContent = 'No matching sessions.';
       row.append(cell);
       this.sessionRows.append(row);
@@ -764,7 +772,7 @@ export class TransmogAppShell extends WebUIElement {
       row.classList.toggle('auto-responded', session.autoResponse !== null);
       row.setAttribute('aria-selected', String(this.selectedSessionId === session.id));
       const values = [
-        session.autoResponse === null ? session.status?.toString() ?? '—' : `${session.status ?? session.autoResponse.status} · AUTO`, session.host, session.path, session.protocol,
+        session.autoResponse === null ? session.status?.toString() ?? '—' : `${session.status ?? session.autoResponse.status} · AUTO`, callerLabel(session.caller), session.host, session.path, session.protocol,
         `${session.durationMs} ms`, `${session.responseBytes} B`,
         `${session.terminal}${session.loss ? ' · loss' : ''}${session.capturing ? ' · capture' : ''}`,
       ];
@@ -2003,6 +2011,13 @@ function lifecycleLabel(lifecycle: Lifecycle): string {
     case 'failed': return 'Needs attention';
     default: return 'Stopped';
   }
+}
+
+function callerLabel(caller: ClientIdentity): string {
+  if (caller.kind === 'remote') return 'Remote';
+  if (caller.kind === 'local-unknown') return 'Local process unknown';
+  const pid = caller.processId === null ? '' : ` · ${caller.processId}`;
+  return `${caller.processName ?? 'Local process'}${pid}`;
 }
 
 function describeError(error: unknown): string {

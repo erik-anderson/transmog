@@ -7,6 +7,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use transmog_core::ClientIdentity;
 use transmog_session::{
     ApplicationSessionService, CatalogCursor, CatalogQuery, CatalogSubscription, SessionFilter,
     SessionSnapshot, SessionTerminal, SubscriptionEvent,
@@ -69,6 +70,8 @@ pub struct SessionQueryInput {
 pub struct SessionSummary {
     /// Opaque display identifier for subsequent detail queries.
     pub id: String,
+    /// Best-effort caller identity captured when the connection opened.
+    pub caller: ClientIdentityView,
     /// Last observed request method.
     pub method: String,
     /// Original target host.
@@ -93,6 +96,38 @@ pub struct SessionSummary {
     pub capturing: bool,
     /// Winning local autoresponse, when the origin was bypassed.
     pub auto_response: Option<AutoResponseMatchView>,
+}
+
+/// Presentation-safe caller identity for one downstream connection.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientIdentityView {
+    /// `local-process`, `local-unknown`, or `remote`.
+    pub kind: &'static str,
+    /// Executable file name when available.
+    pub process_name: Option<String>,
+    /// Process identifier when the socket owner was resolved.
+    pub process_id: Option<u32>,
+}
+
+pub(crate) fn client_identity_view(identity: &ClientIdentity) -> ClientIdentityView {
+    match identity {
+        ClientIdentity::LocalProcess { pid, name } => ClientIdentityView {
+            kind: "local-process",
+            process_name: name.clone(),
+            process_id: Some(*pid),
+        },
+        ClientIdentity::LocalUnknown => ClientIdentityView {
+            kind: "local-unknown",
+            process_name: None,
+            process_id: None,
+        },
+        ClientIdentity::Remote => ClientIdentityView {
+            kind: "remote",
+            process_name: None,
+            process_id: None,
+        },
+    }
 }
 
 /// Authoritative page plus visible global pressure counters.
@@ -285,6 +320,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
     };
     SessionSummary {
         id: format!("{:032x}", snapshot.exchange_id.0),
+        caller: client_identity_view(&snapshot.metadata.client_identity),
         method: request.map_or_else(|| "—".to_owned(), |head| head.method.clone()),
         host: target.host.clone(),
         path: target.query.as_ref().map_or_else(
@@ -340,6 +376,7 @@ mod tests {
             downstream_connection_id: ConnectionId(1),
             stream_id: StreamId(id),
             client_addr: "127.0.0.1:1".parse().unwrap(),
+            client_identity: ClientIdentity::default(),
             proxy_addr: "127.0.0.1:2".parse().unwrap(),
             ingress_version: HttpLegVersion::Http1,
             egress_version: None,
@@ -444,6 +481,29 @@ mod tests {
                 .unwrap()
                 .as_millis(),
             0
+        );
+    }
+
+    #[test]
+    fn caller_identity_is_structured_for_process_and_remote_rows() {
+        assert_eq!(
+            client_identity_view(&ClientIdentity::LocalProcess {
+                pid: 42,
+                name: Some("browser.exe".to_owned()),
+            }),
+            ClientIdentityView {
+                kind: "local-process",
+                process_name: Some("browser.exe".to_owned()),
+                process_id: Some(42),
+            }
+        );
+        assert_eq!(
+            client_identity_view(&ClientIdentity::Remote),
+            ClientIdentityView {
+                kind: "remote",
+                process_name: None,
+                process_id: None,
+            }
         );
     }
 }

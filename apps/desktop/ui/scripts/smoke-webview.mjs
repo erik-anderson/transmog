@@ -211,7 +211,16 @@ try {
           internalAutomationFields: automation?.querySelectorAll('input[name="ruleId"], input[name="revision"], input[name="assetId"], input[name="assetRevision"]').length ?? 0,
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
           noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
-          sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement
+          sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement,
+          callerColumn: [...element.shadowRoot.querySelectorAll('th')]
+            .some((heading) => heading.textContent?.trim() === 'Caller'),
+          brandIconLoaded: (() => {
+            const icon = element.shadowRoot.querySelector('.brand-mark');
+            return icon instanceof HTMLImageElement
+              && icon.getAttribute('src') === '/transmog-icon.svg'
+              && icon.complete
+              && icon.naturalWidth > 0;
+          })()
         },
         themePreference: element.dataset.theme,
         startupMs: performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd ?? 0
@@ -224,6 +233,7 @@ try {
   assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
   assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
+  assert(result.resources.some((url) => url.endsWith('/transmog-icon.svg')), 'brand icon asset was not loaded');
   assert(result.cspViolations.length === 0, `CSP violations: ${JSON.stringify(result.cspViolations)}`);
   assert(result.landmarks.nav === 1 && result.landmarks.main === 1 && result.landmarks.headings >= 6,
     `semantic landmarks missing: ${JSON.stringify(result.landmarks)}`);
@@ -246,7 +256,8 @@ try {
     && result.ux.postHeaderFilterVisible && result.ux.scratchEditorClosed
     && result.ux.internalAutomationFields === 0,
     `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable,
+  assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
+    && result.ux.callerColumn && result.ux.brandIconLoaded,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 

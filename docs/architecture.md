@@ -44,7 +44,39 @@ adapts experimental control decisions into an identified hook, and exposes
 injected replay and transactional host-integration seams. The layer is
 UI-independent and no lower crate depends on it.
 
-## Hooks v2
+## Layer map
+
+The workspace keeps dependency direction explicit even though all layers share
+one repository:
+
+- `transmog-core`: canonical messages and bodies, interception, observation,
+  routing contracts, and exchange metadata;
+- `transmog-content`: content-coding plans, codecs, bounds, and representation
+  metadata repair;
+- `transmog-tls`, `transmog-http`, `transmog-h3`, and `transmog-websocket`:
+  trust/certificate policy and protocol adapters;
+- `transmog-client-identity`: bounded operating-system caller attribution;
+- `transmog-runtime`: listener, exchange orchestration, upstream pools,
+  retries, shutdown, and provider assembly;
+- `transmog-control-model` and `transmog-control-transport`: breakable
+  same-build interactive commands and delivery;
+- `transmog-capture` and `transmog-saz`: native streaming records and finalized
+  compatibility export;
+- `transmog-automation`, `transmog-script`, `transmog-script-supervisor`, and
+  `transmog-script-host`: declarative and sandboxed programmable behavior;
+- `transmog-session`: UI-independent live application lifecycle;
+- `transmog-app` and `transmog-app-webui`: persisted product workspaces, safe
+  presentation models, and Rust-rendered UI;
+- `transmog-host-windows`, `transmog-process-sandbox`, and
+  `transmog-preview-worker`: explicit OS integration and isolated helpers; and
+- `transmog`, `transmog-desktop`: headless command-line and Windows desktop
+  products.
+
+Dependencies point toward lower layers. Transport objects do not appear in core
+interception contracts, and product persistence or UI types do not appear in
+runtime or protocol APIs.
+
+## Interception lifecycle
 
 `transmog-core` exposes transport-neutral, typed lifecycle callbacks. An
 `InterceptorFactory` creates one `ExchangeInterceptor` per exchange. Request
@@ -62,10 +94,11 @@ editing is available only through an explicit nonzero limit.
 `transmog-content` is the next layer above canonical body framing. It owns
 content-coding plans, representation header repair, decompression budgets, and
 bounded streaming gzip/Brotli/deflate/zstd codec engines. Its content-aware
-pipeline composes those engines around the Hooks v2 body pipeline without
-moving compression policy into Hyper, quiche, or core lifecycle types. Hooks
-declare neutral, raw, required-decoded, or optional-decoded representation
-requirements; raw/decoded conflicts fail before body processing begins.
+pipeline composes those engines around the interception body pipeline without
+moving compression policy into Hyper, quiche, or core lifecycle types.
+Interceptors declare neutral, raw, required-decoded, or optional-decoded
+representation requirements; raw/decoded conflicts fail before body processing
+begins.
 Codec operations use content-layer byte quanta, cooperative executor yields,
 per-call deadlines, and cumulative active-work deadlines. Timeout is a typed
 terminal content failure; transports neither schedule nor reinterpret it.
@@ -87,6 +120,7 @@ generation, TLS policy, and connector policy.
 - an optional canonical streaming `UpstreamService`;
 - an optional protocol-neutral `WebSocketHookFactory` (empty by default);
 - a downstream `DownstreamCertificateResolver`;
+- a bounded, best-effort downstream `ClientIdentityResolver`;
 - clock and ID providers for deterministic tests or host integration.
 
 The convenience `ProxyServer::bind` adapts a `ProxyCa` through the bounded MITM
@@ -101,6 +135,14 @@ validate the authorized destination against the complete normalized request
 target before any network I/O; fallback policy stays above the individual
 adapter.
 
+The default client-identity resolver snapshots the process associated with a
+new loopback TCP connection on Windows and Linux. Non-loopback peers are marked
+remote, lookup failures do not fail traffic, and embedders can replace the
+resolver. The snapshot is part of immutable exchange metadata and is therefore
+available to hooks, observers, the application session catalog, and native
+capture. See [client process attribution](client-process-attribution.md) for
+platform behavior and security constraints.
+
 The core owns protocol correctness state: exchange IDs, framing and flow
 control, route attempts, retry eligibility, connection pools, deadlines,
 cancellation, body bounds, pause permits, trust generation, certificate and
@@ -112,7 +154,9 @@ The headless application/session service owns only live application lifecycle:
 bounded searchable snapshots, lossy delta hints, capture start/seal state,
 same-build controller attachment, and proxy run status. Durable databases,
 saved projects, command-line policy, and UI selection/editor state remain above
-that service. See [the service guide](application-session-service.md).
+that service. See [the service guide](application-session-service.md). The
+desktop-specific facade, sandbox helpers, and presentation layer sit above that
+service; see [the product shell](product-shell.md).
 
 ## Resource and failure model
 

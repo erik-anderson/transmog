@@ -28,6 +28,7 @@ fn metadata(iteration: u32) -> ExchangeMetadata {
             downstream_connection_id: ConnectionId(1),
             stream_id: StreamId(u128::from(iteration) + 1),
             client_addr: "127.0.0.1:1000".parse().expect("static address"),
+            client_identity: transmog_core::ClientIdentity::default(),
             proxy_addr: "127.0.0.1:2000".parse().expect("static address"),
             ingress_version: HttpLegVersion::Http2,
             egress_version: None,

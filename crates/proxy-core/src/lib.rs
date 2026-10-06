@@ -31,7 +31,7 @@ pub use message::{
 };
 pub use policy::{FallbackDecision, Replayability, RoutePolicy};
 pub use protocol::{HttpLegVersion, TlsSummary, VerificationResult};
-pub use session::{ConnectionId, SessionId, SessionMetadata, StreamId};
+pub use session::{ClientIdentity, ConnectionId, SessionId, SessionMetadata, StreamId};
 pub use translation::{
     BodySemantics, MessageKind, TranslationError, TranslationOptions, body_semantics,
     prepare_headers,

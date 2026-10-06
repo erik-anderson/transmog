@@ -1,6 +1,7 @@
 # ADR 0001: LLVM/Ninja and one BoringSSL family
 
 Date: 2026-10-02
+Status: accepted
 
 ## Decision
 
@@ -25,8 +26,9 @@ hook, Transmog will maintain a thin Tokio driver over quiche rather than add
 another QUIC/TLS implementation.
 
 The reproducible Windows bootstrap pins LLVM 22.1.4, CMake 4.4.4, Ninja 1.13.2,
-and NASM 3.02. Local copies live under ignored `.tools`; CI installs equivalent
-tools from their official actions/distributions.
+and NASM 3.02. Local copies live under ignored `.tools`; reproducible hosted
+environments must install equivalent tools from reviewed distributions if
+hosted automation is enabled.
 
 The Visual Studio C++ component in `.vsconfig` supplies only the current Windows
 SDK, Universal CRT, STL headers, and ABI libraries needed by the MSVC Rust target.

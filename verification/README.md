@@ -1,9 +1,11 @@
 # Verification artifacts
 
-The network-enabled Playwright gate writes `live-report.json` here. Failure
-screenshots, traces, and videos remain under `e2e/playwright/test-results`.
-Reports contain protocol metadata and proof identifiers only; they must not
-contain private keys, cookies, authorization values, or response bodies.
+The network-enabled Playwright gate writes ignored `live-report.json` and
+`live-report.md` files here. They are per-run evidence, not maintained project
+documentation or a source of truth. Failure screenshots, traces, and videos
+remain under `e2e/playwright/test-results`. Reports contain protocol metadata
+and proof identifiers only; they must not contain private keys, cookies,
+authorization values, or response bodies.
 
 Each report captures the proxy address, browser version, per-case completion
 time, connection/stream/session and breakpoint event IDs, protocol/ALPN,

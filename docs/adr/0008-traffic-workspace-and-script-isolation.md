@@ -6,7 +6,7 @@ Status: accepted
 
 Transmog needs Fiddler-style traffic inspection and automation without moving
 durable product state or a JavaScript runtime into the proxy core. Built-in
-rules and scripts must produce the same auditable Hooks v2 actions. Response
+rules and scripts must produce the same auditable interception actions. Response
 bodies are potentially sensitive and hostile, while locally-authored scripts
 can still contain mistakes or compromised dependencies.
 

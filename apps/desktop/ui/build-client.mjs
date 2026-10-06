@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { copyFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ if (shellTemplate.includes('(event)')) {
 }
 const expected = check
   ? new Map(await Promise.all(
-      ['app.css', 'app.js', 'monaco-editor.worker.js', 'monaco-ts.worker.js', 'webui-projection.json'].map(async (filename) => [
+      ['app.css', 'app.js', 'monaco-editor.worker.js', 'monaco-ts.worker.js', 'transmog-icon.svg', 'webui-projection.json'].map(async (filename) => [
         filename,
         await readFile(join(outputDirectory, filename))
       ])
@@ -57,6 +57,11 @@ for (const [entryPoint, outfile] of [
     legalComments: 'inline',
   });
 }
+
+await copyFile(
+  join(workingDirectory, '../icons/icon.svg'),
+  join(outputDirectory, 'transmog-icon.svg')
+);
 
 if (expected !== undefined) {
   for (const [filename, previous] of expected) {

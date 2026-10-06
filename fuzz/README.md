@@ -16,9 +16,9 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
 - `codec_roundtrip` generates valid identity and one-to-four-layer gzip, Brotli,
   zlib, and zstd bodies at important size boundaries. Encoding and reverse-order
   decoding must reproduce the original bytes across independent chunk sizes.
-- `content_pipeline` runs valid multi-layer bodies through a decoded Hooks v2
-  transform, header/trailer repair, optional modification, and identity or
-  preserve-original output. Re-decoding preserved output must produce the
+- `content_pipeline` runs valid multi-layer bodies through a decoded
+  interceptor transform, header/trailer repair, optional modification, and
+  identity or preserve-original output. Re-decoding preserved output must produce the
   expected modified representation.
 - `websocket_frames` combines raw hostile streams with synthesized valid
   client/server frames, both mask roles, arbitrary transport chunking, text and

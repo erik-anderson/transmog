@@ -16,6 +16,7 @@ pub use proxy::{
     ExchangeEvidence, ProxyComponents, ProxyConfig, ProxyControl, ProxyRuntimeError, ProxyServer,
     RouteAttemptEvidence, WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
+pub use transmog_client_identity::{ClientIdentityResolver, SystemClientIdentityResolver};
 
 /// Network exposure configuration.
 #[derive(Clone, Debug)]

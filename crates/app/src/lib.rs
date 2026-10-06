@@ -57,7 +57,8 @@ pub use response_assets::{
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
 use serde::Serialize;
 pub use sessions::{
-    SessionHint, SessionPage, SessionQueryInput, SessionSummary, SessionUpdateSubscription,
+    ClientIdentityView, SessionHint, SessionPage, SessionQueryInput, SessionSummary,
+    SessionUpdateSubscription,
 };
 use thiserror::Error;
 pub use transmog_script::{ScriptAction, ScriptInvocation};

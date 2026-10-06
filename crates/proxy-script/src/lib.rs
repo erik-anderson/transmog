@@ -1320,6 +1320,7 @@ mod tests {
                 downstream_connection_id: ConnectionId(2),
                 stream_id: StreamId(3),
                 client_addr: "127.0.0.1:1".parse().unwrap(),
+                client_identity: transmog_core::ClientIdentity::default(),
                 proxy_addr: "127.0.0.1:2".parse().unwrap(),
                 ingress_version: HttpLegVersion::Http2,
                 egress_version: None,

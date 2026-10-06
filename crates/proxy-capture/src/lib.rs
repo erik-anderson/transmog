@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use transmog_core::{
-    HeaderBlock,
+    ClientIdentity, HeaderBlock,
     intercept::{HookEffectAction, HookPhase},
     observe::{ExchangeBoundary, ObserverEvent, ObserverEventKind},
 };
@@ -24,7 +24,7 @@ const MAGIC: [u8; 8] = *b"TMCAP01\0";
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Native capture format revision.
-pub const CAPTURE_FORMAT_REVISION: u32 = 1;
+pub const CAPTURE_FORMAT_REVISION: u32 = 2;
 
 /// Finite writer and recovery limits.
 #[derive(Clone, Copy, Debug)]
@@ -118,6 +118,8 @@ pub enum CaptureRecordKind {
     ExchangeStarted {
         /// Client peer address.
         client_addr: String,
+        /// Best-effort caller identity captured at connection accept time.
+        client_identity: ClientIdentity,
         /// Listener address.
         listener_addr: String,
         /// Original target authority.
@@ -252,6 +254,7 @@ struct StoredRecord {
 #[derive(Deserialize, Serialize)]
 struct StartedPayload {
     client_addr: String,
+    client_identity: ClientIdentity,
     listener_addr: String,
     authority: String,
     started_unix_nanos: u128,
@@ -661,6 +664,7 @@ pub fn record_from_observer(
     let kind = match &event.kind {
         ObserverEventKind::ExchangeStarted { metadata } => CaptureRecordKind::ExchangeStarted {
             client_addr: metadata.client_addr.to_string(),
+            client_identity: metadata.client_identity.clone(),
             listener_addr: metadata.listener_addr.to_string(),
             authority: metadata.original_target.as_target().authority.clone(),
             started_unix_nanos: unix_nanos(metadata.started_at),
@@ -838,6 +842,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
     let (kind, payload) = match &record.kind {
         CaptureRecordKind::ExchangeStarted {
             client_addr,
+            client_identity,
             listener_addr,
             authority,
             started_unix_nanos,
@@ -845,6 +850,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
             "exchange-started",
             json(StartedPayload {
                 client_addr: client_addr.clone(),
+                client_identity: client_identity.clone(),
                 listener_addr: listener_addr.clone(),
                 authority: authority.clone(),
                 started_unix_nanos: *started_unix_nanos,
@@ -984,6 +990,7 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
             let value: StartedPayload = decode(record.payload)?;
             CaptureRecordKind::ExchangeStarted {
                 client_addr: value.client_addr,
+                client_identity: value.client_identity,
                 listener_addr: value.listener_addr,
                 authority: value.authority,
                 started_unix_nanos: value.started_unix_nanos,
@@ -1272,6 +1279,30 @@ mod tests {
     #[test]
     fn explicit_loss_records_are_durable() {
         let record = loss_record(9, 10, 3, "observer-queue-saturated");
+        let recovered = recover(
+            &artifact(std::slice::from_ref(&record), false)[..],
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(recovered.records, vec![record]);
+    }
+
+    #[test]
+    fn caller_process_identity_round_trips_in_streaming_capture() {
+        let record = CaptureRecord {
+            sequence: 1,
+            exchange_id: 7,
+            kind: CaptureRecordKind::ExchangeStarted {
+                client_addr: "127.0.0.1:50000".to_owned(),
+                client_identity: ClientIdentity::LocalProcess {
+                    pid: 4242,
+                    name: Some("browser.exe".to_owned()),
+                },
+                listener_addr: "127.0.0.1:8080".to_owned(),
+                authority: "example.test".to_owned(),
+                started_unix_nanos: 10,
+            },
+        };
         let recovered = recover(
             &artifact(std::slice::from_ref(&record), false)[..],
             CaptureLimits::default(),

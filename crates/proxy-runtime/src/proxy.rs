@@ -27,6 +27,7 @@ use tokio::{
     time::timeout,
 };
 use tracing::{debug, warn};
+use transmog_client_identity::{ClientIdentityResolver, SystemClientIdentityResolver};
 use transmog_content::{ContentBodyPipeline, ContentPipelineError, ContentPolicy};
 use transmog_core::{
     BodyFrame, BodySemantics, BodyStream, BodyStreamError, BodyStreamSender, BoundedBodyBuffer,
@@ -123,6 +124,7 @@ pub struct ProxyComponents {
     certificates: Arc<dyn DownstreamCertificateResolver>,
     clock: Arc<dyn RuntimeClock>,
     ids: Arc<dyn RuntimeIdGenerator>,
+    client_identity_resolver: Arc<dyn ClientIdentityResolver>,
 }
 
 impl std::fmt::Debug for ProxyComponents {
@@ -135,6 +137,7 @@ impl std::fmt::Debug for ProxyComponents {
             .field("custom_route_selector", &self.route_selector.is_some())
             .field("application_upstream", &self.application_upstream.is_some())
             .field("websocket_hooks", &self.websocket_hooks)
+            .field("client_identity_resolver", &"installed")
             .finish_non_exhaustive()
     }
 }
@@ -156,6 +159,7 @@ impl ProxyComponents {
             certificates,
             clock: Arc::new(SystemRuntimeClock),
             ids: Arc::new(AtomicRuntimeIdGenerator::new()),
+            client_identity_resolver: Arc::new(SystemClientIdentityResolver),
         }
     }
 
@@ -220,6 +224,20 @@ impl ProxyComponents {
     ) -> Self {
         self.clock = clock;
         self.ids = ids;
+        self
+    }
+
+    /// Installs a caller-process resolver for newly accepted connections.
+    ///
+    /// Resolution is best-effort and never rejects traffic. Applications can
+    /// replace the platform resolver for embedding, testing, or stricter host
+    /// privacy policy.
+    #[must_use]
+    pub fn with_client_identity_resolver(
+        mut self,
+        resolver: Arc<dyn ClientIdentityResolver>,
+    ) -> Self {
+        self.client_identity_resolver = resolver;
         self
     }
 }
@@ -427,6 +445,7 @@ impl ProxyServer {
             certificates: components.certificates,
             clock: components.clock,
             ids: components.ids,
+            client_identity_resolver: components.client_identity_resolver,
             upstream: RwLock::new(upstream),
             alt_svc: Mutex::new(AltSvcCache::new(1_024)),
             config: config.clone(),
@@ -489,17 +508,30 @@ impl ProxyServer {
                     };
                     let proxy_addr = stream.local_addr()?;
                     let state = Arc::clone(&self.state);
+                    let identity_resolver = Arc::clone(&state.client_identity_resolver);
                     let connection_id = ConnectionId(
                         state.ids.next_id(RuntimeIdKind::Connection)
                     );
                     tasks.spawn(async move {
                         let _permit = permit;
+                        let identity = tokio::task::spawn_blocking(move || {
+                            identity_resolver.resolve(client_addr, proxy_addr)
+                        })
+                        .await
+                        .unwrap_or_else(|_| {
+                            if client_addr.ip().is_loopback() {
+                                transmog_core::ClientIdentity::LocalUnknown
+                            } else {
+                                transmog_core::ClientIdentity::Remote
+                            }
+                        });
                         if let Err(error) = serve_explicit_connection(
                             state,
                             stream,
                             ConnectionContext {
                                 client_addr,
                                 proxy_addr,
+                                client_identity: identity,
                                 connection_id,
                                 tunnel: None,
                             },
@@ -532,6 +564,7 @@ struct ProxyState {
     certificates: Arc<dyn DownstreamCertificateResolver>,
     clock: Arc<dyn RuntimeClock>,
     ids: Arc<dyn RuntimeIdGenerator>,
+    client_identity_resolver: Arc<dyn ClientIdentityResolver>,
     upstream: RwLock<Arc<UpstreamGeneration>>,
     alt_svc: Mutex<AltSvcCache>,
     config: ProxyConfig,
@@ -569,6 +602,7 @@ impl UpstreamGeneration {
 struct ConnectionContext {
     client_addr: SocketAddr,
     proxy_addr: SocketAddr,
+    client_identity: transmog_core::ClientIdentity,
     connection_id: ConnectionId,
     tunnel: Option<TunnelContext>,
 }
@@ -866,6 +900,7 @@ impl ProxyState {
             downstream_connection_id: context.connection_id,
             stream_id: StreamId(self.ids.next_id(RuntimeIdKind::Stream)),
             client_addr: context.client_addr,
+            client_identity: context.client_identity.clone(),
             proxy_addr: context.proxy_addr,
             ingress_version,
             egress_version: None,
@@ -4493,6 +4528,7 @@ mod tests {
 
     struct LifecycleObserver {
         phases: Arc<StdMutex<Vec<&'static str>>>,
+        client_identity: Arc<StdMutex<Option<transmog_core::ClientIdentity>>>,
     }
 
     struct StaticTrust(Vec<Vec<u8>>);
@@ -4975,6 +5011,9 @@ mod tests {
             &self,
             event: transmog_core::observe::ObserverEvent,
         ) -> transmog_core::observe::BoxObserverFuture<'_> {
+            if let ObserverEventKind::ExchangeStarted { metadata } = &event.kind {
+                *self.client_identity.lock().unwrap() = Some(metadata.client_identity.clone());
+            }
             let phase = match event.kind {
                 ObserverEventKind::ExchangeStarted { .. } => "started",
                 ObserverEventKind::RequestHeadObserved { .. } => "request-head-boundary",
@@ -5021,9 +5060,11 @@ mod tests {
             .unwrap(),
         );
         let phases = Arc::new(StdMutex::new(Vec::new()));
+        let client_identity = Arc::new(StdMutex::new(None));
         let observers = ObserverHub::new(vec![(
             Arc::new(LifecycleObserver {
                 phases: Arc::clone(&phases),
+                client_identity: Arc::clone(&client_identity),
             }),
             transmog_core::observe::ObserverConfig::default(),
         )]);
@@ -5099,6 +5140,11 @@ mod tests {
                 "completed"
             ]
         );
+        assert!(matches!(
+            client_identity.lock().unwrap().as_ref(),
+            Some(transmog_core::ClientIdentity::LocalProcess { pid, .. })
+                if *pid == std::process::id()
+        ));
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();

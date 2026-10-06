@@ -6,8 +6,8 @@ Status: accepted for gzip, Brotli, deflate, and zstd
 
 The content-processing layer needs incremental, bounded decoding and encoding.
 It must fit Tokio body pumps without buffering complete representations, keep
-codec implementation types out of public contracts, and eventually support
-gzip, deflate, Brotli, and zstd behind one Transmog-owned interface.
+codec implementation types out of public contracts, and support gzip, deflate,
+Brotli, and zstd behind one Transmog-owned interface.
 
 The dependency choice is deliberately narrower than the planned product
 surface. Enabling a codec is a supply-chain and runtime decision of its own;
@@ -69,7 +69,7 @@ background workers are not enabled.
 - Resource limits and frame sequencing remain stable library policy rather
   than incidental codec behavior.
 - Dependency features and versions are auditable and reproducible.
-- All four initially planned HTTP content codings use one private adapter
+- All four enabled HTTP content codings use one private adapter
   surface with explicit byte, ratio, and decoder-window bounds.
 - A dependency upgrade is intentional work: update the exact pin, review the
   changelog and graph, and rerun the corruption, truncation, limit, and

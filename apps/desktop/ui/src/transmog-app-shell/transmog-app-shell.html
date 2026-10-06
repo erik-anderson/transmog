@@ -2,7 +2,7 @@
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
-        <span class="brand-mark" aria-hidden="true">T</span>
+        <img class="brand-mark" src="/transmog-icon.svg" alt="">
         <span>Transmog</span>
       </div>
       <p class="top-summary">{{heading}}</p>
@@ -56,8 +56,8 @@
             <section class="session-list-pane" aria-label="Captured sessions">
               <div w-ref="{sessionScroller}" class="table-wrap">
                 <table>
-                  <thead><tr><th>Method</th><th>Status</th><th>Host</th><th>Path and query</th><th>Protocol</th><th>Duration</th><th>Response</th><th>State</th></tr></thead>
-                  <tbody w-ref="{sessionRows}"><tr><td colspan="8" class="empty-cell">No sessions loaded.</td></tr></tbody>
+                  <thead><tr><th>Method</th><th>Status</th><th>Caller</th><th>Host</th><th>Path and query</th><th>Protocol</th><th>Duration</th><th>Response</th><th>State</th></tr></thead>
+                  <tbody w-ref="{sessionRows}"><tr><td colspan="9" class="empty-cell">No sessions loaded.</td></tr></tbody>
                 </table>
               </div>
               <div class="list-footer">

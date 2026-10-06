@@ -6108,6 +6108,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-client-identity"
+version = "0.1.0"
+dependencies = [
+ "transmog-core",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "transmog-content"
 version = "0.1.0"
 dependencies = [
@@ -6239,6 +6247,7 @@ dependencies = [
  "tokio",
  "tokio-boring",
  "tracing",
+ "transmog-client-identity",
  "transmog-content",
  "transmog-core",
  "transmog-h3",

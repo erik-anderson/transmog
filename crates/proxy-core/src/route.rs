@@ -364,6 +364,7 @@ mod tests {
                 downstream_connection_id: ConnectionId(2),
                 downstream_stream_id: StreamId(3),
                 client_addr: SocketAddr::from(([127, 0, 0, 1], 1000)),
+                client_identity: crate::ClientIdentity::default(),
                 listener_addr: SocketAddr::from(([127, 0, 0, 1], 2000)),
                 ingress_version: HttpLegVersion::Http2,
                 original_target: OriginalTarget::new(original.clone()),

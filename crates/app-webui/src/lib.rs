@@ -20,6 +20,7 @@ const MONACO_EDITOR_WORKER: &[u8] =
 const MONACO_TYPESCRIPT_WORKER: &[u8] =
     include_bytes!("../../../apps/desktop/ui/dist/monaco-ts.worker.js");
 const APP_ICON: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.ico");
+const APP_LOGO: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.svg");
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
 const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui monaco";
 
@@ -168,6 +169,9 @@ impl AppRenderer {
                 MONACO_TYPESCRIPT_WORKER.to_vec(),
             ),
             "/favicon.ico" => UiResponse::asset(200, "image/x-icon", APP_ICON.to_vec()),
+            "/transmog-icon.svg" => {
+                UiResponse::asset(200, "image/svg+xml; charset=utf-8", APP_LOGO.to_vec())
+            }
             css_path => CSS_ASSETS
                 .iter()
                 .find(|(path, _)| *path == css_path)
@@ -264,6 +268,7 @@ mod tests {
             "/app.css",
             "/monaco-editor.worker.js",
             "/monaco-ts.worker.js",
+            "/transmog-icon.svg",
         ] {
             assert_eq!(
                 renderer

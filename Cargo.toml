@@ -4,6 +4,7 @@ members = [
     "apps/desktop",
     "crates/app",
     "crates/app-webui",
+    "crates/client-identity",
     "crates/host-windows",
     "crates/proxy-core",
     "crates/proxy-content",
@@ -65,7 +66,7 @@ tokio-boring = "=5.2.0"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Isolation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Isolation", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 zip = { version = "=8.6.0", default-features = false }
 
 [workspace.lints.rust]

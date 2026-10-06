@@ -19,4 +19,4 @@ decides it is appropriate:
    files preserve the originally proposed triggers as design material, not as
    approved automation policy.
 4. Observe the first Windows, Linux, macOS, fuzz, browser, and performance runs
-   and record any platform-specific findings in the applicable plan.
+   and record still-open platform work in `docs/roadmap.md`.

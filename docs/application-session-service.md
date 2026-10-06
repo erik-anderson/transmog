@@ -95,8 +95,8 @@ controls body-sample retention.
 
 ## Interactive control
 
-The service adapts experimental control v0 into one identified Hooks v2
-interceptor. The caller selects an exact set of request-head, request-body,
+The service adapts experimental control v0 into one identified interceptor. The
+caller selects an exact set of request-head, request-body,
 response-head, and response-body phases; there is no built-in rules engine.
 Body phases use decoded-required buffering under the negotiated finite limit.
 

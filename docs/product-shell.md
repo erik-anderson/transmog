@@ -21,10 +21,12 @@ or WebUI.
   operation and can display an OS consent dialog. The setup action warns before
   triggering that dialog; unattended builds and tests never install trust.
 - The traffic list queries the newest bounded window (100 by default, at most
-  200), watches
-  live automatically, and has no pagination. It follows the latest row until
+  200), watches live automatically, and has no pagination. It follows the latest row until
   the user scrolls away or selects a request; capture continues while that view
   is pinned.
+- Traffic rows show the best-effort local caller process name and PID captured
+  at connection accept time. Non-loopback peers show as remote and unresolved
+  loopback callers remain explicitly unknown.
 - Completed retained client responses can seed auto-responses directly from
   the Traffic inspector or by drag-and-drop. The Automation workspace exposes
   a reorderable top-to-bottom list where the first enabled exact method/URL
@@ -72,8 +74,7 @@ valid prefix.
 
 Build and Windows prerequisites are documented in [building.md](building.md).
 Product-state and support behavior is documented in
-[product-state-and-support.md](product-state-and-support.md). The next product
-milestone is specified in the
-[traffic inspection, automation, and sandboxed scripting plan](specs/traffic-inspection-automation-scripting-plan.md).
-Windows release qualification and eventual Linux qualification remain separate
-platform gates.
+[product-state-and-support.md](product-state-and-support.md). Current gaps and
+deliberately deferred platform work are maintained only in the
+[roadmap](roadmap.md). Windows release qualification and eventual Linux/macOS
+qualification remain separate platform gates.

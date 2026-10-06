@@ -12,6 +12,7 @@ use crate::body_store::MAX_BODY_READ_BYTES;
 use crate::{
     AppError, BodyAvailability, BodyStore, DEFAULT_BODY_READ_BYTES, ErrorCategory,
     StoredBodyMetadata,
+    sessions::{ClientIdentityView, client_identity_view},
 };
 
 const MAX_DISPLAY_BYTES: usize = 64 * 1024;
@@ -74,6 +75,8 @@ pub struct HeadView {
 pub struct SessionDetail {
     /// Opaque session identifier.
     pub id: String,
+    /// Best-effort caller identity captured when the connection opened.
+    pub caller: ClientIdentityView,
     /// Request heads at original/effective boundaries.
     pub requests: Vec<HeadView>,
     /// Response heads at original/effective boundaries.
@@ -302,6 +305,7 @@ pub(crate) fn session_detail(
     };
     Ok(SessionDetail {
         id: id.to_ascii_lowercase(),
+        caller: client_identity_view(&snapshot.metadata.client_identity),
         requests,
         responses,
         bodies,

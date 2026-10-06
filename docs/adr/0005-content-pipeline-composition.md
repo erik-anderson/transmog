@@ -4,10 +4,11 @@ Status: accepted
 
 ## Context
 
-Hooks v2 owns protocol-neutral body plans while `transmog-content` owns HTTP
-content codings. Core must express whether a plan expects raw coded bytes or
-decoded representation bytes without depending on codec libraries. The content
-layer must compose multiple codings, preserve exact pass-through behavior, and
+The core interception API owns protocol-neutral body plans while
+`transmog-content` owns HTTP content codings. Core must express whether a plan
+expects raw coded bytes or decoded representation bytes without depending on
+codec libraries. The content layer must compose multiple codings, preserve
+exact pass-through behavior, and
 fail before body commitment when independently registered hooks are
 incompatible.
 
@@ -27,10 +28,10 @@ Core aggregates those requirements while constructing `BodyPipeline`:
   unsupported.
 
 `transmog-content::ContentBodyPipeline` wraps the resulting core pipeline.
-It decodes the declared coding stack in reverse sender order, applies Hooks v2,
-and re-encodes in forward sender order when policy preserves the original
-coding. It owns whole-stack byte and expansion accounting in addition to each
-codec layer's bounds. Trailers remain terminal and representation metadata is
+It decodes the declared coding stack in reverse sender order, applies the
+interception pipeline, and re-encodes in forward sender order when policy
+preserves the original coding. It owns whole-stack byte and expansion
+accounting in addition to each codec layer's bounds. Trailers remain terminal and representation metadata is
 repaired both before decoded hooks and after hook output.
 
 An unchanged neutral pipeline retains the original headers, bytes, and frame
@@ -52,8 +53,7 @@ types. Runtime policy and transport wiring remain a higher-layer concern.
 - Unsupported optional inspection is a byte-exact bypass; malformed input and
   required unsupported coding still fail closed.
 - Recompression is never imposed on neutral traffic.
-- The pre-1.0 Hooks v2 body-action constructors change to require an explicit
-  representation choice for every body-changing plan.
+- Every body-changing plan declares an explicit representation choice.
 
 ## Alternatives considered
 

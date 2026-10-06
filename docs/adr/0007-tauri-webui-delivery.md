@@ -45,7 +45,7 @@ local adapter.
   subresources, allow navigation only to the custom application origin that
   Tauri exposes on the current platform, and deny new windows.
 - Use same-origin custom-protocol fetch only for explicitly allowlisted,
-  app-owned resources such as the Phase 0 delivery probe. Use typed Tauri
+  app-owned resources. Use typed Tauri
   commands for bounded authoritative queries and mutations. Use bounded
   channels for lossy revision/delta hints, never as authoritative state or a
   body-chunk stream.
@@ -64,9 +64,8 @@ local adapter.
 ## Capability and data boundary
 
 The main window capability contains no broad Tauri core/plugin permissions.
-The Phase 0 `phase_zero_probe` established the pattern now used by the product
-commands: each operation is explicitly registered, accepts a bounded typed
-DTO, revalidates in Rust, and returns a stable bounded result. Live session
+Each product command is explicitly registered, accepts a bounded typed DTO,
+revalidates in Rust, and returns a stable bounded result. Live session
 notifications are hint-only typed channels. Filesystem paths are accepted only
 by narrow create-new capture/CA/import/export operations; there is no generic
 filesystem, shell, WebView HTTP-client, or remote-domain IPC permission.
@@ -77,32 +76,6 @@ paths return 404, methods other than GET/HEAD return 405, dynamic pages are
 traffic never enters raw HTML, script, style, component metadata, or a URL
 loaded by the WebView.
 
-## Phase 0 evidence
-
-The spike was tested on Rust 1.97.1, Clang/LLVM 22.1.4, Ninja 1.13.2, Windows
-SDK 10.0.26100, and WebView2 154.0.4258.53.
-
-- Six Rust tests cover SSR state, fresh nonces, restrictive CSP, embedded
-  asset/probe routing, traversal-shaped paths, method handling, and command DTO
-  validation, including the exact custom-origin navigation allowlist.
-- TypeScript type checking and deterministic esbuild/projection regeneration
-  pass from the npm lockfile.
-- Dev and optimized WebView2 runs load only the custom origin plus Tauri's IPC
-  origin. The automated DevTools smoke check observes ESM, both hashed WebUI CSS
-  assets, favicon, same-origin JSON, command IPC, one channel hint, no CSP
-  violations, and no browser errors.
-- The optimized binary imports Windows system libraries but no Node runtime.
-  The app runs without an HTTP development server.
-- Tauri produced a 1.79 MiB NSIS installer. After the first hash-verified NSIS
-  tool download, a second full packaging run succeeded with Cargo offline and
-  sandbox network access blocked.
-- `cargo deny` accepts the reviewed MPL-2.0 and Apache-2.0-with-LLVM-exception
-  licenses added by Tauri. RUSTSEC-2024-0370 is ignored only because Cargo
-  metadata exposes Tauri's GTK 0.18 packages while target-specific `cargo tree`
-  proves the unmaintained macro is unreachable from both configured Windows
-  and Linux Transmog desktop targets. The exception must be removed or
-  replaced before Linux desktop support is enabled.
-
 ## Consequences
 
 The desktop can be built and exercised without a localhost server and ships no
@@ -110,7 +83,7 @@ browser or Node runtime. Renderer tests do not need a window, and the WebView
 boundary has a repeatable real-runtime probe.
 
 Generated client assets must be deliberately refreshed when TypeScript or its
-locked packages change. The initial implementation buffers a complete document
-and does not provide soft navigation or progressive streaming. Tauri/WebUI are
+locked packages change. The renderer buffers a complete document and does not
+provide soft navigation or progressive streaming. Tauri/WebUI are
 same-build internal contracts and may change atomically while the monorepo is
 still under the human-controlled stabilization policy.

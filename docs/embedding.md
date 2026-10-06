@@ -60,6 +60,12 @@ Call `ProxyServer::serve` through shutdown so accepted connections and observer
 queues receive their bounded graceful drain. `ProxyControl` exposes trust reload
 and observer counters without granting transport access.
 
+The default client-identity resolver attributes loopback connections on Windows
+and Linux and labels non-loopback clients remote. Applications may replace it
+with `ProxyComponents::with_client_identity_resolver`; attribution remains
+diagnostic and cannot authorize traffic. See
+[client process attribution](client-process-attribution.md).
+
 For an interactive controller, use the generic `DecisionBridge` inside an
 interceptor. Its finite queue and deadline make saturation, disconnect,
 cancellation, stale replies, and duplicate replies explicit. It is an in-process

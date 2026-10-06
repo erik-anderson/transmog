@@ -27,6 +27,10 @@ fn main() {
     }
     println!(
         "cargo:rerun-if-changed={}",
+        ui_dir.join("../icons/icon.svg").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
         ui_dir.join("dist/webui-projection.json").display()
     );
     compile_webui(&ui_dir);

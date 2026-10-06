@@ -5,29 +5,12 @@ modifying HTTP/1.1, HTTP/2, and HTTP/3 origin exchanges. Browser traffic enters
 through an HTTP proxy (including intercepted `CONNECT`); HTTP/3 is an origin
 egress protocol, not browser-to-proxy QUIC.
 
-The project is under active implementation. See [architecture](docs/architecture.md),
-[Hooks lifecycle](docs/hooks-lifecycle.md), [embedding](docs/embedding.md),
-[certificate model](docs/certificate-model.md), [testing](docs/testing.md),
-[performance](docs/performance.md), [safe previews](docs/safe-previews.md),
-[build prerequisites](docs/building.md), and
-[limitations](docs/limitations.md). Forward work is organized by the
-[layered monorepo roadmap](docs/specs/monorepo-roadmap.md), with a dedicated
-[content-processing plan](docs/specs/content-processing-plan.md).
-The completed traffic inspection, automation, response-asset, sandboxed
-scripting, and safe-preview implementation is recorded in the
-[traffic workspace plan](docs/specs/traffic-inspection-automation-scripting-plan.md).
-SAZ conversion behavior and its fidelity limits are documented in
-[SAZ compatibility](docs/saz-compatibility.md). The optional declarative layer
-is described in [automation](docs/automation.md); embedders may instead install
-their own Hooks v2 interceptors directly. WebSocket upgrade, framing, hook, and
-resource semantics are documented in
-[WebSocket inspection](docs/websocket-inspection.md).
-The UI-independent composition boundary is documented in the
-[application/session service guide](docs/application-session-service.md).
-The Windows-first Tauri/WebUI product shell spike and its local verification
-commands are documented in [the desktop app guide](apps/desktop/README.md).
-Product and package naming conventions are recorded in
-[the branding guide](docs/branding.md).
+The [documentation index](docs/README.md) separates current behavior,
+architectural decisions, operational guidance, and the future-only
+[roadmap](docs/roadmap.md). Start with [architecture](docs/architecture.md) for
+the layer model, [building](docs/building.md) and [testing](docs/testing.md) for
+development, or [the desktop guide](apps/desktop/README.md) for the Windows
+application.
 
 ## Local verification
 

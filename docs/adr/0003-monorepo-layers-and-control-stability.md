@@ -8,12 +8,11 @@ Accepted.
 
 ## Context
 
-Transmog will initially build the proxy engine, content processing, control,
-capture, rules, and product layers in one monorepo. Atomic changes are valuable
-while these APIs are being discovered, but accidental coupling would make a
-later repository split expensive. A control boundary will eventually be useful
-for a developer-tool UI, yet stabilizing speculative messages before content,
-capture, and rule consumers exist would freeze the wrong model.
+Transmog keeps the proxy engine, content processing, control, capture, rules,
+and product layers in one monorepo. Atomic changes are valuable while these APIs
+evolve, but accidental coupling would make a later repository split expensive.
+The desktop uses a control boundary, yet stabilizing it while product behavior
+is still evolving would freeze the wrong model.
 
 ## Decision
 
@@ -21,9 +20,9 @@ Crate boundaries enforce dependency direction even while all layers share one
 repository. Core does not own product state, and its internal Serde forms are
 not a wire protocol.
 
-An experimental control v0 may be introduced when a consumer needs it. It may
-break through coordinated monorepo changes and incompatible peers must reject
-one another through a revision/build handshake.
+Experimental control revision 0 may break through coordinated monorepo changes,
+and incompatible peers must reject one another through a revision/build
+handshake.
 
 Control-protocol stabilization has one trigger: a human maintainer explicitly
 indicates that stabilizing it now makes sense. No automated condition or amount

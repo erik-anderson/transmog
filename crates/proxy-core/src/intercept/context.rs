@@ -10,7 +10,8 @@ use std::{
 use tokio::sync::Notify;
 
 use crate::{
-    ConnectionId, ExchangeExtensions, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
+    ClientIdentity, ConnectionId, ExchangeExtensions, HttpLegVersion, SessionId, SessionMetadata,
+    StreamId, Target,
 };
 
 use super::audit::HookAuditTrail;
@@ -52,6 +53,8 @@ pub struct ExchangeMetadata {
     pub downstream_stream_id: StreamId,
     /// Client peer address.
     pub client_addr: SocketAddr,
+    /// Best-effort caller identity captured when the downstream connection opened.
+    pub client_identity: ClientIdentity,
     /// Proxy listener address.
     pub listener_addr: SocketAddr,
     /// Browser-facing HTTP version.
@@ -79,6 +82,7 @@ impl ExchangeMetadata {
             downstream_connection_id: session.downstream_connection_id,
             downstream_stream_id: session.stream_id,
             client_addr: session.client_addr,
+            client_identity: session.client_identity.clone(),
             listener_addr: session.proxy_addr,
             ingress_version: session.ingress_version,
             original_target: OriginalTarget::new(original_target),
