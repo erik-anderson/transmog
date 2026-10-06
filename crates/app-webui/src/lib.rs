@@ -262,6 +262,8 @@ mod tests {
         assert!(csp.contains("trusted-types webui monaco"));
         assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
         assert!(csp.contains("font-src data:"));
+        assert!(csp.contains("transmog-preview:"));
+        assert!(csp.contains("http://transmog-preview.localhost"));
         assert!(!csp.contains("unsafe-eval"));
         assert!(csp.contains("worker-src 'self'"));
         for path in [

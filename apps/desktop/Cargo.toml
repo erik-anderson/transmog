@@ -22,6 +22,7 @@ transmog-app-webui = { version = "=0.1.0", path = "../../crates/app-webui" }
 transmog-session = { version = "=0.1.0", path = "../../crates/proxy-session" }
 tokio.workspace = true
 serde.workspace = true
+percent-encoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }

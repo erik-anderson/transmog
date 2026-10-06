@@ -176,6 +176,10 @@ try {
         title: document.title,
         url: location.href,
         readyState: document.readyState,
+        previewProtocolUrl: globalThis.__TAURI_INTERNALS__.convertFileSrc(
+          'preview/smoke-handle',
+          'transmog-preview'
+        ),
         resources: performance.getEntriesByType('resource').map((entry) => entry.name),
         cspViolations: globalThis.__transmogCspViolations,
         landmarks: {
@@ -231,6 +235,8 @@ try {
   assert(result.text === 'Proxy stopped', `typed status command failed: ${result.text}`);
   assert(result.formSubmission.startsWith('Loaded '), `WebUI event binding failed: ${result.formSubmission}`);
   assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
+  assert(result.previewProtocolUrl === 'http://transmog-preview.localhost/preview%2Fsmoke-handle',
+    `preview protocol was not mapped for WebView2: ${result.previewProtocolUrl}`);
   assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
   assert(result.resources.some((url) => url.endsWith('/transmog-icon.svg')), 'brand icon asset was not loaded');

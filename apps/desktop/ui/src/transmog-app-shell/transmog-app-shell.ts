@@ -1,5 +1,5 @@
 import { WebUIElement } from '@microsoft/webui-framework';
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ModuleKind, ModuleResolutionKind, ScriptTarget, monaco, typescriptDefaults } from '../monaco.js';
 
 function reportUnhandledFrontendIssue(code: string, value: unknown): void {
@@ -949,7 +949,10 @@ export class TransmogAppShell extends WebUIElement {
       });
       const summary = `${inspection.metadata.boundary} · ${inspection.representation} · ${inspection.displayBytes} bytes${inspection.decoded ? ' · decoded' : ' · encoded'}${inspection.truncated ? ' · truncated' : ''}`;
       if (inspection.previewHandle !== null) {
-        this.bodyImagePreview.src = `transmog-preview://localhost/preview/${encodeURIComponent(inspection.previewHandle)}`;
+        this.bodyImagePreview.src = convertFileSrc(
+          `preview/${inspection.previewHandle}`,
+          'transmog-preview',
+        );
         this.bodyImagePreview.hidden = false;
         const safety = inspection.previewMimeType === 'image/svg+xml'
           ? 'Loaded as a sandboxed image; scripts and external resources are blocked.'

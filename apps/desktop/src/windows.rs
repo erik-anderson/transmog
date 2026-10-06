@@ -9,6 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::{
     Manager, State, WebviewWindowBuilder,
@@ -898,9 +899,9 @@ fn packaged_preview_worker() -> Option<PathBuf> {
 }
 
 fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
-    let handle = request.uri().path().strip_prefix("/preview/");
+    let handle = preview_handle(request.uri().path());
     let preview = (request.method() == tauri::http::Method::GET)
-        .then(|| handle.and_then(|handle| application.image_preview(handle)))
+        .then(|| handle.and_then(|handle| application.image_preview(&handle)))
         .flatten();
     let (status, content_type, body) = preview.map_or_else(
         || {
@@ -926,6 +927,16 @@ fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Re
         .header("cross-origin-resource-policy", "cross-origin")
         .body(body)
         .expect("fixed preview response headers must be valid")
+}
+
+fn preview_handle(path: &str) -> Option<String> {
+    let decoded = percent_decode_str(path.strip_prefix('/')?)
+        .decode_utf8()
+        .ok()?;
+    decoded
+        .strip_prefix("preview/")
+        .filter(|handle| !handle.is_empty() && !handle.contains('/'))
+        .map(str::to_owned)
 }
 
 fn exit_for_maintenance_if_requested() {
@@ -1118,7 +1129,7 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_navigation, remove_owned_app_data};
+    use super::{is_allowed_navigation, preview_handle, remove_owned_app_data};
 
     #[test]
     fn navigation_is_limited_to_the_embedded_origin() {
@@ -1137,6 +1148,20 @@ mod tests {
         ] {
             assert!(!is_allowed_navigation(&tauri::Url::parse(denied).unwrap()));
         }
+    }
+
+    #[test]
+    fn preview_handles_accept_direct_and_tauri_encoded_paths() {
+        assert_eq!(
+            preview_handle("/preview/opaque-handle_123").as_deref(),
+            Some("opaque-handle_123")
+        );
+        assert_eq!(
+            preview_handle("/preview%2Fopaque-handle_123").as_deref(),
+            Some("opaque-handle_123")
+        );
+        assert_eq!(preview_handle("/preview%2Fnested%2Fhandle"), None);
+        assert_eq!(preview_handle("/not-preview/opaque-handle_123"), None);
     }
 
     #[test]
