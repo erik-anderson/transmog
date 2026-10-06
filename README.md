@@ -104,7 +104,8 @@ That design makes the lower layers useful on their own:
 - write native TMCap captures or finalized SAZ exports from an owned
   application.
 
-Start with the [architecture overview](docs/architecture.md) and
+Start with the [architecture overview](docs/architecture.md),
+[key dependency map](docs/dependencies.md), and
 [embedding guide](docs/embedding.md). The [documentation index](docs/README.md)
 separates current behavior, architectural decisions, operational guidance, and
 the [future roadmap](docs/roadmap.md).
@@ -141,6 +142,20 @@ identity printed by the install command:
 ```powershell
 pwsh ./scripts/uninstall-ca-user.ps1 -Sha256 <64-hex-digit-value>
 ```
+
+## Technology
+
+Transmog uses Hyper for HTTP/1.1 and HTTP/2, quiche for QUIC and HTTP/3, and a
+single BoringSSL family for TLS, certificate verification, interception
+certificates, and cryptographic operations. Tokio provides the asynchronous
+runtime, while `async-compression` supplies bounded streaming gzip, Brotli,
+DEFLATE, and zstd processing.
+
+The Windows application uses Tauri and Wry with the system's Evergreen
+WebView2 runtime, Microsoft WebUI for the interface, Monaco for script editing,
+and an isolated V8 process for sandboxed automation. See the
+[key dependency map](docs/dependencies.md) for ownership boundaries,
+supply-chain controls, and the authoritative manifest locations.
 
 ## Development and verification
 

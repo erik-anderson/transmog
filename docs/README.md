@@ -9,6 +9,8 @@ sources of truth.
 
 - [Architecture](architecture.md) explains the layers, dependency direction,
   transport model, and failure boundaries.
+- [Key dependencies](dependencies.md) identifies the major protocol, crypto,
+  application, and build libraries and explains where they are contained.
 - [Product shell](product-shell.md) describes the Windows desktop behavior and
   its relationship to the reusable application facade.
 - [Current limitations](limitations.md) states what the implementation does
