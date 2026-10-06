@@ -1,5 +1,11 @@
 # Embedding Transmog
 
+The [educational .NET 10 sample](../examples/dotnet-embedding/README.md) shows a
+C# console application calling the canonical engine in-process through a narrow
+native C ABI. The bridge is intentionally same-build and is not a stable managed
+SDK, but it demonstrates foreign-language ownership, bounded result transfer,
+system trust, and explicit HTTP/1.1, HTTP/2, and HTTP/3 selection.
+
 The [`embedded` example](../crates/proxy-runtime/examples/embedded.rs) constructs
 the proxy without CLI modules or global state. It supplies an interceptor that
 modifies decoded request and response bytes, bounded observer, route selector,

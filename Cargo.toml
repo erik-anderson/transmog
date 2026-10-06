@@ -25,6 +25,7 @@ members = [
     "crates/proxy-websocket",
     "crates/proxy-session",
     "crates/proxy-cli",
+    "examples/dotnet-embedding/native",
 ]
 
 [workspace.package]

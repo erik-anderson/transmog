@@ -109,6 +109,10 @@ Start with the [architecture overview](docs/architecture.md) and
 separates current behavior, architectural decisions, operational guidance, and
 the [future roadmap](docs/roadmap.md).
 
+For a foreign-language example, the [.NET 10 embedding sample](examples/dotnet-embedding/README.md)
+uses a narrow native ABI to issue a bounded request through the canonical Rust
+engine from a C# command-line application.
+
 ## Headless proxy and capture tools
 
 The lower-level CLI can run the proxy without the desktop shell. Create and

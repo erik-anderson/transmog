@@ -1,3 +1,7 @@
+//! Windows `AppContainer` integration tests for the script host.
+
+#![cfg(windows)]
+
 use std::collections::BTreeSet;
 
 use transmog_script::{

@@ -1,6 +1,6 @@
-#![cfg(windows)]
-
 //! Windows `AppContainer` integration test for the raster preview worker.
+
+#![cfg(windows)]
 
 use std::{
     io::{Cursor, Read, Write},

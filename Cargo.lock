@@ -6174,6 +6174,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-dotnet-sample-native"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "serde",
+ "serde_json",
+ "tokio",
+ "transmog-core",
+ "transmog-h3",
+ "transmog-http",
+ "transmog-tls",
+]
+
+[[package]]
 name = "transmog-h3"
 version = "0.1.0"
 dependencies = [
