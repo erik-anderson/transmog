@@ -6,11 +6,11 @@
 
 **See what your apps send. Stop traffic in flight. Change it. Replay it.**
 
-Transmog is a Windows-first web debugging proxy that turns HTTP traffic into a
-live, inspectable workspace. Capture requests as they happen, select any
-exchange to explore its request and response, pause traffic at breakpoints,
-override behavior with reusable rules, and keep a durable record when the
-interesting bug finally appears.
+Transmog is a web debugging proxy designed to grow into a cross-platform
+developer tool. It turns HTTP traffic into a live, inspectable workspace:
+capture requests as they happen, select any exchange to explore its request and
+response, pause traffic at breakpoints, override behavior with reusable rules,
+and keep a durable record when the interesting bug finally appears.
 
 The desktop experience is the product: a focused traffic list and split
 request/response inspector, backed by a carefully layered Rust proxy engine.
@@ -18,8 +18,10 @@ Those layers also provide reusable crates for applications that need the same
 interception, content-processing, automation, or capture capabilities without
 the Transmog UI.
 
-> Transmog is under active development. The desktop application is currently
-> qualified on Windows and uses the system's Evergreen WebView2 runtime.
+> Transmog is under active development. Initial product development and release
+> qualification are focused on Windows, where the desktop application uses the
+> system's Evergreen WebView2 runtime. The portable engine is already exercised
+> on Linux; native Linux and macOS desktop products remain future work.
 
 ## What you can do
 
@@ -155,6 +157,20 @@ Chromium, and digest-pinned Nginx, Apache, and Caddy endpoints:
 ```powershell
 pwsh ./scripts/test-interop.ps1
 ```
+
+The Linux gate runs the complete workspace test matrix and a release build as
+Linux binaries in a pinned Debian container. On Windows, Docker Desktop executes
+that container on its WSL2 Linux kernel:
+
+```powershell
+pwsh ./scripts/test-linux-docker.ps1
+```
+
+This provides strong portability coverage for the Rust engine and headless
+tools, but it is not Linux desktop qualification. The current Linux gate does
+not exercise a native desktop WebView, system proxy and certificate-store
+integration, production helper-process sandbox, installer, or native browser
+end-to-end workflow.
 
 See [build prerequisites](docs/building.md), [testing](docs/testing.md), and
 [current limitations](docs/limitations.md) for the supported matrix and exact
