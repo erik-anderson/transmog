@@ -6198,6 +6198,7 @@ dependencies = [
  "tokio",
  "tracing",
  "transmog-core",
+ "transmog-network",
  "transmog-tls",
 ]
 
@@ -6227,7 +6228,17 @@ dependencies = [
  "tower-service",
  "tracing",
  "transmog-core",
+ "transmog-network",
  "transmog-tls",
+]
+
+[[package]]
+name = "transmog-network"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -6266,6 +6277,7 @@ dependencies = [
  "transmog-core",
  "transmog-h3",
  "transmog-http",
+ "transmog-network",
  "transmog-tls",
  "transmog-websocket",
 ]

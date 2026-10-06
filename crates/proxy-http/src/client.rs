@@ -11,9 +11,8 @@ use http::{HeaderMap, HeaderName, HeaderValue, Request, Version, header::HOST, u
 use http_body::{Body, Frame};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
-use hyper_boring::HttpsConnector;
 use hyper_util::{
-    client::legacy::{Client, Error as ClientError, connect::HttpConnector},
+    client::legacy::{Client, Error as ClientError},
     rt::TokioExecutor,
 };
 use thiserror::Error;
@@ -23,11 +22,12 @@ use transmog_core::{
     HeaderField, HttpLegVersion, MessageKind, RequestHead, ResponseHead, StreamingRequest,
     StreamingResponse, TranslationOptions, prepare_headers,
 };
+use transmog_network::HappyEyeballsConfig;
 use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
-use crate::{HyperEgressMode, build_https_connector};
+use crate::{HttpsOriginConnector, HyperEgressMode, build_https_connector_with_happy_eyeballs};
 
-type OriginClient = Client<HttpsConnector<HttpConnector>, CanonicalHttpBody>;
+type OriginClient = Client<HttpsOriginConnector, CanonicalHttpBody>;
 
 /// Pooled Hyper origin client with distinct ALPN pools for forced H1 and H2.
 #[derive(Clone)]
@@ -70,13 +70,38 @@ impl HyperOriginClient {
     /// Returns [`HyperOriginError`] if a `BoringSSL` connector cannot be
     /// constructed from the shared context factory.
     pub fn new(factory: &UpstreamTlsContextFactory) -> Result<Self, HyperOriginError> {
-        let h1 = Client::builder(TokioExecutor::new())
-            .build(build_https_connector(factory, HyperEgressMode::Http1Only)?);
+        Self::with_happy_eyeballs(factory, HappyEyeballsConfig::default())
+    }
+
+    /// Builds all Hyper pools with an explicit shared Happy Eyeballs policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HyperOriginError`] if a `BoringSSL` connector cannot be
+    /// constructed from the shared context factory.
+    pub fn with_happy_eyeballs(
+        factory: &UpstreamTlsContextFactory,
+        happy_eyeballs: HappyEyeballsConfig,
+    ) -> Result<Self, HyperOriginError> {
+        let h1 =
+            Client::builder(TokioExecutor::new()).build(build_https_connector_with_happy_eyeballs(
+                factory,
+                HyperEgressMode::Http1Only,
+                happy_eyeballs,
+            )?);
         let mut h2_builder = Client::builder(TokioExecutor::new());
         h2_builder.http2_only(true);
-        let h2 = h2_builder.build(build_https_connector(factory, HyperEgressMode::Http2Only)?);
-        let auto = Client::builder(TokioExecutor::new())
-            .build(build_https_connector(factory, HyperEgressMode::Auto)?);
+        let h2 = h2_builder.build(build_https_connector_with_happy_eyeballs(
+            factory,
+            HyperEgressMode::Http2Only,
+            happy_eyeballs,
+        )?);
+        let auto =
+            Client::builder(TokioExecutor::new()).build(build_https_connector_with_happy_eyeballs(
+                factory,
+                HyperEgressMode::Auto,
+                happy_eyeballs,
+            )?);
         Ok(Self { h1, h2, auto })
     }
 

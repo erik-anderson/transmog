@@ -29,6 +29,8 @@ sources of truth.
   upgrade paths.
 - [Certificate and trust model](certificate-model.md): upstream verification
   and downstream interception certificates.
+- [Origin connection racing](networking.md): bounded Happy Eyeballs behavior
+  shared by TCP/TLS and QUIC origin transports.
 - [Client process attribution](client-process-attribution.md): local process
   name/PID resolution and remote-client classification.
 

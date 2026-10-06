@@ -60,6 +60,7 @@ use transmog_h3::{
 use transmog_http::{
     ConnectAuthority, HyperEgressMode, HyperOriginClient, HyperOriginError, HyperUpgradeResponse,
 };
+use transmog_network::HappyEyeballsConfig;
 use transmog_tls::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
     DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, LeafCacheError, ProxyCa,
@@ -92,6 +93,8 @@ pub struct ProxyConfig {
     pub limits: RuntimeLimits,
     /// HTTP/3 transport flow-control and timeout bounds.
     pub h3: H3TransportLimits,
+    /// Shared IPv6/IPv4 connection-racing policy for origin transports.
+    pub happy_eyeballs: HappyEyeballsConfig,
     /// WebSocket frame, message, idle, write, and close-handshake bounds.
     pub websocket: RelayLimits,
 }
@@ -103,6 +106,7 @@ impl Default for ProxyConfig {
             route_policy: RoutePolicy::Auto,
             limits: RuntimeLimits::default(),
             h3: H3TransportLimits::default(),
+            happy_eyeballs: HappyEyeballsConfig::default(),
             websocket: RelayLimits::default(),
         }
     }
@@ -328,7 +332,11 @@ impl ProxyControl {
     /// supplied snapshot generation is newer than the active generation, or
     /// an adapter-construction error if the new policy cannot be installed.
     pub async fn reload_trust(&self, trust: Arc<TrustSnapshot>) -> Result<(), ProxyRuntimeError> {
-        let next = Arc::new(UpstreamGeneration::new(trust, self.state.config.h3)?);
+        let next = Arc::new(UpstreamGeneration::new(
+            trust,
+            self.state.config.h3,
+            self.state.config.happy_eyeballs,
+        )?);
         let mut active = self.state.upstream.write().await;
         if next.trust_generation <= active.trust_generation {
             return Err(ProxyRuntimeError::TrustGenerationNotMonotonic {
@@ -430,7 +438,11 @@ impl ProxyServer {
         {
             return Err(ProxyRuntimeError::InvalidConfiguration);
         }
-        let upstream = Arc::new(UpstreamGeneration::new(trust, config.h3)?);
+        let upstream = Arc::new(UpstreamGeneration::new(
+            trust,
+            config.h3,
+            config.happy_eyeballs,
+        )?);
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
         let (websocket_evidence, _) = broadcast::channel(1_024);
@@ -585,11 +597,12 @@ impl UpstreamGeneration {
     fn new(
         trust: Arc<TrustSnapshot>,
         h3_limits: H3TransportLimits,
+        happy_eyeballs: HappyEyeballsConfig,
     ) -> Result<Self, ProxyRuntimeError> {
         h3_limits.validate().map_err(H3OriginError::from)?;
         let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
-        let hyper = HyperOriginClient::new(&tls)?;
-        let h3 = H3OriginClient::new(tls.clone(), h3_limits);
+        let hyper = HyperOriginClient::with_happy_eyeballs(&tls, happy_eyeballs)?;
+        let h3 = H3OriginClient::with_happy_eyeballs(tls.clone(), h3_limits, happy_eyeballs);
         Ok(Self {
             hyper,
             h3,

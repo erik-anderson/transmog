@@ -134,7 +134,9 @@ quiche clients; in-flight exchanges retain their previous generation.
 clients through the same canonical boundary used by application services. They
 validate the authorized destination against the complete normalized request
 target before any network I/O; fallback policy stays above the individual
-adapter.
+adapter. Both transports use the runtime's shared, bounded Happy Eyeballs
+policy: Hyper races TCP address families and the quiche adapter races complete,
+verified QUIC handshakes. See [origin connection racing](networking.md).
 
 The default client-identity resolver snapshots the process associated with a
 new loopback TCP connection on Windows and Linux. Non-loopback peers are marked

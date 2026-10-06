@@ -50,20 +50,61 @@ enum RequestedProtocol {
 }
 
 impl RequestedProtocol {
-    const fn route_policy(self) -> RoutePolicy {
-        match self {
-            Self::H1 => RoutePolicy::Http1Only,
-            Self::H2 => RoutePolicy::Http2Only,
-            Self::H3 => RoutePolicy::Http3Only,
-        }
-    }
-
     const fn label(self) -> &'static str {
         match self {
             Self::H1 => "h1",
             Self::H2 => "h2",
             Self::H3 => "h3",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AllowedProtocols {
+    h1: bool,
+    h2: bool,
+    h3: bool,
+}
+
+impl AllowedProtocols {
+    fn from_requested(protocols: &[RequestedProtocol]) -> Self {
+        Self {
+            h1: protocols.contains(&RequestedProtocol::H1),
+            h2: protocols.contains(&RequestedProtocol::H2),
+            h3: protocols.contains(&RequestedProtocol::H3),
+        }
+    }
+
+    const fn hyper_route_policy(self) -> Option<RoutePolicy> {
+        match (self.h1, self.h2) {
+            (true, true) => Some(RoutePolicy::Auto),
+            (true, false) => Some(RoutePolicy::Http1Only),
+            (false, true) => Some(RoutePolicy::Http2Only),
+            (false, false) => None,
+        }
+    }
+
+    fn labels(self) -> Vec<&'static str> {
+        [
+            (self.h1, RequestedProtocol::H1),
+            (self.h2, RequestedProtocol::H2),
+            (self.h3, RequestedProtocol::H3),
+        ]
+        .into_iter()
+        .filter(|(allowed, _)| *allowed)
+        .map(|(_, protocol)| protocol.label())
+        .collect()
+    }
+
+    fn hyper_labels(self) -> Vec<&'static str> {
+        [
+            (self.h1, RequestedProtocol::H1),
+            (self.h2, RequestedProtocol::H2),
+        ]
+        .into_iter()
+        .filter(|(allowed, _)| *allowed)
+        .map(|(_, protocol)| protocol.label())
+        .collect()
     }
 }
 
@@ -88,7 +129,7 @@ const fn default_timeout_milliseconds() -> u64 {
 }
 
 fn default_protocols() -> Vec<RequestedProtocol> {
-    vec![RequestedProtocol::H2, RequestedProtocol::H1]
+    vec![RequestedProtocol::H1, RequestedProtocol::H2]
 }
 
 #[derive(Debug, Serialize)]
@@ -96,6 +137,7 @@ fn default_protocols() -> Vec<RequestedProtocol> {
 struct FetchMetadata {
     status_code: u16,
     protocol: &'static str,
+    allowed_protocols: Vec<&'static str>,
     body_bytes: usize,
     headers: Vec<HeaderMetadata>,
     trailers: Vec<HeaderMetadata>,
@@ -113,7 +155,8 @@ struct HeaderMetadata {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AttemptMetadata {
-    protocol: &'static str,
+    allowed_protocols: Vec<&'static str>,
+    negotiated_protocol: Option<&'static str>,
     outcome: String,
 }
 
@@ -365,6 +408,7 @@ fn validate_request(request: &FetchRequest) -> Result<(), String> {
 
 async fn fetch(request: FetchRequest) -> Result<FetchSuccess, String> {
     let target = parse_target(&request.url)?;
+    let allowed = AllowedProtocols::from_requested(&request.protocols);
     let timeout = Duration::from_millis(request.timeout_milliseconds);
     let trust = Arc::new(
         TrustSnapshot::load(&SystemTrustSource, 1)
@@ -372,114 +416,193 @@ async fn fetch(request: FetchRequest) -> Result<FetchSuccess, String> {
     );
     let trust_generation = trust.generation();
     let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
-    let hyper = if request
-        .protocols
-        .iter()
-        .any(|protocol| matches!(protocol, RequestedProtocol::H1 | RequestedProtocol::H2))
-    {
-        Some(
-            HyperOriginClient::new(&tls)
-                .map_err(|_| "the HTTP/1.1 and HTTP/2 client could not be created".to_owned())?,
-        )
-    } else {
-        None
-    };
-    let h3 = request
-        .protocols
-        .contains(&RequestedProtocol::H3)
+    let hyper = allowed
+        .hyper_route_policy()
+        .map(|_| HyperOriginClient::new(&tls))
+        .transpose()
+        .map_err(|_| "the HTTP/1.1 and HTTP/2 client could not be created".to_owned())?;
+    let h3 = allowed
+        .h3
         .then(|| H3OriginClient::new(tls, H3TransportLimits::default()));
 
-    let mut attempts = Vec::with_capacity(request.protocols.len());
-    for protocol in request.protocols {
-        if protocol == RequestedProtocol::H3 && target.scheme != "https" {
-            attempts.push(AttemptMetadata {
-                protocol: protocol.label(),
-                outcome: "HTTP/3 requires an HTTPS URL".to_owned(),
-            });
-            continue;
-        }
-
-        let service = upstream_service(
-            protocol,
-            hyper.as_ref(),
-            h3.as_ref(),
+    let mut attempts = Vec::with_capacity(2);
+    if allowed.h3 {
+        match execute_h3_attempt(
+            h3.as_ref()
+                .expect("HTTP/3 client exists when HTTP/3 is allowed"),
+            &target,
             request.max_response_bytes,
+            trust_generation,
             timeout,
-        );
-        let executor = UpstreamExecutor::new(service, timeout);
-        let cancellation = ExchangeCancellation::new();
-        let plan = route_plan(&target, protocol, trust_generation);
-        match executor
-            .execute(streaming_get(&target)?, plan, &cancellation)
-            .await
+        )
+        .await
         {
             Ok(response) => {
-                let status_code = response.head.status;
                 let negotiated = response.head.source_version;
-                let headers = metadata_headers(&response.head.headers);
-                let (body, trailers) = collect_body(
-                    response.body,
-                    request.max_response_bytes,
-                    Instant::now() + timeout,
-                )
-                .await?;
                 attempts.push(AttemptMetadata {
-                    protocol: protocol.label(),
+                    allowed_protocols: vec![RequestedProtocol::H3.label()],
+                    negotiated_protocol: Some(protocol_label(negotiated)),
                     outcome: "response received".to_owned(),
                 });
-                let metadata = FetchMetadata {
-                    status_code,
-                    protocol: protocol_label(negotiated),
-                    body_bytes: body.len(),
-                    headers,
-                    trailers,
+                return finish_response(
+                    response,
+                    allowed,
                     attempts,
-                };
-                let metadata_json = serde_json::to_vec_pretty(&metadata)
-                    .map_err(|_| "response metadata could not be serialized".to_owned())?;
-                return Ok(FetchSuccess {
-                    status_code,
-                    body,
-                    metadata_json,
-                });
+                    request.max_response_bytes,
+                    timeout,
+                )
+                .await;
             }
             Err(error) => attempts.push(AttemptMetadata {
-                protocol: protocol.label(),
-                outcome: error.to_string(),
+                allowed_protocols: vec![RequestedProtocol::H3.label()],
+                negotiated_protocol: None,
+                outcome: error,
             }),
         }
     }
 
-    let summary = attempts
-        .into_iter()
-        .map(|attempt| format!("{}: {}", attempt.protocol, attempt.outcome))
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(format!("all allowed protocol attempts failed: {summary}"))
+    if let Some(route_policy) = allowed.hyper_route_policy() {
+        match execute_hyper_attempt(
+            hyper
+                .as_ref()
+                .expect("Hyper client exists when HTTP/1.1 or HTTP/2 is allowed"),
+            &target,
+            route_policy,
+            request.max_response_bytes,
+            trust_generation,
+            timeout,
+        )
+        .await
+        {
+            Ok(response) => {
+                let negotiated = response.head.source_version;
+                attempts.push(AttemptMetadata {
+                    allowed_protocols: allowed.hyper_labels(),
+                    negotiated_protocol: Some(protocol_label(negotiated)),
+                    outcome: "response received".to_owned(),
+                });
+                return finish_response(
+                    response,
+                    allowed,
+                    attempts,
+                    request.max_response_bytes,
+                    timeout,
+                )
+                .await;
+            }
+            Err(error) => attempts.push(AttemptMetadata {
+                allowed_protocols: allowed.hyper_labels(),
+                negotiated_protocol: None,
+                outcome: error,
+            }),
+        }
+    }
+
+    Err(all_attempts_failed(attempts))
 }
 
-fn upstream_service(
-    protocol: RequestedProtocol,
-    hyper: Option<&HyperOriginClient>,
-    h3: Option<&H3OriginClient>,
+fn all_attempts_failed(attempts: Vec<AttemptMetadata>) -> String {
+    let summary = attempts
+        .into_iter()
+        .map(|attempt| {
+            format!(
+                "{}: {}",
+                attempt.allowed_protocols.join("/"),
+                attempt.outcome
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("all allowed protocol attempts failed: {summary}")
+}
+
+async fn execute_h3_attempt(
+    client: &H3OriginClient,
+    target: &Target,
+    max_response_bytes: usize,
+    trust_generation: u64,
+    timeout: Duration,
+) -> Result<transmog_core::StreamingResponse, String> {
+    if target.scheme == "https" {
+        let service = Arc::new(H3UpstreamService::new(
+            client.clone(),
+            max_response_bytes,
+            BODY_CHANNEL_CAPACITY,
+        ));
+        execute_attempt(
+            service,
+            target,
+            RoutePolicy::Http3Only,
+            trust_generation,
+            timeout,
+        )
+        .await
+    } else {
+        Err("HTTP/3 requires an HTTPS URL".to_owned())
+    }
+}
+
+async fn execute_hyper_attempt(
+    client: &HyperOriginClient,
+    target: &Target,
+    route_policy: RoutePolicy,
+    max_response_bytes: usize,
+    trust_generation: u64,
+    timeout: Duration,
+) -> Result<transmog_core::StreamingResponse, String> {
+    let service = Arc::new(HyperUpstreamService::new(
+        client.clone(),
+        max_response_bytes,
+        BODY_CHANNEL_CAPACITY,
+        timeout,
+    ));
+    execute_attempt(service, target, route_policy, trust_generation, timeout).await
+}
+
+async fn execute_attempt(
+    service: Arc<dyn UpstreamService>,
+    target: &Target,
+    route_policy: RoutePolicy,
+    trust_generation: u64,
+    timeout: Duration,
+) -> Result<transmog_core::StreamingResponse, String> {
+    let executor = UpstreamExecutor::new(service, timeout);
+    let cancellation = ExchangeCancellation::new();
+    let plan = route_plan(target, route_policy, trust_generation);
+    executor
+        .execute(streaming_get(target)?, plan, &cancellation)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn finish_response(
+    response: transmog_core::StreamingResponse,
+    allowed: AllowedProtocols,
+    attempts: Vec<AttemptMetadata>,
     max_response_bytes: usize,
     timeout: Duration,
-) -> Arc<dyn UpstreamService> {
-    match protocol {
-        RequestedProtocol::H1 | RequestedProtocol::H2 => Arc::new(HyperUpstreamService::new(
-            hyper
-                .expect("Hyper client exists for an H1 or H2 attempt")
-                .clone(),
-            max_response_bytes,
-            BODY_CHANNEL_CAPACITY,
-            timeout,
-        )),
-        RequestedProtocol::H3 => Arc::new(H3UpstreamService::new(
-            h3.expect("HTTP/3 client exists for an H3 attempt").clone(),
-            max_response_bytes,
-            BODY_CHANNEL_CAPACITY,
-        )),
-    }
+) -> Result<FetchSuccess, String> {
+    let status_code = response.head.status;
+    let negotiated = response.head.source_version;
+    let headers = metadata_headers(&response.head.headers);
+    let (body, trailers) =
+        collect_body(response.body, max_response_bytes, Instant::now() + timeout).await?;
+    let metadata = FetchMetadata {
+        status_code,
+        protocol: protocol_label(negotiated),
+        allowed_protocols: allowed.labels(),
+        body_bytes: body.len(),
+        headers,
+        trailers,
+        attempts,
+    };
+    let metadata_json = serde_json::to_vec_pretty(&metadata)
+        .map_err(|_| "response metadata could not be serialized".to_owned())?;
+    Ok(FetchSuccess {
+        status_code,
+        body,
+        metadata_json,
+    })
 }
 
 fn parse_target(url: &str) -> Result<Target, String> {
@@ -555,17 +678,17 @@ fn streaming_get(target: &Target) -> Result<StreamingRequest, String> {
     })
 }
 
-fn route_plan(target: &Target, protocol: RequestedProtocol, trust_generation: u64) -> UpstreamPlan {
+fn route_plan(target: &Target, route_policy: RoutePolicy, trust_generation: u64) -> UpstreamPlan {
     UpstreamPlan {
         pool_key: UpstreamPoolKey {
             destination: UpstreamDestination::from_target(target),
-            version_policy: protocol.route_policy(),
+            version_policy: route_policy,
             trust_generation,
             tls_policy_id: Arc::from("dotnet-sample-system-trust-v1"),
             connector_policy_id: Arc::from("dotnet-sample-direct-v1"),
         },
-        route_id: Arc::from("dotnet-sample-requested-protocol"),
-        reason: Arc::from("ordered protocol selected by the managed host"),
+        route_id: Arc::from("dotnet-sample-allowed-protocols"),
+        reason: Arc::from("transport policy derived from the managed host's allowed protocols"),
         replayability: Replayability::SafeMethod,
     }
 }
@@ -651,7 +774,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_bounded_and_prefer_h2() {
+    fn defaults_are_bounded_and_enable_tcp_alpn() {
         let request: FetchRequest = serde_json::from_value(json!({
             "url": "https://example.test/"
         }))
@@ -659,10 +782,43 @@ mod tests {
         validate_request(&request).unwrap();
         assert_eq!(
             request.protocols,
-            vec![RequestedProtocol::H2, RequestedProtocol::H1]
+            vec![RequestedProtocol::H1, RequestedProtocol::H2]
         );
+        let allowed = AllowedProtocols::from_requested(&request.protocols);
+        assert_eq!(allowed.hyper_route_policy(), Some(RoutePolicy::Auto));
         assert_eq!(request.max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES);
         assert_eq!(request.timeout_milliseconds, DEFAULT_TIMEOUT_MILLISECONDS);
+    }
+
+    #[test]
+    fn protocol_order_does_not_control_preference() {
+        let forward = AllowedProtocols::from_requested(&[
+            RequestedProtocol::H1,
+            RequestedProtocol::H2,
+            RequestedProtocol::H3,
+        ]);
+        let reverse = AllowedProtocols::from_requested(&[
+            RequestedProtocol::H3,
+            RequestedProtocol::H2,
+            RequestedProtocol::H1,
+        ]);
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.hyper_route_policy(), Some(RoutePolicy::Auto));
+        assert!(forward.h3);
+        assert_eq!(forward.labels(), vec!["h1", "h2", "h3"]);
+    }
+
+    #[test]
+    fn singleton_protocol_sets_remain_strict() {
+        let h1 = AllowedProtocols::from_requested(&[RequestedProtocol::H1]);
+        assert_eq!(h1.hyper_route_policy(), Some(RoutePolicy::Http1Only));
+
+        let h2 = AllowedProtocols::from_requested(&[RequestedProtocol::H2]);
+        assert_eq!(h2.hyper_route_policy(), Some(RoutePolicy::Http2Only));
+
+        let h3 = AllowedProtocols::from_requested(&[RequestedProtocol::H3]);
+        assert_eq!(h3.hyper_route_policy(), None);
+        assert!(h3.h3);
     }
 
     #[test]
@@ -730,7 +886,14 @@ mod tests {
         assert!(!handle.is_null());
         // SAFETY: `handle` is live until the final free call.
         unsafe {
-            assert_eq!(transmog_dotnet_sample_fetch_succeeded(handle), 1);
+            let succeeded = transmog_dotnet_sample_fetch_succeeded(handle);
+            if succeeded != 1 {
+                let error = slice::from_raw_parts(
+                    transmog_dotnet_sample_fetch_error(handle),
+                    transmog_dotnet_sample_fetch_error_length(handle),
+                );
+                panic!("native fetch failed: {}", String::from_utf8_lossy(error));
+            }
             assert_eq!(transmog_dotnet_sample_fetch_status_code(handle), 200);
             let body = slice::from_raw_parts(
                 transmog_dotnet_sample_fetch_body(handle),

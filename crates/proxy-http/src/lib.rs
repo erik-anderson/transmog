@@ -8,4 +8,7 @@ mod upstream;
 pub use authority::{AuthorityError, ConnectAuthority};
 pub use client::{HyperOriginClient, HyperOriginError, HyperUpgradeResponse};
 pub use service::HyperUpstreamService;
-pub use upstream::{HyperEgressMode, build_https_connector};
+pub use upstream::{
+    HappyEyeballsResolver, HttpsOriginConnector, HyperEgressMode, build_https_connector,
+    build_https_connector_with_happy_eyeballs,
+};

@@ -16,6 +16,7 @@ hyper.workspace = true
 hyper-boring.workspace = true
 hyper-util.workspace = true
 transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-network = { version = "=0.1.0", path = "../network" }
 transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true

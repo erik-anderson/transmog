@@ -20,6 +20,7 @@ transmog-client-identity = { version = "=0.1.0", path = "../client-identity" }
 transmog-content = { version = "=0.1.0", path = "../proxy-content" }
 transmog-h3 = { version = "=0.1.0", path = "../proxy-h3" }
 transmog-http = { version = "=0.1.0", path = "../proxy-http" }
+transmog-network = { version = "=0.1.0", path = "../network" }
 transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
 transmog-websocket = { version = "=0.1.0", path = "../proxy-websocket" }
 thiserror.workspace = true

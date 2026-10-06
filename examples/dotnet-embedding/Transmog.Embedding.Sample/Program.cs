@@ -73,7 +73,7 @@ internal static class Program
                 --url <http-or-https-url> --output <path> [options]
 
             Options:
-              --protocols <list>         Ordered h1,h2,h3 attempts (default: h2,h1)
+              --protocols <list>         Allowed h1,h2,h3 protocols (default: h1,h2)
               --max-response-bytes <n>   Response limit (default: 16777216; max: 268435456)
               --timeout-seconds <n>      Per-attempt/head and body deadline (default: 30; max: 300)
               --overwrite                Replace an existing output file
@@ -99,7 +99,7 @@ internal sealed record Options(
     {
         string? urlText = null;
         string? outputPath = null;
-        string protocolsText = "h2,h1";
+        string protocolsText = "h1,h2";
         int maxResponseBytes = DefaultMaxResponseBytes;
         int timeoutSeconds = DefaultTimeoutSeconds;
         bool overwrite = false;
@@ -150,17 +150,20 @@ internal sealed record Options(
             throw new ArgumentException("--output is required.");
         }
 
-        string[] protocols = protocolsText
+        string[] requestedProtocols = protocolsText
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(value => value.ToLowerInvariant())
             .ToArray();
-        if (protocols.Length == 0
-            || protocols.Any(value => value is not ("h1" or "h2" or "h3"))
-            || protocols.Distinct(StringComparer.Ordinal).Count() != protocols.Length)
+        if (requestedProtocols.Length == 0
+            || requestedProtocols.Any(value => value is not ("h1" or "h2" or "h3"))
+            || requestedProtocols.Distinct(StringComparer.Ordinal).Count() != requestedProtocols.Length)
         {
             throw new ArgumentException(
                 "--protocols must be a non-empty, duplicate-free comma-separated list of h1, h2, and h3.");
         }
+        string[] protocols = requestedProtocols
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
 
         return new Options(
             url,

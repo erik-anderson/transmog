@@ -19,6 +19,9 @@ use transmog_core::{
     HeaderBlock, HeaderField, HttpLegVersion, MessageKind, ResponseHead, StreamingRequest,
     StreamingResponse, TranslationOptions, prepare_headers,
 };
+use transmog_network::{
+    HappyEyeballsConfig, HappyEyeballsError, race_candidates, resolve_candidates,
+};
 use transmog_tls::UpstreamTlsContextFactory;
 
 use crate::{H3ConfigError, H3TransportLimits, build_quiche_config};
@@ -62,15 +65,26 @@ pub struct H3StreamingResponse {
 pub struct H3OriginClient {
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
+    happy_eyeballs: HappyEyeballsConfig,
     pool: Arc<Mutex<HashMap<PoolKey, mpsc::Sender<DriverCommand>>>>,
 }
 
 impl H3OriginClient {
     /// Creates an HTTP/3 client tied to one immutable trust generation.
     pub fn new(tls: UpstreamTlsContextFactory, limits: H3TransportLimits) -> Self {
+        Self::with_happy_eyeballs(tls, limits, HappyEyeballsConfig::default())
+    }
+
+    /// Creates an HTTP/3 client with explicit Happy Eyeballs policy.
+    pub fn with_happy_eyeballs(
+        tls: UpstreamTlsContextFactory,
+        limits: H3TransportLimits,
+        happy_eyeballs: HappyEyeballsConfig,
+    ) -> Self {
         Self {
             tls,
             limits,
+            happy_eyeballs,
             pool: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -226,6 +240,7 @@ impl H3OriginClient {
             key.peer_port,
             self.tls.clone(),
             self.limits,
+            self.happy_eyeballs,
         )
         .await?;
         let (sender, receiver) = mpsc::channel(self.limits.pending_requests_per_connection);
@@ -337,11 +352,29 @@ impl H3ConnectionDriver {
         peer_port: u16,
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
+        happy_eyeballs: HappyEyeballsConfig,
     ) -> Result<Self, H3OriginError> {
-        let peer_addr = tokio::net::lookup_host((host.as_str(), peer_port))
-            .await?
-            .next()
-            .ok_or_else(|| H3OriginError::DnsNoAddresses(host.clone()))?;
+        let candidates = resolve_candidates(&host, peer_port, happy_eyeballs).await?;
+        if candidates.is_empty() {
+            return Err(H3OriginError::DnsNoAddresses(host));
+        }
+        match race_candidates(candidates, happy_eyeballs, |peer_addr| {
+            Self::connect_address(host.clone(), peer_addr, tls.clone(), limits)
+        })
+        .await
+        {
+            Ok((driver, _)) => Ok(driver),
+            Err(HappyEyeballsError::NoCandidates) => Err(H3OriginError::DnsNoAddresses(host)),
+            Err(HappyEyeballsError::AttemptsFailed(error)) => Err(error),
+        }
+    }
+
+    async fn connect_address(
+        host: String,
+        peer_addr: SocketAddr,
+        tls: UpstreamTlsContextFactory,
+        limits: H3TransportLimits,
+    ) -> Result<Self, H3OriginError> {
         let bind_addr = if peer_addr.is_ipv4() {
             "0.0.0.0:0"
         } else {
@@ -364,15 +397,52 @@ impl H3ConnectionDriver {
             peer_addr,
             &mut config,
         )?;
-        Ok(Self {
-            tls,
-            limits,
-            socket,
-            local_addr,
-            peer_addr,
-            connection,
-            h3_config: quiche::h3::Config::new()?,
-        })
+        Box::pin(
+            Self {
+                tls,
+                limits,
+                socket,
+                local_addr,
+                peer_addr,
+                connection,
+                h3_config: quiche::h3::Config::new()?,
+            }
+            .establish(),
+        )
+        .await
+    }
+
+    async fn establish(mut self) -> Result<Self, H3OriginError> {
+        let mut recv_buffer = vec![0_u8; MAX_UDP_PACKET_SIZE];
+        let mut send_buffer = vec![0_u8; MAX_DATAGRAM_SIZE];
+        flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
+        loop {
+            if self.connection.is_established() {
+                return Ok(self);
+            }
+            if self.connection.is_closed() {
+                return Err(H3OriginError::ClosedBeforeResponse);
+            }
+            let wait = self
+                .connection
+                .timeout()
+                .unwrap_or(self.limits.idle_timeout);
+            tokio::select! {
+                packet = self.socket.recv(&mut recv_buffer) => {
+                    let read = packet?;
+                    let info = quiche::RecvInfo {
+                        from: self.peer_addr,
+                        to: self.local_addr,
+                    };
+                    match self.connection.recv(&mut recv_buffer[..read], info) {
+                        Ok(_) | Err(quiche::Error::Done) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                () = sleep(wait) => self.connection.on_timeout(),
+            }
+            flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
+        }
     }
 
     async fn run(mut self, receiver: mpsc::Receiver<DriverCommand>) {
@@ -1300,6 +1370,46 @@ mod tests {
             vec![BodyFrame::Data(Bytes::from_static(b"h3-ok"))]
         );
         server.finish().await;
+    }
+
+    #[tokio::test]
+    async fn h3_happy_eyeballs_uses_a_working_alternate_family() {
+        let ca = ProxyCa::generate("Transmog H3 Happy Eyeballs origin", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let bind_ip = "127.0.0.1".parse().unwrap();
+        let (origin, server) = spawn_origin(leaf, bind_ip).await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 42)
+                .unwrap(),
+        );
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        let limits = H3TransportLimits {
+            idle_timeout: std::time::Duration::from_secs(2),
+            ..H3TransportLimits::default()
+        };
+        let unreachable_v6 = SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, origin.port()));
+        let config = HappyEyeballsConfig::new(std::time::Duration::from_millis(10), 4).unwrap();
+        let (driver, selected) = timeout(
+            std::time::Duration::from_secs(1),
+            race_candidates(vec![unreachable_v6, origin], config, |peer_addr| {
+                H3ConnectionDriver::connect_address(
+                    "localhost".to_owned(),
+                    peer_addr,
+                    tls.clone(),
+                    limits,
+                )
+            }),
+        )
+        .await
+        .expect("alternate-family QUIC handshake did not win")
+        .unwrap();
+        assert_eq!(selected, origin);
+        assert_eq!(driver.peer_addr, origin);
+        assert!(driver.connection.is_established());
+        drop(driver);
+        server.abort();
     }
 
     #[tokio::test]

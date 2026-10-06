@@ -17,6 +17,7 @@ pub use proxy::{
     RouteAttemptEvidence, WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
 pub use transmog_client_identity::{ClientIdentityResolver, SystemClientIdentityResolver};
+pub use transmog_network::{HappyEyeballsConfig, HappyEyeballsConfigError};
 
 /// Network exposure configuration.
 #[derive(Clone, Debug)]
@@ -131,6 +132,11 @@ mod tests {
     #[test]
     fn loopback_is_default_and_remote_requires_opt_in() {
         assert!(ListenerConfig::default().validate().is_ok());
+        let proxy = ProxyConfig::default();
+        assert_eq!(
+            proxy.happy_eyeballs.attempt_delay(),
+            std::time::Duration::from_millis(250)
+        );
         let remote = ListenerConfig {
             listen_addr: "0.0.0.0:8080".parse().unwrap(),
             allow_remote_clients: false,
