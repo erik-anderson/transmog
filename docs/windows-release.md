@@ -21,6 +21,11 @@ No certificate identity, private key, token, or password belongs in this
 repository. The release wrapper injects the certificate thumbprint in a
 temporary ignored config overlay and removes that overlay after packaging.
 
+The manually dispatched hosted Windows workflow currently creates only unsigned
+development installers. Its setup, artifacts, and measurements are described
+in [`ci/README.md`](../ci/README.md). Azure signing and release publication are
+separate future stages.
+
 Create a signed installer:
 
 ```powershell

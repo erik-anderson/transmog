@@ -47,9 +47,12 @@ are checked in.
 - Add macOS caller-process attribution only if it can use a supported and
   testable operating-system contract; the available `libproc` socket APIs are
   currently private and subject to change.
+- Integrate Azure Artifact Signing with profile-scoped OIDC permissions and
+  protected release approval. The manual hosted Windows packaging workflow
+  currently produces unsigned development installers.
 - Complete signed Windows release qualification on a clean machine for each
-  release candidate. Hosted CI remains disabled until a human explicitly
-  enables it.
+  release candidate, and explicitly review activation of the broader hosted
+  platform, browser, fuzz, and performance workflows.
 
 ## Protocol expansion
 

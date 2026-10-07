@@ -66,8 +66,9 @@ buffered, so progressive streaming hydration would need a transport change.
 
 For the real WebView smoke check, start the binary with a loopback-only
 WebView2 DevTools port, then run `npm run smoke:webview -- --port 9333` from
-`apps/desktop/ui`. The DevTools switch is test-only. Hosted CI remains inactive
-until a human explicitly enables it.
+`apps/desktop/ui`. The DevTools switch is test-only. The hosted WebView smoke
+matrix remains inactive; the manual unsigned Windows packaging workflow is
+described in [`ci/README.md`](../../ci/README.md).
 The localization check temporarily expands the Traffic heading eightfold at
 200% DPI and restores the original text immediately after measuring it.
 

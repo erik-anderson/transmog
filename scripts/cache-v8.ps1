@@ -16,9 +16,13 @@ $cachePath = Join-Path $cacheDirectory $escapedUrl
 $temporaryDownload = $null
 
 if (-not $ArchivePath) {
-    $temporaryDownload = New-TemporaryFile
-    Invoke-WebRequest -Uri $expectedUrl -OutFile $temporaryDownload.FullName
-    $ArchivePath = $temporaryDownload.FullName
+    if (Test-Path -LiteralPath $cachePath) {
+        $ArchivePath = $cachePath
+    } else {
+        $temporaryDownload = New-TemporaryFile
+        Invoke-WebRequest -Uri $expectedUrl -OutFile $temporaryDownload.FullName
+        $ArchivePath = $temporaryDownload.FullName
+    }
 }
 
 try {
@@ -28,7 +32,9 @@ try {
         throw "rusty_v8 archive SHA-256 mismatch: $actualSha256"
     }
     New-Item -ItemType Directory -Force -Path $cacheDirectory | Out-Null
-    Copy-Item -LiteralPath $resolvedArchive -Destination $cachePath -Force
+    if ($resolvedArchive -ne [System.IO.Path]::GetFullPath($cachePath)) {
+        Copy-Item -LiteralPath $resolvedArchive -Destination $cachePath -Force
+    }
     [pscustomobject]@{
         Version = '150.4.0'
         Sha256 = $actualSha256

@@ -26,8 +26,10 @@ cargo test --locked --workspace --all-features --all-targets
 
 The Linux runner uses a digest-pinned Docker image with Clang, `llvm-ar`, and
 Ninja, mounts the checkout read-only, and keeps Cargo and target data in named
-volumes. Hosted workflow definitions are parked under `ci/github-actions/` and
-remain inactive; see [`ci/README.md`](../ci/README.md).
+volumes. A manually dispatched standard Windows runner now executes the unsigned
+installer's application/host/desktop test gate. The broader hosted workflow
+definitions remain inactive under `ci/github-actions/`; see
+[`ci/README.md`](../ci/README.md).
 
 ## Deterministic coverage
 

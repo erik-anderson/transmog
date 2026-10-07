@@ -1,0 +1,82 @@
+name: Windows unsigned installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      use_cache:
+        description: Reuse dependency downloads after the first cold build
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: windows-unsigned-installer
+  cancel-in-progress: false
+
+jobs:
+  package:
+    # Standard runners are free for public repositories. Keep private runs disabled.
+    if: github.event.repository.private == false
+    runs-on: windows-2025
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      TRANSMOG_CI_USE_CACHE: ${{ inputs.use_cache }}
+
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+          cache: ${{ inputs.use_cache && 'npm' || '' }}
+          cache-dependency-path: apps/desktop/ui/package-lock.json
+
+      - name: Restore dependency downloads
+        if: inputs.use_cache
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: |
+            .tools/downloads
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/.rusty_v8
+          key: windows-installer-downloads-v1-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.ps1', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            windows-installer-downloads-v1-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.ps1', 'rust-toolchain.toml') }}-
+
+      - name: Test and build the unsigned NSIS installer
+        run: ./scripts/ci-windows-installer.ps1
+
+      - name: Upload the unsigned installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: transmog-windows-x64-unsigned-${{ github.run_number }}-${{ github.run_attempt }}
+          path: artifacts/windows-ci/installer/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload build measurements
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-build-measurements-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            artifacts/windows-ci/build-metrics.json
+            artifacts/windows-ci/build-summary.md
+            artifacts/windows-ci/tool-versions.txt
+          if-no-files-found: warn
+          retention-days: 7
