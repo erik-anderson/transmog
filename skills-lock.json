@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "webui-reference": {
+      "source": "microsoft/webui",
+      "sourceType": "github",
+      "skillPath": "ai/SKILL.md",
+      "computedHash": "d8a4d3e7cb4ad6171a5054d65e0577bc7d0a28d8f38003ebbad6f72c7b4d14b8"
+    }
+  }
+}
