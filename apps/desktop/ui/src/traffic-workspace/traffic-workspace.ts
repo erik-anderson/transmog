@@ -274,6 +274,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.queryLoaded = true; this.queryError = ''; this.renderSessionState();
       if (force) this.diagnostic = this.sessionText;
       this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
+      this.$emit('traffic-refreshed');
     } catch (error:unknown) { this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
   }
   async watchSessions():Promise<void> {
@@ -331,6 +332,36 @@ export class TrafficWorkspace extends WorkspaceElement {
     try { await this.liveInspection; } finally { this.liveInspection = null; }
   }
   beginAutoResponseFromSelected():void { if (this.selectedDetail && this.selectedSessionId) this.$emit('autoresponse-request',{sessionId:this.selectedSessionId,detail:this.selectedDetail}); }
+  async revealSession(id:string):Promise<boolean> {
+    window.clearTimeout(this.searchTimer);
+    let revision = ++this.queryRevision;
+    try {
+      const page = await invoke<SessionPage>('query_sessions',{query:{limit:this.pageLimit,sort:this.sort,focusId:id}});
+      if (revision !== this.queryRevision || !this.isConnected) return false;
+      const row = page.sessions.find((session) => session.id === id);
+      if (!row) throw new Error('Source no longer in Traffic.');
+      // Discard live queries started with the old filters while the source page was loading.
+      revision = ++this.queryRevision;
+      const filtered = this.filters.length > 0 || this.searchText.length > 0;
+      this.filters = []; this.searchText = ''; this.searchInput.value = '';
+      this.pageIndex = Math.floor((page.focusOffset ?? 0)/this.pageLimit);
+      this.totalMatched = page.totalMatched; this.displayedMatched = page.totalMatched;
+      this.pageEnd = this.pageIndex*this.pageLimit+page.sessions.length;
+      this.followLatest = false; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0;
+      this.rebuildRows(page.sessions); this.queryLoaded = true; this.queryError = '';
+      this.renderSessionState(); this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
+      await this.inspectSession(row);
+      if (revision !== this.queryRevision || this.selectedSessionId !== id) return true;
+      const element = (this.getRootNode() as ShadowRoot).getElementById('session-'+id);
+      element?.scrollIntoView({block:'nearest'}); element?.focus({preventScroll:true});
+      if (filtered) this.diagnostic = 'Traffic filters cleared to reveal the source request.';
+      return true;
+    } catch (error:unknown) {
+      if (revision !== this.queryRevision || !this.isConnected) return false;
+      this.showNotice('Source unavailable',describeError(error),null,null);
+      return false;
+    }
+  }
   showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
   async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
   replaySelected():void { if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }

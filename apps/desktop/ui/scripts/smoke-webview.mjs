@@ -179,6 +179,9 @@ try {
       const autoResponseMethod = autoResponseEditor?.querySelector('select[name="method"]');
       const requestHeaders = autoResponseEditor?.querySelector('textarea[name="requestHeaders"]')?.closest('label');
       const scratchEditorOpened = autoResponseEditor instanceof HTMLFormElement && !autoResponseEditor.hidden;
+      const responseBody = autoResponseEditor?.querySelector('textarea[name="body"]');
+      const responseBodyRows = responseBody?.rows;
+      const responseBodyResize = responseBody instanceof HTMLTextAreaElement ? getComputedStyle(responseBody).resize : '';
       if (autoResponseMethod instanceof HTMLSelectElement) {
         autoResponseMethod.value = 'POST';
         autoResponseMethod.dispatchEvent(new Event('change', { bubbles: true }));
@@ -232,6 +235,8 @@ try {
           exactUrlFields: automation?.querySelectorAll('input[name="url"]').length ?? 0,
           firstMatchExplained: /first enabled match wins/i.test(automation?.textContent ?? ''),
           scratchEditorOpened,
+          responseBodyRows,
+          responseBodyResize,
           postHeaderFilterVisible,
           scratchEditorClosed: autoResponseEditor instanceof HTMLFormElement && autoResponseEditor.hidden,
           internalAutomationFields: automation?.querySelectorAll('input[name="ruleId"], input[name="revision"], input[name="assetId"], input[name="assetRevision"]').length ?? 0,
@@ -283,6 +288,7 @@ try {
   assert(result.ux.automationExpanders >= 1 && result.ux.autoResponseWorkspace === 1
     && result.ux.autoResponseDropZone === 1 && result.ux.exactUrlFields === 1
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
+    && result.ux.responseBodyRows === 12 && result.ux.responseBodyResize === 'vertical'
     && result.ux.postHeaderFilterVisible && result.ux.scratchEditorClosed
     && result.ux.internalAutomationFields === 0,
     `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);

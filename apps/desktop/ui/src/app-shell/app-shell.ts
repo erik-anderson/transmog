@@ -147,6 +147,14 @@ export class AppShell extends WebUIElement {
   async onAutoResponse(event: CustomEvent<SelectedResponse>): Promise<void> {
     if (await this.activateView('automation')) await this.automation.populateCapturedAutoResponse(event.detail.sessionId, event.detail.detail);
   }
+  async onSourceTraffic(event: CustomEvent<string>): Promise<void> {
+    if (await this.activateView('traffic')) {
+      if (!await this.traffic.revealSession(event.detail)) await this.automation.refreshSourceAvailability();
+    }
+  }
+  onTrafficRefreshed(): void {
+    if (this.activeView === 'automation') void this.automation.refreshSourceAvailability();
+  }
   async onMatchedRule(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
   }

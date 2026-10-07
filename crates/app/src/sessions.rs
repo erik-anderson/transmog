@@ -121,6 +121,9 @@ pub struct SessionQueryInput {
     /// Offset into the sorted matching read model.
     #[serde(default)]
     pub offset: Option<usize>,
+    /// Reveal the bounded page containing this retained exchange after sorting.
+    #[serde(default)]
+    pub focus_id: Option<String>,
 }
 
 /// One bounded row in the live-session browser.
@@ -213,6 +216,8 @@ pub struct SessionPage {
     pub total_matched: usize,
     /// Total retained metadata rows.
     pub retained_count: usize,
+    /// Effective offset when revealing a particular exchange.
+    pub focus_offset: Option<usize>,
 }
 
 /// Small lossy signal that tells presentation layers to query again.
@@ -269,6 +274,7 @@ pub(crate) fn query_sessions(
         || input.search.is_some()
         || !input.filters.is_empty()
         || input.offset.is_some()
+        || input.focus_id.is_some()
     {
         return query_sorted(service, &input);
     }
@@ -341,6 +347,7 @@ pub(crate) fn query_sessions(
     Ok(SessionPage {
         total_matched: sessions.len(),
         retained_count: sessions.len(),
+        focus_offset: None,
         sessions,
         next_cursor,
         evicted: counters.evicted,
@@ -559,11 +566,27 @@ fn query_sorted(
         sort_rows(&mut rows, sort);
     }
     let total_matched = rows.len();
+    let focus_offset = input
+        .focus_id
+        .as_ref()
+        .map(|id| {
+            rows.iter()
+                .position(|row| &row.id == id)
+                .map(|index| index / limit * limit)
+                .ok_or_else(|| {
+                    AppError::new(
+                        ErrorCategory::Unavailable,
+                        "source is no longer in the matching retained traffic",
+                        false,
+                    )
+                })
+        })
+        .transpose()?;
     let counters = service.catalog().counters();
     Ok(SessionPage {
         sessions: rows
             .into_iter()
-            .skip(input.offset.unwrap_or(0))
+            .skip(focus_offset.unwrap_or_else(|| input.offset.unwrap_or(0)))
             .take(limit)
             .collect(),
         next_cursor: None,
@@ -572,6 +595,7 @@ fn query_sorted(
         subscriber_lag: counters.subscriber_lag,
         total_matched,
         retained_count,
+        focus_offset,
     })
 }
 
@@ -961,6 +985,49 @@ mod tests {
         assert_eq!(page.total_matched, 1);
         assert_eq!(page.retained_count, 300);
         assert_eq!(page.sessions[0].path, "/299");
+    }
+
+    #[test]
+    fn focuses_a_retained_exchange_in_the_correct_sorted_page() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=30 {
+            service.catalog().apply(started(id));
+        }
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let query = SessionQueryInput {
+            limit: Some(10),
+            focus_id: Some(format!("{:032x}", 3)),
+            sort: Some(SessionSort {
+                column: TrafficColumn::Url,
+                direction: SortDirection::Ascending,
+            }),
+            ..Default::default()
+        };
+        let page = query_sessions(&service, &registry, query.clone()).unwrap();
+        assert!(page.sessions.iter().any(|row| row.path == "/3"));
+        assert_eq!(page.focus_offset, Some(20));
+        assert_eq!(page.sessions.len(), 10);
+        let missing = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                focus_id: Some(format!("{:032x}", 99)),
+                ..query.clone()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(missing.category, ErrorCategory::Unavailable);
+        let filtered = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                search: Some("/29".into()),
+                ..query
+            },
+        )
+        .unwrap_err();
+        assert_eq!(filtered.category, ErrorCategory::Unavailable);
     }
 
     #[test]

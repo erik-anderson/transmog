@@ -442,6 +442,183 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn captured_autoresponse_survives_source_loss_and_replays_encoded_edits() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        async fn request(listener: String, url: &str, length: usize) -> (String, Vec<u8>) {
+            let mut client = tokio::net::TcpStream::connect(listener).await.unwrap();
+            client
+                .write_all(
+                    format!(
+                        "GET {url} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                        url.strip_prefix("http://")
+                            .unwrap()
+                            .split('/')
+                            .next()
+                            .unwrap()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let head = read_http_head(&mut client).await;
+                let mut body = vec![0; length];
+                client.read_exact(&mut body).await.unwrap();
+                (String::from_utf8(head).unwrap(), body)
+            })
+            .await
+            .unwrap()
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let config = crate::AppConfig {
+            body_store: Some(crate::BodyStoreConfig::product_default(
+                root.path().join("bodies"),
+            )),
+            response_asset_root: Some(root.path().join("assets")),
+            automation_path: Some(root.path().join("automation")),
+            ..crate::AppConfig::default()
+        };
+        let application = crate::Application::new(config.clone()).unwrap();
+        let ca = CaCreateRequest {
+            certificate_path: root.path().join("ca.pem"),
+            private_key_path: root.path().join("ca.key"),
+            common_name: "Autoresponse test CA".to_owned(),
+            validity_days: 2,
+        };
+        create_ca(ca.clone()).await.unwrap();
+        let start = ProxyStartRequest {
+            ca_certificate_path: ca.certificate_path,
+            ca_private_key_path: ca.private_key_path,
+            route: ProxyRoute::Http1,
+            ..ProxyStartRequest::default()
+        };
+        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/account", origin.local_addr().unwrap());
+        let encoded =
+            crate::inspector::encode_content(&["gzip".to_owned()], b"original response".to_vec())
+                .await
+                .unwrap();
+        let origin_body = encoded.clone();
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            read_http_head(&mut socket).await;
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", origin_body.len()).as_bytes()).await.unwrap();
+            socket.write_all(&origin_body).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+        application.start_proxy(start.clone(), None).await.unwrap();
+        let (_, original) =
+            request(application.status().listener.unwrap(), &url, encoded.len()).await;
+        assert_eq!(original, encoded);
+        origin_task.await.unwrap(); // The origin is closed for every subsequent request.
+        application.shutdown().await.unwrap();
+        let source_id = application
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions[0]
+            .id
+            .clone();
+        let input = crate::SessionResponseAsset {
+            id: "captured".to_owned(),
+            revision: 1,
+            exchange_id: source_id.clone(),
+            boundary: "client-response".to_owned(),
+            decoded_body: None,
+            preserve_content_encoding: true,
+        };
+        let asset = application
+            .create_response_asset_from_session(input.clone())
+            .await
+            .unwrap();
+        let mut rule = transmog_automation::Rule {
+            id: "captured-rule".to_owned(),
+            display_name: Some("Captured account".to_owned()),
+            enabled: true,
+            revision: 1,
+            priority: -1_000_000,
+            matcher: transmog_automation::RuleMatcher {
+                path_prefix: Some("/account".to_owned()),
+                ..Default::default()
+            },
+            request: transmog_automation::RequestActions {
+                response_asset: Some(asset.asset_ref()),
+                ..Default::default()
+            },
+            response: transmog_automation::ResponseActions::default(),
+        };
+        let candidate = application
+            .validate_automation(crate::AutomationRuleSet {
+                rules: vec![rule.clone()],
+                ..Default::default()
+            })
+            .unwrap();
+        application
+            .activate_automation(&candidate.candidate_id)
+            .unwrap();
+        application.start_proxy(start.clone(), None).await.unwrap();
+        let (head, replayed) =
+            request(application.status().listener.unwrap(), &url, encoded.len()).await;
+        assert!(head.starts_with("HTTP/1.1 200"));
+        assert_eq!(replayed, encoded);
+        application.shutdown().await.unwrap();
+        let edited = application
+            .create_response_asset_from_session(crate::SessionResponseAsset {
+                id: "edited".to_owned(),
+                decoded_body: Some(b"edited response".to_vec()),
+                ..input
+            })
+            .await
+            .unwrap();
+        rule.revision += 1;
+        rule.request.response_asset = Some(edited.asset_ref());
+        let candidate = application
+            .validate_automation(crate::AutomationRuleSet {
+                rules: vec![rule],
+                ..Default::default()
+            })
+            .unwrap();
+        application
+            .activate_automation(&candidate.candidate_id)
+            .unwrap();
+        drop(application);
+
+        let restarted = crate::Application::new(config).unwrap();
+        assert!(restarted.session_detail(&source_id).is_err());
+        assert_eq!(restarted.response_assets().len(), 2);
+        restarted.start_proxy(start, None).await.unwrap();
+        let (head, _) = request(
+            restarted.status().listener.unwrap(),
+            &url,
+            usize::try_from(edited.body_bytes).unwrap(),
+        )
+        .await;
+        assert!(head.starts_with("HTTP/1.1 200"));
+        assert!(head.to_ascii_lowercase().contains("content-encoding: gzip"));
+        restarted.shutdown().await.unwrap();
+        let row = &restarted
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions[0];
+        let detail = restarted.session_detail(&row.id).unwrap();
+        assert_eq!(detail.auto_response.unwrap().rule_id, "captured-rule");
+        let inspection = restarted
+            .inspect_body(crate::BodyInspectionRequest {
+                session_id: row.id.clone(),
+                boundary: "client-response".to_owned(),
+                representation: crate::BodyRepresentation::OriginalText,
+                decode_content: true,
+                offset: 0,
+                max_bytes: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(inspection.display, "edited response");
+    }
+
+    #[tokio::test]
     async fn start_rejects_remote_listener_without_acknowledgement() {
         let service =
             ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();

@@ -24,8 +24,8 @@
             <p>Serve a saved response without contacting the origin. Rules are checked from top to bottom; the first enabled match wins.</p>
           </div>
           <div class="actions">
-            <button  type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{!selection.reusable}}">Use selected response</button>
-            <button type="button" class="secondary" @click="{beginScratchAutoResponse()}">Create from scratch</button>
+            <button type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{!selection.reusable || savingAutoResponse}}">Use selected response</button>
+            <button w-ref="{newResponseButton}" type="button" class="secondary" @click="{beginScratchAutoResponse()}" ?disabled="{{savingAutoResponse}}">Create from scratch</button>
           </div>
         </header>
         <div @dragover="{allowSessionDrop(e)}" @drop="{dropSession(e)}" class="auto-response-drop-zone" tabindex="0">
@@ -36,12 +36,14 @@
     <for each="rule in rules">
       <article key="{{rule.id}}" id="rule-{{rule.id}}" class="auto-response-rule" tabindex="-1" draggable="true" data-rule-id="{{rule.id}}" ?data-disabled="{{!rule.enabled}}" ?data-matched="{{rule.id == highlightedRuleId}}" @dragstart="{dragRule(rule.id, e)}" @dragover="{allowRuleDrop(rule.id, e)}" @drop="{dropRule(rule.id, e)}" @dragend="{finishRuleDrag()}">
         <span class="drag-handle" title="Drag to change first-match order">⋮⋮</span><span class="rule-order">{{rule.order}}</span>
-        <div class="rule-description"><strong>{{rule.name}}</strong><small>{{rule.criteria}}</small></div><span class="rule-state">{{rule.state}}</span>
-        <div class="rule-actions"><button type="button" class="secondary compact-button" @click="{editAutoResponse(rule)}">Edit criteria</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'toggle')}">{{rule.toggleLabel}}</button><button type="button" class="secondary compact-button" ?disabled="{{rule.first}}" @click="{mutateAutoResponse(rule.id, 'up')}">↑</button><button type="button" class="secondary compact-button" ?disabled="{{rule.last}}" @click="{mutateAutoResponse(rule.id, 'down')}">↓</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'remove')}">Remove</button></div>
+        <div class="rule-description"><strong title="{{rule.name}}">{{rule.name}}</strong><details class="rule-criteria"><summary title="{{rule.criteria}}">{{rule.criteria}}</summary><p>{{rule.criteria}}</p></details></div><span class="rule-state">{{rule.state}}</span>
+        <div class="rule-actions"><button type="button" class="secondary compact-button" @click="{editAutoResponse(rule)}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">Edit criteria</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'toggle')}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">{{rule.toggleLabel}}</button><button type="button" class="secondary compact-button" aria-label="Move {{rule.name}} up" title="Move up" ?disabled="{{rule.first || savingAutoResponse || changingAutoResponse}}" @click="{mutateAutoResponse(rule.id, 'up')}">↑</button><button type="button" class="secondary compact-button" aria-label="Move {{rule.name}} down" title="Move down" ?disabled="{{rule.last || savingAutoResponse || changingAutoResponse}}" @click="{mutateAutoResponse(rule.id, 'down')}">↓</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'remove')}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">Remove</button></div>
       </article>
     </for>
   </div>
-        <form w-ref="{autoResponseForm}" @submit="{saveAutoResponse(e)}" class="auto-response-editor" ?hidden="{{editorHidden}}">
+        <div class="auto-response-undo" ?hidden="{{!undoRemoveText}}"><span role="status">{{undoRemoveText}}</span><button w-ref="{undoRemoveButton}" type="button" class="secondary compact-button" @click="{undoRemoveAutoResponse()}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">Undo removal</button></div>
+        <form w-ref="{autoResponseForm}" @submit="{saveAutoResponse(e)}" class="auto-response-editor" ?hidden="{{editorHidden}}" aria-busy="{{savingAutoResponse}}">
+          <fieldset class="auto-response-fields" aria-label="Auto-response rule" ?disabled="{{savingAutoResponse}}">
           <header>
             <div><span class="section-label">Rule editor</span><h3>{{editorTitle}}</h3></div>
             <button type="button" class="secondary compact-button" @click="{cancelAutoResponseEdit()}">Cancel</button>
@@ -49,23 +51,27 @@
           <label>Rule name <input name="name" maxlength="128" required placeholder="Offline account response"></label>
           <label>Method <select w-ref="{autoResponseMethod}" name="method" @change="{updateAutoResponseHeaderFilterState()}"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
           <label class="wide-field">Exact URL <input name="url" type="url" maxlength="8192" required placeholder="https://example.test/api/account"></label>
-          <label ?hidden="{{requestHeadersHidden}}" class="wide-field">Request headers that must match (POST only; one <code>Name: value</code> per line)<textarea name="requestHeaders" ?disabled="{{requestHeadersHidden}}" placeholder="Content-Type: application/json"></textarea></label>
+          <label ?hidden="{{requestHeadersHidden}}" class="wide-field"><span>Request headers that must match <small>(POST only; one <code>Name: value</code> per line)</small></span><textarea name="requestHeaders" ?disabled="{{requestHeadersHidden}}" placeholder="Content-Type: application/json" @input="{clearHeaderError('requestHeaders')}" aria-describedby="auto-request-headers-error"></textarea><span id="auto-request-headers-error" class="field-error" ?hidden="{{!requestHeadersError}}">{{requestHeadersError}}</span></label>
           <section class="auto-response-source wide-field">
             <strong>Response source</strong>
+            <if condition="sourceSessionId"><p><if condition="sourceAvailable"><a href="#traffic" title="Show original request in Traffic" @click="{showSourceTraffic(e)}">{{sourceLabel}}</a></if><if condition="!sourceAvailable"><span>{{sourceLabel}}</span></if></p><p aria-live="polite" ?hidden="{{!sourceAvailabilityText}}">{{sourceAvailabilityText}}</p></if>
             <p>{{sourceText}}</p>
           </section>
           <label ?hidden="{{responseFieldsHidden}}">Response status <input w-ref="{autoResponseStatus}" ?readonly="{{responseReadOnly}}" name="status" type="number" min="200" max="599" value="200" required></label>
           <label ?hidden="{{responseFieldsHidden}}">Content type <input w-ref="{autoResponseMediaType}" ?readonly="{{responseReadOnly}}" name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
-          <label ?hidden="{{responseHeadersHidden}}" class="wide-field">Response headers (one <code>Name: value</code> per line)<textarea name="responseHeaders"></textarea></label>
-          <label class="wide-field" ?hidden="{{responseFieldsHidden}}">Response body <textarea w-ref="{autoResponseBody}" ?readonly="{{bodyReadOnly}}" name="body" maxlength="16777216"></textarea></label>
+          <label ?hidden="{{responseHeadersHidden}}" class="wide-field"><span>Response headers <small>(one <code>Name: value</code> per line)</small></span><textarea name="responseHeaders" @input="{clearHeaderError('responseHeaders')}" aria-describedby="auto-response-headers-error"></textarea><span id="auto-response-headers-error" class="field-error" ?hidden="{{!responseHeadersError}}">{{responseHeadersError}}</span></label>
+          <label class="wide-field" ?hidden="{{bodyHidden}}"><span>Response body <if condition="bodyReadOnly"><small>(read-only)</small></if></span><textarea w-ref="{autoResponseBody}" ?readonly="{{bodyReadOnly}}" name="body" rows="12" maxlength="16777216" aria-describedby="auto-response-body-help"></textarea><small id="auto-response-body-help" aria-live="polite">{{bodyStatusText}}</small></label>
           <div  class="captured-response-options wide-field" ?hidden="{{capturedOptionsHidden}}">
-            <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Replace the captured response body with the decoded text above</label>
-            <label><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Re-encode edits using the captured response’s original content encoding</label>
+            <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Edit response body</label>
+            <label ?hidden="{{encodingOptionsHidden}}"><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Keep original compression</label>
           </div>
-          <div class="actions wide-field">
-            <button type="submit">Save rule</button>
+          <div class="auto-response-editor-actions wide-field">
+            <output class="field-error" aria-live="polite" ?hidden="{{!autoResponseError}}">{{autoResponseError}}</output>
+            <div class="actions"><button type="submit" ?disabled="{{changingAutoResponse}}"><if condition="savingAutoResponse">Saving…</if><if condition="!savingAutoResponse">Save rule</if></button>
             <button type="button" class="secondary" @click="{cancelAutoResponseEdit()}">Cancel</button>
+            </div>
           </div>
+          </fieldset>
         </form>
       </section>
     </div>

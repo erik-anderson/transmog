@@ -51,6 +51,7 @@ export interface SessionPage {
   subscriberLag: number;
   totalMatched: number;
   retainedCount: number;
+  focusOffset: number | null;
 }
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
@@ -194,7 +195,10 @@ export interface AutomationStatus {
   candidateCount: number;
   historyCount: number;
 }
-export interface ResponseAsset { id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null; }
+export interface ResponseAsset {
+  id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null;
+  provenance: {kind: 'authored' | 'imported'} | {kind: 'session'; exchange_id: string; boundary: string};
+}
 export interface CapturedAutoResponseSource {
   kind: 'captured';
   sessionId: string;

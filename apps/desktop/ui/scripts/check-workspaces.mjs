@@ -26,7 +26,7 @@ const requests = [];
 page.on('pageerror', (error) => errors.push(error.message));
 page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
 page.on('request', (request) => requests.push(new URL(request.url()).pathname));
-await page.route('http://workspace.test/**', async (route) => {
+await page.route('https://workspace.test/**', async (route) => {
   const path = new URL(route.request().url()).pathname;
   if (path === '/') {
     await route.fulfill({ contentType: 'text/html', body: html, headers: { 'Content-Security-Policy': "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco" } });
@@ -50,7 +50,7 @@ await page.addInitScript((workspace) => {
   window.__TAURI_INTERNALS__ = {
     transformCallback(callback) { const id = ++callbackId; callbacks.set(id, callback); return id; },
     unregisterCallback(id) { callbacks.delete(id); },
-    convertFileSrc(path) { return 'http://workspace.test/' + path; },
+    convertFileSrc(path) { return 'https://workspace.test/' + path; },
     async invoke(command, args) {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
@@ -64,15 +64,27 @@ await page.addInitScript((workspace) => {
         case 'watch_sessions': state.channel = args.onEvent; return;
         case 'query_sessions': {
           if (state.queryError) throw new Error('Fixture query failure');
+          if (state.deferFocus && args.query.focusId) { state.deferFocus=false; state.focusPending=true; await new Promise(resolve=>state.releaseFocus=resolve); }
+          if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
           let rows = structuredClone(state.sessions).filter(row => !args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase()));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
-          const {sort,offset=0,limit=100} = args.query;
+          const {sort,limit=100} = args.query;
+          let offset=args.query.offset??0;
           if (sort) rows.sort((a,b) => {const left=key(a,sort.column),right=key(b,sort.column);const result=typeof left==='number'?left-right:String(left).localeCompare(String(right));return (sort.direction==='descending'?-result:result)||a.id.localeCompare(b.id);});
-          return {sessions:rows.slice(offset,offset+limit),totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
+          if (args.query.focusId) {
+            const index=rows.findIndex(row=>row.id===args.query.focusId);
+            if (index<0) throw new Error('Source no longer in Traffic.');
+            offset=Math.floor(index/limit)*limit;
+          }
+          return {sessions:rows.slice(offset,offset+limit),focusOffset:args.query.focusId?offset:null,totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
         }
-        case 'session_detail': if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100)); return detail(args.id);
+        case 'session_detail':
+          if (state.deferDetail===args.id) { state.detailPending=true; await new Promise(resolve=>state.releaseDetail=resolve); }
+          if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
+          if (state.evictedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
+          return detail(args.id);
         case 'save_response_body': {
           state.lastSave=structuredClone(args);
           await new Promise(resolve=>setTimeout(resolve,80));
@@ -80,6 +92,7 @@ await page.addInitScript((workspace) => {
           return state.saveCancelled ? null : {fileName:'original.webp',bytes:4};
         }
         case 'inspect_body': {
+          if (state.deferBody===args.request.sessionId && args.request.representation==='original-text') { state.bodyPending=true; await new Promise(resolve=>state.releaseBody=resolve); }
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
           const metadata=detail(args.request.sessionId).storedBodies[0];
           if (state.bodyOverride) Object.assign(metadata,state.bodyOverride);
@@ -88,7 +101,21 @@ await page.addInitScript((workspace) => {
           const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':'original-text'):args.request.representation;
           return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
-        case 'automation_status': return { generation: 0, rules: [], candidateCount: 0, historyCount: 0 };
+        case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], candidateCount: 0, historyCount: 0 });
+        case 'response_assets': return structuredClone(state.assets??[]);
+        case 'create_response_asset':
+        case 'create_response_asset_from_session': {
+          if (state.assetDelay) await new Promise(resolve=>setTimeout(resolve,state.assetDelay));
+          if (state.assetError) throw new Error('Fixture asset write failed');
+          const input=args.input;
+          const asset={id:input.id,revision:input.revision,status:input.status??200,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
+          (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
+          return asset;
+        }
+        case 'validate_automation': state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
+        case 'activate_automation':
+          state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
+          return structuredClone(state.automation);
         case 'script_declarations': return '';
         case 'script_status': return { generation: 0, active: [], saved: [], candidateCount: 0, historyCount: 0 };
         case 'breakpoint_status': return { enabled: true, paused: structuredClone(state.paused) };
@@ -106,7 +133,7 @@ const view = async (name) => {
   await page.locator('#' + name).waitFor({ state: 'visible' });
 };
 try {
-  await page.goto('http://workspace.test/');
+  await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded 4 of 4 exchanges.'));
   assert.match(await page.locator('.session-status').textContent(),/Proxy stopped/,'Traffic banner claims live capture while the proxy is stopped');
   assert.match(await page.locator('.list-footer').textContent(),/Showing captured traffic/);
@@ -359,7 +386,160 @@ try {
   await page.getByRole('button', { name: 'Create auto-response', exact: true }).click();
   await page.locator('#automation').waitFor({ state: 'visible' });
   await page.locator('.auto-response-editor').waitFor({ state: 'visible' });
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.auto-response-source p').textContent.includes('Decoded editing will preserve utf-8'));
+  await page.locator('#auto-response-body-help').getByText(/text uses utf-8/).waitFor({state:'visible'});
+  const autoEditor=page.locator('.auto-response-editor');
+  const sourceLink=page.locator('.auto-response-source a');
+  const autoField=name=>autoEditor.locator('[name="'+name+'"]');
+  assert.equal(await autoField('body').getAttribute('rows'),'12');
+  assert.equal(await autoField('body').evaluate(body=>getComputedStyle(body).resize),'vertical');
+  assert.match(await autoField('body').evaluate(body=>getComputedStyle(body).fontFamily),/Mono|Consolas/);
+  assert.equal(await autoField('name').evaluate(input=>input.getRootNode().activeElement===input),true,'Rule editor did not receive focus');
+  await sourceLink.getByText('GET example.test/second',{exact:true}).waitFor({state:'visible'});
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.waitFor({state:'hidden'});
+  const capturedRuleId=await page.locator('.auto-response-rule').getAttribute('data-rule-id');
+  const capturedRule=page.locator('#rule-'+capturedRuleId);
+  await capturedRule.getByRole('button',{name:'Disable',exact:true}).click();
+  await capturedRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
+  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await sourceLink.waitFor({state:'visible'});
+  assert.equal(await autoField('status').inputValue(),'200','Saved response metadata was hidden or lost');
+  assert.equal(await autoField('body').isVisible(),false,'Criteria editor implies saved response bytes can be changed');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.waitFor({state:'hidden'});
+  assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
+  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await sourceLink.waitFor({state:'visible'});
+
+  // Reveal a source on a later page even when current filters exclude it.
+  const originalSourceRows=await page.evaluate(async()=>{
+    const state=globalThis.__workspaceFixture;
+    const rows=structuredClone(state.sessions);
+    for(let index=0;index<130;index++) state.sessions.push({...rows[0],id:'source-page-'+index,path:'/filler/'+index,url:'http://example.test/filler/'+index,startedAt:2000+index});
+    const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');
+    traffic.pageSize='10'; traffic.sort={column:'started-at',direction:'descending'};
+    traffic.filters=[{column:'status',operator:'equals',value:'304'}]; traffic.searchText='cached'; traffic.searchInput.value='cached';
+    await traffic.refreshSessions(undefined,true);
+    state.deferFocus=true;
+    return rows;
+  });
+  await sourceLink.click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.focusPending);
+  await page.evaluate(()=>{
+    const state=globalThis.__workspaceFixture;state.deferRefresh=true;
+    globalThis.__pendingRefresh=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);
+  });
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.refreshPending);
+  await page.evaluate(()=>globalThis.__workspaceFixture.releaseFocus());
+  await page.locator('#traffic').waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedSessionId==='second' && document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').pageIndex>0);
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.releaseRefresh();await globalThis.__pendingRefresh;});
+  assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'),'true');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched),originalSourceRows.length+130,'A late filtered refresh replaced the source page');
+  assert.deepEqual(await page.evaluate(()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');return {filters:traffic.filters,search:traffic.searchText};}),{filters:[],search:''});
+  await view('automation');
+  await sourceLink.waitFor({state:'visible'});
+  await page.evaluate(async rows=>{
+    const state=globalThis.__workspaceFixture;
+    state.sessions=rows.filter(row=>row.id!=='second'); state.evictedIds=['second'];
+    await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);
+  },originalSourceRows);
+  await sourceLink.waitFor({state:'detached'});
+  await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('.auto-response-source').textContent(),/Saved response/,'Eviction removed the durable response metadata');
+  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
+  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await sourceLink.count(),0,'Reopening an evicted source restored a broken link');
+  await page.evaluate(async rows=>{
+    const state=globalThis.__workspaceFixture;state.sessions=rows;state.evictedIds=[];
+    const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';
+    await traffic.refreshSessions(undefined,true);
+  },originalSourceRows);
+  await sourceLink.waitFor({state:'visible'});
+  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
+
+  // Neither a slow text preview nor a slow dropped-session lookup can replace a newer draft.
+  await page.evaluate(()=>{
+    const state=globalThis.__workspaceFixture;state.deferBody='second';
+    globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSelected();
+  });
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.bodyPending);
+  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await autoField('body').fill('New scratch draft');
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.deferBody=null;globalThis.__workspaceFixture.releaseBody();await globalThis.__pendingAutoResponse;});
+  assert.equal(await autoField('body').inputValue(),'New scratch draft','Late captured body overwrote a newer draft');
+  assert.equal(await autoField('body').evaluate(body=>body.readOnly),false);
+  await page.evaluate(()=>{
+    const state=globalThis.__workspaceFixture;state.deferDetail='first';
+    globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSessionId('first');
+  });
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.detailPending);
+  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await autoField('name').fill('Newer lookup draft');
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.deferDetail=null;globalThis.__workspaceFixture.releaseDetail();await globalThis.__pendingAutoResponse;});
+  assert.equal(await autoField('name').inputValue(),'Newer lookup draft','Late dropped-session lookup replaced a newer editor');
+
+  await autoField('name').fill('Authored response');
+  await autoField('url').fill('http://example.test/authored');
+  await autoField('method').selectOption('POST');
+  await autoField('requestHeaders').fill('Content-Type: application/json');
+  await autoField('method').selectOption('GET');
+  await autoField('method').selectOption('POST');
+  assert.equal(await autoField('requestHeaders').inputValue(),'Content-Type: application/json','Method switch discarded the header draft');
+  const assetsBeforeInvalid=await page.evaluate(()=>globalThis.__workspaceFixture.assets.length);
+  await autoField('requestHeaders').fill('Not a header');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await page.locator('#auto-request-headers-error').waitFor({state:'visible'});
+  assert.equal(await autoField('requestHeaders').evaluate(input=>input.validity.customError),true);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid,'Invalid matcher created an unused response asset');
+  await autoField('requestHeaders').fill('Content-Type: application/json');
+  await autoField('responseHeaders').fill('Also not a header');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await page.locator('#auto-response-headers-error').waitFor({state:'visible'});
+  await autoField('responseHeaders').fill('X-Fixture: yes');
+  await autoField('body').fill('Authored response body');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=true;});
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.getByText('Fixture asset write failed',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await autoField('body').inputValue(),'Authored response body','Failed save lost the body draft');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=false;globalThis.__workspaceFixture.assetDelay=400;});
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click({clickCount:2});
+  await autoEditor.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isEnabled(),false,'Creation remains available during a save');
+  assert.equal(await autoField('body').isEnabled(),false,'Body can change during a save');
+  await autoEditor.waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.displayName==='Authored response').length),1,'Double submit created duplicate rules');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid+1);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
+  const authoredRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
+  const authoredRule=page.locator('#rule-'+authoredRuleId);
+  await authoredRule.getByRole('button',{name:'Move Authored response down',exact:true}).click();
+  await page.waitForFunction(id=>document.querySelector('app-shell').shadowRoot.querySelector('.auto-response-rule').dataset.ruleId!==id,authoredRuleId);
+  assert.equal(await authoredRule.locator('.rule-order').textContent(),'2');
+  const orderBeforeRemove=await page.locator('.auto-response-rule').evaluateAll(rules=>rules.map(rule=>rule.dataset.ruleId));
+  await capturedRule.getByRole('button',{name:'Remove',exact:true}).click();
+  await page.getByRole('button',{name:'Undo removal',exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.getByRole('button',{name:'Undo removal',exact:true}).evaluate(button=>button.getRootNode().activeElement===button),true,'Removal left keyboard focus on a deleted control');
+  await page.getByRole('button',{name:'Undo removal',exact:true}).click();
+  await capturedRule.waitFor({state:'visible'});
+  assert.deepEqual(await page.locator('.auto-response-rule').evaluateAll(rules=>rules.map(rule=>rule.dataset.ruleId)),orderBeforeRemove,'Undo changed first-match order');
+  assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Undo changed the rule enabled state');
+  await capturedRule.locator('.rule-criteria summary').click();
+  assert.equal(await capturedRule.locator('.rule-criteria p').isVisible(),true);
+
+  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await autoField('body').fill(Array.from({length:30},(_,index)=>'line '+(index+1)).join('\n'));
+  await page.setViewportSize({width:800,height:600});
+  await autoEditor.evaluate(form=>form.scrollIntoView({block:'start'}));
+  const savePosition=await autoEditor.getByRole('button',{name:'Save rule',exact:true}).boundingBox();
+  assert.ok(savePosition.y>=50 && savePosition.y+savePosition.height<580,'Sticky save actions are outside the small window');
+  assert.ok((await autoField('body').boundingBox()).height>=240,'Twelve-line body editor has insufficient height');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-small.png')});
+  await page.emulateMedia({colorScheme:'dark'});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-dark.png')});
+  await page.emulateMedia({colorScheme:'light'});
+  await page.setViewportSize({width:1280,height:800});
   await page.locator('.auto-response-editor').getByRole('button', { name: 'Cancel', exact: true }).first().click();
   await page.getByRole('button', { name: 'Create from scratch', exact: true }).click();
   await page.locator('.auto-response-editor input[name="name"]').fill('Preserved draft');

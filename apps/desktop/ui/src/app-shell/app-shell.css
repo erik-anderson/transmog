@@ -215,18 +215,28 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .drag-handle { color: var(--muted); cursor: grab; user-select: none; }
 .rule-order { display: grid; place-items: center; width: 1.55rem; height: 1.55rem; border-radius: 50%; color: var(--accent-strong); background: var(--accent-soft); font-size: .68rem; font-weight: 800; }
 .rule-description { display: grid; min-width: 0; gap: .15rem; }
-.rule-description strong, .rule-description small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rule-description small { color: var(--muted); font: .68rem "Cascadia Mono", Consolas, monospace; }
+.rule-description strong, .rule-criteria summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-criteria { min-width: 0; color: var(--muted); font: .68rem "Cascadia Mono", Consolas, monospace; }
+.rule-criteria summary { cursor: pointer; }
+.rule-criteria p { margin: .4rem 0 0; overflow-wrap: anywhere; font: inherit; }
 .rule-state { color: var(--muted); font-size: .68rem; font-weight: 700; }
 .rule-actions { display: flex; gap: .3rem; }
 .rule-actions button { padding-inline: .45rem; }
-.auto-response-editor { max-width: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.auto-response-editor > header { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; }
+.auto-response-editor { max-width: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.auto-response-fields { display: grid; gap: .75rem; min-width: 0; margin: 0; padding: 0; border: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.auto-response-fields > header { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 1rem; }
 .auto-response-editor h3 { margin: 0; font-size: 1rem; }
 .auto-response-editor .section-label { display: block; margin-bottom: .15rem; }
 .wide-field { grid-column: 1 / -1; }
 .auto-response-source { padding: .65rem; border-left: .2rem solid var(--accent); background: var(--accent-soft); }
 .auto-response-source p { margin: .2rem 0 0; font-size: .74rem; }
+.auto-response-source a { color: var(--accent-strong); text-decoration: underline; overflow-wrap: anywhere; }
+.auto-response-fields textarea { resize: vertical; font: .8rem/1.5 "Cascadia Mono", Consolas, monospace; }
+.auto-response-fields [readonly] { background: var(--panel-subtle); }
+.auto-response-fields small { font-size: .74rem; font-weight: 400; }
+.auto-response-editor-actions { position: sticky; bottom: -.1rem; z-index: 1; display: grid; gap: .5rem; padding: .65rem 0; border-top: 1px solid var(--line); background: var(--panel); }
+.field-error { color: var(--danger); font-size: .78rem; overflow-wrap: anywhere; }
+.auto-response-undo { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .65rem 0 0; font-size: .78rem; }
 .captured-response-options { display: flex; flex-wrap: wrap; gap: 1rem; }
 .paused-card .monaco-editor-host { min-height: 12rem; margin: .6rem 0; }
 .phase-form { display: flex; flex-wrap: wrap; align-items: end; max-width: none; }
