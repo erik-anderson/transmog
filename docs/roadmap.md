@@ -47,9 +47,6 @@ are checked in.
 - Add macOS caller-process attribution only if it can use a supported and
   testable operating-system contract; the available `libproc` socket APIs are
   currently private and subject to change.
-- Observe the first protected Azure Artifact Signing and provenance-attestation
-  run and record its hosted evidence. The manual release workflow creates signed
-  drafts with profile-scoped OIDC; the unsigned development workflow remains.
 - Complete signed Windows release qualification on a clean machine for each
   release candidate, and explicitly review activation of the broader hosted
   platform, browser, fuzz, and performance workflows.

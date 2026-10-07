@@ -162,6 +162,25 @@ uses fresh tools and downloads instead.
 
 ## Initial hosted verification
 
+The [first successful signed draft run](https://github.com/erik-anderson/transmog/actions/runs/37644656152)
+passed on 2026-10-07 at commit `c4f2abb`. All six jobs passed: build, protected
+signing, installer qualification, negative identity test, provenance attestation,
+and draft publication. The build took 60 minutes 30 seconds, including the
+30-minute native WebView soak. Signing and the remaining jobs took about four
+minutes after environment approval.
+
+The 24,537,904-byte `Transmog_0.1.0_x64-setup.exe` has a valid Authenticode
+signature for `Erik Anderson` and an RFC 3161 timestamp. Its SHA-256 is
+`b09a216f905c87b583c220eee4dbdb891a63fe6294d8970603eecfe9e3bd7615`.
+Independent download verification matched all eleven draft asset digests.
+The hosted Windows Server 2025 installer test verified the three installed
+executables and uninstaller, maintenance, removal, and unchanged proxy/root
+certificate state. Other-profile signing returned HTTP 403; Azure rejected the
+unprotected OIDC subject with error 700213. The Sigstore bundle was verified
+against the repository, workflow, `main`, and source commit, and covers the final
+signed installer, release manifest, and SBOM file. The release remains a draft;
+the clean Windows 11 checklist is still deferred by the maintainer.
+
 The [first cold run](https://github.com/erik-anderson/transmog/actions/runs/37586689686)
 passed on 2026-10-07 at commit `b52c2f8`, with dependency caching disabled.
 The full job took 21 minutes 56 seconds; the measured build phases took
