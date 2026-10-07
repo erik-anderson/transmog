@@ -139,7 +139,7 @@ impl WorkspacePreferences {
             && self
                 .columns
                 .iter()
-                .all(|column| (48..=1200).contains(&column.width))
+                .all(|column| (32..=1200).contains(&column.width))
             && [
                 self.list_split,
                 self.request_split,

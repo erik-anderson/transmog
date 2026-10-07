@@ -468,7 +468,7 @@ pub(crate) async fn inspect_body(
         if metadata.availability != BodyAvailability::Complete {
             return Err(AppError::new(
                 ErrorCategory::InvalidInput,
-                "content decoding requires a complete retained body",
+                incomplete_body_message(&metadata, "Content decoding"),
                 false,
             ));
         }
@@ -539,7 +539,7 @@ pub(crate) async fn image_source(
     if metadata.availability != BodyAvailability::Complete {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
-            "image preview requires a complete retained body",
+            incomplete_body_message(&metadata, "Image preview"),
             false,
         ));
     }
@@ -577,6 +577,19 @@ pub(crate) async fn image_source(
         ));
     }
     Ok((metadata, bytes, decoded))
+}
+
+fn incomplete_body_message(metadata: &StoredBodyMetadata, operation: &str) -> String {
+    format!(
+        "{operation} needs a complete body; capture status {:?}, {} of {} observed bytes retained. {}",
+        metadata.availability,
+        metadata.retained_bytes,
+        metadata.observed_bytes,
+        metadata
+            .reason
+            .as_deref()
+            .unwrap_or("The body is still being captured or its terminal event was not received")
+    )
 }
 
 pub(crate) fn parse_session_id(id: &str) -> Result<u128, AppError> {

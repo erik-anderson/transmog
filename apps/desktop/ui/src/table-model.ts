@@ -27,7 +27,7 @@ export function normalizeWorkspace(value: WorkspacePreferences | undefined): Wor
   if (!value || value.columns?.length !== columnDefinitions.length) return fallback;
   const known = new Set(columnDefinitions.map((column) => column.id));
   if (new Set(value.columns.map((column) => column.id)).size !== known.size || value.columns.some((column) => !known.has(column.id))) return fallback;
-  return { ...fallback, ...value, columns:value.columns.map((column) => ({...column,width:Math.max(48,Math.min(1200,column.width))})) };
+  return { ...fallback, ...value, columns:value.columns.map((column) => ({...column,width:Math.max(32,Math.min(1200,column.width))})) };
 }
 
 export function displayColumns(columns: ColumnPreference[]) {

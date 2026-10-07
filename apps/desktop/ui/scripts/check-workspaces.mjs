@@ -63,6 +63,7 @@ await page.addInitScript((workspace) => {
         case 'stop_application': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
         case 'watch_sessions': state.channel = args.onEvent; return;
         case 'query_sessions': {
+          if (state.queryError) throw new Error('Fixture query failure');
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
           let rows = structuredClone(state.sessions).filter(row => !args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase()));
@@ -75,6 +76,9 @@ await page.addInitScript((workspace) => {
         case 'inspect_body': {
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
           const metadata=detail(args.request.sessionId).storedBodies[0];
+          if (state.bodyOverride) Object.assign(metadata,state.bodyOverride);
+          state.lastBodyRequest=structuredClone(args.request);
+          if (metadata.contentCodings.length && metadata.availability!=='complete' && args.request.decodeContent) throw new Error('Content decoding needs a complete body');
           const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType==='image/png'?'image':'original-text'):args.request.representation;
           return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
@@ -97,7 +101,10 @@ const view = async (name) => {
 };
 try {
   await page.goto('http://workspace.test/');
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.startsWith('Watching live traffic.'));
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded 4 of 4 exchanges.'));
+  assert.match(await page.locator('.session-status').textContent(),/Proxy stopped/,'Traffic banner claims live capture while the proxy is stopped');
+  assert.match(await page.locator('.list-footer').textContent(),/Showing captured traffic/);
+  assert.doesNotMatch(await page.locator('.list-footer').textContent(),/Following live|capture continues/);
   assert.equal(await page.locator('#traffic').isVisible(), true);
   assert.equal(await page.locator('a[data-view="traffic"]').getAttribute('aria-current'), 'page');
   const editorOutputs = Object.entries(metadata.outputs).filter(([, output]) => Object.keys(output.inputs).some((input) => input.includes('node_modules/monaco-editor'))).map(([file]) => '/' + file.replace(/^dist\//, ''));
@@ -115,13 +122,31 @@ try {
   const originalWidth = await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width);
   await methodEdge.focus(); await page.keyboard.press('ArrowRight');
   const resizedWidth = await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width);
-  assert.ok(resizedWidth >= originalWidth+8,'Keyboard column resizing did not affect layout');
+  assert.ok(Math.abs(resizedWidth-originalWidth-10)<1,'Keyboard resizing stretched the column beyond the requested width');
   const edgeBounds = await methodEdge.boundingBox();
-  await page.mouse.move(edgeBounds.x+2,edgeBounds.y+10); await page.mouse.down(); await page.mouse.move(edgeBounds.x+42,edgeBounds.y+10,{steps:5}); await page.mouse.up();
-  assert.ok(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width) >= resizedWidth+30,'Pointer column resizing did not affect layout');
-  await page.locator('#header-process').dragTo(page.locator('#header-path'));
+  await page.mouse.move(edgeBounds.x+2,edgeBounds.y+10); await page.mouse.down();
+  await page.mouse.move(edgeBounds.x+3,edgeBounds.y+10);
+  assert.ok(Math.abs(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width)-resizedWidth-1)<1,'Column snapped at the start of a resize');
+  await page.mouse.move(edgeBounds.x+42,edgeBounds.y+10,{steps:5}); await page.mouse.up();
+  assert.ok(Math.abs(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width)-resizedWidth-40)<1,'Pointer resizing did not track cursor movement');
+  const processHeader=await page.locator('#header-process .column-trigger').boundingBox();
+  const pathHeader=await page.locator('#header-path .column-trigger').boundingBox();
+  await page.mouse.move(processHeader.x+15,processHeader.y+12); await page.mouse.down();
+  await page.mouse.move(processHeader.x+25,processHeader.y+12,{steps:3});
+  assert.equal(await page.locator('#header-process').getAttribute('data-dragging'),'','Header button did not enter drag mode');
+  await page.mouse.move(pathHeader.x+pathHeader.width/2,pathHeader.y+12,{steps:8});
+  assert.equal(await page.locator('#header-path').getAttribute('data-drop-target'),'','Column drop target is not visible');
+  await page.mouse.up();
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes']);
   await page.waitForTimeout(300); // Let the accidental post-drag click guard expire.
+  const dragCancelBounds=await page.locator('#header-process .column-trigger').boundingBox();
+  await page.mouse.move(dragCancelBounds.x+15,dragCancelBounds.y+12); await page.mouse.down();
+  await page.mouse.move(dragCancelBounds.x-50,dragCancelBounds.y+12,{steps:5}); await page.keyboard.press('Escape'); await page.mouse.up();
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes'],'Cancelling a column drag changed the layout');
+  await page.waitForTimeout(300);
+  await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').setColumnWidth('method',32,true));
+  assert.ok(Math.abs(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width)-32)<1,'Minimum column width is stretched by table or header content');
+  await methodEdge.press('Home');
   const openColumn = async id => { await page.locator('#header-'+id+' .column-trigger').click(); await page.locator('#column-actions').waitFor({state:'visible'}); };
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move left',exact:true}).click();
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.slice(0,3).map(header=>header.dataset.columnId)),['method','host','status'],'Moving across pinned columns did not change visible order');
@@ -154,10 +179,14 @@ try {
   const proxy = page.locator('.top-actions proxy-toggle button');
   await proxy.click();
   await page.getByRole('button',{name:'Starting…',exact:true}).first().waitFor({state:'visible'});
+  assert.match(await page.locator('.session-status').textContent(),/^Starting proxy\./);
   assert.equal(await proxy.isEnabled(),false);
   await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
+  assert.match(await page.locator('.session-status').textContent(),/^Proxy running\./);
   const runningColor=await proxy.evaluate(button=>getComputedStyle(button).backgroundColor);
   await proxy.click();
+  await page.getByRole('button',{name:'Stopping…',exact:true}).first().waitFor({state:'visible'});
+  assert.match(await page.locator('.session-status').textContent(),/^Stopping proxy\./);
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
   assert.notEqual(await proxy.evaluate(button=>getComputedStyle(button).backgroundColor),runningColor);
   await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
@@ -166,9 +195,45 @@ try {
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.stop_application),2,'Proxy action did not track refreshed lifecycle state');
 
+  const retainedRows = await page.evaluate(async()=>{
+    const state=globalThis.__workspaceFixture;
+    const rows=state.sessions; state.sessions=[];
+    await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);
+    return rows;
+  });
+  assert.equal(await page.locator('.session-status').textContent(),'Proxy stopped. Start the proxy to capture traffic.');
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
+  assert.equal(await page.locator('.session-status').textContent(),'Proxy running. Waiting for proxied requests.');
+  for (const lifecycle of ['stopping','failed']) {
+    await page.evaluate(async(lifecycle)=>{globalThis.__workspaceFixture.lifecycle=lifecycle;await document.querySelector('app-shell').refreshStatus();},lifecycle);
+    assert.doesNotMatch(await page.locator('.session-status').textContent(),/Waiting for proxied requests|Watching live/);
+    assert.doesNotMatch(await page.locator('.list-footer').textContent(),/Following live|capture continues/);
+  }
+  await page.evaluate(async()=>{
+    const shell=document.querySelector('app-shell'),state=globalThis.__workspaceFixture;
+    state.lifecycle='running'; await shell.refreshStatus();
+    state.queryDelay=80;
+    const refresh=shell.shadowRoot.querySelector('traffic-workspace').refreshSessions();
+    state.lifecycle='stopped'; await shell.refreshStatus(); await refresh;
+    state.queryDelay=0;
+  });
+  assert.equal(await page.locator('.session-status').textContent(),'Proxy stopped. Start the proxy to capture traffic.','A delayed query restored a stale running message');
+  await page.evaluate(async(rows)=>{globalThis.__workspaceFixture.sessions=rows;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);},retainedRows);
+  await page.evaluate(async()=>{
+    const state=globalThis.__workspaceFixture,shell=document.querySelector('app-shell');
+    state.queryError=true; await shell.shadowRoot.querySelector('traffic-workspace').refreshSessions();
+    state.lifecycle='running'; await shell.refreshStatus();
+  });
+  assert.match(await page.locator('.session-status').textContent(),/^Proxy running\. Traffic query failed: Fixture query failure/,'A lifecycle refresh hid a traffic query failure');
+  await page.evaluate(async()=>{
+    const state=globalThis.__workspaceFixture,shell=document.querySelector('app-shell');
+    state.queryError=false; state.lifecycle='stopped'; await shell.refreshStatus();
+    await shell.shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);
+  });
+
   await page.evaluate(() => { globalThis.__row = document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]'); });
   await page.locator('form.filters button').click();
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.startsWith('Loaded '));
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded '));
   assert.equal(await page.evaluate(() => globalThis.__row === document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]')), true, 'A refresh replaced a keyed row');
   const coalesced = await page.evaluate(async () => {
     const traffic = document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');
@@ -186,6 +251,7 @@ try {
   });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.selection-bar strong').textContent.endsWith('/second'));
   assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'), 'true');
+  assert.match(await page.locator('.list-footer').textContent(),/Inspection pinned · showing captured traffic/);
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.match(await page.locator('message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
   await page.getByRole('button',{name:'Replay',exact:true}).click();
@@ -199,6 +265,43 @@ try {
   await page.locator('tr[data-session-id="image"]').click();
   await page.locator('message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
   await page.locator('message-inspector[side="response"] img').waitFor({state:'visible'});
+  const responseInspector=page.locator('message-inspector[side="response"]');
+  await page.evaluate(()=>{
+    const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
+    const detail=structuredClone(inspector.detail);
+    const override=globalThis.__workspaceFixture.bodyOverride={availability:'lost',observedBytes:8,retainedBytes:4,contentCodings:['gzip'],reason:'exchange failed at ResponseBody before completion'};
+    Object.assign(detail.storedBodies[0],override);
+    inspector.detail=detail;
+  });
+  await responseInspector.getByText('Preview unavailable:',{exact:false}).waitFor({state:'visible'});
+  assert.match(await responseInspector.locator('.body-facts').textContent(),/4 B retained \/ 8 B observed · lost/);
+  assert.match(await responseInspector.locator('.body-preview').textContent(),/Reason: exchange failed at ResponseBody/);
+  assert.match(await responseInspector.locator('.body-preview').textContent(),/Raw Hex shows the 4 B retained bytes/);
+  await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');
+  await responseInspector.getByText('Hex',{exact:true}).last().waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastBodyRequest.decodeContent),false,'Hex tried to decode an incomplete compressed body');
+  assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isChecked(),false);
+  assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isEnabled(),false);
+  await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('metadata');
+  assert.match(await responseInspector.locator('.body-preview').textContent(),/"reason": "exchange failed at ResponseBody/);
+  await page.evaluate(()=>{
+    const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
+    const detail=structuredClone(inspector.detail);
+    Object.assign(detail.storedBodies[0],{availability:'truncated',observedBytes:1851,retainedBytes:1800,reason:'per-body retention limit reached'});
+    inspector.detail=detail;
+  });
+  assert.match(await responseInspector.locator('.body-facts').textContent(),/1,800 B retained \/ 1,851 B observed/,'Rounded counts hid missing body bytes');
+  await page.evaluate(()=>{
+    const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
+    const detail=structuredClone(inspector.detail);
+    Object.assign(detail.storedBodies[0],{availability:'evicted',retainedBytes:0,reason:'evicted by circular response-body quota'});
+    inspector.detail=detail;
+  });
+  assert.match(await responseInspector.locator('.body-preview').textContent(),/"availability": "evicted"/,'Metadata cannot inspect a body without retained bytes');
+  await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('auto');
+  assert.match(await responseInspector.locator('.body-preview').textContent(),/removed to make room/);
+  assert.doesNotMatch(await responseInspector.locator('.body-preview').textContent(),/Hex/,'Unavailable bytes incorrectly recommend Hex');
+  await page.evaluate(()=>delete globalThis.__workspaceFixture.bodyOverride);
   await page.locator('tr[data-session-id="second"]').click();
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   const heldOrder=await page.locator('.traffic-table tbody tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId));
@@ -263,7 +366,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace.png')});
   const beforeReload=requests.length;
   await page.reload();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.startsWith('Watching live traffic.'));
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded '));
   assert.equal(await page.getByRole('button',{name:'Toggle navigation labels'}).getAttribute('aria-expanded'),'false');
   assert.equal(await page.getByRole('separator',{name:'Resize traffic list and inspector',exact:true}).getAttribute('aria-valuenow'),'47');
   assert.equal(await page.locator('#header-host').getAttribute('data-pinned'),'');

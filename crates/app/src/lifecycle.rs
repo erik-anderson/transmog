@@ -10,7 +10,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{RoutePolicy, intercept::InterceptorChainFactory};
-use transmog_runtime::{ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer};
+use transmog_runtime::{
+    AtomicRuntimeIdGenerator, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
+    SystemRuntimeClock,
+};
 use transmog_session::{ApplicationSessionService, HostIntegration, HostIntegrationPlan};
 use transmog_tls::{CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot};
 
@@ -91,6 +94,7 @@ pub struct CaIdentity {
 
 pub(crate) async fn start_proxy(
     service: &ApplicationSessionService,
+    runtime_ids: Arc<AtomicRuntimeIdGenerator>,
     body_store: Option<&BodyStore>,
     automation: AutomationRegistry,
     scripts: ScriptRegistry,
@@ -160,9 +164,13 @@ pub(crate) async fn start_proxy(
             )
         })?,
     );
-    let mut components = ProxyComponents::new(hooks, certificates).with_content_policy(
-        ContentPolicy::preserve_original_output(ContentLimits::default()),
-    );
+    // IDs must outlive a proxy run because retained exchanges and body-cache
+    // files remain addressable after stop/start.
+    let mut components = ProxyComponents::new(hooks, certificates)
+        .with_infrastructure(Arc::new(SystemRuntimeClock), runtime_ids)
+        .with_content_policy(ContentPolicy::preserve_original_output(
+            ContentLimits::default(),
+        ));
     if let Some(body_store) = body_store {
         components =
             components.with_observer(Arc::new(body_store.clone()), body_store.observer_config());
@@ -279,7 +287,135 @@ const fn route_policy(route: ProxyRoute) -> RoutePolicy {
 
 #[cfg(test)]
 mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
     use super::*;
+
+    async fn read_http_head(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            assert!(head.len() < 32 * 1024);
+            head.push(socket.read_u8().await.unwrap());
+        }
+        head
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn restart_retains_distinct_exchanges_and_complete_compressed_bodies() {
+        let root = std::env::temp_dir().join(format!(
+            "transmog-app-restart-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ca = CaCreateRequest {
+            certificate_path: root.join("ca.pem"),
+            private_key_path: root.join("ca.key"),
+            common_name: "Restart test CA".to_owned(),
+            validity_days: 2,
+        };
+        create_ca(ca.clone()).await.unwrap();
+        let application = crate::Application::new(crate::AppConfig {
+            body_store: Some(crate::BodyStoreConfig::product_default(root.join("bodies"))),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        let request = ProxyStartRequest {
+            ca_certificate_path: ca.certificate_path,
+            ca_private_key_path: ca.private_key_path,
+            route: ProxyRoute::Http1,
+            ..ProxyStartRequest::default()
+        };
+        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let encoded =
+            crate::inspector::encode_content(&["gzip".to_owned()], b"retained response".to_vec())
+                .await
+                .unwrap();
+        let body_length = encoded.len();
+        let origin_task = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = origin.accept().await.unwrap();
+                read_http_head(&mut socket).await;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\r\n", encoded.len()).as_bytes()).await.unwrap();
+                socket.write_all(&encoded).await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+        });
+        let mut ids = Vec::new();
+        for run in 1..=2 {
+            application
+                .start_proxy(request.clone(), None)
+                .await
+                .unwrap();
+            let mut client = tokio::net::TcpStream::connect(application.status().listener.unwrap())
+                .await
+                .unwrap();
+            client
+                .write_all(
+                    format!(
+                        "GET http://{origin_addr}/{run} HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let response = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let head = read_http_head(&mut client).await;
+                let mut body = vec![0; body_length];
+                client.read_exact(&mut body).await.unwrap();
+                head
+            })
+            .await
+            .unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 200"));
+            drop(client);
+            application.shutdown().await.unwrap();
+            let page = application
+                .query_sessions(crate::SessionQueryInput::default())
+                .unwrap();
+            assert_eq!(page.sessions.len(), run, "restart reused an exchange ID");
+            let row = page
+                .sessions
+                .iter()
+                .find(|row| row.path == format!("/{run}"))
+                .unwrap();
+            let detail = application.session_detail(&row.id).unwrap();
+            let body = detail
+                .stored_bodies
+                .iter()
+                .find(|body| body.boundary == "client-response")
+                .unwrap();
+            assert_eq!(
+                body.availability,
+                crate::BodyAvailability::Complete,
+                "{body:?}"
+            );
+            ids.push(row.id.clone());
+        }
+        assert_ne!(ids[0], ids[1]);
+        for id in ids {
+            let inspection = application
+                .inspect_body(crate::BodyInspectionRequest {
+                    session_id: id,
+                    boundary: "client-response".to_owned(),
+                    representation: crate::BodyRepresentation::Auto,
+                    decode_content: true,
+                    offset: 0,
+                    max_bytes: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(inspection.display, "retained response");
+        }
+        origin_task.await.unwrap();
+        drop(application);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn ca_creation_is_create_new_and_round_trips() {
@@ -316,6 +452,7 @@ mod tests {
         let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
         let error = start_proxy(
             &service,
+            Arc::new(AtomicRuntimeIdGenerator::new()),
             None,
             AutomationRegistry::load(None, Arc::new(assets.clone())).unwrap(),
             ScriptRegistry::load(None, None, Arc::new(assets)).unwrap(),

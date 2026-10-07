@@ -1,6 +1,6 @@
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import type { BodyInspection, HeadView, SessionDetail } from '../models.js';
+import type { BodyInspection, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 
@@ -22,8 +22,8 @@ export class MessageInspector extends WebUIElement {
   @observable detailsText = '';
   @observable loading = false;
   @observable viewer = 'auto';
+  @observable decodeContent = true;
   @observable headerShare = '35%';
-  decodeInput!: HTMLInputElement;
   bodyLimit!: HTMLInputElement;
   private generation = 0;
   private previousId: string | null = null;
@@ -50,6 +50,7 @@ export class MessageInspector extends WebUIElement {
   showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(); }
   changeBoundary(event:Event): void { this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
   changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value; void this.inspectBody(); }
+  changeDecoding(event:Event): void { this.decodeContent = (event.currentTarget as HTMLInputElement).checked; void this.inspectBody(); }
   resizeHeaders(event:CustomEvent<{value:number;committed:boolean}>): void {
     this.headerShare = event.detail.value+'%';
     this.$emit('inspector-resize',{side:this.side,...event.detail});
@@ -60,27 +61,43 @@ export class MessageInspector extends WebUIElement {
     this.imageUrl = ''; this.loading = false;
     if (!this.detail) return;
     const head = this.heads().find((head) => head.boundary === this.boundary);
-    this.bodyFacts = body ? (body.mediaType ?? 'Unknown content type')+' · '+formatBytes(body.retainedBytes)+' retained' : '';
+    this.bodyFacts = body ? this.retentionFacts(body) : '';
     this.viewerLabel = this.viewer === 'auto' ? 'Auto' : this.viewer;
+    if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : 'No body metadata was captured for this message stage.'; this.viewerLabel = 'Metadata'; return; }
     if (this.side === 'response' && head?.status === 304 && !body?.retainedBytes) {
       this.bodyText = '304 Not Modified — no response body is expected. The client uses its cached representation.';
       this.viewerLabel = 'Auto · no body'; return;
     }
-    if (!body || !body.retainedBytes) { this.bodyText = body?.observedBytes === 0 ? 'This '+this.side+' has no body.' : body?.reason ?? 'No '+this.side+' body was retained for this exchange.'; return; }
-    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.bodyText = body.reason ?? 'The retained body is '+body.availability+'.'; return; }
+    if (!body) { this.bodyText = this.side === 'request' ? 'No request body is available in the body cache. Request bodies are not retained by default.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
+    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.bodyText = this.retentionReason(body); return; }
+    if (!body.retainedBytes) { this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
     this.loading = true; this.bodyText = 'Loading preview…';
     try {
-      const inspection = await invoke<BodyInspection>('inspect_body',{request:{sessionId:this.detail.id,boundary:this.boundary,representation:this.viewer,decodeContent:this.decodeInput?.checked ?? true,offset:0,maxBytes:Number(this.bodyLimit?.value ?? 262144)}});
+      const inspection = await invoke<BodyInspection>('inspect_body',{request:{sessionId:this.detail.id,boundary:this.boundary,representation:this.viewer,decodeContent:this.viewer !== 'bytes' && this.decodeContent,offset:0,maxBytes:Number(this.bodyLimit?.value ?? 262144)}});
       if (generation !== this.generation || !this.isConnected) return;
       const labels:Record<string,string> = {'formatted-json':'JSON','original-text':'Text','bytes':'Hex','image':'Image','metadata':'Metadata','unavailable':'Unavailable'};
       this.viewerLabel = (this.viewer === 'auto' ? 'Auto · ' : '')+(labels[inspection.representation] ?? inspection.representation);
-      this.bodyFacts = (inspection.metadata.mediaType ?? 'Unknown content type')+' · '+formatBytes(inspection.displayBytes)+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
+      this.bodyFacts = this.retentionFacts(inspection.metadata)+' · '+formatBytes(inspection.displayBytes)+' shown'+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
       this.bodyText = inspection.display || inspection.warning || (inspection.representation === 'image' ? '' : 'No body content.');
       if (inspection.warning && inspection.display) this.bodyText = inspection.warning+'\n\n'+inspection.display;
+      if (inspection.metadata.availability !== 'complete') this.bodyText = this.retentionReason(inspection.metadata)+'\n\n'+this.bodyText;
       if (inspection.previewHandle) this.imageUrl = convertFileSrc('preview/'+inspection.previewHandle,'transmog-preview');
     } catch (error:unknown) {
-      if (generation === this.generation) this.bodyText = 'Preview unavailable: '+describeError(error)+'. Try the Hex or Metadata viewer.';
+      if (generation === this.generation) this.bodyText = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.';
     } finally { if (generation === this.generation) this.loading = false; }
+  }
+  private retentionFacts(body:StoredBodyMetadata):string {
+    const bytes = (value:number) => body.availability === 'complete' ? formatBytes(value) : value.toLocaleString()+' B';
+    return (body.mediaType ?? 'Unknown content type')+' · '+bytes(body.retainedBytes)+' retained / '+bytes(body.observedBytes)+' observed · '+body.availability+(body.reason ? ' · '+body.reason : '');
+  }
+  private retentionReason(body:StoredBodyMetadata):string {
+    const reasons:Record<string,string> = {
+      complete:'The complete body was retained.', capturing:'The body is still being captured; its final size is not yet known.',
+      truncated:'Only part of the body was retained because a capture limit was reached.', lost:'The capture is incomplete because delivery or storage was interrupted.',
+      evicted:'The body was removed to make room in the circular response cache.', disabled:'Body retention was disabled for this exchange.',
+      'quota-omitted':'The body was omitted because the response cache was full.',
+    };
+    return (reasons[body.availability] ?? 'Body capture status: '+body.availability+'.')+(body.reason ? ' Reason: '+body.reason+'.' : '');
   }
   async copyHeaders(): Promise<void> { await this.copy(this.headerRows.map((row) => row.name+': '+row.value).join('\r\n'),'Headers copied.'); }
   async copyBody(): Promise<void> { await this.copy(this.bodyText,'Body preview copied.'); }

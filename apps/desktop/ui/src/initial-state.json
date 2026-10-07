@@ -22,10 +22,10 @@
     "settings": "false"
   },
   "sessions": [],
-  "sessionText": "Loading traffic…",
+  "sessionText": "Loading captured traffic…",
   "sessionKind": "progress",
   "followLatest": true,
-  "followText": "Following live traffic",
+  "followText": "Showing captured traffic",
   "selectedSessionId": null,
   "selectedMethodText": "—",
   "selectedUrlText": "Select a request",
@@ -302,6 +302,9 @@
   "ascendingLabel": "Sort A–Z",
   "descendingLabel": "Sort Z–A",
   "pinLabel": "Pin column",
+  "draggingColumn": "",
+  "dropColumnId": "",
+  "dropPlacement": "",
   "filterDraft": "",
   "detail": null,
   "mode": "body",
@@ -315,6 +318,7 @@
   "detailsText": "No exchange selected.",
   "loading": false,
   "viewer": "auto",
+  "decodeContent": true,
   "headerShare": "35%",
   "columns": [
     {

@@ -39,7 +39,7 @@
       </nav>
 
       <main>
-        <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" :preferences="{{workspace}}"></traffic-workspace>
+        <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}"></traffic-workspace>
         <breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace>
         <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}"></automation-workspace>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>

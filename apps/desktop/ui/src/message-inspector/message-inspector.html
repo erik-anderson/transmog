@@ -21,7 +21,7 @@
       <section class="body-view" ?hidden="{{mode != 'body' && mode != 'split'}}">
         <div class="body-toolbar">
           <select aria-label="Body viewer" @change="{changeViewer(e)}"><option value="auto" ?selected="{{viewer == 'auto'}}">Auto</option><option value="formatted">Formatted JSON</option><option value="original-text">Text</option><option value="bytes">Hex</option><option value="image">Image</option><option value="metadata">Metadata</option></select>
-          <label class="checkbox-label"><input w-ref="{decodeInput}" type="checkbox" checked @change="{inspectBody()}"> Decode</label>
+          <label class="checkbox-label"><input type="checkbox" ?checked="{{decodeContent && viewer != 'bytes' && viewer != 'metadata'}}" ?disabled="{{viewer == 'bytes' || viewer == 'metadata'}}" @change="{changeDecoding(e)}"> Decode</label>
           <details class="preview-options"><summary>Preview limit</summary><label>Bytes <input w-ref="{bodyLimit}" type="number" min="1" max="16777216" value="262144" @change="{inspectBody()}"></label><button type="button" class="secondary compact-button" @click="{inspectBody()}">Refresh preview</button></details>
           <button type="button" class="secondary compact-button" @click="{copyBody()}" ?disabled="{{loading}}">Copy body</button>
         </div>

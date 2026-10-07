@@ -21,7 +21,7 @@ traffic-workspace { display:contents; }
 .filter-chips { display:flex; flex-wrap:wrap; gap:.4rem; padding:.4rem .7rem; background:var(--panel); border-bottom:1px solid var(--line); }
 .filter-chip { min-height:1.6rem; padding:.2rem .45rem; border-color:var(--line); color:var(--text); background:var(--panel-subtle); font-size:.7rem; }
 .clear-filters { min-height:1.6rem; border:0; padding:.2rem; color:var(--accent-strong); background:transparent; font-size:.7rem; }
-.traffic-table { min-width:100%; table-layout:fixed; width:100%; }
+.traffic-table { min-width:0; table-layout:fixed; width:100%; }
 @supports (width:attr(data-size type(<length>))) {
   .traffic-table { width:attr(data-width type(<length>),100%); }
   .traffic-table col { width:attr(data-width type(<length>),160px); }
@@ -40,7 +40,12 @@ traffic-workspace { display:contents; }
 .traffic-table tr[data-tone="not-modified"] { color:var(--muted); }
 .traffic-table tr[data-tone="not-modified"] .session-link { color:var(--muted); }
 .traffic-table[data-wrap] td { white-space:normal; overflow-wrap:anywhere; height:auto; vertical-align:top; }
-.column-trigger { display:flex; align-items:center; gap:.3rem; width:100%; min-height:2.2rem; padding:.4rem .8rem .4rem .65rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:0; border-radius:0; color:var(--muted); background:transparent; font:inherit; font-weight:600; text-align:left; cursor:pointer; }
+.column-trigger { display:flex; align-items:center; gap:.3rem; width:100%; min-width:0; min-height:2.2rem; padding:.4rem .5rem; overflow:hidden; white-space:nowrap; border:0; border-radius:0; color:var(--muted); background:transparent; font:inherit; font-weight:600; text-align:left; cursor:grab; user-select:none; touch-action:none; }
+.column-label { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.traffic-table:has(th[data-dragging]) .column-trigger { cursor:grabbing; }
+.traffic-table th[data-dragging] .column-trigger { opacity:.5; background:var(--accent-soft); }
+.traffic-table th[data-drop-target] { box-shadow:inset 3px 0 var(--accent); }
+.traffic-table th[data-drop-target][data-drop-placement="after"] { box-shadow:inset -3px 0 var(--accent); }
 .column-caret { margin-left:auto; opacity:0; }
 .column-trigger:hover .column-caret, .column-trigger:focus-visible .column-caret { opacity:1; }
 .sort-arrow { color:var(--accent-strong); }

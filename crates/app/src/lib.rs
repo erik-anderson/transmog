@@ -208,6 +208,7 @@ impl std::fmt::Debug for AppConfig {
 #[derive(Clone)]
 pub struct Application {
     service: ApplicationSessionService,
+    runtime_ids: Arc<transmog_runtime::AtomicRuntimeIdGenerator>,
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
     breakpoints: breakpoints::BreakpointManager,
     composer: composer::ComposerManager,
@@ -281,6 +282,7 @@ impl Application {
         }
         Ok(Self {
             service: service.clone(),
+            runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
             breakpoints: breakpoints::BreakpointManager::new(service, build_id),
             composer: composer::ComposerManager::new(config.replay_executor),
@@ -638,6 +640,7 @@ impl Application {
     ) -> Result<AppStatus, AppError> {
         let result = lifecycle::start_proxy(
             &self.service,
+            Arc::clone(&self.runtime_ids),
             self.body_store.as_ref(),
             self.automation.clone(),
             self.scripts.clone(),

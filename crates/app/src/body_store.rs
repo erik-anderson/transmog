@@ -696,11 +696,14 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
             state.last_sequences.remove(&event.exchange_id);
             state.lossy_exchanges.remove(&event.exchange_id);
         }
-        ObserverEventKind::Failed(_) => {
+        ObserverEventKind::Failed(failure) => {
             mark_exchange_loss(
                 &mut state,
                 event.exchange_id,
-                "exchange failed before completion",
+                &format!(
+                    "exchange failed at {:?} ({:?}) before completion",
+                    failure.stage, failure.kind
+                ),
             );
             finalize_exchange(inner, &mut state, event.exchange_id, false);
             state.exchange_modes.remove(&event.exchange_id);
@@ -793,13 +796,22 @@ fn observe_chunk(
         record.reason = Some("body retention was disabled".to_owned());
         return;
     }
+    // An empty frame omits no bytes and needs no quota allocation.
+    if chunk.byte_count == 0 && chunk.sample.as_ref().is_none_or(bytes::Bytes::is_empty) {
+        return;
+    }
     if lossy || chunk.truncated || chunk.sample.is_none() {
         record.availability = BodyAvailability::Lost;
-        record.reason = Some("observer did not provide every body byte".to_owned());
+        record
+            .reason
+            .get_or_insert_with(|| "observer did not provide every body byte".to_owned());
     }
     let Some(sample) = chunk.sample else {
         return;
     };
+    if sample.is_empty() {
+        return;
+    }
     let per_body_remaining = inner
         .config
         .max_body_bytes
@@ -966,9 +978,15 @@ fn mark_dropped_event(inner: &BodyStoreInner, event: &ObserverEvent) {
 fn mark_exchange_loss(state: &mut StoreState, exchange_id: ExchangeId, reason: &str) {
     state.lossy_exchanges.insert(exchange_id);
     for (key, record) in &mut state.records {
-        if key.exchange_id == exchange_id && !record.terminal {
+        if key.exchange_id == exchange_id
+            && !record.terminal
+            && matches!(
+                record.availability,
+                BodyAvailability::Capturing | BodyAvailability::Complete | BodyAvailability::Lost
+            )
+        {
             record.availability = BodyAvailability::Lost;
-            record.reason = Some(reason.to_owned());
+            record.reason.get_or_insert_with(|| reason.to_owned());
         }
     }
 }
@@ -1203,6 +1221,211 @@ mod tests {
                 .bytes,
             b"ell"
         );
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn empty_frames_do_not_truncate_complete_bodies_or_consume_quota() {
+        let root = root("empty-frames");
+        let store = BodyStore::new(config(root.clone(), 4)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b""),
+                chunk(1, 4, b"1234"),
+                chunk(1, 5, b""),
+                completed(1, 6),
+            ],
+        );
+        let body = &store.metadata(ExchangeId(1))[0];
+        assert_eq!(body.availability, BodyAvailability::Complete, "{body:?}");
+        assert_eq!(body.observed_bytes, 4);
+        assert_eq!(body.retained_bytes, 4);
+        assert_eq!(body.reason, None);
+        assert_eq!(
+            store
+                .read_range(ExchangeId(1), ExchangeBoundary::UpstreamResponse, 0, 4)
+                .unwrap()
+                .bytes,
+            b"1234"
+        );
+        push(
+            &store,
+            [started(2), head(2, 2), chunk(2, 3, b""), completed(2, 4)],
+        );
+        let body = &store.metadata(ExchangeId(2))[0];
+        assert_eq!(body.availability, BodyAvailability::Complete, "{body:?}");
+        assert_eq!(body.retained_bytes, 0);
+        assert_eq!(body.reason, None);
+        assert_eq!(
+            store.metadata(ExchangeId(1))[0].availability,
+            BodyAvailability::Complete
+        );
+        assert_eq!(store.counters().retained_bytes, 4);
+        assert_eq!(store.counters().evicted_bodies, 0);
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn nonempty_html_with_an_empty_final_frame_stays_complete_under_default_limits() {
+        let root = root("html-empty-final-frame");
+        let store = BodyStore::new(BodyStoreConfig::product_default(root.clone())).unwrap();
+        let body = Bytes::from(format!(
+            "<!DOCTYPE html><html><title>Error 403</title><div>{}</div>",
+            "x".repeat(1772)
+        ));
+        push(
+            &store,
+            [
+                started(1),
+                event(
+                    1,
+                    2,
+                    ObserverEventKind::ResponseHeadObserved {
+                        boundary: ExchangeBoundary::UpstreamResponse,
+                        head: ResponseHead {
+                            status: 403,
+                            source_version: HttpLegVersion::Http2,
+                            headers: HeaderBlock::from_fields(vec![
+                                HeaderField::try_new("content-type", "text/html; charset=utf-8")
+                                    .unwrap(),
+                            ]),
+                        },
+                    },
+                ),
+                event(
+                    1,
+                    3,
+                    ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                        boundary: ExchangeBoundary::UpstreamResponse,
+                        byte_count: body.len(),
+                        sample: Some(body.clone()),
+                        truncated: false,
+                    }),
+                ),
+                chunk(1, 4, b""),
+                completed(1, 5),
+            ],
+        );
+        let retained = store.metadata(ExchangeId(1));
+        assert_eq!(
+            retained[0].availability,
+            BodyAvailability::Complete,
+            "{:?}",
+            retained[0]
+        );
+        assert_eq!(retained[0].observed_bytes, body.len() as u64);
+        assert_eq!(retained[0].retained_bytes, body.len() as u64);
+        assert_eq!(retained[0].reason, None);
+        assert_eq!(
+            store
+                .read_range(
+                    ExchangeId(1),
+                    ExchangeBoundary::UpstreamResponse,
+                    0,
+                    body.len()
+                )
+                .unwrap()
+                .bytes,
+            body
+        );
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delivery_gaps_preserve_the_specific_retention_reason() {
+        let root = root("reasons");
+        let store = BodyStore::new(config(root.clone(), 4)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 4, b"1234"),
+                completed(1, 5),
+            ],
+        );
+        let body = &store.metadata(ExchangeId(1))[0];
+        assert_eq!(body.availability, BodyAvailability::Lost);
+        assert_eq!(
+            body.reason.as_deref(),
+            Some("observer delivery sequence gap")
+        );
+        push(
+            &store,
+            [
+                started(2),
+                head(2, 2),
+                chunk(2, 3, b"123456"),
+                completed(2, 5),
+            ],
+        );
+        let body = &store.metadata(ExchangeId(2))[0];
+        assert_eq!(body.availability, BodyAvailability::Truncated);
+        assert_eq!(body.reason.as_deref(), Some("body retention quota reached"));
+        store.set_mode(RetentionMode::Off);
+        push(
+            &store,
+            [
+                started(3),
+                head(3, 2),
+                chunk(3, 4, b"1234"),
+                completed(3, 5),
+            ],
+        );
+        let body = &store.metadata(ExchangeId(3))[0];
+        assert_eq!(body.availability, BodyAvailability::Disabled);
+        assert_eq!(body.reason.as_deref(), Some("body retention was disabled"));
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn incomplete_compressed_body_explains_why_and_keeps_raw_hex_available() {
+        let root = root("incomplete-preview");
+        let store = BodyStore::new(config(root.clone(), 4)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b"123456"),
+                completed(1, 4),
+            ],
+        );
+        let mut request = crate::BodyInspectionRequest {
+            session_id: format!("{:032x}", 1),
+            boundary: "upstream-response".to_owned(),
+            representation: crate::BodyRepresentation::Auto,
+            decode_content: true,
+            offset: 0,
+            max_bytes: Some(16),
+        };
+        let error = crate::inspector::inspect_body(Some(&store), request.clone())
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("4 of 6 observed bytes retained"));
+        assert!(error.message.contains("body retention quota reached"));
+        request.representation = crate::BodyRepresentation::Bytes;
+        request.decode_content = false;
+        let hex = crate::inspector::inspect_body(Some(&store), request.clone())
+            .await
+            .unwrap();
+        assert_eq!(hex.display_bytes, 4);
+        assert_eq!(hex.representation, "bytes");
+        assert!(!hex.decoded);
+        request.representation = crate::BodyRepresentation::Metadata;
+        let metadata = crate::inspector::inspect_body(Some(&store), request)
+            .await
+            .unwrap()
+            .metadata;
+        assert_eq!(metadata.availability, BodyAvailability::Truncated);
+        assert_eq!(metadata.retained_bytes, 4);
         drop(store);
         let _ = fs::remove_dir_all(root);
     }

@@ -109,7 +109,7 @@ try {
         throw new Error('session submission controls were not found');
       }
       const initializationDeadline = performance.now() + 10_000;
-      while (!sessionOutput.textContent?.startsWith('Watching live traffic.')) {
+      while (!sessionOutput.textContent?.includes('Start the proxy to capture traffic.')) {
         if (performance.now() >= initializationDeadline) {
           throw new Error('automatic live-watch initialization timed out with: ' + sessionOutput.textContent);
         }
@@ -129,7 +129,7 @@ try {
       trafficWorkspace.$flushUpdates();
       filter.requestSubmit();
       const submissionDeadline = performance.now() + 10_000;
-      while (!sessionOutput.textContent?.startsWith('Loaded ')) {
+      while (!sessionOutput.textContent?.includes('Start the proxy to capture traffic.')) {
         if (performance.now() >= submissionDeadline) {
           throw new Error('WebUI form submission timed out with: ' + sessionOutput.textContent);
         }
@@ -257,7 +257,7 @@ try {
   `);
 
   assert(result.text === 'Proxy stopped', `typed status command failed: ${result.text}`);
-  assert(result.formSubmission.startsWith('Loaded '), `WebUI event binding failed: ${result.formSubmission}`);
+  assert(result.formSubmission === 'Proxy stopped. Start the proxy to capture traffic.', `WebUI event binding or stopped traffic status failed: ${result.formSubmission}`);
   assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
   assert(result.previewProtocolUrl === 'http://transmog-preview.localhost/preview%2Fsmoke-handle',
     `preview protocol was not mapped for WebView2: ${result.previewProtocolUrl}`);

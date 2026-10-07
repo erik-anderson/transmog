@@ -1,7 +1,7 @@
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { ColumnId, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
+import type { ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 
@@ -11,6 +11,8 @@ type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;c
 export class TrafficWorkspace extends WorkspaceElement {
   @attr view = 'traffic';
   @attr({attribute:'page-size'}) pageSize = '100';
+  @attr lifecycle:Lifecycle = 'stopped';
+  @attr pending = '';
   @observable preferences = defaultWorkspace();
   @observable sessions:Row[] = [];
   @observable columns:Column[] = [];
@@ -25,10 +27,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable reuseTitle = '';
   @observable matchedRuleId = '';
   @observable matchedRuleLabel = 'Show matched rule';
-  @observable sessionText = 'Loading traffic…';
+  @observable sessionText = 'Loading captured traffic…';
   @observable sessionKind = 'progress';
   @observable followLatest = true;
-  @observable followText = 'Following live traffic';
+  @observable followText = 'Showing captured traffic';
   @observable newTrafficCount = 0;
   @observable updatesPending = false;
   @observable totalMatched = 0;
@@ -49,6 +51,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable ascendingLabel = 'Sort A–Z';
   @observable descendingLabel = 'Sort Z–A';
   @observable pinLabel = 'Pin column';
+  @observable draggingColumn = '';
+  @observable dropColumnId = '';
+  @observable dropPlacement = '';
   @observable filterDraft = '';
   filterForm!:HTMLFormElement;
   sessionScroller!:HTMLElement;
@@ -66,19 +71,24 @@ export class TrafficWorkspace extends WorkspaceElement {
   private inspectionGeneration = 0;
   private queryRevision = 0;
   private resize: {id:ColumnId;startX:number;width:number;previous:number;pointer:number} | null = null;
-  private draggedColumn:ColumnId | null = null;
+  private columnDrag: {id:ColumnId;startX:number;startY:number;pointer:number;target:ColumnId|null;active:boolean;handle:HTMLElement} | null = null;
   private suppressMenuUntil = 0;
   private searchTimer:number | undefined;
   private layoutObserver:ResizeObserver | null = null;
   private displayedMatched = 0;
   private liveInspection:Promise<void> | null = null;
   private inspectionAgain = false;
+  private queryLoaded = false;
+  private queryError = '';
+  private watchError = '';
 
   protected hydratedCallback():void {
     this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns(); });
     this.layoutObserver.observe(this.sessionScroller);
     void this.watchSessions();
   }
+  lifecycleChanged():void { this.renderSessionState(); this.renderFollowState(); }
+  pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
   pageSizeChanged():void {
     this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
     if (this.watching) { this.pageIndex = 0; void this.refreshSessions(undefined,true); }
@@ -180,14 +190,45 @@ export class TrafficWorkspace extends WorkspaceElement {
     window.clearTimeout(this.searchTimer);
     this.searchTimer = window.setTimeout(() => { this.pageIndex = 0; this.queryRevision++; void this.refreshSessions(undefined,true); },250);
   }
-  dragColumn(id:ColumnId,event:DragEvent):void { this.draggedColumn = id; event.dataTransfer?.setData('application/x-traffic-column',id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; }
-  allowColumnDrop(event:DragEvent):void { if (this.draggedColumn) event.preventDefault(); }
-  dropColumn(id:ColumnId,event:DragEvent):void {
-    event.preventDefault(); const source = this.draggedColumn; this.draggedColumn = null; this.suppressMenuUntil = performance.now()+250;
-    if (!source || source === id) return;
-    this.reorderColumn(source,id);
+  startColumnDrag(id:ColumnId,event:PointerEvent):void {
+    if (event.button !== 0) return;
+    const handle = event.currentTarget as HTMLElement;
+    this.columnDrag = {id,startX:event.clientX,startY:event.clientY,pointer:event.pointerId,target:null,active:false,handle};
+    handle.setPointerCapture(event.pointerId);
   }
-  finishColumnDrag():void { this.draggedColumn = null; this.suppressMenuUntil = performance.now()+250; }
+  moveColumnDrag(event:PointerEvent):void {
+    const drag = this.columnDrag;
+    if (!drag || drag.pointer !== event.pointerId) return;
+    if (!drag.active && Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY) < 5) return;
+    event.preventDefault(); drag.active = true; this.draggingColumn = drag.id; this.closeMenu();
+    const bounds = this.sessionScroller.getBoundingClientRect();
+    if (event.clientX > bounds.right-24) this.sessionScroller.scrollBy(20,0);
+    else if (event.clientX < bounds.left+24) this.sessionScroller.scrollBy(-20,0);
+    const header = (this.getRootNode() as ShadowRoot).elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>('th[data-column-id]');
+    const target = header && this.trafficTable.contains(header) ? header.dataset.columnId as ColumnId : null;
+    drag.target = target !== drag.id ? target : null;
+    this.dropColumnId = drag.target ?? '';
+    this.dropPlacement = this.columns.findIndex(column => column.id === drag.id) < this.columns.findIndex(column => column.id === target) ? 'after' : 'before';
+  }
+  finishColumnDrag(event:PointerEvent):void {
+    const drag = this.columnDrag;
+    if (!drag || drag.pointer !== event.pointerId) return;
+    if (drag.active) {
+      event.preventDefault(); this.suppressMenuUntil = performance.now()+250;
+      if (drag.target) this.reorderColumn(drag.id,drag.target);
+    }
+    this.clearColumnDrag();
+  }
+  cancelColumnDrag(event:PointerEvent|KeyboardEvent):void {
+    if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+    if (this.columnDrag?.active) { event.preventDefault(); this.suppressMenuUntil = performance.now()+250; }
+    this.clearColumnDrag();
+  }
+  private clearColumnDrag():void {
+    const drag = this.columnDrag; this.columnDrag = null;
+    this.draggingColumn = ''; this.dropColumnId = ''; this.dropPlacement = '';
+    if (drag?.handle.hasPointerCapture(drag.pointer)) drag.handle.releasePointerCapture(drag.pointer);
+  }
   startColumnResize(id:ColumnId,event:PointerEvent):void {
     if (event.button !== 0) return; event.preventDefault(); event.stopPropagation();
     const previous = this.preferences.columns.find((column) => column.id === id)!.width;
@@ -208,7 +249,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width))+38;
     this.setColumnWidth(id,width,true);
   }
-  private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(48,Math.min(1200,width)))} : column)},committed); }
+  private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(32,Math.min(1200,width)))} : column)},committed); }
 
   async refreshSessions(event?:Event,force=false):Promise<void> {
     event?.preventDefault(); this.forceUpdate ||= force || event !== undefined; this.queryAgain = true;
@@ -230,10 +271,10 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.updatesPending = this.newTrafficCount > 0 || page.sessions.some((row,index) => this.sessions[index]?.id !== row.id);
         const fresh = new Map(page.sessions.map((row) => [row.id,row])); this.rebuildRows(this.sessions.map((row) => fresh.get(row.id) ?? row));
       }
-      this.sessionText = 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges'; this.sessionKind = 'success';
+      this.queryLoaded = true; this.queryError = ''; this.renderSessionState();
       if (force) this.diagnostic = this.sessionText;
       this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
-    } catch (error:unknown) { this.sessionText = 'Traffic query failed: '+describeError(error); this.sessionKind = 'error'; this.diagnostic = this.sessionText; }
+    } catch (error:unknown) { this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
   }
   async watchSessions():Promise<void> {
     if (this.watching) return; this.watching = true;
@@ -242,8 +283,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       void this.refreshSessions();
       if (this.selectedSessionId && (hint.exchangeId === this.selectedSessionId || hint.lagged)) void this.refreshInspection();
     }; this.sessionUpdates = onEvent;
-    try { await invoke<void>('watch_sessions',{onEvent}); await this.refreshSessions(undefined,true); this.sessionText = 'Watching live traffic. '+(this.totalMatched ? this.totalMatched+' exchanges retained.' : 'Waiting for proxied requests.'); this.sessionKind = 'success'; }
-    catch (error:unknown) { this.watching = false; this.sessionText = 'Live refresh failed: '+describeError(error); this.sessionKind = 'error'; }
+    try { await invoke<void>('watch_sessions',{onEvent}); this.watchError = ''; await this.refreshSessions(undefined,true); this.renderSessionState(); }
+    catch (error:unknown) { this.watching = false; this.watchError = 'Live refresh failed: '+describeError(error); this.renderSessionState(); }
   }
   sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); } }
   selectWithButton(session:SessionSummary,event:Event):void { event.stopPropagation(); void this.inspectSession(session); }
@@ -294,14 +335,27 @@ export class TrafficWorkspace extends WorkspaceElement {
   async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
   replaySelected():void { if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }
   async resumeLatest():Promise<void> { this.followLatest = true; this.pageIndex = 0; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
-  showUpdates():void { if (this.pendingRows.length) this.rebuildRows(this.pendingRows); this.displayedMatched = this.totalMatched; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.sessionText = 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges'; }
+  showUpdates():void { if (this.pendingRows.length) this.rebuildRows(this.pendingRows); this.displayedMatched = this.totalMatched; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.renderSessionState(); }
   async navigatePage(delta:number):Promise<void> { this.pageIndex = Math.max(0,this.pageIndex+delta); this.followLatest = false; this.queryRevision++; await this.refreshSessions(undefined,true); }
-  private renderFollowState():void { this.followText = this.followLatest ? 'Following live traffic' : this.selectedSessionId ? 'Inspection pinned · capture continues' : 'Row positions held · capture continues'; }
+  private renderSessionState():void {
+    const state = this.pending || this.lifecycle;
+    const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
+    const empty = this.filters.length || this.searchText ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges.' : empty);
+    this.sessionText = (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
+    this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';
+  }
+  private renderFollowState():void {
+    const capturing = this.lifecycle === 'running' && !this.pending;
+    const held = this.selectedSessionId ? 'Inspection pinned' : 'Row positions held';
+    this.followText = this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
+  }
   async exportLiveCapture():Promise<void> {
     try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }
     catch (error:unknown) { this.showNotice('TMCap export failed',describeError(error),null,null); }
   }
   disconnectedCallback():void {
+    this.clearColumnDrag();
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
     this.inspectionGeneration++; super.disconnectedCallback();
   }

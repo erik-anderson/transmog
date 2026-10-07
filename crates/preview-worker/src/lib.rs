@@ -34,7 +34,11 @@ pub fn rasterize(source: &[u8]) -> Result<Vec<u8>, String> {
         .filter(|format| {
             matches!(
                 format,
-                ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Gif | ImageFormat::WebP
+                ImageFormat::Png
+                    | ImageFormat::Jpeg
+                    | ImageFormat::Gif
+                    | ImageFormat::WebP
+                    | ImageFormat::Ico
             )
         })
         .ok_or_else(|| "preview image format is not allowed".to_owned())?;
@@ -131,6 +135,7 @@ mod tests {
             ImageFormat::Jpeg,
             ImageFormat::Gif,
             ImageFormat::WebP,
+            ImageFormat::Ico,
         ] {
             let source = one_pixel(format);
             let result = rasterize(&source).unwrap();
