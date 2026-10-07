@@ -40,3 +40,4 @@ Set-TestManifest
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'an unlisted payload file'
 Write-Host 'Release payload safety checks passed.'
 & (Join-Path $PSScriptRoot 'test-release-publication.ps1')
+& (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')

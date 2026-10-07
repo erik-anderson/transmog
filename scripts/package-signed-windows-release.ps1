@@ -44,7 +44,8 @@ try {
         $denial = (& (Resolve-WindowsSignTool) sign /fd SHA256 /dlib $ClientDll /dmdf $deniedMetadata $probeFile 2>&1 | Out-String)
         $denialExit = $LASTEXITCODE
     } finally { $PSNativeCommandUseErrorActionPreference = $priorNativePreference }
-    if ($denialExit -eq 0 -or $denial -notmatch '(?i)403|Forbidden') { throw "The other-profile test did not prove HTTP 403 denial: $denial" }
+    Assert-OtherProfileSigningDenied -ExitCode $denialExit -Output $denial
+    Write-Host 'Other-profile signing returned the required HTTP 403 denial.'
     [ordered]@{ OtherProfileSigningDenied = $true; HttpStatus = 403 } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $releaseRoot 'profile-permission-test.json') -Encoding utf8NoBOM
     $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object {

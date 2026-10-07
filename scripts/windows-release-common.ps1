@@ -13,6 +13,16 @@ function Resolve-WindowsSignTool {
     return $signTools[0]
 }
 
+function Assert-OtherProfileSigningDenied {
+    param([int]$ExitCode, [string]$Output)
+    if ($ExitCode -eq 0 -or $Output -notmatch '(?i)403|Forbidden') {
+        throw "The other-profile test did not prove HTTP 403 denial: $Output"
+    }
+    # GitHub's PowerShell wrapper exits with LASTEXITCODE. The expected denial
+    # passed this test, so its native failure must not fail the surrounding job.
+    $global:LASTEXITCODE = 0
+}
+
 function Get-WindowsSignatureEvidence {
     param([Parameter(Mandatory)][string]$FilePath, [Parameter(Mandatory)][string]$ExpectedPublisher)
     $signature = Get-AuthenticodeSignature -LiteralPath $FilePath
