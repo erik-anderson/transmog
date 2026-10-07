@@ -64,14 +64,20 @@ jobs:
       contents: read
       id-token: write
     env:
-      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
-      SIGNING_ACCOUNT_NAME: ${{ vars.SIGNING_ACCOUNT_NAME }}
-      SIGNING_CERTIFICATE_PROFILE: ${{ vars.SIGNING_CERTIFICATE_PROFILE }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      SIGNING_ENDPOINT: ${{ secrets.SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT_NAME: ${{ secrets.SIGNING_ACCOUNT_NAME }}
+      SIGNING_CERTIFICATE_PROFILE: ${{ secrets.SIGNING_CERTIFICATE_PROFILE }}
       SIGNING_PUBLISHER: ${{ vars.SIGNING_PUBLISHER }}
-      SIGNING_DENIED_PROFILE: ${{ vars.SIGNING_DENIED_PROFILE }}
+      SIGNING_DENIED_PROFILE: ${{ secrets.SIGNING_DENIED_PROFILE }}
     steps:
+      - name: Mask operational signing configuration
+        run: |
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'SIGNING_ENDPOINT', 'SIGNING_ACCOUNT_NAME', 'SIGNING_CERTIFICATE_PROFILE', 'SIGNING_DENIED_PROFILE')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            if ($value) { Write-Output "::add-mask::$value" }
+          }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -95,8 +101,8 @@ jobs:
       - name: Authenticate using protected environment OIDC
         uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Sign binaries and NSIS bundle and prove profile restriction
         env:
@@ -106,12 +112,6 @@ jobs:
         with:
           name: windows-release-signed-${{ github.run_attempt }}
           path: artifacts/windows-signed/
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-release-probe-config-${{ github.run_attempt }}
-          path: artifacts/permission-probe-config.json
           if-no-files-found: error
           retention-days: 7
 
@@ -150,12 +150,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: windows-release-probe-config-${{ github.run_attempt }}
-          path: artifacts/probe-config
       - name: Require Azure to reject the unprotected GitHub subject
-        run: ./scripts/test-unprotected-signing-identity.ps1 -ConfigPath artifacts/probe-config/permission-probe-config.json -ReportPath artifacts/release-evidence/identity-permission-test.json
+        env:
+          PROBE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_PROBE_CLIENT_ID }}
+          PROBE_TENANT_ID: ${{ secrets.AZURE_SIGNING_PROBE_TENANT_ID }}
+        run: ./scripts/test-unprotected-signing-identity.ps1 -ClientId $env:PROBE_CLIENT_ID -TenantId $env:PROBE_TENANT_ID -ReportPath artifacts/release-evidence/identity-permission-test.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-release-identity-test-${{ github.run_attempt }}

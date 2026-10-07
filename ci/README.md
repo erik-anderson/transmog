@@ -33,11 +33,23 @@ Certificate Profile Signer assignment on the production certificate profile.
 It has no subscription/resource-group/account-wide roles or application API
 permissions. The login uses the tenant without requiring subscription discovery.
 
-Environment variables (identifiers and configuration, not secrets):
+Protected environment secrets (configuration identifiers, no signing keys or
+passwords) mask values from the start of each job:
 
 - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`;
 - `SIGNING_ENDPOINT`, `SIGNING_ACCOUNT_NAME`, `SIGNING_CERTIFICATE_PROFILE`;
-- `SIGNING_PUBLISHER` and `SIGNING_DENIED_PROFILE`.
+- `SIGNING_DENIED_PROFILE`.
+
+`SIGNING_PUBLISHER` is an environment variable because the Authenticode publisher
+is public. Azure authentication remains secretless OIDC; storing identifiers in
+GitHub's secrets facility is a log-privacy measure, not a client-secret login.
+
+The negative identity job uses repository secrets `AZURE_SIGNING_PROBE_CLIENT_ID`
+and `AZURE_SIGNING_PROBE_TENANT_ID` for the same application/tenant IDs. These are
+configuration identifiers, not passwords or signing credentials; storing them as
+secrets masks logs and avoids carrying operational configuration in public
+artifacts. Signing logs mask account, endpoint, and profile configuration, and
+release reports omit those values. The Authenticode publisher remains public.
 
 Keep subscription identifiers, account endpoint, certificate-profile names, and
 expected publisher in the protected environment configuration. A separate test

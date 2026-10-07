@@ -1,12 +1,11 @@
-param([Parameter(Mandatory)][string]$ConfigPath, [Parameter(Mandatory)][string]$ReportPath)
+param([Parameter(Mandatory)][string]$ClientId, [Parameter(Mandatory)][string]$TenantId, [Parameter(Mandatory)][string]$ReportPath)
 $ErrorActionPreference = 'Stop'
-$config = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json
-foreach ($id in @($config.ClientId, $config.TenantId)) { if ($id -notmatch '^[0-9a-f-]{36}$') { throw 'Invalid Azure identifier in probe configuration.' } }
+foreach ($id in @($ClientId, $TenantId)) { if ($id -notmatch '^[0-9a-f-]{36}$') { throw 'Invalid Azure identifier in probe configuration.' } }
 if (-not $env:ACTIONS_ID_TOKEN_REQUEST_URL -or -not $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN) { throw 'The diagnostic job must have an OIDC token to test Azure rejection.' }
 $separator = if ($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')) { '&' } else { '?' }
 $oidc = Invoke-RestMethod -Uri ($env:ACTIONS_ID_TOKEN_REQUEST_URL + $separator + 'audience=api%3A%2F%2FAzureADTokenExchange') -Headers @{ Authorization = "Bearer $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN" }
-$response = Invoke-WebRequest -Method Post -Uri "https://login.microsoftonline.com/$($config.TenantId)/oauth2/v2.0/token" -SkipHttpErrorCheck -ContentType 'application/x-www-form-urlencoded' -Body @{
-    client_id = $config.ClientId; scope = 'https://codesigning.azure.net/.default'; grant_type = 'client_credentials'
+$response = Invoke-WebRequest -Method Post -Uri "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token" -SkipHttpErrorCheck -ContentType 'application/x-www-form-urlencoded' -Body @{
+    client_id = $ClientId; scope = 'https://codesigning.azure.net/.default'; grant_type = 'client_credentials'
     client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'; client_assertion = $oidc.value
 }
 $oidc = $null

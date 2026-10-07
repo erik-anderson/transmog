@@ -45,11 +45,8 @@ try {
         $denialExit = $LASTEXITCODE
     } finally { $PSNativeCommandUseErrorActionPreference = $priorNativePreference }
     if ($denialExit -eq 0 -or $denial -notmatch '(?i)403|Forbidden') { throw "The other-profile test did not prove HTTP 403 denial: $denial" }
-    [ordered]@{ OtherProfileSigningDenied = $true; HttpStatus = 403; Profile = $env:SIGNING_DENIED_PROFILE } | ConvertTo-Json |
+    [ordered]@{ OtherProfileSigningDenied = $true; HttpStatus = 403 } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $releaseRoot 'profile-permission-test.json') -Encoding utf8NoBOM
-    # These are public identifiers, carried separately from release assets for the negative OIDC test.
-    [ordered]@{ ClientId = $env:AZURE_CLIENT_ID; TenantId = $env:AZURE_TENANT_ID } | ConvertTo-Json |
-        Set-Content -LiteralPath (Join-Path $repositoryRoot 'artifacts\permission-probe-config.json') -Encoding utf8NoBOM
     $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     })
