@@ -9,22 +9,32 @@ New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot 'target\releas
 Push-Location $repositoryRoot
 try {
     . (Join-Path $PSScriptRoot 'dev-env.ps1') -Check
-    $buildResult = & (Join-Path $PSScriptRoot 'package-windows.ps1') -UnsignedDevelopment -BuildOnly |
-        ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }
-    if (@($buildResult).Count -ne 1) { throw 'The release build did not produce one build result.' }
-
     # The complete deterministic repository gate runs before signing credentials exist.
-    & cargo fmt --all -- --check
-    & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-    & cargo test --workspace --all-features --locked
-    & cargo deny check
-    & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
-    & (Join-Path $PSScriptRoot 'check-crypto-graph.ps1')
-    & (Join-Path $PSScriptRoot 'generate-supply-chain-artifacts.ps1') -NoticePath (Join-Path $payloadRoot 'evidence\THIRD_PARTY_NOTICES.md') -SbomPath (Join-Path $payloadRoot 'evidence\sbom.cdx.json')
     Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
-    try { & npm run test:workspaces } finally { Pop-Location }
-    $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 |
-        ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
+    try { & npm run check } finally { Pop-Location }
+    Write-Host '::group::Repository analysis and tests (development profile)'
+    try {
+        & cargo fmt --all -- --check
+        & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+        & cargo test --workspace --all-features --locked
+        & cargo deny check
+        & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
+        & (Join-Path $PSScriptRoot 'check-crypto-graph.ps1')
+        & (Join-Path $PSScriptRoot 'generate-supply-chain-artifacts.ps1') -NoticePath (Join-Path $payloadRoot 'evidence\THIRD_PARTY_NOTICES.md') -SbomPath (Join-Path $payloadRoot 'evidence\sbom.cdx.json')
+        Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
+        try { & npm run test:workspaces } finally { Pop-Location }
+    } finally { Write-Host '::endgroup::' }
+    Write-Host '::group::Optimized application and helpers (one release build)'
+    try {
+        $buildResult = & (Join-Path $PSScriptRoot 'package-windows.ps1') -UnsignedDevelopment -BuildOnly -SkipTests |
+            ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }
+        if (@($buildResult).Count -ne 1) { throw 'The release build did not produce one build result.' }
+    } finally { Write-Host '::endgroup::' }
+    Write-Host '::group::Release WebView validation and 30-minute soak'
+    try {
+        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 |
+            ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
+    } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM
     foreach ($binary in @('transmog-desktop.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
         $sourceBinary = Join-Path $buildResult.BuildDirectory $binary

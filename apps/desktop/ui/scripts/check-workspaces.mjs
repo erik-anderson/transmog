@@ -177,18 +177,28 @@ try {
   assert.ok(panes.details.x>panes.list.x+panes.list.width,'Side-by-side layout did not arrange panes horizontally');
   await page.getByLabel('Traffic layout',{exact:true}).selectOption('stacked');
   const proxy = page.locator('.top-actions proxy-toggle button');
+  const proxyBackground = async lifecycle => {
+    await page.waitForFunction(lifecycle => document.querySelector('app-shell').shadowRoot.querySelector('.top-actions proxy-toggle button').dataset.lifecycle === lifecycle, lifecycle);
+    await proxy.evaluate(async button => {
+      // Reading the style starts any pending CSS transition; labels can update
+      // before the 100ms background transition has reached its final color.
+      getComputedStyle(button).backgroundColor;
+      await Promise.all(button.getAnimations().map(animation => animation.finished.catch(() => {})));
+    });
+    return proxy.evaluate(button => getComputedStyle(button).backgroundColor);
+  };
   await proxy.click();
   await page.getByRole('button',{name:'Starting…',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Starting proxy\./);
   assert.equal(await proxy.isEnabled(),false);
   await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Proxy running\./);
-  const runningColor=await proxy.evaluate(button=>getComputedStyle(button).backgroundColor);
+  const runningColor=await proxyBackground('running');
   await proxy.click();
   await page.getByRole('button',{name:'Stopping…',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Stopping proxy\./);
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
-  assert.notEqual(await proxy.evaluate(button=>getComputedStyle(button).backgroundColor),runningColor);
+  assert.notEqual(await proxyBackground('stopped'),runningColor);
   await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
   await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
   await proxy.click();

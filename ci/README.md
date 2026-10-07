@@ -17,12 +17,18 @@ for seven days; compiled targets and signing tools are never restored from cache
 | Provenance attestation | `contents: read`, `id-token: write`, `attestations: write` | None |
 | Draft publication | `contents: write` | None |
 
-The build runs the locked packaging tests, full repository gate, browser workspace
+The build runs the full locked repository gate, browser workspace
 tests, and 30-minute WebView soak before credentials exist. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The
 signing job checks that catalog before restoring the three binaries and UI assets;
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
+
+The repository-wide Clippy/tests run before optimized compilation. That full gate
+replaces the packaging wrapper's narrower test pass. Tauri forwards the three
+shipped package selections to one Cargo release build, and sidecars are staged
+later during bundling. Clippy/development and release artifacts remain separate;
+this avoids redundant test/package passes without removing the quality checks.
 
 The `release-signing` environment allows only the `main` branch, requires
 `erik-anderson` approval, allows self-review for this solo repository, and disables

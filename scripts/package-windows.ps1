@@ -5,6 +5,7 @@ param(
     [switch]$Offline,
     [switch]$BuildOnly,
     [switch]$BundleOnly,
+    [switch]$SkipTests,
     [string]$SigningMetadataPath,
     [string]$SigningClientDll,
     [string]$ExpectedPublisher
@@ -14,6 +15,8 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 
 if ($BuildOnly -and $BundleOnly) { throw 'BuildOnly and BundleOnly are mutually exclusive.' }
+if ($BuildOnly -and -not $UnsignedDevelopment) { throw 'BuildOnly requires UnsignedDevelopment; signing happens during bundling.' }
+if ($SkipTests -and (-not $BuildOnly -or -not $UnsignedDevelopment)) { throw 'SkipTests is limited to unsigned BuildOnly after the CI repository gate.' }
 if ($SigningMetadataPath -and ($UnsignedDevelopment -or $SigningCertificateThumbprint)) {
     throw 'Choose one signing mode: Artifact Signing, local certificate, or unsigned development.'
 }
@@ -45,21 +48,25 @@ try {
     Pop-Location
 }
 
-$cargoArguments = @('test', '--locked', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
-if ($Offline) { $cargoArguments += '--offline' }
-& cargo @cargoArguments
-if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
+if (-not $SkipTests) {
+    $cargoArguments = @('test', '--locked', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
+    if ($Offline) { $cargoArguments += '--offline' }
+    & cargo @cargoArguments
+    if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
+}
 
-$hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
-if ($Offline) { $hostBuildArguments += '--offline' }
-& cargo @hostBuildArguments
-if ($LASTEXITCODE -ne 0) { throw "Script host release build failed with exit code $LASTEXITCODE" }
+if (-not $BuildOnly) {
+    $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+    if ($Offline) { $hostBuildArguments += '--offline' }
+    & cargo @hostBuildArguments
+    if ($LASTEXITCODE -ne 0) { throw "Script host release build failed with exit code $LASTEXITCODE" }
+}
 }
 
 $binaryDirectory = Join-Path $desktopRoot 'binaries'
 $bundledHost = Join-Path $binaryDirectory 'transmog-script-host-x86_64-pc-windows-msvc.exe'
 $bundledPreview = Join-Path $binaryDirectory 'transmog-preview-worker-x86_64-pc-windows-msvc.exe'
-New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null
+if (-not $BuildOnly) { New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null }
 if ($SigningMetadataPath) {
     $SigningMetadataPath = (Resolve-Path -LiteralPath $SigningMetadataPath).Path
     $SigningClientDll = (Resolve-Path -LiteralPath $SigningClientDll).Path
@@ -67,8 +74,10 @@ if ($SigningMetadataPath) {
         & (Join-Path $PSScriptRoot 'sign-windows-file.ps1') -FilePath (Join-Path $repositoryRoot "target\release\$helperName") -MetadataPath $SigningMetadataPath -ClientDll $SigningClientDll -ExpectedPublisher $ExpectedPublisher | Out-Host
     }
 }
-Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-script-host.exe') -Destination $bundledHost -Force
-Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-preview-worker.exe') -Destination $bundledPreview -Force
+if (-not $BuildOnly) {
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-script-host.exe') -Destination $bundledHost -Force
+    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-preview-worker.exe') -Destination $bundledPreview -Force
+}
 
 $tauriArguments = if ($BuildOnly) { @('build', '--no-bundle', '--no-sign', '--ci') }
     elseif ($BundleOnly) { @('bundle', '--bundles', 'nsis', '--ci') }
@@ -77,9 +86,10 @@ if ($UnsignedDevelopment -and -not $BuildOnly) { $tauriArguments += '--no-sign' 
 $overridePath = Join-Path $artifactRoot 'signing-config.json'
 $override = @{
     bundle = @{
-        externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker')
+        externalBin = @()
     }
 }
+if (-not $BuildOnly) { $override.bundle.externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker') }
 if ($SigningMetadataPath) {
     $override.bundle.windows = @{
         digestAlgorithm = 'sha256'
@@ -98,7 +108,14 @@ if ($SigningMetadataPath) {
 }
 $override | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $overridePath -Encoding utf8NoBOM
 $tauriArguments += @('--config', $overridePath)
-if (-not $BundleOnly) { $tauriArguments += @('--', '--locked') }
+if (-not $BundleOnly) {
+    $tauriArguments += @('--', '--locked')
+    if ($BuildOnly) {
+        # One Cargo release graph builds all three shipped binaries. Sidecars are
+        # staged only when bundling, after these outputs exist.
+        $tauriArguments += @('-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+    }
+}
 
 Push-Location $desktopRoot
 $priorCargoOffline = $env:CARGO_NET_OFFLINE
@@ -122,8 +139,10 @@ try {
     $env:TMP = $priorTmp
     Pop-Location
     Remove-Item -LiteralPath $overridePath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $bundledHost -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $bundledPreview -Force -ErrorAction SilentlyContinue
+    if (-not $BuildOnly) {
+        Remove-Item -LiteralPath $bundledHost -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $bundledPreview -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($BuildOnly) {
