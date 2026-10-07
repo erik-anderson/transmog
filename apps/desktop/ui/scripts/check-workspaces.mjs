@@ -39,7 +39,7 @@ await page.route('http://workspace.test/**', async (route) => {
 });
 await page.addInitScript((workspace) => {
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
-  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/png':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
+  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     return { id, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
@@ -73,13 +73,19 @@ await page.addInitScript((workspace) => {
           return {sessions:rows.slice(offset,offset+limit),totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
         }
         case 'session_detail': if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100)); return detail(args.id);
+        case 'save_response_body': {
+          state.lastSave=structuredClone(args);
+          await new Promise(resolve=>setTimeout(resolve,80));
+          if (state.saveError) throw new Error('Fixture file write failed');
+          return state.saveCancelled ? null : {fileName:'original.webp',bytes:4};
+        }
         case 'inspect_body': {
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
           const metadata=detail(args.request.sessionId).storedBodies[0];
           if (state.bodyOverride) Object.assign(metadata,state.bodyOverride);
           state.lastBodyRequest=structuredClone(args.request);
           if (metadata.contentCodings.length && metadata.availability!=='complete' && args.request.decodeContent) throw new Error('Content decoding needs a complete body');
-          const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType==='image/png'?'image':'original-text'):args.request.representation;
+          const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':'original-text'):args.request.representation;
           return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
         case 'automation_status': return { generation: 0, rules: [], candidateCount: 0, historyCount: 0 };
@@ -276,6 +282,25 @@ try {
   await page.locator('message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
   await page.locator('message-inspector[side="response"] img').waitFor({state:'visible'});
   const responseInspector=page.locator('message-inspector[side="response"]');
+  assert.equal(await page.getByRole('button',{name:'Copy body',exact:true}).count(),0);
+  const saveBody=responseInspector.getByRole('button',{name:'Save as…',exact:true});
+  await saveBody.click();
+  await responseInspector.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
+  assert.equal(await responseInspector.getByRole('button',{name:'Saving…',exact:true}).isEnabled(),false);
+  await page.locator('.global-diagnostics').getByText('Saved original.webp (4 B).',{exact:true}).waitFor({state:'visible'});
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.lastSave),{sessionId:'image',boundary:'client-response'},'Save as used preview bytes or a preview URL');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.saveCancelled=true;});
+  await saveBody.click();
+  await responseInspector.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
+  await saveBody.waitFor({state:'visible'});
+  assert.equal(await saveBody.isEnabled(),true,'Cancelling Save as did not restore the control');
+  assert.equal(await page.locator('.global-diagnostics').textContent(),'Saved original.webp (4 B).');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.saveCancelled=false;globalThis.__workspaceFixture.saveError=true;});
+  await saveBody.click();
+  await page.locator('.notice').getByText('Response save failed',{exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('.notice').textContent(),/Fixture file write failed/);
+  await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.saveError=false;});
   await page.evaluate(()=>{
     const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
     const detail=structuredClone(inspector.detail);
@@ -287,6 +312,7 @@ try {
   assert.match(await responseInspector.locator('.body-facts').textContent(),/4 B retained \/ 8 B observed · lost/);
   assert.match(await responseInspector.locator('.body-preview').textContent(),/Reason: exchange failed at ResponseBody/);
   assert.match(await responseInspector.locator('.body-preview').textContent(),/Raw Hex shows the 4 B retained bytes/);
+  assert.equal(await saveBody.isEnabled(),false,'Save as accepts an incomplete response');
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');
   await responseInspector.getByText('Hex',{exact:true}).last().waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastBodyRequest.decodeContent),false,'Hex tried to decode an incomplete compressed body');
@@ -311,6 +337,7 @@ try {
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('auto');
   assert.match(await responseInspector.locator('.body-preview').textContent(),/removed to make room/);
   assert.doesNotMatch(await responseInspector.locator('.body-preview').textContent(),/Hex/,'Unavailable bytes incorrectly recommend Hex');
+  assert.equal(await saveBody.isEnabled(),false,'Save as accepts evicted response bytes');
   await page.evaluate(()=>delete globalThis.__workspaceFixture.bodyOverride);
   await page.locator('tr[data-session-id="second"]').click();
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});

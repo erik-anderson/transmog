@@ -319,6 +319,8 @@
   "loading": false,
   "viewer": "auto",
   "decodeContent": true,
+  "bodyMetadata": null,
+  "saving": false,
   "headerShare": "35%",
   "columns": [
     {

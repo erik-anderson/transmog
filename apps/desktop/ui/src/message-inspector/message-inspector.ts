@@ -23,6 +23,8 @@ export class MessageInspector extends WebUIElement {
   @observable loading = false;
   @observable viewer = 'auto';
   @observable decodeContent = true;
+  @observable bodyMetadata:StoredBodyMetadata | null = null;
+  @observable saving = false;
   @observable headerShare = '35%';
   bodyLimit!: HTMLInputElement;
   private generation = 0;
@@ -41,6 +43,7 @@ export class MessageInspector extends WebUIElement {
     this.boundaries = heads.map((head) => ({id:head.boundary,label:stages[head.boundary] ?? head.boundary}));
     if (!heads.some((head) => head.boundary === this.boundary)) this.boundary = heads.find((head) => head.boundary === expected)?.boundary ?? heads[0]?.boundary ?? expected;
     const head = heads.find((head) => head.boundary === this.boundary);
+    this.bodyMetadata = this.detail?.storedBodies.find((body) => body.boundary === this.boundary) ?? null;
     this.headSummary = head ? this.side === 'request' ? (head.method ?? '')+' '+(head.target ?? '') : 'HTTP '+head.status+' · '+(stages[head.boundary] ?? head.boundary) : this.detail ? 'Waiting for '+this.side+' headers' : 'Select an exchange';
     this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value}));
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss},null,2) : 'No exchange selected.';
@@ -75,6 +78,7 @@ export class MessageInspector extends WebUIElement {
     try {
       const inspection = await invoke<BodyInspection>('inspect_body',{request:{sessionId:this.detail.id,boundary:this.boundary,representation:this.viewer,decodeContent:this.viewer !== 'bytes' && this.decodeContent,offset:0,maxBytes:Number(this.bodyLimit?.value ?? 262144)}});
       if (generation !== this.generation || !this.isConnected) return;
+      this.bodyMetadata = inspection.metadata;
       const labels:Record<string,string> = {'formatted-json':'JSON','original-text':'Text','bytes':'Hex','image':'Image','metadata':'Metadata','unavailable':'Unavailable'};
       this.viewerLabel = (this.viewer === 'auto' ? 'Auto · ' : '')+(labels[inspection.representation] ?? inspection.representation);
       this.bodyFacts = this.retentionFacts(inspection.metadata)+' · '+formatBytes(inspection.displayBytes)+' shown'+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
@@ -100,7 +104,16 @@ export class MessageInspector extends WebUIElement {
     return (reasons[body.availability] ?? 'Body capture status: '+body.availability+'.')+(body.reason ? ' Reason: '+body.reason+'.' : '');
   }
   async copyHeaders(): Promise<void> { await this.copy(this.headerRows.map((row) => row.name+': '+row.value).join('\r\n'),'Headers copied.'); }
-  async copyBody(): Promise<void> { await this.copy(this.bodyText,'Body preview copied.'); }
+  async saveBody():Promise<void> {
+    if (this.saving || !this.detail || this.bodyMetadata?.availability !== 'complete' || !this.bodyMetadata.retainedBytes) return;
+    this.saving = true;
+    try {
+      const result = await invoke<{fileName:string;bytes:number}|null>('save_response_body',{sessionId:this.detail.id,boundary:this.boundary});
+      if (result) this.$emit('diagnostic','Saved '+result.fileName+' ('+formatBytes(result.bytes)+').');
+    } catch (error:unknown) {
+      this.$emit('notice',{title:'Response save failed',message:describeError(error),actionLabel:null,action:null});
+    } finally { this.saving = false; }
+  }
   private async copy(text:string,message:string): Promise<void> {
     try { await navigator.clipboard.writeText(text); this.$emit('diagnostic',message); }
     catch { this.$emit('diagnostic','Select the text and use Copy.'); }

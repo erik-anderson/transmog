@@ -37,6 +37,10 @@
   the window cannot accommodate their content.
 - Captured markup must remain inert text. Use the isolated preview origin for
   images and preserve the embedded origin's CSP and Trusted Types enforcement.
+- Save response files from the complete original body through the backend.
+  Preview data may be shortened, formatted, or normalized to another image
+  format. Keep an eviction lease while the native file dialog is open, and
+  derive suggested names from original headers rather than display-safe copies.
 
 ## Verification
 

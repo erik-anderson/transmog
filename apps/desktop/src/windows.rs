@@ -25,10 +25,10 @@ use transmog_app::{
     CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
     DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
     ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
-    RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus,
-    SessionDetail, SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset,
-    SupportBundleRequest, SupportBundleResult, SystemReplayExecutor, WindowState,
-    WorkspacePreferences,
+    ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
+    ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
+    SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
+    WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -548,6 +548,36 @@ async fn inspect_body(
 }
 
 #[tauri::command]
+async fn save_response_body(
+    session_id: String,
+    boundary: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<ResponseFileResult>, AppError> {
+    let application = state.application.clone();
+    let prepared = tokio::task::spawn_blocking(move || {
+        application.prepare_response_file(&session_id, &boundary)
+    })
+    .await
+    .map_err(|_| AppError {
+        category: transmog_app::ErrorCategory::Internal,
+        message: "Response save preparation failed".to_owned(),
+        retryable: true,
+    })??;
+    let name = prepared.suggested_name().to_owned();
+    let destination = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save response as")
+        .set_file_name(name)
+        .save_file()
+        .await;
+    match destination {
+        Some(file) => prepared.save_to(file.path().to_owned()).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
 fn watch_sessions(
     on_event: Channel<SessionHint>,
     state: State<'_, DesktopState>,
@@ -844,6 +874,7 @@ pub fn run() {
             query_sessions,
             session_detail,
             inspect_body,
+            save_response_body,
             watch_sessions,
             enable_breakpoints,
             breakpoint_status,

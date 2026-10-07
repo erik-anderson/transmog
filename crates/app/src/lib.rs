@@ -17,6 +17,8 @@ mod lifecycle;
 mod preview;
 mod product_state;
 mod response_assets;
+mod response_file;
+mod response_filename;
 mod scripts;
 mod sessions;
 mod workspace;
@@ -55,6 +57,7 @@ pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetProvenance,
     SessionResponseAsset,
 };
+pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
 use serde::Serialize;
 pub use sessions::{
@@ -712,6 +715,24 @@ impl Application {
     /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
         inspector::session_detail(&self.service, self.body_store.as_ref(), id)
+    }
+
+    /// Prepares a complete original response for an explicitly requested save.
+    /// Holds an eviction lease until the caller saves or cancels the operation.
+    ///
+    /// # Errors
+    /// Returns invalid selection, unavailable body, or incomplete capture errors.
+    pub fn prepare_response_file(
+        &self,
+        session_id: &str,
+        boundary: &str,
+    ) -> Result<ResponseFile, AppError> {
+        response_file::prepare(
+            &self.service,
+            self.body_store.as_ref(),
+            session_id,
+            boundary,
+        )
     }
 
     /// Returns one bounded safe representation of a retained body boundary.

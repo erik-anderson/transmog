@@ -64,6 +64,7 @@ sha1 = "0.10.6"
 sha2 = "0.10.9"
 sourcemap = "=9.3.2"
 thiserror = "2.0.17"
+tempfile = "=3.27.0"
 tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-boring = "=5.2.0"
 tower-service = "0.3.3"

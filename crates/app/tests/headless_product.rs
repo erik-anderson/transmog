@@ -229,6 +229,41 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let normalized = application.image_preview(&handle).expect("cached preview");
     assert_eq!(normalized.1, "image/png");
     assert!(normalized.0.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let image_file = application
+        .prepare_response_file(&image_detail.id, "client-response")
+        .unwrap();
+    assert_eq!(image_file.suggested_name(), "image.png");
+    let image_path = workspace.root.join("saved-image.png");
+    image_file.save_to(image_path.clone()).await.unwrap();
+    assert_eq!(std::fs::read(image_path).unwrap(), image.body);
+
+    let encoded = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("encoding/stacked"),
+        &[],
+    )
+    .await;
+    assert_success(&encoded);
+    assert_header(&encoded, "content-encoding", "gzip, br, deflate, zstd");
+    let encoded_detail = wait_for_session(&application, "/encoding/stacked", "completed").await;
+    let decoded_file = application
+        .prepare_response_file(&encoded_detail.id, "client-response")
+        .unwrap();
+    assert_eq!(decoded_file.suggested_name(), "stacked.html");
+    let decoded_path = workspace.root.join("saved-decoded.html");
+    decoded_file.save_to(decoded_path.clone()).await.unwrap();
+    assert_eq!(
+        std::fs::read(decoded_path).unwrap(),
+        concat!(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
+            "<title>gzip-br-deflate-zstd interop fixture</title></head>",
+            "<body><h1 data-origin=\"nginx\" data-coding=\"gzip-br-deflate-zstd\">",
+            "gzip-br-deflate-zstd through Transmog</h1></body></html>"
+        )
+        .as_bytes()
+    );
 
     let failure = curl(
         &environment,

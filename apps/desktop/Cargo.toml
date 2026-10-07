@@ -25,6 +25,7 @@ serde.workspace = true
 percent-encoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.4.5"
 transmog-host-windows = { version = "=0.1.0", path = "../../crates/host-windows" }
