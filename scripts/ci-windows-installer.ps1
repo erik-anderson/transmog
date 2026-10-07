@@ -92,7 +92,7 @@ try {
             Name = $installerName
             Bytes = $packageOutput.Bytes
             Sha256 = $packageOutput.Sha256
-            Signature = $packageOutput.Signature
+            Signature = [string]$packageOutput.Signature
         }
     }
     $status = 'passed'

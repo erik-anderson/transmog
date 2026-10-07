@@ -46,6 +46,21 @@ allowance; increasing it is not required for this workflow.
 The optional caches are for this unsigned workflow. A future signing workflow
 must review cache trust and permissions separately.
 
+## Initial hosted verification
+
+The [first cold run](https://github.com/erik-anderson/transmog/actions/runs/37586689686)
+passed on 2026-10-07 at commit `b52c2f8`, with dependency caching disabled.
+The full job took 21 minutes 56 seconds; the measured build phases took
+1,291.72 seconds. The packaging gate passed 73 tests with one existing ignored
+test. The downloaded 23.12 MiB NSIS installer was confirmed unsigned, and its
+SHA-256 matched both the uploaded checksum file and build report.
+
+Cargo targets occupied 10.80 GiB after the build. This supports caching source
+downloads while keeping compiled targets out of the repository's included
+10 GiB cache allowance. Cached-run timing has not yet been measured. Installer
+and report downloads are retained for seven days on GitHub; the run history
+remains the reference for this baseline.
+
 ## Deferred workflows
 
 The broader definitions remain under `ci/github-actions/` rather than
