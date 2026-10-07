@@ -15,7 +15,7 @@ if ($env:GITHUB_REPOSITORY -cne 'erik-anderson/transmog' -or $env:GITHUB_REF -cn
 $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'Transmog-draft-release' }
 $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
 $tag = 'v' + $manifest.Version
-$releases = @(Invoke-RestMethod -Uri "$api/releases?per_page=100" -Headers $headers)
+$releases = Invoke-RestMethod -Uri "$api/releases?per_page=100" -Headers $headers
 $existing = @($releases | Where-Object tag_name -CEQ $tag)
 if ($existing.Count -gt 1 -or ($existing.Count -eq 1 -and -not $existing[0].draft)) { throw "Refusing to overwrite a published or ambiguous release: $tag" }
 $body = @{
