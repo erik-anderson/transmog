@@ -1,0 +1,238 @@
+name: Windows signed draft release
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+concurrency:
+  group: windows-signed-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: windows-2025
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Set up pinned native and Rust tools
+        run: |
+          ./scripts/setup-windows-ci.ps1
+          $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
+          rustup toolchain install $pin --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
+          ./scripts/setup-release-validation-tools.ps1
+      - name: Install locked UI and browser-test dependencies
+        run: |
+          npm ci --prefix apps/desktop/ui
+          npm ci --prefix e2e/playwright
+          Push-Location e2e/playwright
+          try { npx playwright install chromium } finally { Pop-Location }
+          ./scripts/cache-v8.ps1
+      - name: Build and test before Azure authentication
+        run: |
+          ./scripts/test-release-safety.ps1
+          ./scripts/build-windows-release.ps1
+      - name: Upload immutable unsigned build payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-build-${{ github.run_attempt }}
+          path: artifacts/windows-build/
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      SIGNING_ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT_NAME: ${{ vars.SIGNING_ACCOUNT_NAME }}
+      SIGNING_CERTIFICATE_PROFILE: ${{ vars.SIGNING_CERTIFICATE_PROFILE }}
+      SIGNING_PUBLISHER: ${{ vars.SIGNING_PUBLISHER }}
+      SIGNING_DENIED_PROFILE: ${{ vars.SIGNING_DENIED_PROFILE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-build-${{ github.run_attempt }}
+          path: artifacts/downloaded-build
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Prepare bundler and verify payload before Azure login
+        run: |
+          npm ci --ignore-scripts --prefix apps/desktop/ui
+          $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
+          rustup toolchain install $pin --profile minimal --target x86_64-pc-windows-msvc
+          ./scripts/prepare-windows-signing.ps1 -PayloadRoot artifacts/downloaded-build
+      - name: Download and verify signing SDK
+        id: sdk
+        run: ./scripts/setup-artifact-signing-client.ps1
+      - name: Authenticate using protected environment OIDC
+        uses: Azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Sign binaries and NSIS bundle and prove profile restriction
+        env:
+          SIGNING_CLIENT_DLL: ${{ steps.sdk.outputs.client-dll }}
+        run: ./scripts/package-signed-windows-release.ps1 -PayloadRoot artifacts/downloaded-build -ClientDll $env:SIGNING_CLIENT_DLL
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-signed-${{ github.run_attempt }}
+          path: artifacts/windows-signed/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-probe-config-${{ github.run_attempt }}
+          path: artifacts/permission-probe-config.json
+          if-no-files-found: error
+          retention-days: 7
+
+  installer-test:
+    needs: sign
+    runs-on: windows-2025
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-signed-${{ github.run_attempt }}
+          path: artifacts/windows-signed
+      - name: Verify and install signed bundle without Azure credentials
+        run: ./scripts/test-signed-windows-installer.ps1 -ReleaseRoot artifacts/windows-signed -ReportPath artifacts/release-evidence/installer-test.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-installer-test-${{ github.run_attempt }}
+          path: artifacts/release-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  identity-test:
+    needs: sign
+    runs-on: windows-2025
+    timeout-minutes: 10
+    # Deliberately no environment: even an OIDC-capable job must fail Azure login.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-probe-config-${{ github.run_attempt }}
+          path: artifacts/probe-config
+      - name: Require Azure to reject the unprotected GitHub subject
+        run: ./scripts/test-unprotected-signing-identity.ps1 -ConfigPath artifacts/probe-config/permission-probe-config.json -ReportPath artifacts/release-evidence/identity-permission-test.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-identity-test-${{ github.run_attempt }}
+          path: artifacts/release-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  attest:
+    needs: [sign, installer-test, identity-test]
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-signed-${{ github.run_attempt }}
+          path: artifacts/windows-signed
+      - name: Check signed artifact provenance and checksums
+        run: |
+          . ./scripts/windows-release-common.ps1
+          Assert-SignedRelease -ReleaseRoot artifacts/windows-signed -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID | Out-Host
+      - name: Attest the final signed installer and release metadata
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/windows-signed/*-setup.exe
+            artifacts/windows-signed/release-manifest.json
+            artifacts/windows-signed/sbom.cdx.json
+          create-storage-record: false
+      - name: Retain and verify the Sigstore bundle
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts/attestation | Out-Null
+          Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination artifacts/attestation/provenance.sigstore.json
+          $installer = Get-ChildItem artifacts/windows-signed/*-setup.exe
+          gh attestation verify $installer.FullName --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref refs/heads/main --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Attestation verification failed.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-attestation-${{ github.run_attempt }}
+          path: artifacts/attestation/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-draft:
+    needs: [sign, installer-test, identity-test, attest]
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-signed-${{ github.run_attempt }}
+          path: artifacts/windows-signed
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: windows-release-*-test-${{ github.run_attempt }}
+          path: artifacts/release-evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-release-attestation-${{ github.run_attempt }}
+          path: artifacts/release-evidence
+      - name: Create or update a draft without Azure access
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/publish-windows-draft.ps1 -ReleaseRoot artifacts/windows-signed -EvidenceRoot artifacts/release-evidence

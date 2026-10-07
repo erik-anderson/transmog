@@ -21,12 +21,16 @@ No certificate identity, private key, token, or password belongs in this
 repository. The release wrapper injects the certificate thumbprint in a
 temporary ignored config overlay and removes that overlay after packaging.
 
-The manually dispatched hosted Windows workflow currently creates only unsigned
-development installers. Its setup, artifacts, and measurements are described
-in [`ci/README.md`](../ci/README.md). Azure signing and release publication are
-separate future stages.
+For hosted releases, dispatch **Windows signed draft release** on `main` and
+approve its protected `release-signing` job after the build passes. The workflow
+uses Azure Artifact Signing through profile-scoped OIDC, signs the inner binaries
+and NSIS bundle, verifies timestamps/publisher, tests permission rejection, and
+creates a GitHub provenance attestation for the final signed installer. It creates
+only a draft release. Its setup, permissions, artifacts, and verification command
+are described in [`ci/README.md`](../ci/README.md). The separate unsigned installer
+workflow remains available for development.
 
-Create a signed installer:
+For the alternative local-certificate path, create a signed installer:
 
 ```powershell
 pwsh ./scripts/package-windows.ps1 `
@@ -121,6 +125,10 @@ standalone curl/Chromium with Nginx, Apache, and Caddy across supported HTTP and
 content-coding paths. Certificate validation remains enabled.
 
 ## Clean-machine release checklist
+
+The maintainer has deferred this checklist for the initial pipeline integration.
+Hosted Windows Server installer and WebView checks do not establish clean Windows
+11 qualification. Draft release evidence records that limitation.
 
 Use a disposable, fully updated Windows 11 VM with no Transmog state:
 
