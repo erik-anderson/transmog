@@ -14,14 +14,14 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $desktopUi = Join-Path $repositoryRoot 'apps\desktop\ui'
-$executable = Join-Path $repositoryRoot 'target\release\transmog-desktop.exe'
+$executable = Join-Path $repositoryRoot 'target\release\transmog.exe'
 if ($ExecutablePath) {
     if (-not $SkipReleaseBuild) { throw 'An external executable requires SkipReleaseBuild.' }
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
-if (Get-Process -Name 'transmog-desktop' -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
+if (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($executable)) -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
 
 function Resolve-ArtifactPath([string]$Path) {
     if (-not $Path) { return $null }

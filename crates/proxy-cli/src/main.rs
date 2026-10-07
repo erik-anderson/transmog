@@ -56,7 +56,7 @@ async fn main() {
         .try_init()
         .ok();
     if let Err(error) = run().await {
-        eprintln!("transmog: {error}");
+        eprintln!("transmog-cli: {error}");
         std::process::exit(2);
     }
 }
@@ -76,7 +76,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             print_usage();
             Ok(())
         }
-        _ => Err(invalid_input("unknown command; run `transmog help`").into()),
+        _ => Err(invalid_input("unknown command; run `transmog-cli help`").into()),
     }
 }
 
@@ -607,18 +607,18 @@ fn invalid_input(message: impl Into<String>) -> io::Error {
 
 fn print_usage() {
     println!(
-        "transmog\n\n\
+        "transmog-cli\n\n\
          Generate a CA (files must not already exist):\n  \
-         transmog ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
+         transmog-cli ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
          Issue a short-lived server leaf from an existing CA:\n  \
-         transmog ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
+         transmog-cli ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
          Run the explicit proxy:\n  \
-         transmog serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
+         transmog-cli serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
          Inspect, validate, recover/seal, or export a native capture:\n  \
-         transmog capture inspect --input FILE\n  \
-         transmog capture validate --input FILE\n  \
-         transmog capture seal --input FILE --output RECOVERED_FILE\n  \
-         transmog capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
+         transmog-cli capture inspect --input FILE\n  \
+         transmog-cli capture validate --input FILE\n  \
+         transmog-cli capture seal --input FILE --output RECOVERED_FILE\n  \
+         transmog-cli capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
          Non-loopback listening additionally requires --allow-remote."
     );
 }

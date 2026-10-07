@@ -6,10 +6,12 @@ capitalization.
 
 Developer-facing identifiers follow their ecosystem conventions:
 
-- the command-line executable and primary Cargo package are `transmog`;
+- the command-line executable is `transmog-cli` (`transmog-cli.exe` on Windows),
+  and its Cargo package is `transmog`;
 - library packages use the `transmog-*` prefix and Rust imports use
   `transmog_*`;
-- the desktop package and executable are `transmog-desktop`;
+- the desktop Cargo package is `transmog-desktop`, and its Windows executable
+  is `transmog.exe`;
 - npm workspace packages use the `@transmog` scope;
 - test configuration uses `TRANSMOG_*` environment variables;
 - the embedded application origin is `transmog-ui://localhost`, mapped by

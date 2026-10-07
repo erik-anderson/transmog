@@ -13,7 +13,7 @@ name = "transmog_desktop"
 path = "src/lib.rs"
 
 [[bin]]
-name = "transmog-desktop"
+name = "transmog"
 path = "src/main.rs"
 
 [dependencies]

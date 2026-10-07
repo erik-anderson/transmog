@@ -51,6 +51,7 @@ jobs:
           $installRoot = Join-Path $env:RUNNER_TEMP 'transmog-webview-baseline'
           $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S',"/D=$installRoot" -WindowStyle Hidden -PassThru
           if (-not $install.WaitForExit(180000) -or $install.ExitCode -ne 0) { throw 'Baseline install failed.' }
+          # This pinned historical installer predates the desktop binary rename.
           $exe = Join-Path $installRoot 'transmog-desktop.exe'
           try {
             ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -StartupOnly

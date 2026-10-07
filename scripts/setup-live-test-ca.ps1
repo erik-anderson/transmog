@@ -15,7 +15,7 @@ if (-not $PrivateKeyPath) {
     $PrivateKeyPath = Join-Path $localDirectory 'live-test-ca.key'
 }
 if (-not $BinaryPath) {
-    $BinaryPath = Join-Path $repositoryRoot 'target\release\transmog.exe'
+    $BinaryPath = Join-Path $repositoryRoot 'target\release\transmog-cli.exe'
 }
 
 $certificateExists = Test-Path -LiteralPath $CertificatePath

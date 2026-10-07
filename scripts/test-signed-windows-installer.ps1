@@ -21,14 +21,14 @@ function Get-HostState {
 }
 $before = Get-HostState
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', "/D=$installDirectory")
-foreach ($name in @('transmog-desktop.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
+foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }
-Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog-desktop.exe') -Arguments @('--prepare-update')
+Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--prepare-update')
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'uninstall.exe') -Arguments @('/S')
 $deadline = [DateTime]::UtcNow.AddSeconds(60)
-while ((Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-desktop.exe')) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
-if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-desktop.exe')) { throw 'Uninstall left the installed executable behind.' }
+while ((Test-Path -LiteralPath (Join-Path $installDirectory 'transmog.exe')) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
+if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog.exe')) { throw 'Uninstall left the installed executable behind.' }
 if ((Get-HostState) -cne $before) { throw 'The no-proxy/no-certificate installer smoke test changed host proxy or current-user roots.' }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReportPath) | Out-Null
 [ordered]@{

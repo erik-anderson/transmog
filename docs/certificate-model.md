@@ -32,12 +32,12 @@ run verifies it read-only, and the dedicated teardown removes the exact root.
 Routine telemetry records fingerprints and verification results, not private
 keys or full subject names. There is no global accept-invalid-certificate mode.
 
-For private origins and hermetic tests, `transmog serve
+For private origins and hermetic tests, `transmog-cli serve
 --upstream-ca-cert roots.pem` augments the OS-enumerated roots with one or more
 PEM certificates before constructing the immutable BoringSSL snapshot. It does
 not replace public roots, mutate an OS store, or enable invalid-certificate
 acceptance; chain, identity, validity, and usage verification are unchanged for
-Hyper and quiche. `transmog ca issue --ca-cert ca.pem --ca-key ca.key
+Hyper and quiche. `transmog-cli ca issue --ca-cert ca.pem --ca-key ca.key
 --identity HOST_OR_IP --cert leaf.pem --key leaf.key` issues a short-lived leaf
 with the requested DNS or IP identity for controlled origins. The resulting
 private key has the same handling requirements as any server key and should not

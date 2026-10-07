@@ -38,6 +38,9 @@ Pop-Location
 cargo run --locked -p transmog-desktop
 ```
 
+The desktop Cargo package produces `transmog.exe` on Windows. The separate
+headless CLI package produces `transmog-cli.exe`.
+
 ## Verification and packaging
 
 UI checks use the repository's Playwright installation; native desktop checks

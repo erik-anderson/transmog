@@ -2,7 +2,7 @@ param()
 . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
 $fixture = Join-Path ([System.IO.Path]::GetTempPath()) ('transmog-release-test-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force (Join-Path $fixture 'target\release') | Out-Null
-$files = foreach ($name in @('transmog-desktop.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+$files = foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
     $path = Join-Path $fixture "target\release\$name"
     'fixture' | Set-Content -LiteralPath $path
     [ordered]@{ Path = "target/release/$name"; Sha256 = (Get-FileHash -LiteralPath $path).Hash }
@@ -24,9 +24,9 @@ try {
 } finally { Pop-Location }
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'different-commit' -RunId '123' } 'a different source commit'
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '124' } 'a different workflow run'
-'tampered' | Set-Content -LiteralPath (Join-Path $fixture 'target\release\transmog-desktop.exe')
+'tampered' | Set-Content -LiteralPath (Join-Path $fixture 'target\release\transmog.exe')
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'changed binary bytes'
-'fixture' | Set-Content -LiteralPath (Join-Path $fixture 'target\release\transmog-desktop.exe')
+'fixture' | Set-Content -LiteralPath (Join-Path $fixture 'target\release\transmog.exe')
 $invalid = $baseline | ConvertFrom-Json
 $invalid.Files[0].Path = '../outside.exe'
 $invalid | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath

@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "transmog-cli"
+path = "src/main.rs"
+
 [dependencies]
 bytes.workspace = true
 transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }

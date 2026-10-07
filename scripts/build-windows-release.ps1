@@ -38,7 +38,7 @@ try {
             ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
     } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM
-    foreach ($binary in @('transmog-desktop.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
         $sourceBinary = Join-Path $buildResult.BuildDirectory $binary
         if ((Get-AuthenticodeSignature -LiteralPath $sourceBinary).Status -ne 'NotSigned') { throw "Build output is unexpectedly signed: $binary" }
         Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $payloadRoot "target\release\$binary") -Force

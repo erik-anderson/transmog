@@ -8,7 +8,7 @@ Push-Location $project
 try {
     npm ci
     npx playwright install chromium
-    $env:TRANSMOG_BIN = (Resolve-Path (Join-Path $PSScriptRoot '..\target\release\transmog.exe')).Path
+    $env:TRANSMOG_BIN = (Resolve-Path (Join-Path $PSScriptRoot '..\target\release\transmog-cli.exe')).Path
     $env:TRANSMOG_LIVE = '1'
     npm test
 } finally {

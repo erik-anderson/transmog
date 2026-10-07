@@ -66,7 +66,7 @@ function Assert-ReleasePayload {
     $actualFiles = @(Get-ChildItem -LiteralPath $PayloadRoot -File -Recurse | Where-Object { $_.FullName -ne (Join-Path $PayloadRoot 'build-manifest.json') })
     if ($actualFiles.Count -ne $seen.Count) { throw 'The build payload contains unlisted files.' }
     if ($manifest.Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid release version.' }
-    foreach ($binary in @('transmog-desktop.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
     }

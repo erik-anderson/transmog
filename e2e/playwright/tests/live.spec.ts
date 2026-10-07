@@ -31,7 +31,7 @@ const binary = process.env.TRANSMOG_BIN ?? path.join(
   repo,
   'target',
   'release',
-  windows ? 'transmog.exe' : 'transmog',
+  windows ? 'transmog-cli.exe' : 'transmog-cli',
 );
 const pwsh = process.env.PWSH ?? 'pwsh';
 const caCertificate = process.env.TRANSMOG_TEST_CA_CERT
