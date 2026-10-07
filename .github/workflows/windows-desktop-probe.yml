@@ -1,6 +1,11 @@
 name: Windows hosted WebView startup probe
 on:
   workflow_dispatch:
+    inputs:
+      full_smoke:
+        description: Run the fast WebView checks using the unsigned baseline
+        type: boolean
+        default: false
 permissions: {}
 defaults:
   run:
@@ -27,7 +32,19 @@ jobs:
       - name: Ensure hosted Evergreen runtime is available
         run: |
           ./scripts/setup-windows-webview-ci.ps1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: inputs.full_smoke
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Install locked browser-test tooling
+        if: inputs.full_smoke
+        run: |
+          npm ci --prefix apps/desktop/ui
+          npm ci --prefix e2e/playwright
       - name: Probe the already-built unsigned baseline
+        env:
+          FULL_SMOKE: ${{ inputs.full_smoke }}
         run: |
           $installer = Get-ChildItem artifacts/baseline/*-setup.exe
           if ($installer.Count -ne 1 -or (Get-FileHash $installer.FullName).Hash -ne 'EF3228015BA38A4DBE60570F54C36E7603419BD04DC8A10CE476D079A8D83445') { throw 'Baseline installer checksum mismatch.' }
@@ -39,6 +56,9 @@ jobs:
             ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -StartupOnly
           } catch { Write-Host "Environment-only startup probe failed: $($_.Exception.Message)" }
           ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -StartupOnly -HostedRunnerDevToolsPolicy
+          if ($env:FULL_SMOKE -eq 'true') {
+            ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -HostedRunnerDevToolsPolicy
+          }
       - name: Retain isolated startup evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

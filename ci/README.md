@@ -31,6 +31,21 @@ shipped package selections to one Cargo release build, and sidecars are staged
 later during bundling. Clippy/development and release artifacts remain separate;
 this avoids redundant test/package passes without removing the quality checks.
 
+The hosted WebView check isolates product data and temporarily sets loopback
+DevTools arguments for the desktop executable through machine policy. WebView2
+150+ ignores environment overrides in elevated hosts; standard hosted Windows
+jobs run elevated. The wrapper restores the prior per-app policy afterward and
+refuses that mode outside disposable GitHub-hosted runners. The prerequisite
+setup verifies an Evergreen runtime is present, installing Microsoft's signed
+bootstrapper only on those runners when required. Runtime payloads remain absent
+from the Transmog installer. Failure artifacts contain startup logs/reports only,
+never the isolated profile or its product data.
+
+For runner diagnostics, **Windows hosted WebView startup probe** reuses the
+hash-verified unsigned baseline solely as a test application. Its optional fast
+smoke mode avoids recompiling Rust. This baseline is never used for a signed
+release; release artifacts still require same-run source/hash validation.
+
 The `release-signing` environment allows only the `main` branch, requires
 `erik-anderson` approval, allows self-review for this solo repository, and disables
 administrator bypass. Approve the pending signing job after reviewing its source

@@ -34,7 +34,7 @@ try {
     } finally { Write-Host '::endgroup::' }
     Write-Host '::group::Release WebView validation and 30-minute soak'
     try {
-        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 |
+        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 -HostedRunnerDevToolsPolicy |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
     } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM

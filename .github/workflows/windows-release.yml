@@ -38,6 +38,7 @@ jobs:
           ./scripts/setup-release-validation-tools.ps1
       - name: Install locked UI and browser-test dependencies
         run: |
+          ./scripts/setup-windows-webview-ci.ps1
           npm ci --prefix apps/desktop/ui
           npm ci --prefix e2e/playwright
           Push-Location e2e/playwright
@@ -53,6 +54,17 @@ jobs:
           name: windows-release-build-${{ github.run_attempt }}
           path: artifacts/windows-build/
           if-no-files-found: error
+          retention-days: 7
+      - name: Retain startup diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-startup-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/windows-desktop-validation/**/stdout.txt
+            artifacts/windows-desktop-validation/**/stderr.txt
+            artifacts/windows-desktop-validation/**/startup.json
+          if-no-files-found: warn
           retention-days: 7
 
   sign:
