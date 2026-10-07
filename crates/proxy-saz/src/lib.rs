@@ -2,10 +2,10 @@
 
 //! Session Archive Zip export adapter over sealed or recovered native captures.
 //!
-//! Strict mode emits only the conventional OPC content-types member and the
-//! three `raw/<id>_{c,s,m}` files per complete HTTP exchange. The native format
-//! remains authoritative because SAZ cannot represent every proxy boundary or
-//! hook effect.
+//! Strict mode emits only the conventional OPC content-types member, an explicit
+//! `raw/` directory, and three `raw/<id>_{c,s,m}` files per complete HTTP exchange.
+//! The native format remains authoritative because SAZ cannot represent every
+//! proxy boundary or hook effect.
 
 use std::{
     collections::BTreeMap,
@@ -54,14 +54,14 @@ impl Default for SazLimits {
         Self {
             max_sessions: 1_000_000,
             max_body_bytes_per_direction: 256 * 1024 * 1024,
-            max_entries: 3_000_002,
+            max_entries: 3_000_003,
         }
     }
 }
 
 impl SazLimits {
     fn validate(self) -> Result<Self, SazError> {
-        if self.max_sessions == 0 || self.max_body_bytes_per_direction == 0 || self.max_entries < 4
+        if self.max_sessions == 0 || self.max_body_bytes_per_direction == 0 || self.max_entries < 5
         {
             return Err(SazError::InvalidLimits);
         }
@@ -145,8 +145,11 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
             CONTENT_TYPES.as_bytes(),
             options,
         )?;
+        // Fiddler validates this directory entry before scanning request files;
+        // file names with a raw/ prefix do not satisfy that archive check.
+        writer.add_directory("raw/", options)?;
         let mut report = SazReport {
-            entries: 1,
+            entries: 2,
             ..SazReport::default()
         };
         let mut manifest = Vec::new();
@@ -612,9 +615,9 @@ mod tests {
         let (second, _) = export(SazMode::Strict, &source);
         assert_eq!(bytes, second, "strict SAZ output must be deterministic");
         assert_eq!(report.sessions, 1);
-        assert_eq!(report.entries, 4);
+        assert_eq!(report.entries, 5);
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
-        assert_eq!(archive.len(), 4);
+        assert_eq!(archive.len(), 5);
         assert_eq!(
             member(&mut archive, "[Content_Types].xml"),
             CONTENT_TYPES.as_bytes()
@@ -633,6 +636,27 @@ mod tests {
         assert!(!metadata.contains("log-drop-request-body"));
         assert!(!metadata.contains("log-drop-response-body"));
         assert!(archive.by_name("transmog/manifest.json").is_err());
+    }
+
+    #[test]
+    fn all_profiles_include_explicit_raw_directory_even_without_sessions() {
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            for include_response in [false, true] {
+                let (bytes, report) = export(mode, &capture(include_response, true));
+                let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+                let raw = archive
+                    .by_name("raw/")
+                    .expect("Fiddler requires a raw/ entry");
+                assert!(raw.is_dir());
+                assert_eq!(raw.size(), 0);
+                drop(raw);
+                assert_eq!(report.entries, archive.len());
+                assert_eq!(
+                    report.entries,
+                    2 + 3 * report.sessions + usize::from(mode == SazMode::Extended)
+                );
+            }
+        }
     }
 
     #[test]
@@ -656,13 +680,44 @@ mod tests {
         let limits = SazLimits {
             max_sessions: 1,
             max_body_bytes_per_direction: 2,
-            max_entries: 4,
+            max_entries: 5,
         };
         let mut exporter =
             SazExporter::new(Cursor::new(Vec::new()), SazMode::Strict, limits).unwrap();
         assert!(matches!(
             exporter.export(&capture(true, true)),
             Err(SazError::BodyLimitExceeded)
+        ));
+    }
+
+    #[test]
+    fn entry_limits_count_the_raw_directory_and_extended_manifest() {
+        let limits = SazLimits {
+            max_entries: 5,
+            ..SazLimits::default()
+        };
+        let mut strict =
+            SazExporter::new(Cursor::new(Vec::new()), SazMode::Strict, limits).unwrap();
+        strict.export(&capture(true, true)).unwrap();
+        assert_eq!(strict.report().unwrap().entries, 5);
+
+        let mut extended =
+            SazExporter::new(Cursor::new(Vec::new()), SazMode::Extended, limits).unwrap();
+        assert!(matches!(
+            extended.export(&capture(true, true)),
+            Err(SazError::EntryLimitExceeded)
+        ));
+
+        assert!(matches!(
+            SazExporter::new(
+                Cursor::new(Vec::new()),
+                SazMode::Strict,
+                SazLimits {
+                    max_entries: 4,
+                    ..limits
+                }
+            ),
+            Err(SazError::InvalidLimits)
         ));
     }
 

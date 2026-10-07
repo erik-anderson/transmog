@@ -7,6 +7,7 @@ ZIP central directory, so it is not the streaming persistence format.
 The strict exporter follows the documented Fiddler archive structure:
 
 - `[Content_Types].xml`;
+- an explicit `raw/` ZIP directory entry;
 - `raw/<number>_c.txt` containing the raw client-view HTTP request;
 - `raw/<number>_s.txt` containing the raw client-view HTTP response;
 - `raw/<number>_m.xml` containing conventional session metadata.
@@ -16,6 +17,11 @@ This structure is described by Telerik's
 The ZIP implementation uses stored entries and ZIP64-capable file options. The
 selected `zip` crate is built without optional compression, encryption, time,
 or native-code features.
+
+The `raw/` directory must be a ZIP member of its own. The published
+[Fiddler DotNetZip importer sample](https://github.com/gocardless/gocardless-legacy-dotnet/blob/master/GoCardlessSdk.Tests/libs/FiddlerCoreAPI/SampleApp/SAZ-DOTNETZIP.cs)
+checks for that exact member before looking for requests, so an otherwise valid
+ZIP containing only `raw/<number>_*` files is rejected as a non-Fiddler archive.
 
 Strict mode deliberately exports the client-facing request and response. SAZ
 cannot represent all four Transmog boundaries or the complete attributed
