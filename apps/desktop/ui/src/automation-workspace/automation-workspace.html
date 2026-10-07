@@ -1,0 +1,77 @@
+<template>
+<section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" ?hidden="{{view != 'automation'}}" ?data-active="{{view == 'automation'}}">
+  <div class="tool-page">
+    <p class="section-label">Traffic actions</p>
+    <h1 id="automation-heading">Automation</h1>
+    <p>Enable common actions with simple request filters. Transmog handles validation and records each change in the session audit history.</p>
+    <div class="automation-stack">
+      <details class="automation-card" open>
+        <summary><span><strong>Override User-Agent</strong><small>Replace the outgoing User-Agent on matching requests.</small></span></summary>
+        <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
+          <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
+          <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+          <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
+          <div class="actions">
+            <button type="submit">Enable override</button>
+            <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-user-agent')}">Disable</button>
+          </div>
+        </form>
+      </details>
+      <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
+        <header class="auto-response-header">
+          <div>
+            <h2 id="autoresponder-heading">Auto-responses</h2>
+            <p>Serve a saved response without contacting the origin. Rules are checked from top to bottom; the first enabled match wins.</p>
+          </div>
+          <div class="actions">
+            <button  type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{!selection.reusable}}">Use selected response</button>
+            <button type="button" class="secondary" @click="{beginScratchAutoResponse()}">Create from scratch</button>
+          </div>
+        </header>
+        <div @dragover="{allowSessionDrop(e)}" @drop="{dropSession(e)}" class="auto-response-drop-zone" tabindex="0">
+          Drop a captured request here, or select one in Traffic and choose “Create auto-response”.
+        </div>
+        <div w-ref="{autoResponseList}" class="auto-response-list" aria-live="polite">
+    <if condition="!rules.length"><p class="auto-response-empty">No auto-responses yet. The easiest starting point is a completed request in Traffic.</p></if>
+    <for each="rule in rules">
+      <article key="{{rule.id}}" id="rule-{{rule.id}}" class="auto-response-rule" tabindex="-1" draggable="true" data-rule-id="{{rule.id}}" ?data-disabled="{{!rule.enabled}}" ?data-matched="{{rule.id == highlightedRuleId}}" @dragstart="{dragRule(rule.id, e)}" @dragover="{allowRuleDrop(rule.id, e)}" @drop="{dropRule(rule.id, e)}" @dragend="{finishRuleDrag()}">
+        <span class="drag-handle" title="Drag to change first-match order">⋮⋮</span><span class="rule-order">{{rule.order}}</span>
+        <div class="rule-description"><strong>{{rule.name}}</strong><small>{{rule.criteria}}</small></div><span class="rule-state">{{rule.state}}</span>
+        <div class="rule-actions"><button type="button" class="secondary compact-button" @click="{editAutoResponse(rule)}">Edit criteria</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'toggle')}">{{rule.toggleLabel}}</button><button type="button" class="secondary compact-button" ?disabled="{{rule.first}}" @click="{mutateAutoResponse(rule.id, 'up')}">↑</button><button type="button" class="secondary compact-button" ?disabled="{{rule.last}}" @click="{mutateAutoResponse(rule.id, 'down')}">↓</button><button type="button" class="secondary compact-button" @click="{mutateAutoResponse(rule.id, 'remove')}">Remove</button></div>
+      </article>
+    </for>
+  </div>
+        <form w-ref="{autoResponseForm}" @submit="{saveAutoResponse(e)}" class="auto-response-editor" ?hidden="{{editorHidden}}">
+          <header>
+            <div><span class="section-label">Rule editor</span><h3>{{editorTitle}}</h3></div>
+            <button type="button" class="secondary compact-button" @click="{cancelAutoResponseEdit()}">Cancel</button>
+          </header>
+          <label>Rule name <input name="name" maxlength="128" required placeholder="Offline account response"></label>
+          <label>Method <select w-ref="{autoResponseMethod}" name="method" @change="{updateAutoResponseHeaderFilterState()}"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
+          <label class="wide-field">Exact URL <input name="url" type="url" maxlength="8192" required placeholder="https://example.test/api/account"></label>
+          <label ?hidden="{{requestHeadersHidden}}" class="wide-field">Request headers that must match (POST only; one <code>Name: value</code> per line)<textarea name="requestHeaders" ?disabled="{{requestHeadersHidden}}" placeholder="Content-Type: application/json"></textarea></label>
+          <section class="auto-response-source wide-field">
+            <strong>Response source</strong>
+            <p>{{sourceText}}</p>
+          </section>
+          <label ?hidden="{{responseFieldsHidden}}">Response status <input w-ref="{autoResponseStatus}" ?readonly="{{responseReadOnly}}" name="status" type="number" min="200" max="599" value="200" required></label>
+          <label ?hidden="{{responseFieldsHidden}}">Content type <input w-ref="{autoResponseMediaType}" ?readonly="{{responseReadOnly}}" name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
+          <label ?hidden="{{responseHeadersHidden}}" class="wide-field">Response headers (one <code>Name: value</code> per line)<textarea name="responseHeaders"></textarea></label>
+          <label class="wide-field" ?hidden="{{responseFieldsHidden}}">Response body <textarea w-ref="{autoResponseBody}" ?readonly="{{bodyReadOnly}}" name="body" maxlength="16777216"></textarea></label>
+          <div  class="captured-response-options wide-field" ?hidden="{{capturedOptionsHidden}}">
+            <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Replace the captured response body with the decoded text above</label>
+            <label><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Re-encode edits using the captured response’s original content encoding</label>
+          </div>
+          <div class="actions wide-field">
+            <button type="submit">Save rule</button>
+            <button type="button" class="secondary" @click="{cancelAutoResponseEdit()}">Cancel</button>
+          </div>
+        </form>
+      </section>
+    </div>
+    <output class="operation-status" data-kind="{{automationKind}}" aria-live="polite">{{automationText}}</output>
+    <script-editor theme="{{theme}}" ?active="{{view == 'automation'}}"></script-editor>
+  </div>
+</section>
+
+</template>

@@ -1,0 +1,10 @@
+:host { display: block; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.paused-card { padding: 1rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--panel); }
+textarea, .monaco-editor-host { width: 100%; height: 12rem; margin: .6rem 0; border: 1px solid var(--line); border-radius: .35rem; }
+textarea { padding: .6rem; color: var(--text); background: var(--code); font-family: "Cascadia Mono", Consolas, monospace; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+button { min-height: 2.2rem; padding: .45rem .75rem; border: 1px solid var(--line-strong); border-radius: .32rem; color: var(--text); background: var(--panel); font: inherit; font-size: .78rem; cursor: pointer; }
+button:first-child { color: #fff; background: var(--accent-strong); }
+button:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

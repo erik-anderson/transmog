@@ -20,6 +20,7 @@ transmog-app = { version = "=0.1.0", path = "../app" }
 
 [build-dependencies]
 microsoft-webui = "=0.0.30"
+serde_json.workspace = true
 
 [lints]
 workspace = true

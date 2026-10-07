@@ -1,0 +1,71 @@
+<template>
+<section id="traffic" class="app-view traffic-view" aria-labelledby="traffic-heading" ?hidden="{{view != 'traffic'}}" ?data-active="{{view == 'traffic'}}">
+  <header class="view-toolbar">
+    <div class="view-title">
+      <h1 id="traffic-heading">Traffic</h1>
+      <span>Live requests and responses</span>
+    </div>
+    <form w-ref="{filterForm}" @submit="{refreshSessions(e)}" class="filters">
+      <label><span class="sr-only">Method</span><input name="method" maxlength="32" placeholder="Method"></label>
+      <label><span class="sr-only">Host</span><input name="host" maxlength="255" placeholder="Filter host"></label>
+      <button type="submit" class="secondary compact-button">Apply filters</button>
+    </form>
+  </header>
+  <output class="session-status" data-kind="{{sessionKind}}" aria-live="polite">{{sessionText}}</output>
+
+  <div class="traffic-workspace">
+    <section class="session-list-pane" aria-label="Captured sessions">
+      <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
+        <table>
+          <thead><tr><th>Method</th><th>Status</th><th>Caller</th><th>Host</th><th>Path and query</th><th>Protocol</th><th>Duration</th><th>Response</th><th>State</th></tr></thead>
+          <tbody>
+    <if condition="!sessions.length"><tr><td colspan="9" class="empty-cell">No matching sessions.</td></tr></if>
+    <for each="session in sessions">
+      <tr key="{{session.id}}" tabindex="0" draggable="true" title="Select to inspect, or drag to Auto-responses" data-session-id="{{session.id}}" ?data-selected="{{session.id == selectedSessionId}}" ?data-auto-responded="{{session.autoResponse}}" aria-selected="{{session.selectionState}}" @click="{inspectSession(session)}" @keydown="{selectWithKeyboard(session, e)}" @dragstart="{dragSession(session, e)}">
+        <td><button type="button" class="session-link" @click="{selectWithButton(session, e)}">{{session.method}}</button></td>
+        <td>{{session.statusText}}</td><td>{{session.callerText}}</td><td>{{session.host}}</td><td>{{session.path}}</td><td>{{session.protocol}}</td><td>{{session.durationText}}</td><td>{{session.responseText}}</td><td>{{session.stateText}}</td>
+      </tr>
+    </for>
+  </tbody>
+        </table>
+      </div>
+      <div class="list-footer">
+        <span>{{followText}}</span>
+        <div class="list-footer-actions">
+          <button  type="button" class="secondary compact-button" @click="{resumeLatest()}" ?disabled="{{followLatest}}">Latest</button>
+          <button type="button" class="secondary compact-button" @click="{exportLiveCapture()}">Export TMCap</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="details-pane" aria-labelledby="inspector-heading">
+      <header class="selection-bar">
+        <span class="method-badge">{{selectedMethodText}}</span>
+        <strong id="inspector-heading">{{selectedUrlText}}</strong>
+        <span class="status-badge" ?data-success="{{selectedSuccess}}" ?data-auto-response="{{selectedAutoResponded}}">{{selectedStatusText}}</span>
+        <button title="{{reuseTitle}}" type="button" class="secondary compact-button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}">Create auto-response</button>
+      </header>
+      <div class="exchange-inspector">
+        <section class="message-pane request-pane" aria-labelledby="request-heading">
+          <header><h2 id="request-heading">Request</h2><span>Headers · body · hook effects</span></header>
+          <pre tabindex="0">{{requestText}}</pre>
+        </section>
+        <section class="message-pane response-pane" aria-labelledby="response-heading">
+          <header><h2 id="response-heading">Response</h2><span>Original · formatted · bytes · image</span><button type="button" class="secondary compact-button matched-rule-button" @click="{showMatchedAutoResponse()}" ?hidden="{{matchedRuleHidden}}">{{matchedRuleLabel}}</button></header>
+          <pre tabindex="0">{{responseText}}</pre>
+          <div class="body-toolbar" aria-label="Response body representation">
+            <label>Boundary <select w-ref="{bodyBoundary}" aria-label="Body boundary"><if condition="!bodyBoundaries.length"><option value="">Select a session first</option></if><for each="body in bodyBoundaries"><option key="{{body.boundary}}" value="{{body.boundary}}">{{body.label}}</option></for></select></label>
+            <label>View <select w-ref="{bodyRepresentation}"><option value="auto">Auto</option><option value="original-text">Original text</option><option value="formatted">Formatted</option><option value="bytes">Bytes</option><option value="metadata">Metadata only</option><option value="image">Image</option></select></label>
+            <label>Limit <input w-ref="{bodyMaxBytes}" type="number" min="1" max="16777216" value="262144"></label>
+            <label class="checkbox-label"><input w-ref="{bodyDecoded}" type="checkbox" checked> Decode</label>
+            <button type="button" class="secondary compact-button" @click="{inspectBody()}">Inspect body</button>
+          </div>
+          <pre class="body-preview" tabindex="0">{{bodyText}}</pre>
+          <if condition="!imageHidden"><img src="{{imageSource}}" decoding="async" loading="lazy" class="body-image-preview" alt="Sandboxed response image preview" ?hidden="{{imageHidden}}"></if>
+        </section>
+      </div>
+    </section>
+  </div>
+</section>
+
+</template>

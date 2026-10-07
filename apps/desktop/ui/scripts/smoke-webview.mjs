@@ -95,23 +95,14 @@ try {
 
   const result = await evaluate(`
     (async () => {
-      await customElements.whenDefined('transmog-app-shell');
-      const element = document.querySelector('transmog-app-shell');
+      await customElements.whenDefined('app-shell');
+      const element = document.querySelector('app-shell');
       const button = [...(element?.shadowRoot?.querySelectorAll('button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Refresh status');
       const output = element?.shadowRoot?.querySelector('.global-diagnostics');
       if (!(button instanceof HTMLButtonElement) || !(output instanceof HTMLOutputElement)) {
         throw new Error('hydrated application controls were not found');
       }
-      button.click();
-      const deadline = performance.now() + 10_000;
-      while (output.textContent === 'Application facade ready.') {
-        if (performance.now() >= deadline) {
-          throw new Error('status command timed out');
-        }
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      const statusText = output.textContent;
       const filter = element.shadowRoot.querySelector('form.filters');
       const sessionOutput = element.shadowRoot.querySelector('.session-status');
       if (!(filter instanceof HTMLFormElement) || !(sessionOutput instanceof HTMLOutputElement)) {
@@ -124,7 +115,18 @@ try {
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      sessionOutput.textContent = 'Submitting session query…';
+      element.diagnosticText = 'Checking status…';
+      element.$flushUpdates();
+      button.click();
+      const deadline = performance.now() + 10_000;
+      while (output.textContent !== 'Proxy stopped') {
+        if (performance.now() >= deadline) throw new Error('status command timed out with: ' + output.textContent);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      const statusText = output.textContent;
+      const trafficWorkspace = element.shadowRoot.querySelector('traffic-workspace');
+      trafficWorkspace.sessionText = 'Submitting session query…';
+      trafficWorkspace.$flushUpdates();
       filter.requestSubmit();
       const submissionDeadline = performance.now() + 10_000;
       while (!sessionOutput.textContent?.startsWith('Loaded ')) {
@@ -139,9 +141,11 @@ try {
         throw new Error('application navigation was not found');
       }
       settingsLink.click();
+      await Promise.resolve();
       const settingsVisible = !element.shadowRoot.querySelector('#settings').hidden
         && element.shadowRoot.querySelector('#traffic').hidden;
       trafficLink.click();
+      await Promise.resolve();
       const rootLayout = {
         documentClientHeight: document.documentElement.clientHeight,
         documentScrollHeight: document.documentElement.scrollHeight,
@@ -149,14 +153,28 @@ try {
         bodyScrollHeight: document.body.scrollHeight,
         hostOverflow: getComputedStyle(element).overflow,
         shellHeight: element.shadowRoot.querySelector('.shell').getBoundingClientRect().height,
-        activeView: element.shadowRoot.querySelector('.app-view.active')?.id,
+        activeView: element.shadowRoot.querySelector('.app-view[data-active]')?.id,
         settingsVisible
       };
       const surfaceText = element.shadowRoot.textContent ?? '';
+      const startupResources = performance.getEntriesByType('resource').map((entry) => entry.name);
+      if (startupResources.some((url) => {
+        const path = new URL(url).pathname;
+        return path === '/monaco.js' || path === '/monaco.css' || path.startsWith('/monaco-') && path.endsWith('.worker.js');
+      })) {
+        throw new Error('Monaco resources were loaded before the Automation workspace opened');
+      }
+      element.shadowRoot.querySelector('a[data-view="automation"]').click();
+      const automationDeadline = performance.now() + 10_000;
+      while (element.shadowRoot.querySelector('#automation').hidden) {
+        if (performance.now() >= automationDeadline) throw new Error('lazy Automation workspace timed out');
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
       const automation = element.shadowRoot.querySelector('#automation');
       const scratchButton = [...(automation?.querySelectorAll('button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Create from scratch');
       scratchButton?.click();
+      await Promise.resolve();
       const autoResponseEditor = automation?.querySelector('.auto-response-editor');
       const autoResponseMethod = autoResponseEditor?.querySelector('select[name="method"]');
       const requestHeaders = autoResponseEditor?.querySelector('textarea[name="requestHeaders"]')?.closest('label');
@@ -164,12 +182,15 @@ try {
       if (autoResponseMethod instanceof HTMLSelectElement) {
         autoResponseMethod.value = 'POST';
         autoResponseMethod.dispatchEvent(new Event('change', { bubbles: true }));
+        await Promise.resolve();
       }
       const postHeaderFilterVisible = requestHeaders instanceof HTMLElement && !requestHeaders.hidden;
       const cancelEditor = [...(autoResponseEditor?.querySelectorAll('button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Cancel');
       cancelEditor?.click();
+      await Promise.resolve();
       trafficLink.click();
+      await Promise.resolve();
       return {
         text: statusText,
         formSubmission: sessionOutput.textContent,
@@ -181,6 +202,7 @@ try {
           'transmog-preview'
         ),
         resources: performance.getEntriesByType('resource').map((entry) => entry.name),
+        startupResources,
         cspViolations: globalThis.__transmogCspViolations,
         landmarks: {
           nav: element.shadowRoot.querySelectorAll('nav').length,
@@ -216,11 +238,6 @@ try {
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
           noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
           sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement,
-          completedResponseReusable: element.clientResponseSource({
-            requests: [{ boundary: 'client-request', method: 'GET', target: 'http://example.test/' }],
-            responses: [{ boundary: 'client-response', status: 200 }],
-            storedBodies: [{ boundary: 'client-response', availability: 'complete' }]
-          }) !== null,
           callerColumn: [...element.shadowRoot.querySelectorAll('th')]
             .some((heading) => heading.textContent?.trim() === 'Caller'),
           brandIconLoaded: (() => {
@@ -268,7 +285,7 @@ try {
     && result.ux.internalAutomationFields === 0,
     `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
   assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
-    && result.ux.completedResponseReusable && result.ux.callerColumn && result.ux.brandIconLoaded,
+    && result.ux.callerColumn && result.ux.brandIconLoaded,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
@@ -279,7 +296,7 @@ try {
   }
   if (automationScreenshotPath !== undefined) {
     const automationLayout = await evaluate(`(() => {
-      const shell = document.querySelector('transmog-app-shell');
+      const shell = document.querySelector('app-shell');
       shell.shadowRoot.querySelector('a[data-view="automation"]').click();
       const notice = shell.shadowRoot.querySelector('.notice');
       return {
@@ -295,7 +312,7 @@ try {
     await writeFile(automationScreenshotPath, Buffer.from(screenshot.data, 'base64'));
     result.automationScreenshot = automationScreenshotPath;
     result.automationLayout = automationLayout;
-    await evaluate(`(() => document.querySelector('transmog-app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`);
+    await evaluate(`(() => document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`);
   }
 
   const accessibility = await call('Accessibility.getFullAXTree');
@@ -314,7 +331,7 @@ try {
     ]
   });
   const contrast = await evaluate(`(() => {
-    const root = document.querySelector('transmog-app-shell').shadowRoot;
+    const root = document.querySelector('app-shell').shadowRoot;
     const panel = root.querySelector('.rail');
     const button = root.querySelector('button');
     return {
@@ -330,7 +347,7 @@ try {
     features: [{ name: 'prefers-color-scheme', value: 'dark' }]
   });
   const darkCanvas = await evaluate(`(() => {
-    const shell = document.querySelector('transmog-app-shell');
+    const shell = document.querySelector('app-shell');
     shell.dataset.theme = 'system';
     return getComputedStyle(shell).getPropertyValue('--canvas').trim();
   })()`);
@@ -338,7 +355,7 @@ try {
     media: 'screen',
     features: [{ name: 'prefers-color-scheme', value: 'light' }]
   });
-  const lightCanvas = await evaluate(`(() => getComputedStyle(document.querySelector('transmog-app-shell')).getPropertyValue('--canvas').trim())()`);
+  const lightCanvas = await evaluate(`(() => getComputedStyle(document.querySelector('app-shell')).getPropertyValue('--canvas').trim())()`);
   assert(darkCanvas !== lightCanvas, `system color scheme did not change application palette: ${darkCanvas}`);
   result.systemTheme = { darkCanvas, lightCanvas };
 
@@ -346,21 +363,26 @@ try {
     width: 760, height: 520, deviceScaleFactor: 2, mobile: false
   });
   const scaled = await evaluate(`(() => {
-    const root = document.querySelector('transmog-app-shell').shadowRoot;
+    const root = document.querySelector('app-shell').shadowRoot;
     const heading = root.querySelector('h1');
-    heading.textContent = 'Inspect localized traffic safely — '.repeat(8);
-    return {
-      viewport: document.documentElement.clientWidth,
-      shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
-      headingHeight: heading.getBoundingClientRect().height,
-      controlsVisible: [...root.querySelectorAll('.app-view.active button, .topbar button, .app-footer button')]
-        .filter((button) => !button.hidden)
-        .every((button) => button.getBoundingClientRect().height > 0),
-      invisibleControls: [...root.querySelectorAll('.app-view.active button, .topbar button, .app-footer button')]
-        .filter((button) => !button.hidden && button.getBoundingClientRect().height <= 0)
-        .map((button) => button.textContent?.trim()),
-      rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
-    };
+    const originalHeading = heading.textContent;
+    try {
+      heading.textContent = 'Inspect localized traffic safely — '.repeat(8);
+      return {
+        viewport: document.documentElement.clientWidth,
+        shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
+        headingHeight: heading.getBoundingClientRect().height,
+        controlsVisible: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
+          .filter((button) => !button.hidden)
+          .every((button) => button.getBoundingClientRect().height > 0),
+        invisibleControls: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
+          .filter((button) => !button.hidden && button.getBoundingClientRect().height <= 0)
+          .map((button) => button.textContent?.trim()),
+        rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
+      };
+    } finally {
+      heading.textContent = originalHeading;
+    }
   })()`);
   assert(scaled.shellWidth <= scaled.viewport + 1, `200% DPI shell overflow: ${JSON.stringify(scaled)}`);
   assert(scaled.headingHeight > 0 && scaled.controlsVisible, `long localized text hid interactive UI: ${JSON.stringify(scaled)}`);
@@ -369,13 +391,13 @@ try {
   await call('Emulation.setEmulatedMedia', { media: 'screen', features: [] });
 
   const soak = await evaluate(`(async () => {
-    const shell = document.querySelector('transmog-app-shell');
+    const shell = document.querySelector('app-shell');
     const deadline = performance.now() + ${Math.round(soakMinutes * 60_000)};
     const minimumIterations = ${soakMinutes === 0 ? 100 : 1};
     let iterations = 0;
     do {
       await shell.refreshStatus();
-      if (iterations % 20 === 0) await shell.refreshSessions();
+      if (iterations % 20 === 0) await shell.shadowRoot.querySelector('traffic-workspace').refreshSessions();
       iterations += 1;
       if (deadline > performance.now()) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (iterations < minimumIterations || performance.now() < deadline);

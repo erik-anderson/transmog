@@ -1,0 +1,20 @@
+<template>
+<section id="composer" class="app-view tool-view" aria-labelledby="composer-heading" ?hidden="{{view != 'composer'}}" ?data-active="{{view == 'composer'}}">
+  <div class="tool-page narrow-page">
+    <p class="section-label">Canonical replay</p>
+    <h1 id="composer-heading">Composer</h1>
+    <form w-ref="{composerForm}" @submit="{executeComposer(e)}" class="composer-form">
+      <label>Method <input name="method" value="GET" maxlength="32" required></label>
+      <label>Absolute URL <input name="url" type="url" value="https://example.com/" required></label>
+      <label>Headers (one <code>Name: value</code> per line) <textarea name="headers"></textarea></label>
+      <label>Body <textarea name="body"></textarea></label>
+      <label><input name="bodyHex" type="checkbox"> Body is hexadecimal</label>
+      <label><input name="nonIdempotent" type="checkbox"> I acknowledge non-idempotent replay risk</label>
+      <label><input name="credentials" type="checkbox"> I explicitly supplied and authorize credential headers</label>
+      <button type="submit">Execute replay</button>
+    </form>
+    <pre tabindex="0">{{composerText}}</pre>
+  </div>
+</section>
+
+</template>

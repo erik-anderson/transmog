@@ -1,0 +1,58 @@
+<template>
+<section id="settings" class="app-view tool-view" aria-labelledby="settings-heading" ?hidden="{{view != 'settings'}}" ?data-active="{{view == 'settings'}}">
+  <div class="tool-page settings-page">
+    <p class="section-label">Local product state</p>
+    <h1 id="settings-heading">Settings and support</h1>
+    <div class="settings-grid">
+      <section class="settings-card">
+        <h2>Proxy and interception certificate</h2>
+        <form w-ref="{proxyForm}" @submit="{startProxy(e)}">
+          <fieldset class="proxy-controls" ?disabled="{{!proxyReady}}">
+            <label>CA certificate <input value="{{certificatePath}}" name="certificate" required></label>
+            <label>CA private key <input value="{{privateKeyPath}}" name="privateKey" required></label>
+            <label>CA SHA-256 <input value="{{caSha256}}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
+            <p>Start automatically configures the current-user Windows proxy and restores the exact prior settings when stopped or closed.</p>
+            <div class="actions">
+              <button type="button" @click="{setupCa()}">Set up HTTPS interception</button>
+              <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
+              <button type="submit">Start proxy</button>
+              <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
+            </div>
+          </fieldset>
+          <output class="operation-status" data-kind="{{proxyKind}}" aria-live="polite">{{proxyText}}</output>
+        </form>
+      </section>
+      <section class="settings-card">
+        <h2>Preferences and privacy</h2>
+        <p>Live traffic and breakpoint decisions are never settings.</p>
+        <form w-ref="{settingsForm}" @submit="{saveSettings(e)}">
+          <label>Theme <select name="theme"><option value="system">Use system setting</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          <label>Session page size <input name="pageSize" type="number" min="10" max="200" value="100" required></label>
+          <label><input name="defaultBodies" type="checkbox" checked> Retain response bodies in the one-GiB circular cache</label>
+          <label><input name="captureBodies" type="checkbox"> Retain bounded redacted body samples in automatic TMCap captures</label>
+          <label><input name="rememberArtifacts" type="checkbox"> Remember recent artifact paths locally</label>
+          <label><input name="supportPaths" type="checkbox"> Permit opted-in paths in support bundles</label>
+          <div class="actions">
+            <button type="button" class="secondary" @click="{loadSettings()}">Load settings</button>
+            <button type="submit">Save settings</button>
+          </div>
+        </form>
+      </section>
+      <section class="settings-card support-card">
+        <h2>Diagnostics and support</h2>
+        <form w-ref="{supportForm}" @submit="{createSupportBundle(e)}">
+          <label>New support bundle <input name="destination" value="transmog-support.zip" required></label>
+          <label><input name="includePaths" type="checkbox"> Include recent paths if the saved privacy setting permits it</label>
+          <div class="actions">
+            <button type="button" class="secondary" @click="{refreshDiagnostics()}">Refresh redacted diagnostics</button>
+            <button type="button" class="secondary" @click="{prepareUpdate()}">Prepare safe update handoff</button>
+            <button type="submit">Create support bundle</button>
+          </div>
+        </form>
+        <p>Diagnostic log: <code>{{diagnosticsPathText}}</code></p>
+        <pre tabindex="0">{{supportText}}</pre>
+      </section>
+    </div>
+  </div>
+</section>
+</template>

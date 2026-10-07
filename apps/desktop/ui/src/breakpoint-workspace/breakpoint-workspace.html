@@ -1,0 +1,20 @@
+<template>
+<section id="breakpoints" class="app-view tool-view" aria-labelledby="breakpoints-heading" ?hidden="{{view != 'breakpoints'}}" ?data-active="{{view == 'breakpoints'}}">
+  <div class="tool-page">
+    <p class="section-label">Interactive control</p>
+    <h1 id="breakpoints-heading">Break and modify</h1>
+    <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is recorded in the session audit history.</p>
+    <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(e)}" class="phase-form">
+      <label><input name="requestHead" type="checkbox" checked> Request head</label>
+      <label><input name="requestBody" type="checkbox"> Request body</label>
+      <label><input name="responseHead" type="checkbox" checked> Response head</label>
+      <label><input name="responseBody" type="checkbox"> Response body</label>
+      <button type="submit">Enable selected phases</button>
+      <button type="button" class="secondary" @click="{disableBreakpoints()}">Disable</button>
+      <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
+    </form>
+    <div class="paused-list" aria-live="polite"><if condition="!pausedExchanges.length">{{breakpointText}}</if><for each="item in pausedExchanges"><paused-exchange key="{{item.decisionId}}" :paused="{{item}}" theme="{{theme}}" @breakpoint-decision="{onDecision(e)}"></paused-exchange></for></div>
+  </div>
+</section>
+
+</template>

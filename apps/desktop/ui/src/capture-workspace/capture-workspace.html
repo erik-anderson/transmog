@@ -1,0 +1,29 @@
+<template>
+<section id="captures" class="app-view tool-view" aria-labelledby="captures-heading" ?hidden="{{view != 'captures'}}" ?data-active="{{view == 'captures'}}">
+  <div class="tool-page narrow-page">
+    <p class="section-label">Durable evidence</p>
+    <h1 id="captures-heading">Capture, import, and export</h1>
+    <form w-ref="{captureForm}" @submit="{startCapture(e)}">
+      <label>Native capture path <input name="capturePath" value="session.tmcap" required></label>
+      <label>Quota bytes <input name="quota" type="number" min="1025" max="4294967296" value="1073741824" required></label>
+      <label><input name="bodies" type="checkbox"> Retain bounded redacted body samples</label>
+      <div class="actions">
+        <button type="submit">Start capture</button>
+        <button type="button" class="secondary" @click="{stopCapture()}">Seal capture</button>
+        <button type="button" class="secondary" @click="{refreshCapture()}">Status</button>
+      </div>
+    </form>
+    <form w-ref="{artifactForm}" @submit="{inspectCapture(e)}">
+      <label>Native source <input name="source" value="session.tmcap" required></label>
+      <label>Export destination <input name="destination" value="session.jsonl" required></label>
+      <label>Format <select name="format"><option value="native">TMCap snapshot</option><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
+      <div class="actions">
+        <button type="submit" class="secondary">Inspect/recover</button>
+        <button type="button" @click="{exportCapture()}">Export create-new</button>
+      </div>
+    </form>
+    <pre tabindex="0">{{captureText}}</pre>
+  </div>
+</section>
+
+</template>

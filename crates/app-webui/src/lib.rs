@@ -13,12 +13,7 @@ use webui_handler::plugin::webui::WebUIHydrationPlugin;
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 
-const CLIENT_BUNDLE: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/app.js");
-const CLIENT_STYLES: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/app.css");
-const MONACO_EDITOR_WORKER: &[u8] =
-    include_bytes!("../../../apps/desktop/ui/dist/monaco-editor.worker.js");
-const MONACO_TYPESCRIPT_WORKER: &[u8] =
-    include_bytes!("../../../apps/desktop/ui/dist/monaco-ts.worker.js");
+const DOCUMENT_STYLES: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/document.css");
 const APP_ICON: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.ico");
 const APP_LOGO: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.svg");
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
@@ -152,33 +147,27 @@ impl AppRenderer {
         let path = path.split_once('?').map_or(path, |(path, _)| path);
         let mut response = match path {
             "/" | "/index.html" => self.render_document(view)?,
-            "/app.js" => UiResponse::asset(
-                200,
-                "text/javascript; charset=utf-8",
-                CLIENT_BUNDLE.to_vec(),
-            ),
-            "/app.css" => UiResponse::asset(200, "text/css; charset=utf-8", CLIENT_STYLES.to_vec()),
-            "/monaco-editor.worker.js" => UiResponse::asset(
-                200,
-                "text/javascript; charset=utf-8",
-                MONACO_EDITOR_WORKER.to_vec(),
-            ),
-            "/monaco-ts.worker.js" => UiResponse::asset(
-                200,
-                "text/javascript; charset=utf-8",
-                MONACO_TYPESCRIPT_WORKER.to_vec(),
-            ),
+            "/document.css" => {
+                UiResponse::asset(200, "text/css; charset=utf-8", DOCUMENT_STYLES.to_vec())
+            }
             "/favicon.ico" => UiResponse::asset(200, "image/x-icon", APP_ICON.to_vec()),
             "/transmog-icon.svg" => {
                 UiResponse::asset(200, "image/svg+xml; charset=utf-8", APP_LOGO.to_vec())
             }
-            css_path => CSS_ASSETS
-                .iter()
-                .find(|(path, _)| *path == css_path)
-                .map_or_else(
-                    || UiResponse::asset(404, "text/plain; charset=utf-8", b"not found".to_vec()),
-                    |(_, bytes)| UiResponse::asset(200, "text/css; charset=utf-8", bytes.to_vec()),
-                ),
+            asset_path => {
+                if let Some((_, content_type, bytes)) = CLIENT_ASSETS
+                    .iter()
+                    .find(|(path, _, _)| *path == asset_path)
+                {
+                    UiResponse::asset(200, content_type, bytes.to_vec())
+                } else if let Some((_, bytes)) =
+                    CSS_ASSETS.iter().find(|(path, _)| *path == asset_path)
+                {
+                    UiResponse::asset(200, "text/css; charset=utf-8", bytes.to_vec())
+                } else {
+                    UiResponse::asset(404, "text/plain; charset=utf-8", b"not found".to_vec())
+                }
+            }
         };
         if method == "HEAD" {
             response.body.clear();
@@ -188,8 +177,20 @@ impl AppRenderer {
 
     fn render_document(&self, view: &ShellView) -> Result<UiResponse, UiError> {
         let nonce = generate_nonce()?;
-        let state =
-            serde_json::to_value(view).map_err(|error| UiError::State(error.to_string()))?;
+        let mut state: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../apps/desktop/ui/src/initial-state.json"
+        ))
+        .map_err(|error| UiError::State(error.to_string()))?;
+        state
+            .as_object_mut()
+            .expect("initial client state is an object")
+            .extend(
+                serde_json::to_value(view)
+                    .map_err(|error| UiError::State(error.to_string()))?
+                    .as_object()
+                    .expect("shell view is an object")
+                    .clone(),
+            );
         let handler = WebUIHandler::with_plugin(|| Box::new(WebUIHydrationPlugin::new()));
         let mut writer = StringWriter::default();
         handler
@@ -256,7 +257,7 @@ mod tests {
         let html = String::from_utf8(response.body).unwrap();
         let csp = response.content_security_policy.unwrap();
         assert!(html.contains("Inspect traffic without losing the thread"));
-        assert!(html.contains("transmog-app-shell"));
+        assert!(html.contains("app-shell"));
         assert!(html.contains("id=\"webui-data\""));
         assert!(csp.contains("require-trusted-types-for 'script'"));
         assert!(csp.contains("trusted-types webui monaco"));
@@ -267,7 +268,8 @@ mod tests {
         assert!(!csp.contains("unsafe-eval"));
         assert!(csp.contains("worker-src 'self'"));
         for path in [
-            "/app.css",
+            "/document.css",
+            "/monaco.css",
             "/monaco-editor.worker.js",
             "/monaco-ts.worker.js",
             "/transmog-icon.svg",
@@ -301,5 +303,51 @@ mod tests {
                 .body
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn split_assets_are_bounded_and_keep_their_mime_types() {
+        let renderer = AppRenderer::new().unwrap();
+        let view = ShellView::from(&status());
+        assert!(
+            CLIENT_ASSETS
+                .iter()
+                .any(|(path, _, _)| path.starts_with("/chunks/"))
+        );
+        for (path, mime, bytes) in CLIENT_ASSETS {
+            let get = renderer.respond("GET", path, &view).unwrap();
+            assert_eq!(get.status, 200);
+            assert_eq!(get.content_type, *mime);
+            assert_eq!(get.body, *bytes);
+            assert!(
+                renderer
+                    .respond("HEAD", path, &view)
+                    .unwrap()
+                    .body
+                    .is_empty()
+            );
+        }
+        for path in [
+            "/chunks/missing.js",
+            "/chunks/../app.js",
+            "/client-assets.json",
+            "/client-metafile.json",
+        ] {
+            assert_eq!(renderer.respond("GET", path, &view).unwrap().status, 404);
+        }
+    }
+
+    #[test]
+    fn initial_document_has_reactive_defaults_without_loading_the_editor() {
+        let response = AppRenderer::new()
+            .unwrap()
+            .respond("GET", "/", &ShellView::from(&status()))
+            .unwrap();
+        let html = String::from_utf8(response.body).unwrap();
+        assert!(html.contains("No matching sessions."));
+        assert!(html.contains("Application facade ready."));
+        assert!(html.contains("aria-current=\"page\""));
+        assert!(!html.contains("<link rel=\"stylesheet\" href=\"/monaco.css\""));
+        assert!(!html.contains("<script type=\"module\" src=\"/monaco.js\""));
     }
 }

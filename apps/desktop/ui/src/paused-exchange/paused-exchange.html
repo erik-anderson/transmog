@@ -1,0 +1,14 @@
+<template shadowrootmode="open" w-render="lazy" w-reserve-block-size="18rem">
+  <if condition="editorLoaded"><link w-ref="{monacoStyles}" rel="stylesheet" href="/monaco.css"></if>
+  <article class="paused-card">
+    <strong>{{paused.phase}} · {{paused.exchangeId}}</strong>
+    <textarea aria-label="Replacement draft" @input="{updateDraft(e)}" ?hidden="{{editorReady}}">{{draftText}}</textarea>
+    <div w-ref="{editorHost}" class="monaco-editor-host" ?hidden="{{!editorReady}}"></div>
+    <p role="status">{{editorError}}</p>
+    <div class="actions">
+      <button type="button" @click="{decide('continue')}">Continue</button>
+      <button type="button" @click="{decide('abort')}">Abort</button>
+      <button type="button" @click="{replaceDraft()}">Apply replacement</button>
+    </div>
+  </article>
+</template>

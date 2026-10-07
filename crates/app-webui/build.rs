@@ -15,16 +15,7 @@ fn main() {
     );
     let ui_dir = manifest_dir.join("../../apps/desktop/ui");
     println!("cargo:rerun-if-changed={}", ui_dir.join("src").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        ui_dir.join("dist/app.js").display()
-    );
-    for asset in ["app.css", "monaco-editor.worker.js", "monaco-ts.worker.js"] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            ui_dir.join("dist").join(asset).display()
-        );
-    }
+    println!("cargo:rerun-if-changed={}", ui_dir.join("dist").display());
     println!(
         "cargo:rerun-if-changed={}",
         ui_dir.join("../icons/icon.svg").display()
@@ -85,7 +76,49 @@ fn compile_webui(ui_dir: &Path) {
         generated.push_str(")),\n");
     }
     generated.push_str("];\n");
+    embed_client_assets(ui_dir, &mut generated);
     fs::write(output_dir.join("assets.rs"), generated).expect("write WebUI asset index");
+}
+
+fn embed_client_assets(ui_dir: &Path, generated: &mut String) {
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(ui_dir.join("dist/client-assets.json")).expect("read client asset manifest"),
+    )
+    .expect("parse client asset manifest");
+    generated.push_str("\n/// Current bundler outputs allowlisted by application-origin path.\npub const CLIENT_ASSETS: &[(&str, &str, &[u8])] = &[\n");
+    for asset in manifest
+        .as_array()
+        .expect("client asset manifest is an array")
+    {
+        let filename = asset["file"].as_str().expect("client asset filename");
+        let public_path = asset["path"].as_str().expect("client asset public path");
+        let content_type = asset["contentType"]
+            .as_str()
+            .expect("client asset MIME type");
+        let parts: Vec<_> = filename.split('/').collect();
+        assert!(parts.len() == 1 || parts.len() == 2 && parts[0] == "chunks");
+        assert!(parts.iter().all(|part| {
+            !part.is_empty()
+                && !matches!(*part, "." | "..")
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        }));
+        assert_eq!(public_path, format!("/{filename}"));
+        assert!(matches!(
+            content_type,
+            "text/javascript; charset=utf-8" | "text/css; charset=utf-8"
+        ));
+        let path = ui_dir.join("dist").join(filename);
+        write!(
+            generated,
+            "    ({public_path:?}, {content_type:?}, include_bytes!("
+        )
+        .expect("write asset entry");
+        push_path_literal(generated, &path);
+        generated.push_str(")),\n");
+    }
+    generated.push_str("];\n");
 }
 
 fn push_path_literal(target: &mut String, path: &Path) {
