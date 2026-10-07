@@ -4,7 +4,10 @@ param(
     [int]$DevToolsPort = 9333,
     [string]$ScreenshotPath,
     [string]$AutomationScreenshotPath,
-    [switch]$SkipReleaseBuild
+    [switch]$SkipReleaseBuild,
+    [string]$ExecutablePath,
+    [switch]$StartupOnly,
+    [switch]$HostedRunnerDevToolsPolicy
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +15,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $desktopUi = Join-Path $repositoryRoot 'apps\desktop\ui'
 $executable = Join-Path $repositoryRoot 'target\release\transmog-desktop.exe'
+if ($ExecutablePath) {
+    if (-not $SkipReleaseBuild) { throw 'An external executable requires SkipReleaseBuild.' }
+    $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
+}
+if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
+if (Get-Process -Name 'transmog-desktop' -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
 
 function Resolve-ArtifactPath([string]$Path) {
     if (-not $Path) { return $null }
@@ -22,13 +32,15 @@ function Resolve-ArtifactPath([string]$Path) {
 $ScreenshotPath = Resolve-ArtifactPath $ScreenshotPath
 $AutomationScreenshotPath = Resolve-ArtifactPath $AutomationScreenshotPath
 
-. (Join-Path $PSScriptRoot 'dev-env.ps1')
+if (-not $SkipReleaseBuild) { . (Join-Path $PSScriptRoot 'dev-env.ps1') }
 
-Push-Location $desktopUi
-try {
-    npm run check
-} finally {
-    Pop-Location
+if (-not $StartupOnly) {
+    Push-Location $desktopUi
+    try {
+        npm run check
+    } finally {
+        Pop-Location
+    }
 }
 
 if (-not $SkipReleaseBuild) {
@@ -39,10 +51,32 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 }
 
 $priorArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$DevToolsPort"
+$priorLocalAppData = $env:LOCALAPPDATA
+$debugArguments = "--remote-debugging-port=$DevToolsPort --remote-debugging-address=127.0.0.1"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
+$probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
+$env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
+$policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+$policyName = [IO.Path]::GetFileName($executable)
+$priorPolicy = $null
+$priorPolicyKind = $null
+$createdPolicyKey = $false
+$policySet = $false
 $process = $null
 try {
-    $process = Start-Process -FilePath $executable -PassThru -WindowStyle Hidden
+    $existingTargets = $null
+    try { $existingTargets = Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/list" -TimeoutSec 1 } catch { }
+    if ($existingTargets) { throw 'The requested DevTools port is already serving another process.' }
+    if ($HostedRunnerDevToolsPolicy) {
+        if ($env:ACTIONS_ID_TOKEN_REQUEST_TOKEN) { throw 'Desktop execution must not have OIDC permission.' }
+        if (-not (Test-Path -LiteralPath $policyPath)) { New-Item -Path $policyPath -Force | Out-Null; $createdPolicyKey = $true }
+        $policyKey = Get-Item -LiteralPath $policyPath
+        if ($policyKey.GetValueNames() -contains $policyName) { $priorPolicy = $policyKey.GetValue($policyName); $priorPolicyKind = $policyKey.GetValueKind($policyName) }
+        New-ItemProperty -LiteralPath $policyPath -Name $policyName -Value $debugArguments -PropertyType String -Force | Out-Null
+        $policySet = $true
+    }
+    $process = Start-Process -FilePath $executable -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $probeRoot 'stdout.txt') -RedirectStandardError (Join-Path $probeRoot 'stderr.txt')
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         try {
@@ -51,9 +85,22 @@ try {
             $targets = $null
         }
         if ($targets) { break }
+        if ($process.HasExited) { break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
-    if (-not $targets) { throw 'WebView2 DevTools endpoint did not become ready.' }
+    if (-not $targets) {
+        $exited = $process.HasExited
+        $exitCode = if ($exited) { $process.ExitCode } else { $null }
+        [ordered]@{ StartupVerified = $false; ProcessExited = $exited; ExitCode = $exitCode; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
+        Get-Content -LiteralPath (Join-Path $probeRoot 'stderr.txt') -Tail 30 | ForEach-Object { Write-Host $_ }
+        throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
+    }
+    if ($StartupOnly) {
+        $result = [pscustomobject]@{ StartupVerified = $true; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Runtime = (Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/version").Browser }
+        $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
+        return $result
+    }
 
     $startingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
     Push-Location $desktopUi
@@ -98,4 +145,13 @@ try {
         Stop-Process -Id $process.Id -Force
     }
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $priorArguments
+    $env:LOCALAPPDATA = $priorLocalAppData
+    if ($policySet) {
+        if ($null -ne $priorPolicyKind) { (Get-Item -LiteralPath $policyPath).SetValue($policyName, $priorPolicy, $priorPolicyKind) }
+        else { Remove-ItemProperty -LiteralPath $policyPath -Name $policyName -ErrorAction Stop }
+    }
+    if ($createdPolicyKey) {
+        $policyKey = Get-Item -LiteralPath $policyPath
+        if ($policyKey.ValueCount -eq 0 -and $policyKey.SubKeyCount -eq 0) { Remove-Item -LiteralPath $policyPath }
+    }
 }
