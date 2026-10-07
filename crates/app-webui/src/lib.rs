@@ -11,11 +11,7 @@ use transmog_app::{AppLifecycle, AppStatus};
 use webui::{Protocol, RenderOptions, ResponseWriter, WebUIHandler};
 use webui_handler::plugin::webui::WebUIHydrationPlugin;
 
-include!(concat!(env!("OUT_DIR"), "/assets.rs"));
-
-const DOCUMENT_STYLES: &[u8] = include_bytes!("../../../apps/desktop/ui/dist/document.css");
-const APP_ICON: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.ico");
-const APP_LOGO: &[u8] = include_bytes!("../../../apps/desktop/icons/icon.svg");
+mod assets;
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
 const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui monaco";
 
@@ -92,6 +88,9 @@ impl UiResponse {
 /// Embedded renderer construction or rendering error.
 #[derive(Debug, Error)]
 pub enum UiError {
+    /// An embedded resource could not be decoded within its build-recorded size.
+    #[error("embedded UI asset is invalid: {0}")]
+    InvalidAsset(String),
     /// The compiled `WebUI` protocol is invalid.
     #[error("embedded WebUI protocol is invalid: {0}")]
     InvalidProtocol(String),
@@ -119,7 +118,7 @@ impl AppRenderer {
     ///
     /// Returns [`UiError::InvalidProtocol`] if build output is malformed.
     pub fn new() -> Result<Self, UiError> {
-        let protocol = Protocol::from_protobuf(PROTOCOL_BYTES)
+        let protocol = Protocol::from_protobuf(assets::protocol_bytes())
             .map_err(|error| UiError::InvalidProtocol(error.to_string()))?;
         Ok(Self {
             protocol: Arc::new(protocol),
@@ -130,7 +129,8 @@ impl AppRenderer {
     ///
     /// # Errors
     ///
-    /// Returns a renderer or nonce failure for the document path.
+    /// Returns a renderer or nonce failure for the document path, or an invalid
+    /// embedded resource error for an asset path.
     pub fn respond(
         &self,
         method: &str,
@@ -147,27 +147,9 @@ impl AppRenderer {
         let path = path.split_once('?').map_or(path, |(path, _)| path);
         let mut response = match path {
             "/" | "/index.html" => self.render_document(view)?,
-            "/document.css" => {
-                UiResponse::asset(200, "text/css; charset=utf-8", DOCUMENT_STYLES.to_vec())
-            }
-            "/favicon.ico" => UiResponse::asset(200, "image/x-icon", APP_ICON.to_vec()),
-            "/transmog-icon.svg" => {
-                UiResponse::asset(200, "image/svg+xml; charset=utf-8", APP_LOGO.to_vec())
-            }
-            asset_path => {
-                if let Some((_, content_type, bytes)) = CLIENT_ASSETS
-                    .iter()
-                    .find(|(path, _, _)| *path == asset_path)
-                {
-                    UiResponse::asset(200, content_type, bytes.to_vec())
-                } else if let Some((_, bytes)) =
-                    CSS_ASSETS.iter().find(|(path, _)| *path == asset_path)
-                {
-                    UiResponse::asset(200, "text/css; charset=utf-8", bytes.to_vec())
-                } else {
-                    UiResponse::asset(404, "text/plain; charset=utf-8", b"not found".to_vec())
-                }
-            }
+            asset_path => assets::respond(method, asset_path)?.unwrap_or_else(|| {
+                UiResponse::asset(404, "text/plain; charset=utf-8", b"not found".to_vec())
+            }),
         };
         if method == "HEAD" {
             response.body.clear();
@@ -239,7 +221,7 @@ fn generate_nonce() -> Result<String, UiError> {
 mod tests {
     use super::*;
 
-    fn status() -> AppStatus {
+    pub(super) fn status() -> AppStatus {
         AppStatus {
             lifecycle: AppLifecycle::Stopped,
             listener: None,
@@ -306,27 +288,9 @@ mod tests {
     }
 
     #[test]
-    fn split_assets_are_bounded_and_keep_their_mime_types() {
+    fn origin_rejects_unknown_assets_and_build_metadata() {
         let renderer = AppRenderer::new().unwrap();
         let view = ShellView::from(&status());
-        assert!(
-            CLIENT_ASSETS
-                .iter()
-                .any(|(path, _, _)| path.starts_with("/chunks/"))
-        );
-        for (path, mime, bytes) in CLIENT_ASSETS {
-            let get = renderer.respond("GET", path, &view).unwrap();
-            assert_eq!(get.status, 200);
-            assert_eq!(get.content_type, *mime);
-            assert_eq!(get.body, *bytes);
-            assert!(
-                renderer
-                    .respond("HEAD", path, &view)
-                    .unwrap()
-                    .body
-                    .is_empty()
-            );
-        }
         for path in [
             "/chunks/missing.js",
             "/chunks/../app.js",

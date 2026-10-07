@@ -30,6 +30,13 @@ local adapter.
 - Register `transmog-ui` and serve only allowlisted embedded paths. On
   Windows, the observed origin is `http://transmog-ui.localhost/`. Do not
   open a TCP listener or use Tauri's localhost plugin.
+- Point Tauri's frontend URL at that custom protocol. The WebUI adapter owns
+  the only embedded resource inventory; Tauri must not also embed the build
+  directory, which contains private build metadata as well as runtime assets.
+  Brotli-compress resources at build time and verify their exact original bytes.
+  Decode each resource on first GET within its recorded size and cache it for
+  subsequent requests. HEAD serves metadata without decoding. Retain the existing
+  path allowlist, MIME types, CSP, and offline delivery behavior.
 - Render initial documents in Rust from the embedded WebUI protocol. Generate a
   fresh CSP nonce for each document, pass it through `RenderOptions`, and return
   the restrictive CSP as a response header. Keep Tauri's static `app.security.csp`

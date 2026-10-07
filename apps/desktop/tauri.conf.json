@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "app.transmog.desktop",
   "build": {
-    "frontendDist": "ui/dist"
+    "frontendDist": "transmog-ui://localhost/"
   },
   "app": {
     "windows": [],

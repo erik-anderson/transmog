@@ -138,8 +138,11 @@ Pop-Location
 `ui/dist` is generated and ignored by Git. `npm run check` type-checks the UI
 and builds the client bundle, styles, local Monaco workers, icon, and WebUI
 projection manifest, including on a clean checkout. Run it before invoking
-Cargo directly. `transmog-app-webui` compiles `protocol.bin` and hashed CSS
-into Cargo's output directory on every desktop build. The repository build
+Cargo directly. Each UI build clears stale generated chunks. `transmog-app-webui`
+compiles `protocol.bin` and hashed CSS into Cargo's output directory and embeds
+the allowlisted resources with lossless Brotli compression. The custom protocol
+decodes and caches resources on first use; Tauri does not embed another copy of
+the UI build directory. The repository build
 task generates the assets before Cargo consumes them:
 
 ```powershell

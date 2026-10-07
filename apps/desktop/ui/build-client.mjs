@@ -1,11 +1,11 @@
-import { copyFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import { esbuildProjection } from '@microsoft/webui/projection.js';
 
 const workingDirectory = fileURLToPath(new URL('./', import.meta.url));
-const outputDirectory = fileURLToPath(new URL('./dist/', import.meta.url));
+const outputDirectory = resolve(workingDirectory, 'dist');
 for (const file of await readdir(join(workingDirectory, 'src'), { recursive: true })) {
   if (!file.endsWith('.html')) continue;
   const template = await readFile(join(workingDirectory, 'src', file), 'utf8');
@@ -13,6 +13,11 @@ for (const file of await readdir(join(workingDirectory, 'src'), { recursive: tru
     throw new Error('WebUI event handlers must pass the reserved event token `e`, not `event`: ' + file);
   }
 }
+
+// Discard stale hashed chunks before generating this build's asset inventory.
+if (relative(workingDirectory, outputDirectory) !== 'dist') throw new Error('Unsafe build output directory: ' + outputDirectory);
+await rm(outputDirectory, { recursive: true, force: true });
+await mkdir(outputDirectory, { recursive: true });
 
 const client = await esbuild.build({
   absWorkingDir: workingDirectory,
