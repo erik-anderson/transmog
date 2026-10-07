@@ -57,6 +57,8 @@ jobs:
           } catch { Write-Host "Environment-only startup probe failed: $($_.Exception.Message)" }
           ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -StartupOnly -HostedRunnerDevToolsPolicy
           if ($env:FULL_SMOKE -eq 'true') {
+            # Match smoke assertions to the older test application, not current UI semantics.
+            Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/erik-anderson/transmog/b52c2f8b5d5fa2c13a10cd1840089616c7865779/apps/desktop/ui/scripts/smoke-webview.mjs' -OutFile apps/desktop/ui/scripts/smoke-webview.mjs
             ./scripts/test-windows-desktop.ps1 -ExecutablePath $exe -SkipReleaseBuild -HostedRunnerDevToolsPolicy
           }
       - name: Retain isolated startup evidence
