@@ -36,6 +36,7 @@ function Get-WindowsSignatureEvidence {
 
 function Assert-ReleasePayload {
     param([Parameter(Mandatory)][string]$PayloadRoot, [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$RunId)
+    $PayloadRoot = (Get-Item -LiteralPath $PayloadRoot).FullName
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot 'build-manifest.json') | ConvertFrom-Json
     if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId -or $manifest.Target -ne 'x86_64-pc-windows-msvc') {
         throw 'Build payload provenance does not match this release run.'

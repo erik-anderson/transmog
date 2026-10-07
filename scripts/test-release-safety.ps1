@@ -18,6 +18,10 @@ function Require-Rejection([scriptblock]$Action, [string]$Reason) {
 }
 Set-TestManifest
 Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+Push-Location (Split-Path -Parent $fixture)
+try {
+    Assert-ReleasePayload -PayloadRoot (Split-Path -Leaf $fixture) -Commit 'test-commit' -RunId '123' | Out-Null
+} finally { Pop-Location }
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'different-commit' -RunId '123' } 'a different source commit'
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '124' } 'a different workflow run'
 'tampered' | Set-Content -LiteralPath (Join-Path $fixture 'target\release\transmog-desktop.exe')
