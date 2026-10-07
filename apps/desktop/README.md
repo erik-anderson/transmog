@@ -16,7 +16,7 @@ Complete prerequisites and packaging commands are in
 - `src/lib.rs`: portable renderer, route allowlist, command DTOs, and tests;
 - `src/windows.rs`: thin Tauri/WebView2 adapter;
 - `ui/src`: WebUI HTML/CSS sources and authored TypeScript island;
-- `ui/dist`: reviewed, reproducible ESM and state-projection outputs;
+- `ui/dist`: ignored ESM and state-projection outputs generated during the build;
 - `capabilities/main.json`: empty Tauri core/plugin permission set;
 - `tauri.conf.json`: current-user Windows bundle metadata relying on the host's
   Evergreen WebView2 runtime, with no localhost server;

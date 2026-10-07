@@ -124,7 +124,7 @@ Release packaging builds `transmog-script-host` and the isolated
 Production activation requires the host's Windows AppContainer plus Job Object;
 there is no production fallback to an unsandboxed process.
 
-Install build-time packages and reproduce the checked-in ESM bundle and WebUI
+Install build-time packages and generate the ESM bundle and WebUI
 projection manifest:
 
 ```powershell
@@ -135,13 +135,12 @@ npm run check
 Pop-Location
 ```
 
-`ui/dist/app.js`, `ui/dist/app.css`, both local Monaco worker bundles, and
-`ui/dist/webui-projection.json` are checked in. This lets
-ordinary Cargo builds consume reviewed assets without npm or network access.
-`npm run check` rebuilds both files and fails if either checked-in output was
-stale. `transmog-app-webui` compiles `protocol.bin` and hashed CSS into Cargo's
-output directory on every desktop build. The repository build task performs
-the asset check before Cargo consumes them:
+`ui/dist` is generated and ignored by Git. `npm run check` type-checks the UI
+and builds the client bundle, styles, local Monaco workers, icon, and WebUI
+projection manifest, including on a clean checkout. Run it before invoking
+Cargo directly. `transmog-app-webui` compiles `protocol.bin` and hashed CSS
+into Cargo's output directory on every desktop build. The repository build
+task generates the assets before Cargo consumes them:
 
 ```powershell
 pwsh ./scripts/build-desktop.ps1 -Configuration Debug -LockedDependencies

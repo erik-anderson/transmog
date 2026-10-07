@@ -16,6 +16,7 @@ e2e/playwright/node_modules/
 e2e/playwright/test-results/
 e2e/playwright/playwright-report/
 apps/desktop/ui/node_modules/
+apps/desktop/ui/dist/
 apps/desktop/gen/schemas/
 apps/desktop/binaries/*.exe
 /examples/dotnet-embedding/**/bin/

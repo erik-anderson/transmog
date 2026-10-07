@@ -53,10 +53,10 @@ local adapter.
   avoids committing the product to a client navigation model before the real
   shell needs one. A future change requires a new compatibility and security
   proof; it does not silently weaken Trusted Types.
-- Check in the deterministic ESM bundle and projection manifest. Compile the
-  WebUI protocol and CSS from source in Rust's build script. A clean Cargo build
-  therefore needs no npm process; `npm run check` proves the checked-in client
-  artifacts are reproducible.
+- Generate the deterministic ESM bundle and projection manifest during the
+  build and ignore `ui/dist` in Git. `npm run check` type-checks and generates
+  the client artifacts before Cargo consumes them. Compile the WebUI protocol
+  and CSS from source in Rust's build script.
 - Keep the Tauri dependency and binary Windows-only. The library/render slice
   remains portable, while Linux desktop support waits for the declared
   WebKitGTK qualification phase.
