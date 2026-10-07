@@ -11,7 +11,11 @@ try {
     . (Join-Path $PSScriptRoot 'dev-env.ps1') -Check
     # The complete deterministic repository gate runs before signing credentials exist.
     Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
-    try { & npm run check } finally { Pop-Location }
+    try {
+        & npm run check
+        Write-Host '::group::Browser workspace checks before Rust compilation'
+        try { & npm run test:workspaces } finally { Write-Host '::endgroup::' }
+    } finally { Pop-Location }
     Write-Host '::group::Repository analysis and tests (development profile)'
     try {
         & cargo fmt --all -- --check
@@ -21,8 +25,6 @@ try {
         & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
         & (Join-Path $PSScriptRoot 'check-crypto-graph.ps1')
         & (Join-Path $PSScriptRoot 'generate-supply-chain-artifacts.ps1') -NoticePath (Join-Path $payloadRoot 'evidence\THIRD_PARTY_NOTICES.md') -SbomPath (Join-Path $payloadRoot 'evidence\sbom.cdx.json')
-        Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
-        try { & npm run test:workspaces } finally { Pop-Location }
     } finally { Write-Host '::endgroup::' }
     Write-Host '::group::Optimized application and helpers (one release build)'
     try {

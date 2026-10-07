@@ -24,7 +24,8 @@ signing job checks that catalog before restoring the three binaries and UI asset
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
 
-The repository-wide Clippy/tests run before optimized compilation. That full gate
+Browser workspace checks run first so UI failures do not wait for Rust compilation.
+The repository-wide Clippy/tests then run before optimized compilation. That full gate
 replaces the packaging wrapper's narrower test pass. Tauri forwards the three
 shipped package selections to one Cargo release build, and sidecars are staged
 later during bundling. Clippy/development and release artifacts remain separate;
