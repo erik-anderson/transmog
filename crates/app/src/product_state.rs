@@ -8,9 +8,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 3;
+const CURRENT_SCHEMA: u32 = 4;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -151,6 +152,9 @@ pub struct ProductState {
     pub window: WindowState,
     /// Most-recent-first user artifact references.
     pub recent_artifacts: Vec<RecentArtifact>,
+    /// Non-sensitive layout and column presentation.
+    #[serde(default)]
+    pub workspace: WorkspacePreferences,
 }
 
 impl Default for ProductState {
@@ -161,6 +165,7 @@ impl Default for ProductState {
             privacy: PrivacySettings::default(),
             window: WindowState::default(),
             recent_artifacts: Vec::new(),
+            workspace: WorkspacePreferences::default(),
         }
     }
 }
@@ -222,15 +227,37 @@ impl ProductStateManager {
     }
 
     pub(crate) fn save(&self, state: ProductState) -> Result<ProductState, AppError> {
-        let state = validate(state)?;
         let mut inner = self.inner.lock().unwrap();
+        // Main settings/window writes must not overwrite independently saved layout.
+        let state = validate(ProductState {
+            workspace: inner.state.workspace.clone(),
+            ..state
+        })?;
+        self.persist(&mut inner, &state)?;
+        Ok(state)
+    }
+
+    pub(crate) fn save_workspace(
+        &self,
+        preferences: WorkspacePreferences,
+    ) -> Result<WorkspacePreferences, AppError> {
+        let mut inner = self.inner.lock().unwrap();
+        let state = validate(ProductState {
+            workspace: preferences,
+            ..inner.state.clone()
+        })?;
+        self.persist(&mut inner, &state)?;
+        Ok(state.workspace)
+    }
+
+    fn persist(&self, inner: &mut Inner, state: &ProductState) -> Result<(), AppError> {
         if let Some(prefix) = &self.prefix {
-            write_generation(prefix, inner.next_generation, &state)?;
+            write_generation(prefix, inner.next_generation, state)?;
             inner.next_generation = inner.next_generation.saturating_add(1);
             prune_generations(prefix);
         }
         inner.state = state.clone();
-        Ok(state)
+        Ok(())
     }
 
     pub(crate) fn remember(&self, path: PathBuf, kind: ArtifactKind) {
@@ -255,6 +282,7 @@ fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
         || !(480..=16_384).contains(&state.window.height)
         || !(10..=200).contains(&state.preferences.session_page_size)
         || state.recent_artifacts.len() > MAX_RECENT_ARTIFACTS
+        || !state.workspace.is_valid()
     {
         return Err(invalid("product state exceeds a configured bound"));
     }
@@ -343,12 +371,12 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
                 ..ProductState::default()
             }
         }
-        2 => {
+        2 | 3 => {
             let mut state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
             state.schema_version = CURRENT_SCHEMA;
             state
         }
-        3 => serde_json::from_value(value).map_err(|_| ())?,
+        4 => serde_json::from_value(value).map_err(|_| ())?,
         _ => return Err(()),
     };
     validate(state).map_err(|_| ())
@@ -499,5 +527,55 @@ mod tests {
         assert!(store.save(invalid).is_err());
         store.remember(PathBuf::from("secret.tmcap"), ArtifactKind::NativeCapture);
         assert!(store.snapshot().recent_artifacts.is_empty());
+    }
+
+    #[test]
+    fn old_state_gains_defaults_and_layout_survives_stale_settings_save() {
+        let path = prefix("workspace");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut old = serde_json::to_value(ProductState::default()).unwrap();
+        old["schemaVersion"] = 3.into();
+        old.as_object_mut().unwrap().remove("workspace");
+        fs::write(generation_path(&path, 1), serde_json::to_vec(&old).unwrap()).unwrap();
+        let (store, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        let mut stale = store.snapshot();
+        assert_eq!(stale.workspace, WorkspacePreferences::default());
+        let mut layout = stale.workspace.clone();
+        layout.sidebar_collapsed = true;
+        layout.list_split = 67;
+        layout.columns.swap(2, 3);
+        layout.columns[2].width = 310;
+        store.save_workspace(layout.clone()).unwrap();
+        stale.preferences.theme = ThemePreference::Dark;
+        stale.window.width = 1100;
+        store.save(stale).unwrap();
+        let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(reloaded.snapshot().workspace, layout);
+        assert_eq!(reloaded.snapshot().preferences.theme, ThemePreference::Dark);
+        assert_eq!(reloaded.snapshot().window.width, 1100);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn invalid_layout_never_replaces_saved_preferences() {
+        let store = ProductStateManager::memory(ProductState::default());
+        let original = store.snapshot().workspace;
+        let mut duplicate = original.clone();
+        duplicate.columns[1].id = duplicate.columns[0].id;
+        let mut invisible = original.clone();
+        for column in &mut invisible.columns {
+            column.visible = false;
+        }
+        let mut narrow = original.clone();
+        narrow.columns[0].width = 1;
+        let mut extreme_split = original.clone();
+        extreme_split.list_split = 100;
+        for invalid in [duplicate, invisible, narrow, extreme_split] {
+            assert!(store.save_workspace(invalid).is_err());
+            assert_eq!(store.snapshot().workspace, original);
+        }
     }
 }

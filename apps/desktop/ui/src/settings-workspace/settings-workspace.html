@@ -15,7 +15,7 @@
             <div class="actions">
               <button type="button" @click="{setupCa()}">Set up HTTPS interception</button>
               <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
-              <button type="submit">Start proxy</button>
+              <proxy-toggle lifecycle="{{proxyLifecycle}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
               <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
             </div>
           </fieldset>

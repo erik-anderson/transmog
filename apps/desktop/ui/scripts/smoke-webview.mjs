@@ -238,8 +238,10 @@ try {
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
           noticeAvailable: element.shadowRoot.querySelector('.notice') instanceof HTMLElement,
           sessionScrollerAvailable: element.shadowRoot.querySelector('.table-wrap') instanceof HTMLElement,
-          callerColumn: [...element.shadowRoot.querySelectorAll('th')]
-            .some((heading) => heading.textContent?.trim() === 'Caller'),
+          callerColumn: element.shadowRoot.querySelector('#header-process .column-trigger')?.textContent.trim().startsWith('Process / PID'),
+          resizableLayout: CSS.supports('width','attr(data-width type(<length>))')
+            && element.shadowRoot.querySelectorAll('pane-divider').length >= 3,
+          proxyToggle: element.shadowRoot.querySelector('.top-actions proxy-toggle button')?.textContent.trim() === 'Start proxy',
           brandIconLoaded: (() => {
             const icon = element.shadowRoot.querySelector('.brand-mark');
             return icon instanceof HTMLImageElement
@@ -285,7 +287,7 @@ try {
     && result.ux.internalAutomationFields === 0,
     `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
   assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
-    && result.ux.callerColumn && result.ux.brandIconLoaded,
+    && result.ux.callerColumn && result.ux.brandIconLoaded && result.ux.resizableLayout && result.ux.proxyToggle,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
@@ -373,10 +375,10 @@ try {
         shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
         headingHeight: heading.getBoundingClientRect().height,
         controlsVisible: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
-          .filter((button) => !button.hidden)
+          .filter((button) => !button.closest('[hidden]') && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')))
           .every((button) => button.getBoundingClientRect().height > 0),
         invisibleControls: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
-          .filter((button) => !button.hidden && button.getBoundingClientRect().height <= 0)
+          .filter((button) => !button.closest('[hidden]') && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')) && button.getBoundingClientRect().height <= 0)
           .map((button) => button.textContent?.trim()),
         rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
       };

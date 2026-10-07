@@ -38,6 +38,9 @@ export interface SessionSummary {
   loss: boolean;
   capturing: boolean;
   autoResponse: AutoResponseMatch | null;
+  url: string;
+  startedAt: number;
+  contentType: string | null;
 }
 
 export interface SessionPage {
@@ -46,6 +49,8 @@ export interface SessionPage {
   evicted: number;
   sequenceGaps: number;
   subscriberLag: number;
+  totalMatched: number;
+  retainedCount: number;
 }
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
@@ -135,7 +140,24 @@ export interface ProductState {
   privacy: { retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
+  workspace: WorkspacePreferences;
 }
+
+export type ColumnId = 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
+export interface ColumnPreference { id: ColumnId; width: number; visible: boolean; pinned: boolean; }
+export interface WorkspacePreferences {
+  sidebarCollapsed: boolean;
+  layout: 'stacked' | 'side-by-side';
+  listSplit: number;
+  requestSplit: number;
+  requestBodySplit: number;
+  responseBodySplit: number;
+  wrapCells: boolean;
+  compactRows: boolean;
+  columns: ColumnPreference[];
+}
+export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
+export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 export interface AutomationRule {
   id: string;

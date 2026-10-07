@@ -1,6 +1,9 @@
 import '@microsoft/webui-framework/lazy-hydration.js';
+import './proxy-toggle/proxy-toggle.js';
+import './pane-divider/pane-divider.js';
 import './app-shell/app-shell.js';
 import './traffic-workspace/traffic-workspace.js';
+import './message-inspector/message-inspector.js';
 import './settings-workspace/settings-workspace.js';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from './utilities.js';

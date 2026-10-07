@@ -1,4 +1,5 @@
 import initialState from '../initial-state.json';
+import '../editor-surface/editor-surface.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
@@ -48,6 +49,7 @@ export class ScriptEditor extends WorkspaceElement {
     if (this.active) void this.ensureEditor();
   }
   activeChanged(): void { if (this.active) void this.ensureEditor(); }
+  focusEditor(): void { this.sourceEditor?.layout(); this.sourceEditor?.focus(); }
   themeChanged(): void { this.monaco?.editor.setTheme(this.monacoTheme()); }
   private monacoTheme(): 'vs' | 'vs-dark' { return this.theme === 'dark' || (this.theme === 'system' && this.systemTheme.matches) ? 'vs-dark' : 'vs'; }
   private async ensureEditor(): Promise<void> {

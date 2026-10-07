@@ -256,7 +256,7 @@ mod tests {
             .unwrap();
         let html = String::from_utf8(response.body).unwrap();
         let csp = response.content_security_policy.unwrap();
-        assert!(html.contains("Inspect traffic without losing the thread"));
+        assert!(html.contains("id=\"traffic-heading\""));
         assert!(html.contains("app-shell"));
         assert!(html.contains("id=\"webui-data\""));
         assert!(csp.contains("require-trusted-types-for 'script'"));
@@ -344,10 +344,23 @@ mod tests {
             .respond("GET", "/", &ShellView::from(&status()))
             .unwrap();
         let html = String::from_utf8(response.body).unwrap();
-        assert!(html.contains("No matching sessions."));
+        assert!(html.contains("No matching exchanges."));
+        assert!(html.contains("Process / PID"));
+        assert!(html.contains("popovertarget=\"table-settings\""));
         assert!(html.contains("Application facade ready."));
         assert!(html.contains("aria-current=\"page\""));
         assert!(!html.contains("<link rel=\"stylesheet\" href=\"/monaco.css\""));
         assert!(!html.contains("<script type=\"module\" src=\"/monaco.js\""));
+    }
+
+    #[test]
+    fn persisted_and_hydrated_workspace_defaults_agree() {
+        let initial: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../apps/desktop/ui/src/initial-state.json"
+        ))
+        .unwrap();
+        let defaults = serde_json::to_value(transmog_app::WorkspacePreferences::default()).unwrap();
+        assert_eq!(initial["workspace"], defaults);
+        assert_eq!(initial["preferences"], defaults);
     }
 }

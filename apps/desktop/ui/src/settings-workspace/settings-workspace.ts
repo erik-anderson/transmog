@@ -2,7 +2,7 @@ import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState } from '../models.js';
+import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePreferences } from '../models.js';
 import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
@@ -15,15 +15,17 @@ export class SettingsWorkspace extends WorkspaceElement {
   @observable certificatePath = initialState.certificatePath;
   @observable privateKeyPath = initialState.privateKeyPath;
   @observable caSha256 = initialState.caSha256;
+  @observable proxyLifecycle = 'stopped';
+  @observable proxyPending = '';
   proxyForm!: HTMLFormElement;
   settingsForm!: HTMLFormElement;
   supportForm!: HTMLFormElement;
   ready!: Promise<void>;
 
   protected hydratedCallback(): void { this.ready = this.initializeShell(); }
-  private renderAppStatus(status: AppStatus): void { this.$emit('status-changed', status); }
-  private applyTheme(theme: ProductState['preferences']['theme']): void {
-    this.$emit('preferences-changed', { theme, pageSize: Number(new FormData(this.settingsForm).get('pageSize')) });
+  private renderAppStatus(status: AppStatus): void { this.proxyLifecycle = status.lifecycle; this.$emit('status-changed', status); }
+  private applyTheme(theme: ProductState['preferences']['theme'], workspace?: WorkspacePreferences): void {
+    this.$emit('preferences-changed', { theme, pageSize: Number(new FormData(this.settingsForm).get('pageSize')), workspace });
   }
   dismissNotice(): void { this.$emit('dismiss-notice'); }
   private async initializeShell(): Promise<void> {
@@ -39,7 +41,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.caSha256 = bootstrap.ownedCaSha256 ?? '';
       this.diagnosticsPathText = bootstrap.diagnosticsPath;
       this.populateSettings(productState);
-      this.applyTheme(productState.preferences.theme);
+      this.applyTheme(productState.preferences.theme, productState.workspace);
       this.renderAppStatus(status);
       const certificate = bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent
         ? `Owned CA ${bootstrap.ownedCaSha256} is remembered, but its app-managed files are missing. Remove exact CA, then create and trust a new durable CA.`
@@ -76,7 +78,21 @@ export class SettingsWorkspace extends WorkspaceElement {
     }
   }
 
+  async toggleProxy(): Promise<void> { if (this.proxyLifecycle === 'running') await this.stopProxy(); else await this.startProxy(); }
   async startProxy(event?: Event): Promise<void> {
+    event?.preventDefault();
+    await this.runProxyChange('starting', () => this.startProxyNow());
+  }
+  async stopProxy(): Promise<void> { await this.runProxyChange('stopping', () => this.stopProxyNow()); }
+  private async runProxyChange(kind: string, operation: () => Promise<void>): Promise<void> {
+    if (this.proxyPending) return;
+    this.proxyPending = kind;
+    this.$emit('proxy-operation',kind);
+    try { await operation(); await this.refreshStatus(); }
+    finally { this.proxyPending = ''; this.$emit('proxy-operation',''); }
+  }
+
+  private async startProxyNow(event?: Event): Promise<void> {
     event?.preventDefault();
     const data = new FormData(this.proxyForm);
     try {
@@ -218,7 +234,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     }
   }
 
-  async stopProxy(): Promise<void> {
+  private async stopProxyNow(): Promise<void> {
     this.setProxyOutput('Stopping and restoring host settings…', 'progress');
     try {
       const status = await invoke<AppStatus>('stop_application');
@@ -250,7 +266,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     try {
       const state = await invoke<ProductState>('product_state');
       this.populateSettings(state);
-      this.applyTheme(state.preferences.theme);
+      this.applyTheme(state.preferences.theme, state.workspace);
       this.supportText = `Loaded schema ${state.schemaVersion}; ${state.recentArtifacts.length} recent artifact reference(s).`;
     } catch (error: unknown) {
       this.supportText = `Settings load failed: ${describeError(error)}`;
@@ -271,7 +287,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       state.privacy.includePathsInSupportBundles = data.get('supportPaths') === 'on';
       const saved = await invoke<ProductState>('save_product_state', { productState: state });
       this.populateSettings(saved);
-      this.applyTheme(saved.preferences.theme);
+      this.applyTheme(saved.preferences.theme, saved.workspace);
       this.supportText = `Saved product-state schema ${saved.schemaVersion}.`;
     } catch (error: unknown) {
       this.supportText = `Settings save failed: ${describeError(error)}`;

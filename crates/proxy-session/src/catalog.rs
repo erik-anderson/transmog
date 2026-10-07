@@ -497,6 +497,25 @@ impl SessionCatalog {
         self.lock_state().counters
     }
 
+    /// Projects all retained exchanges into lightweight owned read models.
+    ///
+    /// The configured session limit bounds the result. The callback must not
+    /// re-enter this catalog; only one temporary snapshot is alive at a time.
+    pub fn project_retained<T>(&self, mut project: impl FnMut(&SessionSnapshot) -> T) -> Vec<T> {
+        let state = self.lock_state();
+        state
+            .order
+            .values()
+            .filter_map(|id| state.by_id.get(id))
+            .map(|session| project(&session.snapshot()))
+            .collect()
+    }
+
+    /// Maximum number of rows returned by a presentation query.
+    pub fn page_size_limit(&self) -> usize {
+        self.inner.limits.max_page_size.get()
+    }
+
     /// Attaches terminal WebSocket relay evidence to its originating exchange.
     pub fn apply_websocket(&self, evidence: WebSocketSessionEvidence) -> CatalogApply {
         let exchange_id = ExchangeId(evidence.session_id.0);

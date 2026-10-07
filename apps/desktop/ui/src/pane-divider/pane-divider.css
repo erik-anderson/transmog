@@ -1,0 +1,5 @@
+pane-divider { display:block; min-width:6px; min-height:6px; }
+.pane-divider { width:100%; height:100%; min-width:6px; min-height:6px; background:var(--line); touch-action:none; }
+pane-divider[orientation="horizontal"] .pane-divider { cursor:row-resize; }
+pane-divider[orientation="vertical"] .pane-divider { cursor:col-resize; }
+.pane-divider:hover, .pane-divider:focus-visible { background:var(--accent); outline:2px solid var(--focus); outline-offset:-2px; }

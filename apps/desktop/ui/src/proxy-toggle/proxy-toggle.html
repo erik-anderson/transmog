@@ -1,0 +1,3 @@
+<template>
+  <button type="button" class="proxy-toggle compact-button" data-lifecycle="{{lifecycle}}" ?disabled="{{!ready || pending || lifecycle == 'stopping'}}" @click="{toggle()}">{{actionLabel}}</button>
+</template>

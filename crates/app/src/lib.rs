@@ -19,6 +19,7 @@ mod product_state;
 mod response_assets;
 mod scripts;
 mod sessions;
+mod workspace;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -57,8 +58,8 @@ pub use response_assets::{
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
 use serde::Serialize;
 pub use sessions::{
-    ClientIdentityView, SessionHint, SessionPage, SessionQueryInput, SessionSummary,
-    SessionUpdateSubscription,
+    ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
+    SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
 };
 use thiserror::Error;
 pub use transmog_script::{ScriptAction, ScriptInvocation};
@@ -66,6 +67,7 @@ use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
     ServiceStatus,
 };
+pub use workspace::{ColumnPreference, TrafficColumn, TrafficLayout, WorkspacePreferences};
 
 /// Stable application failure category suitable for presentation boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -295,6 +297,17 @@ impl Application {
     /// Returns validated product preferences and window/artifact state.
     pub fn product_state(&self) -> ProductState {
         self.product_state.snapshot()
+    }
+
+    /// Saves non-sensitive workspace presentation without overwriting other settings.
+    ///
+    /// # Errors
+    /// Returns a bounded validation or persistence failure.
+    pub fn save_workspace_preferences(
+        &self,
+        preferences: WorkspacePreferences,
+    ) -> Result<WorkspacePreferences, AppError> {
+        self.product_state.save_workspace(preferences)
     }
 
     /// Validates and crash-safely persists product state when configured.
@@ -705,8 +718,25 @@ impl Application {
     /// failures without exposing filesystem paths.
     pub async fn inspect_body(
         &self,
-        request: BodyInspectionRequest,
+        mut request: BodyInspectionRequest,
     ) -> Result<BodyInspection, AppError> {
+        if request.representation == BodyRepresentation::Auto
+            && let Some(store) = &self.body_store
+            && let Ok(id) = inspector::parse_session_id(&request.session_id)
+            && store
+                .metadata(transmog_core::intercept::ExchangeId(id))
+                .iter()
+                .any(|body| {
+                    body.boundary == request.boundary
+                        && body.retained_bytes > 0
+                        && body
+                            .media_type
+                            .as_deref()
+                            .is_some_and(|mime| mime.to_ascii_lowercase().starts_with("image/"))
+                })
+        {
+            request.representation = BodyRepresentation::Image;
+        }
         if request.representation == BodyRepresentation::Image {
             let (metadata, source, decoded) =
                 inspector::image_source(self.body_store.as_ref(), &request).await?;

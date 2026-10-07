@@ -1,80 +1,48 @@
-# Transmog desktop shell
+# Transmog desktop
 
-This Windows-first Tauri 2 application is the production shell over the
-UI-neutral Transmog application facade. It provides proxy lifecycle, live
-sessions, inspectors, breakpoints, replay, captures/exports, durable settings,
-redacted support diagnostics, and hardened update/uninstall handoff while
-keeping the WebView a bounded presentation client.
+The Windows desktop app provides a visual workspace for inspecting and modifying
+HTTP traffic. It combines live capture, request/response previews, breakpoints,
+replay, traffic scripts, auto-response rules, and capture exports.
 
-The delivery and security decisions are recorded in
-[`docs/adr/0007-tauri-webui-delivery.md`](../../docs/adr/0007-tauri-webui-delivery.md).
-Complete prerequisites and packaging commands are in
-[`docs/building.md`](../../docs/building.md#windows-desktop-shell).
+The traffic table has configurable columns and resizable inspectors. Layouts are
+saved, responses choose a suitable preview automatically, and editors can expand
+into a larger working window.
 
-## Layout
+## Architecture
 
-- `src/lib.rs`: portable renderer, route allowlist, command DTOs, and tests;
-- `src/windows.rs`: thin Tauri/WebView2 adapter;
-- `ui/src`: composable WebUI workspaces, reactive templates, and shared initial state;
-- `ui/dist`: ignored ESM and state-projection outputs generated during the build;
-- `capabilities/main.json`: empty Tauri core/plugin permission set;
-- `tauri.conf.json`: current-user Windows bundle metadata relying on the host's
-  Evergreen WebView2 runtime, with no localhost server;
-- `windows/installer-hooks.nsh`: fail-closed update/uninstall maintenance hook.
+Tauri hosts the WebUI interface in WebView2. Composable workspaces handle
+presentation; the UI-neutral Rust application facade owns proxy lifecycle,
+traffic data, persistence, and operations. Editors and secondary workspaces load
+on demand. The interface is served from an embedded origin without a local web
+server or filesystem fallback.
 
-## Local verification
+- `src/windows.rs`: Windows and Tauri integration.
+- `ui/src`: WebUI components, templates, and styles.
+- `crates/app`: application services shared with headless clients.
+- `crates/app-webui`: embedded UI rendering and assets.
+
+See [the delivery architecture decision](../../docs/adr/0007-tauri-webui-delivery.md)
+for the framework and security choices.
+
+## Build and run
+
+Follow [the build prerequisites](../../docs/building.md#windows-desktop-shell), then:
 
 ```powershell
 Push-Location ./apps/desktop/ui
 npm ci
-npm run build
 npm run check
-npm run test:workspaces
 Pop-Location
 
 . ./scripts/dev-env.ps1
-cargo test --locked -p transmog-app-webui -p transmog-desktop
 cargo run --locked -p transmog-desktop
 ```
 
-The browser workspace checks use the locked Playwright installation in
-`e2e/playwright`; run `npm ci` there and install its Chromium browser once.
-They render the production WebUI templates under Trusted Types enforcement
-and use fixture commands, covering lazy imports, keyed session rows, burst
-refreshes, inspector races, preserved drafts, and editor disposal.
+## Verification and packaging
 
-`app-shell` composes `traffic-workspace`, `settings-workspace`,
-`automation-workspace`, `breakpoint-workspace`, `composer-workspace`, and
-`capture-workspace`. Children communicate through typed bubbling events and
-public `@attr`/`@observable` properties. HTML owns list and conditional rendering;
-CSS owns visual state. Rust and TypeScript share `ui/src/initial-state.json` so
-the first document and hydration use the same defaults.
+UI checks use the repository's Playwright installation; native desktop checks
+cover WebView2, accessibility, display scaling, and application lifecycle.
+Development guidance is in [ui/AGENTS.md](ui/AGENTS.md).
 
-Traffic and settings hydrate eagerly for live capture and proxy bootstrap.
-Other workspace modules hydrate on first selection and stay mounted to preserve
-drafts. Monaco loads after its Trusted Types environment and applies its CSS
-only when an editor is used. Paused-exchange components reserve an 18-rem block
-with WebUI lazy rendering; client-created rows additionally wait for visibility
-before allocating their editor. Editors dispose owned models when removed.
-The custom origin embeds the current bundler asset manifest, including shared
-and dynamic chunks, with no filesystem fallback.
-
-Workspace selection does not use URL routing. If URL navigation is introduced,
-use `@microsoft/webui-router` after resolving the Trusted Types compatibility
-constraint recorded in ADR 0007. The current custom-protocol response is
-buffered, so progressive streaming hydration would need a transport change.
-
-For the real WebView smoke check, start the binary with a loopback-only
-WebView2 DevTools port, then run `npm run smoke:webview -- --port 9333` from
-`apps/desktop/ui`. The DevTools switch is test-only. The hosted WebView smoke
-matrix remains inactive; the manual unsigned Windows packaging workflow is
-described in [`ci/README.md`](../../ci/README.md).
-The localization check temporarily expands the Traffic heading eightfold at
-200% DPI and restores the original text immediately after measuring it.
-
-Use `scripts/test-windows-desktop.ps1` for accessibility, high contrast/DPI,
-localization-length, memory/soak, and single-instance gates. Pass
-`-ScreenshotPath C:\path\to\traffic.png` to capture the fixed-viewport traffic
-workspace from the same real WebView2 run. Use
-`scripts/package-windows.ps1` for unsigned development or signed release NSIS
-bundles. See [`docs/windows-release.md`](../../docs/windows-release.md).
+Use [the Windows release guide](../../docs/windows-release.md) for packaging and
+[the CI guide](../../ci/README.md) for the manual unsigned installer workflow.

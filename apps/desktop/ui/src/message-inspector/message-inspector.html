@@ -1,0 +1,34 @@
+<template>
+  <section class="message-inspector">
+    <header class="message-tabs">
+      <strong><if condition="side == 'request'">Request</if><if condition="side == 'response'">Response</if></strong>
+      <button type="button" ?data-selected="{{mode == 'headers'}}" @click="{showMode('headers')}">Headers</button>
+      <button type="button" ?data-selected="{{mode == 'body'}}" @click="{showMode('body')}">Body</button>
+      <button type="button" ?data-selected="{{mode == 'split'}}" @click="{showMode('split')}">Split</button>
+      <button type="button" ?data-selected="{{mode == 'details'}}" @click="{showMode('details')}">Details</button>
+    </header>
+    <div class="message-stage">
+      <select aria-label="Message stage" @change="{changeBoundary(e)}"><for each="stage in boundaries"><option key="{{stage.id}}" value="{{stage.id}}" ?selected="{{stage.id == boundary}}">{{stage.label}}</option></for></select>
+      <span title="{{headSummary}}">{{headSummary}}</span>
+    </div>
+    <div class="message-content" data-mode="{{mode}}" data-header-share="{{headerShare}}">
+      <section class="headers-view" ?hidden="{{mode != 'headers' && mode != 'split'}}">
+        <div class="inspector-actions"><button type="button" class="secondary compact-button" @click="{copyHeaders()}" ?disabled="{{!headerRows.length}}">Copy headers</button></div>
+        <table class="headers-table"><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><for each="header in headerRows"><tr key="{{header.id}}"><td>{{header.name}}</td><td>{{header.value}}</td></tr></for></tbody></table>
+        <if condition="!headerRows.length"><p class="inspector-empty">No headers available.</p></if>
+      </section>
+      <pane-divider ?hidden="{{mode != 'split'}}" orientation="horizontal" label="Resize headers and body" value="{{split}}" initial="35" @pane-resize="{resizeHeaders(e)}"></pane-divider>
+      <section class="body-view" ?hidden="{{mode != 'body' && mode != 'split'}}">
+        <div class="body-toolbar">
+          <select aria-label="Body viewer" @change="{changeViewer(e)}"><option value="auto" ?selected="{{viewer == 'auto'}}">Auto</option><option value="formatted">Formatted JSON</option><option value="original-text">Text</option><option value="bytes">Hex</option><option value="image">Image</option><option value="metadata">Metadata</option></select>
+          <label class="checkbox-label"><input w-ref="{decodeInput}" type="checkbox" checked @change="{inspectBody()}"> Decode</label>
+          <details class="preview-options"><summary>Preview limit</summary><label>Bytes <input w-ref="{bodyLimit}" type="number" min="1" max="16777216" value="262144" @change="{inspectBody()}"></label><button type="button" class="secondary compact-button" @click="{inspectBody()}">Refresh preview</button></details>
+          <button type="button" class="secondary compact-button" @click="{copyBody()}" ?disabled="{{loading}}">Copy body</button>
+        </div>
+        <div class="body-facts"><strong>{{viewerLabel}}</strong><span>{{bodyFacts}}</span></div>
+        <div class="body-scroll"><if condition="!imageUrl"><pre class="body-preview" tabindex="0">{{bodyText}}</pre></if><if condition="imageUrl"><img class="body-image-preview" src="{{imageUrl}}" alt="Response image preview" decoding="async"></if></div>
+      </section>
+      <pre class="exchange-details" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>
+    </div>
+  </section>
+</template>

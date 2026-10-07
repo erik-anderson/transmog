@@ -22,10 +22,10 @@
     "settings": "false"
   },
   "sessions": [],
-  "sessionText": "Live refresh is off.",
+  "sessionText": "Loading traffic…",
   "sessionKind": "progress",
   "followLatest": true,
-  "followText": "Following latest traffic",
+  "followText": "Following live traffic",
   "selectedSessionId": null,
   "selectedMethodText": "—",
   "selectedUrlText": "Select a request",
@@ -38,7 +38,7 @@
   "matchedRuleLabel": "Show matched rule",
   "requestText": "Select a session to inspect its request.",
   "responseText": "Select a session to inspect its response.",
-  "bodyText": "No body selected.",
+  "bodyText": "Select an exchange to preview its body.",
   "imageHidden": true,
   "imageSource": "",
   "bodyBoundaries": [],
@@ -74,5 +74,440 @@
   "diagnosticsPathText": "%LOCALAPPDATA%\\Transmog\\diagnostics.jsonl",
   "certificatePath": "",
   "privateKeyPath": "",
-  "caSha256": ""
+  "caSha256": "",
+  "workspace": {
+    "sidebarCollapsed": false,
+    "layout": "stacked",
+    "listSplit": 45,
+    "requestSplit": 45,
+    "requestBodySplit": 35,
+    "responseBodySplit": 35,
+    "wrapCells": false,
+    "compactRows": true,
+    "columns": [
+      {
+        "id": "method",
+        "width": 76,
+        "visible": true,
+        "pinned": true
+      },
+      {
+        "id": "status",
+        "width": 84,
+        "visible": true,
+        "pinned": true
+      },
+      {
+        "id": "process",
+        "width": 180,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "host",
+        "width": 180,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "path",
+        "width": 260,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "duration",
+        "width": 94,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "response-bytes",
+        "width": 112,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "protocol",
+        "width": 100,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "request-bytes",
+        "width": 112,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "state",
+        "width": 104,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "content-type",
+        "width": 160,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "started-at",
+        "width": 126,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "pid",
+        "width": 84,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "url",
+        "width": 340,
+        "visible": false,
+        "pinned": false
+      }
+    ]
+  },
+  "preferences": {
+    "sidebarCollapsed": false,
+    "layout": "stacked",
+    "listSplit": 45,
+    "requestSplit": 45,
+    "requestBodySplit": 35,
+    "responseBodySplit": 35,
+    "wrapCells": false,
+    "compactRows": true,
+    "columns": [
+      {
+        "id": "method",
+        "width": 76,
+        "visible": true,
+        "pinned": true
+      },
+      {
+        "id": "status",
+        "width": 84,
+        "visible": true,
+        "pinned": true
+      },
+      {
+        "id": "process",
+        "width": 180,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "host",
+        "width": 180,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "path",
+        "width": 260,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "duration",
+        "width": 94,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "response-bytes",
+        "width": 112,
+        "visible": true,
+        "pinned": false
+      },
+      {
+        "id": "protocol",
+        "width": 100,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "request-bytes",
+        "width": 112,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "state",
+        "width": 104,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "content-type",
+        "width": 160,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "started-at",
+        "width": 126,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "pid",
+        "width": 84,
+        "visible": false,
+        "pinned": false
+      },
+      {
+        "id": "url",
+        "width": 340,
+        "visible": false,
+        "pinned": false
+      }
+    ]
+  },
+  "proxyPending": "",
+  "proxyLifecycle": "stopped",
+  "navigationExpanded": "true",
+  "actionLabel": "Start proxy",
+  "expanded": false,
+  "selectedDetail": null,
+  "selectedTone": "pending",
+  "matchedRuleId": "",
+  "newTrafficCount": 0,
+  "updatesPending": false,
+  "totalMatched": 0,
+  "pageIndex": 0,
+  "pageLimit": 100,
+  "pageEnd": 0,
+  "sort": {
+    "column": "started-at",
+    "direction": "descending"
+  },
+  "sortLabel": "Newest first",
+  "filters": [],
+  "searchText": "",
+  "listShare": "45%",
+  "requestShare": "45%",
+  "dividerOrientation": "horizontal",
+  "menuColumn": {
+    "id": "method",
+    "label": "Method",
+    "numeric": false,
+    "placeholder": "GET, POST…"
+  },
+  "menuX": "12px",
+  "menuY": "80px",
+  "ascendingLabel": "Sort A–Z",
+  "descendingLabel": "Sort Z–A",
+  "pinLabel": "Pin column",
+  "filterDraft": "",
+  "detail": null,
+  "mode": "body",
+  "boundaries": [],
+  "boundary": "",
+  "headerRows": [],
+  "headSummary": "Select an exchange",
+  "bodyFacts": "",
+  "viewerLabel": "Auto",
+  "imageUrl": "",
+  "detailsText": "No exchange selected.",
+  "loading": false,
+  "viewer": "auto",
+  "headerShare": "35%",
+  "columns": [
+    {
+      "id": "method",
+      "width": 76,
+      "visible": true,
+      "pinned": true,
+      "label": "Method",
+      "numeric": false,
+      "placeholder": "GET, POST…",
+      "widthCss": "76px",
+      "offsetCss": "0px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "status",
+      "width": 84,
+      "visible": true,
+      "pinned": true,
+      "label": "Status",
+      "numeric": true,
+      "placeholder": "HTTP status, e.g. 304",
+      "widthCss": "84px",
+      "offsetCss": "76px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "process",
+      "width": 180,
+      "visible": true,
+      "pinned": false,
+      "label": "Process / PID",
+      "numeric": false,
+      "placeholder": "Process name",
+      "widthCss": "180px",
+      "offsetCss": "160px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "host",
+      "width": 180,
+      "visible": true,
+      "pinned": false,
+      "label": "Host",
+      "numeric": false,
+      "placeholder": "example.com",
+      "widthCss": "180px",
+      "offsetCss": "160px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "path",
+      "width": 260,
+      "visible": true,
+      "pinned": false,
+      "label": "Path and query",
+      "numeric": false,
+      "placeholder": "/api/",
+      "widthCss": "260px",
+      "offsetCss": "160px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "duration",
+      "width": 94,
+      "visible": true,
+      "pinned": false,
+      "label": "Duration",
+      "numeric": true,
+      "placeholder": "Milliseconds",
+      "widthCss": "94px",
+      "offsetCss": "160px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
+      "id": "response-bytes",
+      "width": 112,
+      "visible": true,
+      "pinned": false,
+      "label": "Response size",
+      "numeric": true,
+      "placeholder": "Bytes",
+      "widthCss": "112px",
+      "offsetCss": "160px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    }
+  ],
+  "settingsColumns": [
+    {
+      "id": "method",
+      "width": 76,
+      "visible": true,
+      "pinned": true,
+      "label": "Method"
+    },
+    {
+      "id": "status",
+      "width": 84,
+      "visible": true,
+      "pinned": true,
+      "label": "Status"
+    },
+    {
+      "id": "process",
+      "width": 180,
+      "visible": true,
+      "pinned": false,
+      "label": "Process / PID"
+    },
+    {
+      "id": "host",
+      "width": 180,
+      "visible": true,
+      "pinned": false,
+      "label": "Host"
+    },
+    {
+      "id": "path",
+      "width": 260,
+      "visible": true,
+      "pinned": false,
+      "label": "Path and query"
+    },
+    {
+      "id": "duration",
+      "width": 94,
+      "visible": true,
+      "pinned": false,
+      "label": "Duration"
+    },
+    {
+      "id": "response-bytes",
+      "width": 112,
+      "visible": true,
+      "pinned": false,
+      "label": "Response size"
+    },
+    {
+      "id": "protocol",
+      "width": 100,
+      "visible": false,
+      "pinned": false,
+      "label": "Protocol"
+    },
+    {
+      "id": "request-bytes",
+      "width": 112,
+      "visible": false,
+      "pinned": false,
+      "label": "Request size"
+    },
+    {
+      "id": "state",
+      "width": 104,
+      "visible": false,
+      "pinned": false,
+      "label": "State"
+    },
+    {
+      "id": "content-type",
+      "width": 160,
+      "visible": false,
+      "pinned": false,
+      "label": "Content type"
+    },
+    {
+      "id": "started-at",
+      "width": 126,
+      "visible": false,
+      "pinned": false,
+      "label": "Start time"
+    },
+    {
+      "id": "pid",
+      "width": 84,
+      "visible": false,
+      "pinned": false,
+      "label": "Process ID"
+    },
+    {
+      "id": "url",
+      "width": 340,
+      "visible": false,
+      "pinned": false,
+      "label": "Full URL"
+    }
+  ],
+  "tableWidth": "986px"
 }

@@ -1,0 +1,2 @@
+proxy-toggle { display:inline-block; }
+.proxy-toggle[data-lifecycle="running"] { color:var(--danger); border-color:var(--danger); background:var(--danger-soft); }

@@ -1,0 +1,3 @@
+<template>
+  <div class="pane-divider" role="separator" tabindex="0" aria-label="{{label}}" aria-orientation="{{orientation}}" aria-valuemin="15" aria-valuemax="85" aria-valuenow="{{value}}" @pointerdown="{startResize(e)}" @pointermove="{resize(e)}" @pointerup="{finishResize(e)}" @pointercancel="{cancelResize(e)}" @keydown="{resizeWithKeyboard(e)}" @dblclick="{reset()}"></div>
+</template>

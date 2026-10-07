@@ -1,4 +1,5 @@
 import initialState from '../initial-state.json';
+import '../editor-surface/editor-surface.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import type * as Monaco from 'monaco-editor/editor/editor.api';
 import { WorkspaceElement } from '../workspace-element.js';
@@ -15,6 +16,7 @@ export class PausedExchangeElement extends WorkspaceElement {
   @observable editorError = initialState.editorError;
   monacoStyles!: HTMLLinkElement;
   editorHost!: HTMLDivElement;
+  draftInput!: HTMLTextAreaElement;
   private editor: Monaco.editor.IStandaloneCodeEditor | null = null;
   private loading: Promise<void> | null = null;
   private monaco: typeof Monaco | null = null;
@@ -47,6 +49,7 @@ export class PausedExchangeElement extends WorkspaceElement {
     return this.theme === 'dark' || (this.theme === 'system' && this.systemTheme.matches) ? 'vs-dark' : 'vs';
   }
   updateDraft(event: Event): void { this.draftText = (event.currentTarget as HTMLTextAreaElement).value; }
+  focusEditor(): void { if (this.editor) { this.editor.layout(); this.editor.focus(); } else this.draftInput.focus(); }
 
   private async ensureEditor(): Promise<void> {
     if (this.editor || this.loading) return this.loading ?? undefined;

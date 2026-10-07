@@ -1,19 +1,18 @@
-<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @matched-rule-request="{onMatchedRule(e)}">
+<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
         <img class="brand-mark" src="/transmog-icon.svg" alt="">
         <span>Transmog</span>
       </div>
-      <p class="top-summary">{{heading}}</p>
+      <span class="top-spacer"></span>
       <div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <strong>{{lifecycleLabel}}</strong>
-        <span class="listener-value">{{listener}}</span>
+        <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button>
       </div>
       <div class="top-actions">
-        <button type="button" class="compact-button" ?disabled="{{!proxyReady}}" @click="{startProxy(e)}">Start proxy</button>
-        <button type="button" class="compact-button secondary" @click="{stopProxy()}">Stop</button>
+        <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
       </div>
     </header>
 
@@ -26,22 +25,24 @@
       <button type="button" class="secondary compact-button" aria-label="Dismiss notification" @click="{dismissNotice()}">Dismiss</button>
     </section>
 
-    <div class="app-body">
+    <div class="app-body" ?data-collapsed="{{workspace.sidebarCollapsed}}">
       <nav class="rail" aria-label="Primary">
-        <a href="#traffic" data-view="traffic" ?data-active="{{activeView == 'traffic'}}" aria-current="{{currentNavigation.traffic}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">↕</span><span class="nav-label">Traffic</span></a>
-        <a href="#breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">Ⅱ</span><span class="nav-label">Breakpoints</span></a>
-        <a href="#automation" data-view="automation" @dragover="{allowSessionDrop(e)}" @drop="{dropSession(e)}" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Automation</span></a>
-        <a href="#composer" data-view="composer" ?data-active="{{activeView == 'composer'}}" aria-current="{{currentNavigation.composer}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">›_</span><span class="nav-label">Composer</span></a>
-        <a href="#captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">▣</span><span class="nav-label">Captures</span></a>
+        <button type="button" class="rail-toggle" title="Toggle navigation labels" aria-label="Toggle navigation labels" aria-expanded="{{navigationExpanded}}" @click="{toggleNavigation()}">☰</button>
+        <a href="#traffic" title="Traffic" data-view="traffic" ?data-active="{{activeView == 'traffic'}}" aria-current="{{currentNavigation.traffic}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">↕</span><span class="nav-label">Traffic</span></a>
+        <a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">Ⅱ</span><span class="nav-label">Breakpoints</span></a>
+        <a href="#automation" title="Automation" data-view="automation" @dragover="{allowSessionDrop(e)}" @drop="{dropSession(e)}" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Automation</span></a>
+        <a href="#composer" title="Composer" data-view="composer" ?data-active="{{activeView == 'composer'}}" aria-current="{{currentNavigation.composer}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">›_</span><span class="nav-label">Composer</span></a>
+        <a href="#captures" title="Captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">▣</span><span class="nav-label">Captures</span></a>
         <span class="nav-spacer"></span>
-        <a href="#settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></a>
+        <button type="button" class="rail-reset" aria-label="Restore default layout and columns" title="Restore default layout and columns" @click="{resetWorkspace()}">↺ <span class="nav-label">Reset layout</span></button>
+        <a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></a>
       </nav>
 
       <main>
-        <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}"></traffic-workspace>
+        <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" :preferences="{{workspace}}"></traffic-workspace>
         <breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace>
         <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}"></automation-workspace>
-        <composer-workspace view="{{activeView}}"></composer-workspace>
+        <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>
         <capture-workspace view="{{activeView}}"></capture-workspace>
         <settings-workspace w-ref="{settings}" view="{{activeView}}"></settings-workspace>
       </main>

@@ -3,7 +3,20 @@
 <section class="script-workspace" aria-labelledby="script-heading">
       <p class="section-label">Sandboxed TypeScript</p>
       <h2 id="script-heading">Traffic scripts</h2>
-      <p>Save preserves a draft. Validate compiles it in Rust. Test runs a synthetic request in a fresh production sandbox. Enable applies that tested script to new requests.</p>
+      <p>Save a draft, validate it, and test it in the sandbox before enabling it for new requests.</p>
+      <editor-surface label="TypeScript source" @editor-expanded="{focusEditor()}" @editor-restored="{focusEditor()}">
+        <div slot="actions" class="script-actions actions">
+          <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
+          <button type="button" @click="{validateScript()}">Validate</button>
+          <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
+          <button type="button" class="secondary" @click="{activateScript()}">Enable</button>
+          <button type="button" class="secondary" @click="{disableScript()}">Disable</button>
+          <button type="button" class="secondary" @click="{compareActiveScript()}">Compare with active</button>
+        </div>
+        <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
+      </editor-surface>
+      <details>
+      <summary>Filters and capabilities</summary>
       <form w-ref="{scriptForm}" @submit="{validateScript(e)}" class="script-form">
         <label>Host filter (optional) <input name="scriptHost" value="example.test" maxlength="255"></label>
         <label>Path-prefix filter (optional) <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
@@ -16,18 +29,12 @@
           <label><input name="abort" type="checkbox" checked> Abort requests</label>
           <label><input name="sensitive" type="checkbox"> Read sensitive headers</label>
         </fieldset>
-        <div class="script-actions actions">
-          <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
-          <button type="submit">Validate</button>
-          <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
-          <button type="button" class="secondary" @click="{activateScript()}">Enable</button>
-          <button type="button" class="secondary" @click="{disableScript()}">Disable</button>
-          <button type="button" class="secondary" @click="{compareActiveScript()}">Compare with active</button>
-        </div>
       </form>
-      <div class="editor-label">TypeScript source <span>Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement</span></div>
-      <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
-      <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison" ?hidden="{{!diffVisible}}"></div>
+      </details>
+      <p class="editor-label">Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement in the editor.</p>
+      <editor-surface label="Active and draft comparison" ?hidden="{{!diffVisible}}">
+        <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison"></div>
+      </editor-surface>
       <pre tabindex="0" aria-live="polite">{{scriptText}}</pre>
     </section>
 </template>

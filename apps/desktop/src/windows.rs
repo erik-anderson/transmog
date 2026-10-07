@@ -28,6 +28,7 @@ use transmog_app::{
     RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus,
     SessionDetail, SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset,
     SupportBundleRequest, SupportBundleResult, SystemReplayExecutor, WindowState,
+    WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -81,6 +82,14 @@ fn save_product_state(
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     state.application.save_product_state(product_state)
+}
+
+#[tauri::command]
+fn save_workspace_preferences(
+    preferences: WorkspacePreferences,
+    state: State<'_, DesktopState>,
+) -> Result<WorkspacePreferences, AppError> {
+    state.application.save_workspace_preferences(preferences)
 }
 
 #[tauri::command]
@@ -804,6 +813,7 @@ pub fn run() {
             app_status,
             product_state,
             save_product_state,
+            save_workspace_preferences,
             desktop_bootstrap,
             record_frontend_diagnostic,
             automation_status,

@@ -1,323 +1,309 @@
-import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
-import { Channel, convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { SessionSummary, SessionPage, SessionHint, SessionDetail, BodyInspection } from '../models.js';
-import { callerLabel, describeError, optionalText, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import type { ColumnId, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
+import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
+
+type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
+type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
   @attr view = 'traffic';
-  @attr({ attribute: 'page-size' }) pageSize = '100';
-  @observable sessions: Array<SessionSummary & {statusText: string; callerText: string; durationText: string; responseText: string; stateText: string; selectionState: string}> = initialState.sessions;
-  @observable sessionText = initialState.sessionText;
-  @observable sessionKind = initialState.sessionKind;
-  @observable followLatest = initialState.followLatest;
-  @observable followText = initialState.followText;
-  @observable selectedSessionId: string | null = initialState.selectedSessionId;
-  @observable selectedMethodText = initialState.selectedMethodText;
-  @observable selectedUrlText = initialState.selectedUrlText;
-  @observable selectedStatusText = initialState.selectedStatusText;
-  @observable selectedSuccess = initialState.selectedSuccess;
-  @observable selectedAutoResponded = initialState.selectedAutoResponded;
-  @observable reuseDisabled = initialState.reuseDisabled;
-  @observable reuseTitle = initialState.reuseTitle;
-  @observable matchedRuleHidden = initialState.matchedRuleHidden;
-  @observable matchedRuleLabel = initialState.matchedRuleLabel;
-  @observable requestText = initialState.requestText;
-  @observable responseText = initialState.responseText;
-  @observable bodyText = initialState.bodyText;
-  @observable imageHidden = initialState.imageHidden;
-  @observable imageSource = initialState.imageSource;
-  @observable bodyBoundaries: Array<{boundary: string; label: string}> = initialState.bodyBoundaries;
-  filterForm!: HTMLFormElement;
-  sessionScroller!: HTMLElement;
-  bodyBoundary!: HTMLSelectElement;
-  bodyRepresentation!: HTMLSelectElement;
-  bodyDecoded!: HTMLInputElement;
-  bodyMaxBytes!: HTMLInputElement;
+  @attr({attribute:'page-size'}) pageSize = '100';
+  @observable preferences = defaultWorkspace();
+  @observable sessions:Row[] = [];
+  @observable columns:Column[] = [];
+  @observable settingsColumns:Array<{id:ColumnId;label:string;visible:boolean}> = [];
+  @observable selectedSessionId:string | null = null;
+  @observable selectedDetail:SessionDetail | null = null;
+  @observable selectedMethodText = '—';
+  @observable selectedUrlText = 'Select a request';
+  @observable selectedStatusText = 'No response';
+  @observable selectedTone = 'pending';
+  @observable reuseDisabled = true;
+  @observable reuseTitle = '';
+  @observable matchedRuleId = '';
+  @observable matchedRuleLabel = 'Show matched rule';
+  @observable sessionText = 'Loading traffic…';
+  @observable sessionKind = 'progress';
+  @observable followLatest = true;
+  @observable followText = 'Following live traffic';
+  @observable newTrafficCount = 0;
+  @observable updatesPending = false;
+  @observable totalMatched = 0;
+  @observable pageIndex = 0;
+  @observable pageLimit = 100;
+  @observable pageEnd = 0;
+  @observable sort:TrafficSort = {column:'started-at',direction:'descending'};
+  @observable sortLabel = 'Newest first';
+  @observable filters:TrafficFilter[] = [];
+  @observable searchText = '';
+  @observable tableWidth = '1000px';
+  @observable listShare = '45%';
+  @observable requestShare = '45%';
+  @observable dividerOrientation = 'horizontal';
+  @observable menuColumn = columnDefinitions[0]!;
+  @observable menuX = '12px';
+  @observable menuY = '80px';
+  @observable ascendingLabel = 'Sort A–Z';
+  @observable descendingLabel = 'Sort Z–A';
+  @observable pinLabel = 'Pin column';
+  @observable filterDraft = '';
+  filterForm!:HTMLFormElement;
+  sessionScroller!:HTMLElement;
+  trafficTable!:HTMLTableElement;
+  columnMenu!:HTMLElement;
+  filterInput!:HTMLInputElement;
+  filterOperator!:HTMLSelectElement;
+  searchInput!:HTMLInputElement;
   private watching = false;
-  private sessionUpdates: Channel<SessionHint> | null = null;
-  private programmaticSessionScroll = false;
-  private selectedSessionDetail: SessionDetail | null = null;
-  private matchedAutoResponseId: string | null = null;
-  private inspectionGeneration = 0;
-  private queryPending: Promise<void> | null = null;
+  private sessionUpdates:Channel<SessionHint> | null = null;
+  private queryPending:Promise<void> | null = null;
   private queryAgain = false;
+  private forceUpdate = false;
+  private pendingRows:SessionSummary[] = [];
+  private inspectionGeneration = 0;
+  private queryRevision = 0;
+  private resize: {id:ColumnId;startX:number;width:number;previous:number;pointer:number} | null = null;
+  private draggedColumn:ColumnId | null = null;
+  private suppressMenuUntil = 0;
+  private searchTimer:number | undefined;
+  private layoutObserver:ResizeObserver | null = null;
+  private displayedMatched = 0;
+  private liveInspection:Promise<void> | null = null;
+  private inspectionAgain = false;
 
-  selectedSessionIdChanged(): void {
-    this.sessions = this.sessions.map((session) => {
-      const selectionState = session.id === this.selectedSessionId ? 'true' : 'false';
-      return session.selectionState === selectionState ? session : { ...session, selectionState };
+  protected hydratedCallback():void {
+    this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns(); });
+    this.layoutObserver.observe(this.sessionScroller);
+    void this.watchSessions();
+  }
+  pageSizeChanged():void {
+    this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
+    if (this.watching) { this.pageIndex = 0; void this.refreshSessions(undefined,true); }
+  }
+  preferencesChanged():void {
+    this.listShare = this.preferences.listSplit+'%';
+    this.requestShare = this.preferences.requestSplit+'%';
+    this.dividerOrientation = this.preferences.layout === 'stacked' ? 'horizontal' : 'vertical';
+    this.rebuildColumns();
+  }
+  selectedSessionIdChanged():void { this.rebuildRows(this.sessions); }
+  private rebuildColumns():void {
+    this.columns = displayColumns(this.preferences.columns).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
+    this.settingsColumns = this.preferences.columns.map((column) => ({...column,label:columnDefinitions.find((definition) => definition.id === column.id)!.label}));
+    this.tableWidth = this.columns.reduce((sum,column) => sum+column.width,0)+'px';
+    this.rebuildRows(this.sessions);
+  }
+  private rebuildRows(rows:SessionSummary[]):void {
+    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:row.id === this.selectedSessionId ? 'true' : 'false',rowLabel:row.method+' '+row.host+row.path,
+      cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))}));
+  }
+  private measurePinnedColumns():void {
+    if (!this.columns.length) return;
+    const root = this.getRootNode() as ShadowRoot;
+    let offset = 0;
+    let changed = false;
+    const columns = this.columns.map((column) => {
+      if (!column.pinned) return column;
+      const measured = root.getElementById('header-'+column.id)?.getBoundingClientRect().width ?? column.width;
+      const offsetCss = Math.round(offset)+'px'; offset += measured;
+      if (offsetCss === column.offsetCss) return column;
+      changed = true; return {...column,offsetCss};
     });
+    if (changed) { this.columns = columns; this.rebuildRows(this.sessions); }
   }
+  private patchPreferences(patch:Partial<WorkspacePreferences>,committed=true):void {
+    this.preferences = {...this.preferences,...patch};
+    this.$emit('workspace-change',{patch,committed});
+  }
+  resizeList(event:CustomEvent<{value:number;committed:boolean}>):void { this.patchPreferences({listSplit:event.detail.value},event.detail.committed); }
+  resizeRequest(event:CustomEvent<{value:number;committed:boolean}>):void { this.patchPreferences({requestSplit:event.detail.value},event.detail.committed); }
+  resizeMessage(event:CustomEvent<{side:string;value:number;committed:boolean}>):void { this.patchPreferences(event.detail.side === 'request' ? {requestBodySplit:event.detail.value} : {responseBodySplit:event.detail.value},event.detail.committed); }
+  setLayout(event:Event):void { this.patchPreferences({layout:(event.currentTarget as HTMLSelectElement).value as WorkspacePreferences['layout']}); }
+  setWrap(event:Event):void { this.patchPreferences({wrapCells:(event.currentTarget as HTMLInputElement).checked}); }
+  setCompact(event:Event):void { this.patchPreferences({compactRows:(event.currentTarget as HTMLInputElement).checked}); }
+  setVisible(id:ColumnId,event:Event):void {
+    const visible = (event.currentTarget as HTMLInputElement).checked;
+    if (!visible && this.preferences.columns.filter((column) => column.visible).length === 1) { (event.currentTarget as HTMLInputElement).checked = true; return; }
+    this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,visible} : column)});
+  }
+  resetColumns():void { this.patchPreferences({columns:defaultWorkspace().columns,wrapCells:false,compactRows:true}); }
+  openColumnMenu(id:ColumnId,event:MouseEvent):void {
+    if (performance.now() < this.suppressMenuUntil) { event.preventDefault(); return; }
+    this.menuColumn = columnDefinitions.find((column) => column.id === id)!;
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.menuX = Math.max(12,Math.min(window.innerWidth-300,bounds.left))+'px';
+    this.menuY = Math.min(window.innerHeight-280,bounds.bottom+5)+'px';
+    this.ascendingLabel = id === 'started-at' ? 'Oldest first' : id === 'duration' ? 'Shortest first' : id.includes('bytes') ? 'Smallest first' : this.menuColumn.numeric ? 'Lowest first' : 'Sort A–Z';
+    this.descendingLabel = id === 'started-at' ? 'Newest first' : id === 'duration' ? 'Longest first' : id.includes('bytes') ? 'Largest first' : this.menuColumn.numeric ? 'Highest first' : 'Sort Z–A';
+    this.pinLabel = this.preferences.columns.find((column) => column.id === id)!.pinned ? 'Unpin column' : 'Pin column';
+    this.filterDraft = this.filters.find((filter) => filter.column === id)?.value ?? '';
+    this.$flushUpdates();
+    this.filterInput.value = this.filterDraft;
+    this.filterOperator.value = this.menuColumn.numeric ? 'equals' : 'contains';
+  }
+  private closeMenu():void { if (this.columnMenu.matches(':popover-open')) this.columnMenu.hidePopover(); }
+  async applySort(direction:TrafficSort['direction'],column:ColumnId = this.menuColumn.id):Promise<void> {
+    this.sort = {column,direction}; this.sortLabel = columnDefinitions.find((item) => item.id === column)!.label+' · '+(direction === 'ascending' ? 'ascending' : 'descending');
+    this.followLatest = false; this.pageIndex = 0; this.queryRevision++; this.rebuildColumns(); this.closeMenu(); await this.refreshSessions(undefined,true);
+  }
+  async clearSort():Promise<void> { this.menuColumn = columnDefinitions.find((column) => column.id === 'started-at')!; await this.applySort('descending','started-at'); this.sortLabel = 'Newest first'; }
+  pinColumn():void { const id = this.menuColumn.id; this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,pinned:!column.pinned} : column)}); this.closeMenu(); }
+  hideColumn():void { const id = this.menuColumn.id; if (this.preferences.columns.filter((column) => column.visible).length > 1) this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,visible:false} : column)}); this.closeMenu(); }
+  moveColumn(delta:number):void {
+    const visible = this.columns; const from = visible.findIndex((column) => column.id === this.menuColumn.id);
+    const target = visible[from+delta]; if (target) this.reorderColumn(this.menuColumn.id,target.id); this.closeMenu();
+  }
+  private reorderColumn(source:ColumnId,target:ColumnId):void {
+    if (source === target) return;
+    const preferences = this.preferences.columns;
+    const columns = [...preferences.filter((column) => column.visible && column.pinned),...preferences.filter((column) => column.visible && !column.pinned),...preferences.filter((column) => !column.visible)];
+    const from = columns.findIndex((column) => column.id === source); const to = columns.findIndex((column) => column.id === target);
+    const pinned = columns[to]!.pinned; const [moved] = columns.splice(from,1);
+    if (moved) columns.splice(to,0,{...moved,pinned});
+    this.patchPreferences({columns});
+  }
+  async applyFilter(event:Event):Promise<void> {
+    event.preventDefault(); const value = this.filterInput.value.trim(); if (!value) return;
+    const operator = this.filterOperator.value as TrafficFilter['operator'];
+    const others = this.filters.filter((filter) => filter.column !== this.menuColumn.id || filter.operator !== operator);
+    if (others.length >= 14) { this.diagnostic = 'Remove a filter before adding another (maximum 14).'; return; }
+    this.filters = [...others,{column:this.menuColumn.id,operator,value,label:this.menuColumn.label+' '+operator+' '+value}];
+    this.pageIndex = 0; this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
+  }
+  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async clearFilters():Promise<void> { this.filters = []; this.searchText = ''; this.searchInput.value = ''; this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  searchChanged(event:Event):void {
+    this.searchText = (event.currentTarget as HTMLInputElement).value;
+    window.clearTimeout(this.searchTimer);
+    this.searchTimer = window.setTimeout(() => { this.pageIndex = 0; this.queryRevision++; void this.refreshSessions(undefined,true); },250);
+  }
+  dragColumn(id:ColumnId,event:DragEvent):void { this.draggedColumn = id; event.dataTransfer?.setData('application/x-traffic-column',id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; }
+  allowColumnDrop(event:DragEvent):void { if (this.draggedColumn) event.preventDefault(); }
+  dropColumn(id:ColumnId,event:DragEvent):void {
+    event.preventDefault(); const source = this.draggedColumn; this.draggedColumn = null; this.suppressMenuUntil = performance.now()+250;
+    if (!source || source === id) return;
+    this.reorderColumn(source,id);
+  }
+  finishColumnDrag():void { this.draggedColumn = null; this.suppressMenuUntil = performance.now()+250; }
+  startColumnResize(id:ColumnId,event:PointerEvent):void {
+    if (event.button !== 0) return; event.preventDefault(); event.stopPropagation();
+    const previous = this.preferences.columns.find((column) => column.id === id)!.width;
+    const width = (this.getRootNode() as ShadowRoot).getElementById('header-'+id)!.getBoundingClientRect().width;
+    this.resize = {id,startX:event.clientX,width,previous,pointer:event.pointerId};
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+  resizeColumn(event:PointerEvent):void { if (this.resize?.pointer === event.pointerId) this.setColumnWidth(this.resize.id,this.resize.width+event.clientX-this.resize.startX,false); }
+  finishColumnResize(event:PointerEvent):void { if (this.resize?.pointer !== event.pointerId) return; const id = this.resize.id; this.resize = null; this.setColumnWidth(id,this.preferences.columns.find((column) => column.id === id)!.width,true); }
+  cancelColumnResize(event:PointerEvent):void { if (this.resize?.pointer !== event.pointerId) return; const {id,previous} = this.resize; this.resize = null; this.setColumnWidth(id,previous,true); }
+  resizeColumnWithKeyboard(id:ColumnId,event:KeyboardEvent):void {
+    if (event.key === 'Home') { event.preventDefault(); this.fitColumn(id); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); this.setColumnWidth(id,this.preferences.columns.find((column) => column.id === id)!.width+(event.key === 'ArrowRight' ? 1 : -1)*(event.shiftKey ? 40 : 10),true); }
+  }
+  fitColumn(id:ColumnId):void {
+    const context = new OffscreenCanvas(1,1).getContext('2d');
+    if (!context) return; context.font = getComputedStyle(this.trafficTable).font || '13px Segoe UI';
+    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width))+38;
+    this.setColumnWidth(id,width,true);
+  }
+  private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(48,Math.min(1200,width)))} : column)},committed); }
 
-  protected hydratedCallback(): void { void this.watchSessions(); }
-  disconnectedCallback(): void {
-    if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
-    this.sessionUpdates = null;
-    this.watching = false;
-    super.disconnectedCallback();
-  }
-  async refreshSessions(event?: Event): Promise<void> {
-    event?.preventDefault();
-    this.queryAgain = true;
+  async refreshSessions(event?:Event,force=false):Promise<void> {
+    event?.preventDefault(); this.forceUpdate ||= force || event !== undefined; this.queryAgain = true;
     if (this.queryPending) return this.queryPending;
-    this.queryPending = (async () => {
-      while (this.queryAgain && this.isConnected) {
-        this.queryAgain = false;
-        await this.querySessions();
-      }
-    })();
+    this.queryPending = (async () => { while (this.queryAgain && this.isConnected) { this.queryAgain = false; const apply = this.forceUpdate; this.forceUpdate = false; await this.querySessions(apply); } })();
     try { await this.queryPending; } finally { this.queryPending = null; }
   }
-  private renderSessions(sessions: SessionSummary[]): void {
-    const previous = new Map(this.sessions.map((session) => [session.id, session]));
-    this.sessions = sessions.slice(0, 200).map((session) => {
-      const row = { ...session,
-        selectionState: session.id === this.selectedSessionId ? 'true' : 'false',
-        statusText: session.autoResponse === null ? session.status?.toString() ?? '—' : `${session.status ?? session.autoResponse.status} · AUTO`,
-        callerText: callerLabel(session.caller), durationText: `${session.durationMs} ms`, responseText: `${session.responseBytes} B`,
-        stateText: `${session.terminal}${session.loss ? ' · loss' : ''}${session.capturing ? ' · capture' : ''}`,
-      };
-      const old = previous.get(session.id);
-      return old && JSON.stringify(old) === JSON.stringify(row) ? old : row;
-    });
-    this.$flushUpdates();
-    if (this.followLatest) {
-      this.programmaticSessionScroll = true;
-      this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
-      requestAnimationFrame(() => { this.programmaticSessionScroll = false; });
-    }
-    this.renderFollowState();
+  private async querySessions(force:boolean):Promise<void> {
+    const revision = this.queryRevision;
+    try {
+      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:this.searchText || null,sort:this.sort,offset:this.pageIndex*this.pageLimit,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      if (!this.isConnected || revision !== this.queryRevision) return;
+      this.totalMatched = page.totalMatched ?? page.sessions.length;
+      this.pageEnd = Math.min(this.totalMatched,this.pageIndex*this.pageLimit+page.sessions.length);
+      if (force || this.followLatest || !this.sessions.length) { this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.displayedMatched = this.totalMatched; this.rebuildRows(page.sessions); }
+      else {
+        this.pendingRows = page.sessions;
+        const ids = new Set(this.sessions.map((row) => row.id)); this.newTrafficCount = Math.max(this.totalMatched-this.displayedMatched,page.sessions.filter((row) => !ids.has(row.id)).length,0);
+        this.updatesPending = this.newTrafficCount > 0 || page.sessions.some((row,index) => this.sessions[index]?.id !== row.id);
+        const fresh = new Map(page.sessions.map((row) => [row.id,row])); this.rebuildRows(this.sessions.map((row) => fresh.get(row.id) ?? row));
+      }
+      this.sessionText = 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges'; this.sessionKind = 'success';
+      if (force) this.diagnostic = this.sessionText;
+      this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
+    } catch (error:unknown) { this.sessionText = 'Traffic query failed: '+describeError(error); this.sessionKind = 'error'; this.diagnostic = this.sessionText; }
   }
-  sessionScrolled(): void {
-    if (this.programmaticSessionScroll || this.selectedSessionId !== null) return;
-    const distance = this.sessionScroller.scrollHeight - this.sessionScroller.scrollTop - this.sessionScroller.clientHeight;
-    this.followLatest = distance <= 4;
-    this.renderFollowState();
+  async watchSessions():Promise<void> {
+    if (this.watching) return; this.watching = true;
+    const onEvent = new Channel<SessionHint>(); onEvent.onmessage = (hint) => {
+      if (!this.isConnected) return;
+      void this.refreshSessions();
+      if (this.selectedSessionId && (hint.exchangeId === this.selectedSessionId || hint.lagged)) void this.refreshInspection();
+    }; this.sessionUpdates = onEvent;
+    try { await invoke<void>('watch_sessions',{onEvent}); await this.refreshSessions(undefined,true); this.sessionText = 'Watching live traffic. '+(this.totalMatched ? this.totalMatched+' exchanges retained.' : 'Waiting for proxied requests.'); this.sessionKind = 'success'; }
+    catch (error:unknown) { this.watching = false; this.sessionText = 'Live refresh failed: '+describeError(error); this.sessionKind = 'error'; }
   }
-  selectWithKeyboard(session: SessionSummary, event: KeyboardEvent): void {
+  sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); } }
+  selectWithButton(session:SessionSummary,event:Event):void { event.stopPropagation(); void this.inspectSession(session); }
+  selectWithKeyboard(session:SessionSummary,event:KeyboardEvent):void {
     if (event.target instanceof HTMLButtonElement) return;
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void this.inspectSession(session); }
+    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault(); const index = this.sessions.findIndex((row) => row.id === session.id)+(event.key === 'ArrowDown' ? 1 : -1); const row = this.sessions[index];
+      if (row) { (this.getRootNode() as ShadowRoot).getElementById('session-'+row.id)?.focus(); void this.inspectSession(row); }
+    }
   }
-  selectWithButton(session: SessionSummary, event: Event): void { event.stopPropagation(); void this.inspectSession(session); }
-  dragSession(session: SessionSummary, event: DragEvent): void {
-    event.dataTransfer?.setData('application/x-transmog-session', session.id);
-    event.dataTransfer?.setData('text/plain', `${session.method} ${session.host}${session.path}`);
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy';
-  }
-  beginAutoResponseFromSelected(): void {
-    if (this.selectedSessionId && this.selectedSessionDetail) this.$emit('autoresponse-request', { sessionId: this.selectedSessionId, detail: this.selectedSessionDetail });
-  }
-  showMatchedAutoResponse(): void { if (this.matchedAutoResponseId) this.$emit('matched-rule-request', this.matchedAutoResponseId); }
-  private async querySessions(event?: Event): Promise<void> {
-    event?.preventDefault();
-    const data = new FormData(this.filterForm);
+  dragSession(session:SessionSummary,event:DragEvent):void { event.dataTransfer?.setData('application/x-transmog-session',session.id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'; }
+  private async inspectSession(session:SessionSummary):Promise<void> {
+    const generation = ++this.inspectionGeneration;
+    this.selectedSessionId = session.id; this.selectedDetail = null; this.followLatest = false; this.renderFollowState();
+    this.selectedMethodText = session.method; this.selectedUrlText = session.url ?? session.host+session.path; this.selectedStatusText = session.status === 304 ? '304 Not Modified' : session.status === null ? 'Pending' : String(session.status); this.selectedTone = statusTone(session);
+    this.reuseDisabled = true; this.reuseTitle = 'Loading response…'; this.matchedRuleId = ''; this.$emit('selection-changed',null);
     try {
-      const page = await invoke<SessionPage>('query_sessions', {
-        query: {
-          cursor: null,
-          latest: true,
-          limit: Number(this.pageSize),
-          terminal: null,
-          method: optionalText(data.get('method')),
-          host: optionalText(data.get('host')),
-        },
-      });
-      if (!this.isConnected) return;
-      this.renderSessions(page.sessions);
-      const message = `Loaded ${page.sessions.length} sessions · evicted ${page.evicted} · gaps ${page.sequenceGaps} · subscriber lag ${page.subscriberLag}`;
-      this.sessionText = message;
-      this.sessionKind = 'success';
-      this.diagnostic = message;
-    } catch (error: unknown) {
-      const message = `Session query failed: ${describeError(error)}`;
-      this.sessionText = message;
-      this.sessionKind = 'error';
-      this.diagnostic = message;
-    }
+      const detail = await loadSessionDetail(session.id,session.terminal === 'completed'); if (generation !== this.inspectionGeneration || !this.isConnected) return;
+      this.applyDetail(detail);
+    } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector unavailable: '+describeError(error); }
   }
-
-  async watchSessions(): Promise<void> {
-    if (this.watching) {
-      this.sessionText = 'Live session refresh is already enabled.';
-      this.sessionKind = 'success';
-      return;
-    }
-    this.watching = true;
-    this.sessionText = 'Enabling live session refresh…';
-    this.sessionKind = 'progress';
-    const onEvent = new Channel<SessionHint>();
-    onEvent.onmessage = () => { if (this.isConnected) void this.refreshSessions(); };
-    this.sessionUpdates = onEvent;
-    try {
-      await invoke<void>('watch_sessions', { onEvent });
-      await this.refreshSessions();
-      this.sessionText = 'Watching live traffic. Waiting for proxied requests.';
-      this.sessionKind = 'success';
-      this.diagnostic = 'Live session refresh enabled.';
-    } catch (error: unknown) {
-      this.watching = false;
-      this.sessionUpdates = null;
-      const message = `Live refresh failed: ${describeError(error)}`;
-      this.sessionText = message;
-      this.sessionKind = 'error';
-      this.diagnostic = message;
-    }
+  private applyDetail(detail:SessionDetail):void {
+    this.selectedDetail = detail; const reusable = clientResponseSource(detail) !== null;
+    const status = detail.responses.find((head) => head.boundary === 'client-response')?.status ?? null;
+    this.selectedStatusText = status === 304 ? '304 Not Modified' : status === null ? 'Pending' : String(status);
+    this.selectedTone = statusTone({status,terminal:detail.terminal} as SessionSummary);
+    this.reuseDisabled = !reusable; this.reuseTitle = reusable ? 'Create a rule from this response' : autoResponseUnavailableReason(detail);
+    this.matchedRuleId = detail.autoResponse?.ruleId ?? ''; this.matchedRuleLabel = detail.autoResponse ? 'Show '+detail.autoResponse.ruleName : 'Show matched rule';
+    this.$emit('selection-changed',{sessionId:detail.id,detail,reusable});
   }
-
-  private async inspectSession(session: SessionSummary): Promise<void> {
-    const inspection = ++this.inspectionGeneration;
-    this.selectedSessionId = session.id;
-    this.selectedSessionDetail = null;
-    this.followLatest = false;
-    this.renderFollowState();
-    this.selectedMethodText = session.method;
-    this.selectedUrlText = `${session.host}${session.path}`;
-    this.selectedStatusText = session.status === null ? 'Pending' : `${session.status}`;
-    this.selectedSuccess = session.status !== null && session.status >= 200 && session.status < 400;
-    this.selectedAutoResponded = false;
-    this.reuseDisabled = true;
-    this.reuseTitle = 'Checking whether the completed response can be reused…';
-    this.$emit('selection-changed', null);
-    this.matchedAutoResponseId = null;
-    this.matchedRuleHidden = true;
-    this.imageHidden = true;
-    this.imageSource = '';
-    this.bodyBoundaries = [];
-    this.bodyText = 'No body selected.';
-    this.requestText = 'Loading bounded request evidence…';
-    this.responseText = 'Loading bounded response evidence…';
-    try {
-      const detail = await loadSessionDetail(session.id, session.terminal === 'completed');
-      if (inspection !== this.inspectionGeneration || !this.isConnected) return;
-      this.selectedSessionId = session.id;
-      this.selectedSessionDetail = detail;
-
-      this.requestText = JSON.stringify({
-        requests: detail.requests,
-        hookEffects: detail.hookEffects,
-        routeSelection: detail.routeSelection,
-        routeAttempts: detail.routeAttempts,
-      }, null, 2);
-      const autoResponse = detail.autoResponse === null
-        ? null
-        : `AUTO-RESPONSE: “${detail.autoResponse.ruleName}” was the first matching rule and served its saved response without contacting the origin.`;
-      this.selectedStatusText = detail.autoResponse === null
-        ? (session.status === null ? 'Pending' : `${session.status}`)
-        : `${detail.autoResponse.status} · AUTO`;
-      this.selectedAutoResponded = detail.autoResponse !== null;
-      this.matchedAutoResponseId = detail.autoResponse?.ruleId ?? null;
-      this.matchedRuleHidden = detail.autoResponse === null;
-      this.matchedRuleLabel = detail.autoResponse === null
-        ? 'Show matched rule'
-        : `Show “${detail.autoResponse.ruleName}”`;
-      this.responseText = `${autoResponse === null ? '' : `${autoResponse}\n\n`}${JSON.stringify({
-        responses: detail.responses,
-        terminal: detail.terminal,
-        websocket: detail.websocket,
-        diagnostics: detail.diagnostics,
-        sequenceLoss: detail.sequenceLoss,
-      }, null, 2)}`;
-      this.bodyBoundaries = detail.storedBodies.map((body) => ({ boundary: body.boundary, label: `${body.boundary} · ${body.availability} · ${body.retainedBytes} retained` }));
-      this.bodyText = detail.storedBodies.length === 0
-        ? 'No retained body boundaries are available.'
-        : 'Choose a representation and inspect the selected boundary.';
-      const reusable = clientResponseSource(detail) !== null;
-      this.reuseDisabled = !reusable;
-      this.reuseTitle = reusable
-        ? 'Create an auto-response rule from this client-visible response'
-        : autoResponseUnavailableReason(detail);
-      this.$emit('selection-changed', { sessionId: session.id, detail, reusable });
-    } catch (error: unknown) {
-      if (inspection !== this.inspectionGeneration || !this.isConnected) return;
-      const message = `Inspector unavailable: ${describeError(error)}`;
-      this.requestText = message;
-      this.responseText = message;
-    }
-  }
-
-  resumeLatest(): void {
-    this.inspectionGeneration += 1;
-    this.selectedSessionId = null;
-    this.selectedSessionDetail = null;
-    this.matchedAutoResponseId = null;
-    this.matchedRuleHidden = true;
-    this.reuseDisabled = true;
-    this.reuseTitle = '';
-    this.$emit('selection-changed', null);
-    this.followLatest = true;
-
-    this.programmaticSessionScroll = true;
-    this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
-    requestAnimationFrame(() => { this.programmaticSessionScroll = false; });
-    this.renderFollowState();
-  }
-
-  private renderFollowState(): void {
-    this.followText = this.followLatest
-      ? 'Following latest traffic'
-      : this.selectedSessionId === null
-        ? 'Live updates continue · scroll position paused'
-        : 'Live updates continue · selected request pinned';
-  }
-
-  async exportLiveCapture(): Promise<void> {
-    this.sessionText = 'Exporting a sealed TMCap snapshot…';
-    this.sessionKind = 'progress';
-    try {
-      const result = await invoke<{destination: string; records: number; bytes: number}>('export_live_capture');
-      const message = `Exported ${result.records} records (${result.bytes} bytes) to ${result.destination}`;
-      this.sessionText = message;
-      this.sessionKind = 'success';
-      this.diagnostic = message;
-      this.showNotice('TMCap export complete', result.destination, null, null);
-    } catch (error: unknown) {
-      const message = `TMCap export failed: ${describeError(error)}`;
-      this.sessionText = message;
-      this.sessionKind = 'error';
-      this.showNotice('TMCap export failed', message, null, null);
-    }
-  }
-
-  async inspectBody(): Promise<void> {
-    if (this.selectedSessionId === null || this.bodyBoundary.value.length === 0) {
-      this.bodyText = 'Select a session with retained body metadata first.';
-      return;
-    }
-    this.bodyText = 'Loading bounded body representation…';
-    this.imageHidden = true;
-    this.imageSource = '';
-    try {
-      const inspection = await invoke<BodyInspection>('inspect_body', {
-        request: {
-          sessionId: this.selectedSessionId,
-          boundary: this.bodyBoundary.value,
-          representation: this.bodyRepresentation.value,
-          decodeContent: this.bodyDecoded.checked,
-          offset: 0,
-          maxBytes: Number(this.bodyMaxBytes.value),
-        },
-      });
-      const summary = `${inspection.metadata.boundary} · ${inspection.representation} · ${inspection.displayBytes} bytes${inspection.decoded ? ' · decoded' : ' · encoded'}${inspection.truncated ? ' · truncated' : ''}`;
-      if (inspection.previewHandle !== null) {
-        this.imageSource = convertFileSrc(
-          `preview/${inspection.previewHandle}`,
-          'transmog-preview',
-        );
-        this.imageHidden = false;
-        const safety = inspection.previewMimeType === 'image/svg+xml'
-          ? 'Loaded as a sandboxed image; scripts and external resources are blocked.'
-          : 'Normalized to PNG in an isolated decoder, then loaded as an image.';
-        this.bodyText = `${summary}\n${safety}`;
-      } else {
-        this.bodyText = `${summary}${inspection.warning ? `\n${inspection.warning}` : ''}\n\n${inspection.display}`;
+  private async refreshInspection():Promise<void> {
+    this.inspectionAgain = true;
+    if (this.liveInspection) return this.liveInspection;
+    this.liveInspection = (async () => {
+      while (this.inspectionAgain && this.isConnected && this.selectedSessionId) {
+        this.inspectionAgain = false; const generation = this.inspectionGeneration;
+        try {
+          const detail = await invoke<SessionDetail>('session_detail',{id:this.selectedSessionId});
+          if (generation === this.inspectionGeneration && this.isConnected) this.applyDetail(detail);
+        } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector update unavailable: '+describeError(error); }
       }
-    } catch (error: unknown) {
-      this.bodyText = `Body inspector unavailable: ${describeError(error)}`;
-    }
+    })();
+    try { await this.liveInspection; } finally { this.liveInspection = null; }
   }
-
+  beginAutoResponseFromSelected():void { if (this.selectedDetail && this.selectedSessionId) this.$emit('autoresponse-request',{sessionId:this.selectedSessionId,detail:this.selectedDetail}); }
+  showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
+  async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
+  replaySelected():void { if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }
+  async resumeLatest():Promise<void> { this.followLatest = true; this.pageIndex = 0; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
+  showUpdates():void { if (this.pendingRows.length) this.rebuildRows(this.pendingRows); this.displayedMatched = this.totalMatched; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.sessionText = 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges'; }
+  async navigatePage(delta:number):Promise<void> { this.pageIndex = Math.max(0,this.pageIndex+delta); this.followLatest = false; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  private renderFollowState():void { this.followText = this.followLatest ? 'Following live traffic' : this.selectedSessionId ? 'Inspection pinned · capture continues' : 'Row positions held · capture continues'; }
+  async exportLiveCapture():Promise<void> {
+    try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }
+    catch (error:unknown) { this.showNotice('TMCap export failed',describeError(error),null,null); }
+  }
+  disconnectedCallback():void {
+    window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
+    this.inspectionGeneration++; super.disconnectedCallback();
+  }
 }
-
 TrafficWorkspace.define('traffic-workspace');

@@ -1,10 +1,12 @@
 import initialState from '../initial-state.json';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, Notice, NoticeAction, ProductState, SelectedResponse, ViewName } from '../models.js';
+import type { AppStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
+import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
 import type { AutomationWorkspace } from '../automation-workspace/automation-workspace.js';
+import type { ComposerWorkspace } from '../composer-workspace/composer-workspace.js';
 import { describeError, lifecycleLabel } from '../utilities.js';
 
 const loaders = {
@@ -30,11 +32,21 @@ export class AppShell extends WebUIElement {
   @observable noticeMessageText = initialState.noticeMessageText;
   @observable noticeActionLabel = initialState.noticeActionLabel;
   @observable selection: SelectedResponse | null = initialState.selection;
+  @observable workspace = defaultWorkspace();
+  @observable proxyPending = '';
+  @observable navigationExpanded = 'true';
   traffic!: TrafficWorkspace;
   settings!: SettingsWorkspace;
   automation!: AutomationWorkspace;
+  composer!: ComposerWorkspace;
   private noticeAction: NoticeAction = null;
   private navigationGeneration = 0;
+  private workspaceTouched = false;
+  private workspaceLoaded = false;
+  private saveTimer: number | undefined;
+  private saving = false;
+  private saveAgain = false;
+  workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
 
   activeViewChanged(): void {
     this.currentNavigation = Object.fromEntries(Object.keys(initialState.currentNavigation).map((view) => [view, view === this.activeView ? 'page' : 'false']));
@@ -55,9 +67,44 @@ export class AppShell extends WebUIElement {
     this.listener = status.listener ?? 'Not listening';
     this.diagnosticText = status.hostRestorePending ? 'Host restoration is pending and must be retried before restart.' : status.summary;
   }
-  onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; pageSize: number}>): void {
+  onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; pageSize: number; workspace?: WorkspacePreferences}>): void {
     this.theme = event.detail.theme;
     this.pageSize = String(event.detail.pageSize);
+    if (!this.workspaceLoaded && !this.workspaceTouched) this.workspace = normalizeWorkspace(event.detail.workspace);
+    this.workspaceLoaded = true;
+  }
+  onProxyOperation(event: CustomEvent<string>): void { this.proxyPending = event.detail; }
+  async toggleProxy(): Promise<void> {
+    await this.settings.ready;
+    if (this.lifecycleKind === 'running') await this.settings.stopProxy();
+    else await this.settings.startProxy();
+  }
+  toggleNavigation(): void { this.changeWorkspace({sidebarCollapsed:!this.workspace.sidebarCollapsed}); }
+  onWorkspaceChange(event: CustomEvent<{patch:Partial<WorkspacePreferences>; committed?: boolean}>): void { this.changeWorkspace(event.detail.patch,event.detail.committed !== false); }
+  private changeWorkspace(patch: Partial<WorkspacePreferences>, committed = true): void {
+    this.workspaceTouched = true;
+    this.workspace = {...this.workspace,...patch};
+    if (!committed) return;
+    window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => { void this.saveWorkspace(); },250);
+  }
+  resetWorkspace(): void { this.changeWorkspace(defaultWorkspace()); }
+  private async saveWorkspace(): Promise<void> {
+    this.saveAgain = true;
+    if (this.saving) return;
+    this.saving = true;
+    try {
+      while (this.saveAgain && this.isConnected) {
+        this.saveAgain = false;
+        await invoke<WorkspacePreferences>('save_workspace_preferences',{preferences:this.workspace});
+      }
+    } catch (error: unknown) { this.diagnosticText = 'Layout could not be saved: '+describeError(error); }
+    finally { this.saving = false; }
+  }
+  async copyListener(): Promise<void> {
+    if (this.listener === 'Not listening') return;
+    try { await navigator.clipboard.writeText(this.listener); this.diagnosticText = 'Proxy address copied.'; }
+    catch { this.diagnosticText = 'Select and copy the proxy address shown in the header.'; }
   }
   onProxyReady(): void { this.proxyReady = true; }
   onSelection(event: CustomEvent<SelectedResponse | null>): void { this.selection = event.detail; }
@@ -85,8 +132,8 @@ export class AppShell extends WebUIElement {
   async startProxy(event?: Event): Promise<void> { event?.preventDefault(); await this.settings.ready; await this.settings.startProxy(); }
   async stopProxy(): Promise<void> { await this.settings.ready; await this.settings.stopProxy(); }
   async refreshStatus(): Promise<void> {
-    try { this.applyStatus(await invoke<AppStatus>('app_status')); }
-    catch (error: unknown) { this.diagnosticText = 'Status unavailable: ' + describeError(error); }
+    await this.settings.ready;
+    await this.settings.refreshStatus();
   }
   runNoticeAction(): void {
     const action = this.noticeAction;
@@ -103,6 +150,10 @@ export class AppShell extends WebUIElement {
   async onMatchedRule(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
   }
+  async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
+    if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
+  }
+  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); super.disconnectedCallback(); }
   allowSessionDrop(event: DragEvent): void {
     if (event.dataTransfer?.types.includes('application/x-transmog-session')) event.preventDefault();
   }

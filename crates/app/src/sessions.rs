@@ -13,7 +13,54 @@ use transmog_session::{
     SessionSnapshot, SessionTerminal, SubscriptionEvent,
 };
 
+use crate::workspace::TrafficColumn;
 use crate::{AppError, AutoResponseMatchView, ErrorCategory, inspector::auto_response_match};
+
+/// Direction of a retained-traffic metadata sort.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortDirection {
+    /// Lower values first.
+    Ascending,
+    /// Higher values first.
+    Descending,
+}
+
+/// Sort applied across retained metadata before paging.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionSort {
+    /// Metadata field.
+    pub column: TrafficColumn,
+    /// Sort direction.
+    pub direction: SortDirection,
+}
+
+/// Supported deterministic column filter operation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FilterOperator {
+    /// Case-insensitive substring.
+    Contains,
+    /// Exact value.
+    Equals,
+    /// Inclusive numeric lower bound.
+    Minimum,
+    /// Inclusive numeric upper bound.
+    Maximum,
+}
+
+/// One bounded column filter.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionColumnFilter {
+    /// Metadata field.
+    pub column: TrafficColumn,
+    /// Comparison operation.
+    pub operator: FilterOperator,
+    /// Text or base-ten integer, bounded to 255 characters.
+    pub value: String,
+}
 
 const MAX_CURSOR_TOKENS: usize = 256;
 const DEFAULT_PAGE_SIZE: usize = 100;
@@ -62,6 +109,18 @@ pub struct SessionQueryInput {
     pub method: Option<String>,
     /// Optional ASCII-case-insensitive host filter.
     pub host: Option<String>,
+    /// Global metadata substring search.
+    #[serde(default)]
+    pub search: Option<String>,
+    /// Column filters, combined with AND.
+    #[serde(default)]
+    pub filters: Vec<SessionColumnFilter>,
+    /// Sort all retained matching traffic before returning a bounded page.
+    #[serde(default)]
+    pub sort: Option<SessionSort>,
+    /// Offset into the sorted matching read model.
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
 /// One bounded row in the live-session browser.
@@ -96,6 +155,12 @@ pub struct SessionSummary {
     pub capturing: bool,
     /// Winning local autoresponse, when the origin was bypassed.
     pub auto_response: Option<AutoResponseMatchView>,
+    /// Complete original request target.
+    pub url: String,
+    /// Start timestamp in Unix milliseconds.
+    pub started_at: u64,
+    /// Client-facing response content type, without parameters.
+    pub content_type: Option<String>,
 }
 
 /// Presentation-safe caller identity for one downstream connection.
@@ -144,6 +209,10 @@ pub struct SessionPage {
     pub sequence_gaps: u64,
     /// Total refresh-hint lag observed.
     pub subscriber_lag: u64,
+    /// Matching retained rows before pagination.
+    pub total_matched: usize,
+    /// Total retained metadata rows.
+    pub retained_count: usize,
 }
 
 /// Small lossy signal that tells presentation layers to query again.
@@ -196,6 +265,13 @@ pub(crate) fn query_sessions(
 ) -> Result<SessionPage, AppError> {
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
+    if input.sort.is_some()
+        || input.search.is_some()
+        || !input.filters.is_empty()
+        || input.offset.is_some()
+    {
+        return query_sorted(service, &input);
+    }
     if input.latest && input.cursor.is_some() {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
@@ -247,7 +323,7 @@ pub(crate) fn query_sessions(
         transmog_session::CaptureStatus::Active { .. }
     );
     let now = SystemTime::now();
-    let sessions = page
+    let sessions: Vec<_> = page
         .sessions
         .iter()
         .map(|snapshot| summarize(snapshot, now, capturing))
@@ -263,6 +339,8 @@ pub(crate) fn query_sessions(
         .transpose()?;
     let counters = service.catalog().counters();
     Ok(SessionPage {
+        total_matched: sessions.len(),
+        retained_count: sessions.len(),
         sessions,
         next_cursor,
         evicted: counters.evicted,
@@ -319,6 +397,40 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         None => "active",
     };
     SessionSummary {
+        url: format!(
+            "{}://{}{}{}",
+            target.scheme,
+            target.authority,
+            target.path,
+            target
+                .query
+                .as_ref()
+                .map_or_else(String::new, |query| format!("?{query}"))
+        ),
+        started_at: u64::try_from(
+            snapshot
+                .metadata
+                .started_at
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
+        content_type: snapshot
+            .response_heads
+            .iter()
+            .rev()
+            .find(|head| head.boundary == transmog_core::observe::ExchangeBoundary::ClientResponse)
+            .or_else(|| snapshot.response_heads.last())
+            .and_then(|head| head.head.headers.values("content-type").next())
+            .and_then(|value| std::str::from_utf8(value).ok())
+            .map(|mime| {
+                mime.split(';')
+                    .next()
+                    .unwrap_or(mime)
+                    .trim()
+                    .to_ascii_lowercase()
+            }),
         id: format!("{:032x}", snapshot.exchange_id.0),
         caller: client_identity_view(&snapshot.metadata.client_identity),
         method: request.map_or_else(|| "—".to_owned(), |head| head.method.clone()),
@@ -336,6 +448,229 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         loss: snapshot.sequence_loss > 0,
         capturing,
         auto_response: auto_response_match(snapshot),
+    }
+}
+
+fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
+    match column {
+        TrafficColumn::Status => row.status.map(u64::from),
+        TrafficColumn::Pid => row.caller.process_id.map(u64::from),
+        TrafficColumn::Duration => Some(row.duration_ms),
+        TrafficColumn::ResponseBytes => Some(row.response_bytes),
+        TrafficColumn::RequestBytes => Some(row.request_bytes),
+        TrafficColumn::StartedAt => Some(row.started_at),
+        _ => None,
+    }
+}
+
+fn numeric_column(column: TrafficColumn) -> bool {
+    matches!(
+        column,
+        TrafficColumn::Status
+            | TrafficColumn::Pid
+            | TrafficColumn::Duration
+            | TrafficColumn::ResponseBytes
+            | TrafficColumn::RequestBytes
+            | TrafficColumn::StartedAt
+    )
+}
+
+fn text_value(row: &SessionSummary, column: TrafficColumn) -> String {
+    match column {
+        TrafficColumn::Method => row.method.clone(),
+        TrafficColumn::Process => row
+            .caller
+            .process_name
+            .clone()
+            .unwrap_or_else(|| row.caller.kind.to_owned()),
+        TrafficColumn::Host => row.host.clone(),
+        TrafficColumn::Path => row.path.clone(),
+        TrafficColumn::Url => row.url.clone(),
+        TrafficColumn::Protocol => match row.protocol.as_str() {
+            "Http1" => "HTTP/1.1".to_owned(),
+            "Http2" => "HTTP/2".to_owned(),
+            other => other.to_owned(),
+        },
+        TrafficColumn::State => row.terminal.to_owned(),
+        TrafficColumn::ContentType => row.content_type.clone().unwrap_or_default(),
+        numeric => numeric_value(row, numeric).map_or_else(String::new, |value| value.to_string()),
+    }
+}
+
+fn query_sorted(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+) -> Result<SessionPage, AppError> {
+    if input.cursor.is_some() || input.filters.len() > 14 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "sorted traffic queries require a bounded offset and at most 14 filters",
+            false,
+        ));
+    }
+    validate_filter(input.search.as_deref())?;
+    let filters = input
+        .filters
+        .iter()
+        .map(PreparedFilter::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    let search = input.search.as_ref().map(|value| value.to_lowercase());
+    let limit = input
+        .limit
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .min(service.catalog().page_size_limit());
+    if limit == 0 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "page size must be nonzero",
+            false,
+        ));
+    }
+    let capturing = matches!(
+        service.capture().status(),
+        transmog_session::CaptureStatus::Active { .. }
+    );
+    let now = SystemTime::now();
+    let rows = service
+        .catalog()
+        .project_retained(|snapshot| summarize(snapshot, now, capturing));
+    let retained_count = rows.len();
+    let mut rows: Vec<_> = rows
+        .into_iter()
+        .filter(|row| {
+            input
+                .method
+                .as_ref()
+                .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
+                && input
+                    .host
+                    .as_ref()
+                    .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
+                && input
+                    .terminal
+                    .is_none_or(|terminal| (row.terminal != "active") == terminal)
+                && search
+                    .as_deref()
+                    .is_none_or(|search| matches_search(row, search))
+                && filters.iter().all(|filter| filter.matches(row))
+        })
+        .collect();
+    if let Some(sort) = &input.sort {
+        sort_rows(&mut rows, sort);
+    }
+    let total_matched = rows.len();
+    let counters = service.catalog().counters();
+    Ok(SessionPage {
+        sessions: rows
+            .into_iter()
+            .skip(input.offset.unwrap_or(0))
+            .take(limit)
+            .collect(),
+        next_cursor: None,
+        evicted: counters.evicted,
+        sequence_gaps: counters.sequence_gaps,
+        subscriber_lag: counters.subscriber_lag,
+        total_matched,
+        retained_count,
+    })
+}
+
+struct PreparedFilter {
+    column: TrafficColumn,
+    operator: FilterOperator,
+    text: String,
+    numeric: Option<u64>,
+}
+
+impl PreparedFilter {
+    fn new(filter: &SessionColumnFilter) -> Result<Self, AppError> {
+        validate_filter(Some(&filter.value))?;
+        let numeric = filter.value.parse::<u64>().ok();
+        if matches!(
+            filter.operator,
+            FilterOperator::Minimum | FilterOperator::Maximum
+        ) && !numeric_column(filter.column)
+            || numeric_column(filter.column)
+                && filter.operator != FilterOperator::Contains
+                && numeric.is_none()
+        {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "numeric filters require a base-ten integer and a numeric column",
+                false,
+            ));
+        }
+        Ok(Self {
+            column: filter.column,
+            operator: filter.operator,
+            text: filter.value.to_lowercase(),
+            numeric,
+        })
+    }
+
+    fn matches(&self, row: &SessionSummary) -> bool {
+        match self.operator {
+            FilterOperator::Contains => text_value(row, self.column)
+                .to_lowercase()
+                .contains(&self.text),
+            FilterOperator::Equals if numeric_column(self.column) => {
+                numeric_value(row, self.column).is_some_and(|value| Some(value) == self.numeric)
+            }
+            FilterOperator::Equals => text_value(row, self.column).to_lowercase() == self.text,
+            FilterOperator::Minimum => numeric_value(row, self.column)
+                .is_some_and(|value| self.numeric.is_some_and(|minimum| value >= minimum)),
+            FilterOperator::Maximum => numeric_value(row, self.column)
+                .is_some_and(|value| self.numeric.is_some_and(|maximum| value <= maximum)),
+        }
+    }
+}
+
+fn matches_search(row: &SessionSummary, search: &str) -> bool {
+    [
+        row.url.as_str(),
+        row.method.as_str(),
+        row.host.as_str(),
+        row.caller.process_name.as_deref().unwrap_or_default(),
+        row.terminal,
+        row.content_type.as_deref().unwrap_or_default(),
+    ]
+    .iter()
+    .any(|value| value.to_lowercase().contains(search))
+        || row
+            .caller
+            .process_id
+            .is_some_and(|pid| pid.to_string().contains(search))
+}
+
+fn sort_rows(rows: &mut [SessionSummary], sort: &SessionSort) {
+    if numeric_column(sort.column) {
+        rows.sort_by(|left, right| {
+            let comparison = match (
+                numeric_value(left, sort.column),
+                numeric_value(right, sort.column),
+            ) {
+                (None, Some(_)) => return std::cmp::Ordering::Greater,
+                (Some(_), None) => return std::cmp::Ordering::Less,
+                (left, right) => left.cmp(&right),
+            };
+            let comparison = if sort.direction == SortDirection::Descending {
+                comparison.reverse()
+            } else {
+                comparison
+            };
+            comparison.then_with(|| left.id.cmp(&right.id))
+        });
+    } else if sort.direction == SortDirection::Descending {
+        rows.sort_by_cached_key(|row| {
+            (
+                std::cmp::Reverse(text_value(row, sort.column).to_lowercase()),
+                row.id.clone(),
+            )
+        });
+    } else {
+        rows.sort_by_cached_key(|row| {
+            (text_value(row, sort.column).to_lowercase(), row.id.clone())
+        });
     }
 }
 
@@ -482,6 +817,150 @@ mod tests {
                 .as_millis(),
             0
         );
+    }
+
+    #[test]
+    fn sorting_and_filters_apply_before_bounded_pagination() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for (id, status) in [(1, 500), (2, 304), (3, 200), (4, 200)] {
+            service.catalog().apply(started(id));
+            service.catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(id),
+                sequence: 2,
+                kind: ObserverEventKind::ResponseHeadObserved {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientResponse,
+                    head: transmog_core::ResponseHead {
+                        status,
+                        headers: transmog_core::HeaderBlock::default(),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                },
+            });
+        }
+        service.catalog().apply(started(5)); // Pending values sort last in both directions.
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let query = SessionQueryInput {
+            limit: Some(2),
+            sort: Some(SessionSort {
+                column: TrafficColumn::Status,
+                direction: SortDirection::Ascending,
+            }),
+            ..Default::default()
+        };
+        let first = query_sessions(&service, &registry, query.clone()).unwrap();
+        assert_eq!(
+            first
+                .sessions
+                .iter()
+                .map(|row| row.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/3", "/4"]
+        );
+        assert_eq!((first.total_matched, first.retained_count), (5, 5));
+        let second = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                offset: Some(2),
+                ..query.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            second
+                .sessions
+                .iter()
+                .map(|row| row.status)
+                .collect::<Vec<_>>(),
+            [Some(304), Some(500)]
+        );
+        let descending = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                limit: Some(200),
+                sort: Some(SessionSort {
+                    column: TrafficColumn::Status,
+                    direction: SortDirection::Descending,
+                }),
+                ..query.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(descending.sessions.last().unwrap().status, None);
+        let filtered = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                filters: vec![SessionColumnFilter {
+                    column: TrafficColumn::Status,
+                    operator: FilterOperator::Minimum,
+                    value: "300".into(),
+                }],
+                ..query
+            },
+        )
+        .unwrap();
+        assert_eq!(filtered.total_matched, 2);
+        assert_eq!(filtered.sessions[0].status, Some(304));
+    }
+
+    #[test]
+    fn sorted_queries_enforce_page_and_numeric_filter_bounds() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=300 {
+            service.catalog().apply(started(id));
+        }
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let capped = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                limit: Some(usize::MAX),
+                offset: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(capped.sessions.len(), service.catalog().page_size_limit());
+        let invalid = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                filters: vec![SessionColumnFilter {
+                    column: TrafficColumn::Status,
+                    operator: FilterOperator::Minimum,
+                    value: "three hundred".into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(invalid.category, ErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn searches_all_retained_rows_instead_of_only_the_current_page() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=300 {
+            service.catalog().apply(started(id));
+        }
+        let page = query_sessions(
+            &service,
+            &Arc::new(Mutex::new(CursorRegistry::default())),
+            SessionQueryInput {
+                limit: Some(2),
+                search: Some("EXAMPLE.TEST/299".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total_matched, 1);
+        assert_eq!(page.retained_count, 300);
+        assert_eq!(page.sessions[0].path, "/299");
     }
 
     #[test]

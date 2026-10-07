@@ -579,7 +579,7 @@ pub(crate) async fn image_source(
     Ok((metadata, bytes, decoded))
 }
 
-fn parse_session_id(id: &str) -> Result<u128, AppError> {
+pub(crate) fn parse_session_id(id: &str) -> Result<u128, AppError> {
     if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
@@ -774,7 +774,7 @@ fn render_body(
                 && let Some(formatted) = format_json(text.as_deref())
             {
                 ("formatted-json", formatted, None, text_encoding)
-            } else if let Some(text) = text {
+            } else if let Some(text) = text.filter(|_| media_type.is_none_or(is_text_media_type)) {
                 ("original-text", text, None, text_encoding)
             } else {
                 ("bytes", hex_dump(bytes, offset), None, None)
@@ -814,6 +814,28 @@ fn detect_unicode_encoding(bytes: &[u8], declared: Option<&str>) -> Option<&'sta
 fn is_json_media_type(media_type: &str) -> bool {
     media_type.eq_ignore_ascii_case("application/json")
         || media_type.to_ascii_lowercase().ends_with("+json")
+}
+
+fn is_text_media_type(media_type: &str) -> bool {
+    let mime = media_type
+        .split(';')
+        .next()
+        .unwrap_or(media_type)
+        .trim()
+        .to_ascii_lowercase();
+    mime.starts_with("text/")
+        || is_json_media_type(&mime)
+        || mime.ends_with("+xml")
+        || matches!(
+            mime.as_str(),
+            "application/xml"
+                | "application/javascript"
+                | "application/x-javascript"
+                | "application/ecmascript"
+                | "application/x-www-form-urlencoded"
+                | "application/yaml"
+                | "application/x-yaml"
+        )
 }
 
 fn format_json(text: Option<&str>) -> Option<String> {
@@ -1092,6 +1114,28 @@ mod tests {
         assert!(rendered.1.contains('\n'));
         assert_eq!(rendered.3, Some("utf-8"));
         assert!(hex_dump(&[0, b'A', 0xff], 16).starts_with("00000010"));
+    }
+
+    #[test]
+    fn automatic_viewer_respects_binary_and_text_content_types() {
+        for (mime, expected) in [
+            (Some("text/html; charset=utf-8"), "original-text"),
+            (Some("application/problem+json"), "formatted-json"),
+            (Some("application/octet-stream"), "bytes"),
+            (None, "original-text"),
+        ] {
+            assert_eq!(
+                render_body(
+                    BodyRepresentation::Auto,
+                    br#"{"ok":true}"#,
+                    Some("utf-8"),
+                    mime,
+                    0
+                )
+                .0,
+                expected
+            );
+        }
     }
 
     #[tokio::test]

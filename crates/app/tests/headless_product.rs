@@ -215,14 +215,17 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
         .inspect_body(BodyInspectionRequest {
             session_id: image_detail.id.clone(),
             boundary: "client-response".to_owned(),
-            representation: BodyRepresentation::Image,
+            representation: BodyRepresentation::Auto,
             decode_content: true,
             offset: 0,
             max_bytes: None,
         })
         .await
         .unwrap();
-    let handle = preview.preview_handle.expect("image preview handle");
+    assert_eq!(preview.representation, "image");
+    let handle = preview
+        .preview_handle
+        .expect("automatic image preview handle");
     let normalized = application.image_preview(&handle).expect("cached preview");
     assert_eq!(normalized.1, "image/png");
     assert!(normalized.0.starts_with(b"\x89PNG\r\n\x1a\n"));

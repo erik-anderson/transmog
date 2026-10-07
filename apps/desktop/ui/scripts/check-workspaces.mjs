@@ -31,16 +31,20 @@ await page.route('http://workspace.test/**', async (route) => {
   if (path === '/') {
     await route.fulfill({ contentType: 'text/html', body: html, headers: { 'Content-Security-Policy': "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco" } });
   } else {
+    if (path === '/preview/pixel.png') { await route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}); return; }
     const asset = resources.get(path);
     if (!asset) { await route.fulfill({ status: 404, body: 'Not found' }); return; }
     await route.fulfill({ contentType: asset.contentType, body: asset.body ?? await readFile(asset.file) });
   }
 });
-await page.addInitScript(() => {
+await page.addInitScript((workspace) => {
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
-  const summary = (id) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, protocol: 'HTTP/1.1', status: 200, durationMs: 1, requestBytes: 0, responseBytes: 4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
-  const detail = (id) => ({ id, caller, requests: [{ boundary: 'client-request', method: 'GET', target: 'http://example.test/' + id, status: null, protocol: 'HTTP/1.1', headers: [] }], responses: [{ boundary: 'client-response', method: null, target: null, status: 200, protocol: 'HTTP/1.1', headers: [] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: 4, retainedBytes: 4, availability: 'complete', mediaType: 'text/plain', charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: 'completed', websocket: null, sequenceLoss: 0, autoResponse: null });
-  const state = globalThis.__workspaceFixture = { calls: {}, sessions: [summary('first'), summary('second')], paused: [], queryDelay: 0, slowDetail: false };
+  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/png':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
+  const detail = (id) => {
+    const row = state.sessions.find(row => row.id===id) ?? summary(id);
+    return { id, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+  };
+  const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const callbacks = new Map();
   let callbackId = 0;
   window.__TAURI_INTERNALS__ = {
@@ -52,12 +56,28 @@ await page.addInitScript(() => {
       switch (command) {
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
         case 'desktop_bootstrap': return { caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl' };
-        case 'product_state': return { schemaVersion: 1, preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
-        case 'app_status': return { lifecycle: 'stopped', listener: null, summary: 'Proxy stopped', hostRestorePending: false };
+        case 'product_state': return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
+        case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
+        case 'app_status': return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
+        case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
+        case 'stop_application': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
         case 'watch_sessions': state.channel = args.onEvent; return;
-        case 'query_sessions': await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); return { sessions: structuredClone(state.sessions), nextCursor: null, evicted: 0, sequenceGaps: 0, subscriberLag: 0 };
+        case 'query_sessions': {
+          await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
+          const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
+          let rows = structuredClone(state.sessions).filter(row => !args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase()));
+          for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
+          const {sort,offset=0,limit=100} = args.query;
+          if (sort) rows.sort((a,b) => {const left=key(a,sort.column),right=key(b,sort.column);const result=typeof left==='number'?left-right:String(left).localeCompare(String(right));return (sort.direction==='descending'?-result:result)||a.id.localeCompare(b.id);});
+          return {sessions:rows.slice(offset,offset+limit),totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
+        }
         case 'session_detail': if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100)); return detail(args.id);
-        case 'inspect_body': return { metadata: detail(args.request.sessionId).storedBodies[0], representation: 'original-text', decoded: true, textEncoding: 'utf-8', display: 'body', displayBytes: 4, truncated: false, nextOffset: null, warning: null, previewHandle: null, previewMimeType: null };
+        case 'inspect_body': {
+          if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
+          const metadata=detail(args.request.sessionId).storedBodies[0];
+          const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType==='image/png'?'image':'original-text'):args.request.representation;
+          return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
+        }
         case 'automation_status': return { generation: 0, rules: [], candidateCount: 0, historyCount: 0 };
         case 'script_declarations': return '';
         case 'script_status': return { generation: 0, active: [], saved: [], candidateCount: 0, historyCount: 0 };
@@ -69,7 +89,7 @@ await page.addInitScript(() => {
   };
   globalThis.__cspViolations = [];
   addEventListener('securitypolicyviolation', (event) => globalThis.__cspViolations.push(event.effectiveDirective));
-});
+}, initial.workspace);
 
 const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
@@ -84,6 +104,67 @@ try {
   assert.equal(requests.some((path) => path === '/monaco.js' || path === '/monaco.css' || editorOutputs.includes(path)), false, 'Monaco loaded at startup');
   assert.equal(await page.evaluate(() => customElements.get('automation-workspace') !== undefined), false, 'Automation hydrated at startup');
   const startupRequests = requests.length;
+  assert.equal(await page.evaluate(() => CSS.supports('width','attr(data-width type(<length>))')), true, 'Typed CSS attributes required by resizable panels are unavailable');
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
+  assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
+  assert.equal(await page.locator('tr[data-session-id="cached"]').getAttribute('data-tone'),'not-modified');
+  const toggle = page.getByRole('button',{name:'Toggle navigation labels'});
+  await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-expanded'),'false');
+  const methodEdge = page.getByRole('separator',{name:'Resize Method column',exact:true});
+  const originalWidth = await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width);
+  await methodEdge.focus(); await page.keyboard.press('ArrowRight');
+  const resizedWidth = await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width);
+  assert.ok(resizedWidth >= originalWidth+8,'Keyboard column resizing did not affect layout');
+  const edgeBounds = await methodEdge.boundingBox();
+  await page.mouse.move(edgeBounds.x+2,edgeBounds.y+10); await page.mouse.down(); await page.mouse.move(edgeBounds.x+42,edgeBounds.y+10,{steps:5}); await page.mouse.up();
+  assert.ok(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width) >= resizedWidth+30,'Pointer column resizing did not affect layout');
+  await page.locator('#header-process').dragTo(page.locator('#header-path'));
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes']);
+  await page.waitForTimeout(300); // Let the accidental post-drag click guard expire.
+  const openColumn = async id => { await page.locator('#header-'+id+' .column-trigger').click(); await page.locator('#column-actions').waitFor({state:'visible'}); };
+  await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move left',exact:true}).click();
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.slice(0,3).map(header=>header.dataset.columnId)),['method','host','status'],'Moving across pinned columns did not change visible order');
+  await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move right',exact:true}).click();
+  await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Unpin column',exact:true}).click();
+  await openColumn('status'); await page.locator('#column-actions').getByRole('button',{name:'Highest first',exact:false}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.traffic-table tbody tr').dataset.sessionId==='cached');
+  assert.equal(await page.locator('#header-status').getAttribute('aria-sort'),'descending');
+  await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Pin column',exact:true}).click();
+  assert.equal(await page.locator('#header-host').getAttribute('data-pinned'),'');
+  await openColumn('response-bytes'); await page.locator('#column-actions').getByRole('button',{name:'Hide column',exact:true}).click();
+  assert.equal(await page.locator('#header-response-bytes').count(),0);
+  await page.getByRole('button',{name:'Table settings',exact:true}).click();
+  await page.locator('#table-settings').getByLabel('Response size',{exact:true}).check();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#header-response-bytes').count(),1);
+  await openColumn('status'); await page.getByRole('textbox',{name:'Column filter value'}).fill('304'); await page.locator('#column-actions').getByRole('button',{name:'Apply filter'}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelectorAll('.traffic-table tbody tr[data-session-id]').length===1);
+  assert.equal(await page.locator('.traffic-table tbody tr[data-session-id]').getAttribute('data-session-id'),'cached');
+  await page.getByRole('button',{name:'Clear filters',exact:true}).click();
+  await page.getByRole('button',{name:'Follow live',exact:true}).click();
+  const listDivider = page.getByRole('separator',{name:'Resize traffic list and inspector',exact:true});
+  const listBefore = await page.locator('.session-list-pane').evaluate(pane=>pane.getBoundingClientRect().height);
+  await listDivider.focus(); await page.keyboard.press('ArrowDown');
+  assert.ok(await page.locator('.session-list-pane').evaluate(pane=>pane.getBoundingClientRect().height)>listBefore+5,'Panel divider did not resize list');
+  await page.getByLabel('Traffic layout',{exact:true}).selectOption('side-by-side');
+  const panes = await page.locator('.traffic-workspace').evaluate(grid=>({list:grid.querySelector('.session-list-pane').getBoundingClientRect().toJSON(),details:grid.querySelector('.details-pane').getBoundingClientRect().toJSON()}));
+  assert.ok(panes.details.x>panes.list.x+panes.list.width,'Side-by-side layout did not arrange panes horizontally');
+  await page.getByLabel('Traffic layout',{exact:true}).selectOption('stacked');
+  const proxy = page.locator('.top-actions proxy-toggle button');
+  await proxy.click();
+  await page.getByRole('button',{name:'Starting…',exact:true}).first().waitFor({state:'visible'});
+  assert.equal(await proxy.isEnabled(),false);
+  await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
+  const runningColor=await proxy.evaluate(button=>getComputedStyle(button).backgroundColor);
+  await proxy.click();
+  await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
+  assert.notEqual(await proxy.evaluate(button=>getComputedStyle(button).backgroundColor),runningColor);
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
+  await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
+  await proxy.click();
+  await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.stop_application),2,'Proxy action did not track refreshed lifecycle state');
 
   await page.evaluate(() => { globalThis.__row = document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]'); });
   await page.locator('form.filters button').click();
@@ -105,6 +186,35 @@ try {
   });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.selection-bar strong').textContent.endsWith('/second'));
   assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'), 'true');
+  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
+  await page.getByRole('button',{name:'Replay',exact:true}).click();
+  await page.locator('#composer').waitFor({state:'visible'});
+  assert.equal(await page.locator('#composer input[name="url"]').inputValue(),'http://example.test/second');
+  assert.equal(await page.locator('#composer textarea[name="headers"]').inputValue(),'Accept: */*');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.execute_composer??0),0,'Replay ran before explicit execution');
+  await view('traffic');
+  await page.locator('tr[data-session-id="cached"]').click();
+  await page.locator('message-inspector[side="response"] .body-preview').getByText('304 Not Modified',{exact:false}).waitFor({state:'visible'});
+  await page.locator('tr[data-session-id="image"]').click();
+  await page.locator('message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
+  await page.locator('message-inspector[side="response"] img').waitFor({state:'visible'});
+  await page.locator('tr[data-session-id="second"]').click();
+  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  const heldOrder=await page.locator('.traffic-table tbody tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId));
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions.push({...state.sessions[0],id:'new',url:'http://example.test/new',path:'/new',startedAt:9999});await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions();});
+  assert.deepEqual(await page.locator('.traffic-table tbody tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId)),heldOrder,'Live arrival moved rows during inspection');
+  await page.locator('.new-traffic-button').waitFor({state:'visible'});
+  assert.match(await page.locator('.new-traffic-button').textContent(), /1\s+new/);
+  await page.locator('.new-traffic-button').click();
+  assert.equal(await page.locator('.traffic-table tbody tr').first().getAttribute('data-session-id'),'new');
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;Object.assign(state.sessions[0],{status:null,terminal:'active',responseBytes:0});await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
+  await page.locator('tr[data-session-id="first"]').click();
+  await page.locator('.selection-bar').getByText('Pending',{exact:true}).waitFor({state:'visible'});
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;Object.assign(state.sessions[0],{status:200,terminal:'completed',responseBytes:4});state.channel.onmessage({exchangeId:'first',sequence:2,lagged:false});});
+  await page.locator('message-inspector[side="response"] .body-preview').getByText('body for first',{exact:true}).waitFor({state:'visible'});
+  await page.locator('tr[data-session-id="second"]').click();
+  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button', { name: 'Create auto-response', exact: true }).isEnabled(), true);
   await page.getByRole('button', { name: 'Create auto-response', exact: true }).click();
   await page.locator('#automation').waitFor({ state: 'visible' });
@@ -120,6 +230,14 @@ try {
   await view('automation');
   assert.equal(await page.locator('.auto-response-editor input[name="name"]').inputValue(), 'Preserved draft');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').sourceEditor !== null);
+  const sourceSurface=page.locator('script-editor editor-surface').first();
+  assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=320,'Source editor is too short');
+  await sourceSurface.getByRole('button',{name:'Expand editor',exact:true}).click();
+  assert.equal(await sourceSurface.locator('dialog').evaluate(dialog=>dialog.matches(':modal')),true);
+  assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=580,'Expanded source editor is too short');
+  assert.equal(await sourceSurface.getByRole('button',{name:'Save draft',exact:true}).isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await sourceSurface.locator('dialog').evaluate(dialog=>dialog.matches(':modal')),false);
   const editorsBefore = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
   await page.evaluate(() => {
     globalThis.__workspaceFixture.paused = Array.from({ length: 20 }, (_, index) => ({ decisionId: index + 1, exchangeId: 'paused-' + index, phase: 'request-head', requestHead: { method: 'GET' }, responseHead: null, bodyHex: null, hookId: 'fixture' }));
@@ -128,7 +246,7 @@ try {
   await page.locator('paused-exchange').first().getByRole('button', { name: 'Continue', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange')?.editorReady);
   const editorsVisible = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
-  assert.ok(editorsVisible > editorsBefore && editorsVisible < editorsBefore + 20, 'Offscreen breakpoint editors were eagerly created');
+  assert.ok(editorsVisible > editorsBefore && editorsVisible <= editorsBefore + 2, 'Offscreen breakpoint editors were eagerly created');
   await page.evaluate(async () => {
     globalThis.__workspaceFixture.paused = [];
     await document.querySelector('app-shell').shadowRoot.querySelector('breakpoint-workspace').refreshBreakpoints();
@@ -141,8 +259,31 @@ try {
   assert.ok(layout.scrollHeight <= layout.height + 1, 'The document viewport can scroll');
   assert.deepEqual(await page.evaluate(() => globalThis.__cspViolations), []);
   assert.deepEqual(errors, []);
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.workspace.sidebarCollapsed && globalThis.__workspaceFixture.workspace.listSplit===47 && globalThis.__workspaceFixture.workspace.columns.find(column=>column.id==='host').pinned);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace.png')});
+  const beforeReload=requests.length;
+  await page.reload();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.startsWith('Watching live traffic.'));
+  assert.equal(await page.getByRole('button',{name:'Toggle navigation labels'}).getAttribute('aria-expanded'),'false');
+  assert.equal(await page.getByRole('separator',{name:'Resize traffic list and inspector',exact:true}).getAttribute('aria-valuenow'),'47');
+  assert.equal(await page.locator('#header-host').getAttribute('data-pinned'),'');
+  assert.equal(requests.slice(beforeReload).some(path=>path==='/monaco.js'||path==='/monaco.css'||editorOutputs.includes(path)),false,'Reload eagerly fetched Monaco');
+  assert.deepEqual(errors, []);
+  await page.setViewportSize({width:760,height:520});
+  await page.locator('tr[data-session-id="second"]').click();
+  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  const smallPreview=await page.locator('message-inspector[side="response"] .body-scroll').boundingBox();
+  assert.ok(smallPreview.height>=48,'Small-window response preview has no usable space');
+  await page.locator('message-inspector[side="response"] .body-preview').scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=document.documentElement.clientHeight+1),true,'Small-window inspection scroll escaped the pane');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace-small.png')});
+  await openColumn('status');
+  const smallMenu=await page.locator('#column-actions').boundingBox();
+  assert.ok(smallMenu.y+smallMenu.height<=520,'Column menu extends below a small window');
+  await page.keyboard.press('Escape');
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace-failure.png')});
   process.stderr.write(JSON.stringify({ errors, requests, state: await page.evaluate(() => ({ calls: globalThis.__workspaceFixture?.calls, output: document.querySelector('app-shell')?.shadowRoot?.querySelector('.session-status')?.textContent, diagnostics: document.querySelector('app-shell')?.shadowRoot?.querySelector('.global-diagnostics')?.textContent, definitions: ['app-shell', 'traffic-workspace', 'settings-workspace'].map((tag) => [tag, Boolean(customElements.get(tag))]) })) }, null, 2) + '\n');
   throw error;
 } finally { await browser.close(); }

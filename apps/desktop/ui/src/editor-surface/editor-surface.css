@@ -1,0 +1,12 @@
+:host { display:block; min-width:0; }
+dialog { --editor-height:26rem; position:static; width:100%; max-width:none; margin:0; padding:0; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--text); background:var(--panel); font:inherit; }
+dialog:modal { --editor-height:max(20rem,calc(100dvh - 12rem)); position:fixed; inset:1rem; width:calc(100vw - 2rem); max-height:calc(100dvh - 2rem); overflow:auto; padding:.5rem; box-shadow:0 1rem 4rem #0005; }
+dialog::backdrop { background:#10182080; }
+header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.6rem .8rem; border-bottom:1px solid var(--line); }
+header strong { font-size:.85rem; }
+button { border:1px solid var(--line-strong); border-radius:.3rem; padding:.45rem .65rem; color:var(--text); background:var(--panel); font:inherit; font-size:.76rem; cursor:pointer; }
+button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.editor-actions { padding:.5rem .7rem; }
+.editor-actions:has(slot:empty) { min-height:0; }
+.editor-content { min-width:0; overflow:hidden; }
+::slotted(.monaco-editor-host), ::slotted(textarea) { height:var(--editor-height); min-height:20rem; width:100%; margin:0; border:0; border-radius:0; }
