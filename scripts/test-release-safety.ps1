@@ -39,7 +39,19 @@ Set-TestManifest
 'unlisted' | Set-Content -LiteralPath (Join-Path $fixture 'unexpected.ps1')
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'an unlisted payload file'
 Write-Host 'Release payload safety checks passed.'
-& (Join-Path $PSScriptRoot 'test-release-publication.ps1')
+function Invoke-EnvironmentIsolatedFixture([string]$Script) {
+    $before = [Environment]::GetEnvironmentVariables()
+    & (Join-Path $PSScriptRoot $Script)
+    $after = [Environment]::GetEnvironmentVariables()
+    $names = @(@($before.Keys) + @($after.Keys) | Select-Object -Unique)
+    foreach ($name in $names) {
+        if (-not $before.Contains($name) -or -not $after.Contains($name) -or $before[$name] -cne $after[$name]) {
+            throw "$Script changed the caller's environment variable $name."
+        }
+    }
+    Write-Host "$Script preserved the caller's environment, including absent variables."
+}
+Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
 & (Join-Path $PSScriptRoot 'test-release-version.ps1')
-& (Join-Path $PSScriptRoot 'test-release-lifecycle.ps1')
+Invoke-EnvironmentIsolatedFixture 'test-release-lifecycle.ps1'

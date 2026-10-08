@@ -80,5 +80,11 @@ try {
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }
 } finally {
-    foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $prior[$name]) }
+    foreach ($name in $names) {
+        if ($null -eq $prior[$name]) {
+            Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+        } else {
+            Set-Item -LiteralPath "Env:$name" -Value $prior[$name]
+        }
+    }
 }

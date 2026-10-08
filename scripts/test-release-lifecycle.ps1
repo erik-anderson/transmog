@@ -121,5 +121,13 @@ edition = "2024"
         Publish-Fixture release/1 1.2.3.8 $false
         Assert-Remote main 3.0.0.0 Canary
         Write-Host 'Release lifecycle passed: branch creation reserves a major; Beta advances revisions; promotion persists Stable; Canary increments only revision; older-major hotfixes and repeat events preserve main.'
-    } finally { foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$prior[$name]) } }
+    } finally {
+        foreach ($name in $names) {
+            if ($null -eq $prior[$name]) {
+                Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -LiteralPath "Env:$name" -Value $prior[$name]
+            }
+        }
+    }
 } finally { Pop-Location }
