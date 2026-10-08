@@ -373,12 +373,6 @@ export class TrafficWorkspace extends WorkspaceElement {
     }catch(error:unknown){this.diagnostic='Traffic Undo failed: '+describeError(error);}
     finally{this.removingTraffic=false;}
   }
-  dragSession(session:SessionSummary,event:DragEvent):void {
-    if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
-    event.dataTransfer?.setData('application/x-transmog-session',session.id);
-    event.dataTransfer?.setData('application/x-transmog-sessions',JSON.stringify([...this.trafficSelection.ids]));
-    if(event.dataTransfer)event.dataTransfer.effectAllowed='copy';
-  }
   private async inspectSession(session:SessionSummary,retainSelection=false):Promise<void> {
     if(!retainSelection){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
     const generation = ++this.inspectionGeneration;

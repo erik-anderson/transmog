@@ -28,7 +28,7 @@ or WebUI.
   at connection accept time. Non-loopback peers show as remote and unresolved
   loopback callers remain explicitly unknown.
 - Completed retained client responses can seed auto-responses directly from
-  the Traffic inspector, multiselection review or drag-and-drop. The Automation
+  the Traffic inspector or multiselection review. The Automation
   workspace exposes a dense priority list and editable properties, with bulk
   actions, reversible deletion, duplicate warnings and a network-free matcher
   tester. The first enabled match wins; exact addresses, guided URL patterns

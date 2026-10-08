@@ -32,7 +32,7 @@
             <tbody>
               <if condition="!sessions.length"><tr><td colspan="{{columns.length}}" class="empty-cell">No matching exchanges.<br>Capture traffic or adjust your filters.</td></tr></if>
               <for each="session in sessions">
-                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="0" draggable="true" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-tone="{{session.tone}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}" @dragstart="{dragSession(session,e)}">
+                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="0" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-tone="{{session.tone}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}">
                   <for each="cell in session.cells">
                     <td key="{{cell.id}}" data-column-id="{{cell.id}}" data-offset="{{cell.offsetCss}}" ?data-pinned="{{cell.pinned}}" ?data-numeric="{{cell.numeric}}" title="{{cell.title}}">
                       <if condition="cell.id == 'method'"><button type="button" class="session-link" @click="{selectWithButton(session,e)}">{{cell.text}}</button></if>

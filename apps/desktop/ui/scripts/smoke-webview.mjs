@@ -173,6 +173,10 @@ try {
       const automation = element.shadowRoot.querySelector('#automation');
       const scratchButton = [...(automation?.querySelectorAll('button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Create from scratch');
+      const capturedResponsePrimary=automation.querySelector('.capture-response-button')?.textContent.trim()==='Choose responses in Traffic';
+      const scratchSecondary=scratchButton?.getClientRects().length===0 && automation.querySelector('.capture-response-button')?.getClientRects().length>0;
+      automation.querySelector('[aria-label="More autoresponse options"]').click();
+      await Promise.resolve();
       scratchButton?.click();
       await Promise.resolve();
       const autoResponseEditor = automation?.querySelector('.auto-response-editor');
@@ -276,7 +280,10 @@ try {
           hooksV2Branding: /hooks v2/i.test(surfaceText),
           automationExpanders: automation?.querySelectorAll('details.automation-card').length ?? 0,
           autoResponseWorkspace: automation?.querySelectorAll('.auto-response-workspace').length ?? 0,
-          autoResponseDropZone: automation?.querySelectorAll('.auto-response-drop-zone').length ?? 0,
+          captureStartHint: automation?.querySelectorAll('.auto-response-start-hint').length ?? 0,
+          capturedResponsePrimary,
+          scratchSecondary,
+          trafficRowDragRemoved:trafficWorkspace.querySelectorAll('tr[data-session-id][draggable]').length===0,
           exactUrlFields: automation?.querySelectorAll('input[name="url"]').length ?? 0,
           firstMatchExplained: /first enabled match wins/i.test(automation?.textContent ?? ''),
           scratchEditorOpened,
@@ -339,7 +346,8 @@ try {
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
   assert(result.ux.automationExpanders >= 1 && result.ux.autoResponseWorkspace === 1
-    && result.ux.autoResponseDropZone === 1 && result.ux.exactUrlFields === 1
+    && result.ux.captureStartHint === 1 && result.ux.exactUrlFields === 1
+    && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
     && result.ux.responseBodyRows === 12 && result.ux.responseBodyResize === 'vertical'
     && result.ux.postHeaderFilterVisible && result.ux.scratchEditorClosed

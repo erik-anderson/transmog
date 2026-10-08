@@ -43,14 +43,15 @@ first. Disabled copies provide a convenient starting point for a variant.
 The primary creation flow starts from a completed traffic item. **Create
 auto-response** copies the exact client-visible status, ordered response headers,
 and encoded body into an immutable response asset, then pre-fills a method and
-exact normalized absolute-URL match. A row can also be dragged to the
-Auto-responses workspace. Multiple selected rows open a review with eligibility,
+exact normalized absolute-URL match. The primary Automation action opens
+Traffic to choose responses, or uses the current reusable response. Multiple
+selected rows open a review with eligibility,
 priority and duplicate explanations. The review can skip responses or retain
 only the earliest or most recent response per identical match. Creation leases
 every eligible source before copying and activates the whole batch atomically;
 a failed source never leaves a partially activated batch. Creating a response
-from scratch remains available but is secondary because it is easier to omit
-protocol-relevant headers.
+from scratch is available in the secondary More menu. Captured responses remain
+the primary path because they retain protocol-relevant headers.
 
 Captured sources require a complete retained client response. Disabled,
 truncated, evicted, missing, or lossy bodies cannot be represented as faithful

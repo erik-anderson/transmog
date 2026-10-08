@@ -183,18 +183,7 @@ export class AppShell extends WebUIElement {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
   }
   disconnectedCallback(): void { window.clearTimeout(this.saveTimer); super.disconnectedCallback(); }
-  allowSessionDrop(event: DragEvent): void {
-    if (event.dataTransfer?.types.some(type=>type==='application/x-transmog-session' || type==='application/x-transmog-sessions')) event.preventDefault();
-  }
-  async dropSession(event: DragEvent): Promise<void> {
-    event.preventDefault();
-    const ids=event.dataTransfer?.getData('application/x-transmog-sessions');
-    const id = event.dataTransfer?.getData('application/x-transmog-session');
-    if(await this.activateView('automation')) {
-      if(ids) {try {await this.automation.beginBatch(JSON.parse(ids));}catch(error:unknown){this.diagnosticText='Responses could not be prepared: '+describeError(error);}}
-      else if(id)await this.automation.beginAutoResponseFromSessionId(id);
-    }
-  }
+
 }
 
 AppShell.define('app-shell');

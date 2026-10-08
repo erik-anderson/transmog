@@ -17,7 +17,7 @@
           </div>
         </form>
       </details>
-      <section class="auto-response-workspace" aria-labelledby="autoresponder-heading" @dragover="{allowSessionDrop(e)}" @drop="{dropSession(e)}">
+      <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
         <header class="auto-response-header">
           <div>
             <h2 id="autoresponder-heading">Auto-responses</h2>
@@ -25,11 +25,12 @@
           </div>
           <div class="actions">
             <autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch>
-            <button w-ref="{newResponseButton}" type="button" popovertarget="new-response-menu" @click="{positionRuleMenu(e)}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">Add rule…</button>
+            <button w-ref="{newResponseButton}" class="capture-response-button" type="button" @click="{beginCapturedResponseFlow()}" ?disabled="{{savingAutoResponse || changingAutoResponse}}"><if condition="selection.reusable">Use selected response</if><if condition="!selection.reusable">Choose responses in Traffic</if></button>
+            <button w-ref="{newResponseOptionsButton}" type="button" class="secondary compact-button" aria-label="More autoresponse options" popovertarget="new-response-menu" @click="{positionRuleMenu(e)}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">More</button>
           </div>
         </header>
-        <div class="auto-response-drop-zone" ?hidden="{{rules.length}}">
-          Drop captured responses here, or select them in Traffic and choose “Create autoresponses…”.
+        <div class="auto-response-start-hint" ?hidden="{{rules.length}}">
+          Select one or more captured responses in Traffic, then choose “Create autoresponses…”.
         </div>
         <div class="auto-response-manager" data-list-share="{{ruleListShare}}">
           <div class="rule-list-pane" @keydown="{listKeyboard(e)}">
@@ -88,7 +89,7 @@
         </form>
           </div>
         </div>
-        <div id="new-response-menu" w-ref="{newRuleMenu}" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><button type="button" @click="{beginAutoResponseFromSelected()}" ?hidden="{{!selection.reusable}}" ?disabled="{{savingAutoResponse}}">Use selected response</button><button type="button" @click="{beginScratchAutoResponse()}">Create from scratch</button></div>
+        <div id="new-response-menu" w-ref="{newRuleMenu}" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><button type="button" @click="{beginScratchAutoResponse()}">Create from scratch</button></div>
         <div id="rule-actions-menu" w-ref="{ruleMenu}" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><strong>{{ruleSelectionText}}</strong><button type="button" @click="{mutateSelectedRules('enable')}">Enable selected</button><button type="button" @click="{mutateSelectedRules('disable')}">Disable selected</button><button type="button" @click="{mutateSelectedRules('up')}">Move earlier</button><button type="button" @click="{mutateSelectedRules('down')}">Move later</button><button type="button" @click="{mutateSelectedRules('duplicate')}">Duplicate as disabled copies</button><button type="button" @click="{mutateSelectedRules('remove')}">Remove selected <kbd>Del</kbd></button></div>
         <dialog w-ref="{unsavedDialog}" class="unsaved-rule-dialog" @cancel="{unsavedCancelled(e)}"><h3>Save changes to this rule?</h3><p>Your current edits have not been saved.</p><div class="actions"><button type="button" @click="{resolveUnsaved('save')}">Save and continue</button><button type="button" class="secondary" @click="{resolveUnsaved('discard')}">Discard changes</button><button type="button" class="secondary" autofocus @click="{resolveUnsaved('stay')}">Keep editing</button></div></dialog>
       </section>

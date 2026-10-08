@@ -92,7 +92,6 @@ await page.addInitScript((workspace) => {
           return {sessions:rows.slice(offset,offset+limit),focusOffset:args.query.focusId?offset:null,totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
         }
         case 'session_detail':
-          if (state.deferDetail===args.id) { state.detailPending=true; await new Promise(resolve=>state.releaseDetail=resolve); }
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
           if (state.evictedIds?.includes(args.id) || state.dismissedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
           return detail(args.id);
@@ -207,7 +206,7 @@ const view = async (name) => {
   await page.locator('#' + name).waitFor({ state: 'visible' });
 };
 const discardIfAsked=async()=>{const dialog=page.locator('.unsaved-rule-dialog');if(await dialog.isVisible())await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();};
-const newScratch=async()=>{await page.getByRole('button',{name:'Add rule…',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
+const newScratch=async()=>{await page.getByRole('button',{name:'More autoresponse options',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
@@ -222,6 +221,13 @@ try {
   assert.equal(requests.some((path) => path === '/monaco.js' || path === '/monaco.css' || editorOutputs.includes(path)), false, 'Monaco loaded at startup');
   assert.equal(await page.evaluate(() => customElements.get('automation-workspace') !== undefined), false, 'Automation hydrated at startup');
   const startupRequests = requests.length;
+  assert.equal(await page.locator('.traffic-table tr[data-session-id][draggable]').count(),0,'Traffic rows still advertise cross-tab dragging');
+  await view('automation');
+  await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false,'Scratch authoring is prominent');
+  assert.match(await page.locator('.auto-response-start-hint').textContent(),/Select one or more captured responses in Traffic/);
+  await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).click();
+  await page.locator('#traffic').waitFor({state:'visible'});
   assert.equal(await page.evaluate(() => CSS.supports('width','attr(data-width type(<length>))')), true, 'Typed CSS attributes required by resizable panels are unavailable');
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
@@ -468,6 +474,8 @@ try {
   const autoEditor=page.locator('.auto-response-editor');
   const sourceLink=page.locator('.auto-response-source a');
   const autoField=name=>autoEditor.locator('[name="'+name+'"]');
+  assert.equal(await page.getByRole('button',{name:'Use selected response',exact:true}).isVisible(),true);
+  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false);
   assert.equal(await autoField('body').getAttribute('rows'),'12');
   assert.equal(await autoField('body').evaluate(body=>getComputedStyle(body).resize),'vertical');
   assert.match(await autoField('body').evaluate(body=>getComputedStyle(body).fontFamily),/Mono|Consolas/);
@@ -557,7 +565,7 @@ try {
   await sourceLink.waitFor({state:'visible'});
   await cancelRule();
 
-  // Neither a slow text preview nor a slow dropped-session lookup can replace a newer draft.
+  // A slow captured-response preview cannot replace a newer draft.
   await page.evaluate(()=>{
     const state=globalThis.__workspaceFixture;state.deferBody='second';
     globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSelected();
@@ -568,16 +576,6 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.deferBody=null;globalThis.__workspaceFixture.releaseBody();await globalThis.__pendingAutoResponse;});
   assert.equal(await autoField('body').inputValue(),'New scratch draft','Late captured body overwrote a newer draft');
   assert.equal(await autoField('body').evaluate(body=>body.readOnly),false);
-  await page.evaluate(()=>{
-    const state=globalThis.__workspaceFixture;state.deferDetail='first';
-    globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSessionId('first');
-  });
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.detailPending);
-  await newScratch();
-  await autoField('name').fill('Newer lookup draft');
-  await page.evaluate(async()=>{globalThis.__workspaceFixture.deferDetail=null;globalThis.__workspaceFixture.releaseDetail();await globalThis.__pendingAutoResponse;});
-  assert.equal(await autoField('name').inputValue(),'Newer lookup draft','Late dropped-session lookup replaced a newer editor');
-
   await autoField('name').fill('Authored response');
   await autoField('url').fill('http://example.test/authored');
   await autoField('method').selectOption('POST');
@@ -604,7 +602,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=false;globalThis.__workspaceFixture.assetDelay=400;});
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click({clickCount:2});
   await autoEditor.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.getByRole('button',{name:'Add rule…',exact:true}).isEnabled(),false,'Creation remains available during a save');
+  assert.equal(await page.getByRole('button',{name:'More autoresponse options',exact:true}).isEnabled(),false,'Creation remains available during a save');
   assert.equal(await autoField('body').isEnabled(),false,'Body can change during a save');
   await savedProperties();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.displayName==='Authored response').length),1,'Double submit created duplicate rules');

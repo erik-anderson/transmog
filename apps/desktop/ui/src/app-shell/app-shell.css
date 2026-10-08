@@ -206,8 +206,8 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .auto-response-header h2 { margin: 0; font-size: 1rem; }
 .auto-response-header p { margin: .25rem 0 0; font-size: .76rem; }
 .auto-response-header .actions { flex: 0 0 auto; }
-.auto-response-drop-zone { margin-top: .8rem; padding: .75rem; border: 1px dashed var(--line-strong); border-radius: .4rem; color: var(--muted); background: var(--panel-subtle); font-size: .75rem; text-align: center; }
-.auto-response-drop-zone:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.auto-response-start-hint { margin-top: .8rem; padding: .75rem; border: 1px solid var(--line); border-radius: .4rem; color: var(--muted); background: var(--panel-subtle); font-size: .75rem; text-align: center; }
+.auto-response-start-hint:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .auto-response-list { display: block; min-height: 0; overflow: auto; }
 .auto-response-empty { margin: 0; padding: .7rem; border-radius: .35rem; background: var(--panel-subtle); font-size: .76rem; }
 .auto-response-rule { background: var(--panel); cursor: default; }

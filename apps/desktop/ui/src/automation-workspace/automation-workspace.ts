@@ -6,7 +6,7 @@ import type { MatchEditor } from '../match-editor/match-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
-import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, editableCharacterEncoding, encodeEditedText, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, editableCharacterEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 
@@ -116,19 +116,19 @@ export class AutomationWorkspace extends WorkspaceElement {
   autoResponseEditBody!: HTMLInputElement;
   autoResponsePreserveEncoding!: HTMLInputElement;
   newResponseButton!: HTMLButtonElement;
+  newResponseOptionsButton!:HTMLButtonElement;
   undoRemoveButton!: HTMLButtonElement;
   private automationStatus: AutomationStatus | null = null;
   private autoResponseSourceState: AutoResponseSource | null = null;
   private editingAutoResponseId: string | null = null;
   private draggedRuleId: string | null = null;
   private editorRevision = 0;
-  private sessionLoadRevision = 0;
   private editorOpener: HTMLElement | null = null;
   private sourceQuery: Promise<void> | null = null;
 
   protected hydratedCallback(): void { void this.refreshAutomation(); }
   disconnectedCallback():void {
-    window.clearTimeout(this.matcherTimer);window.clearTimeout(this.usageTimer);this.matcherTestRevision++;this.editorRevision++;this.sessionLoadRevision++;
+    window.clearTimeout(this.matcherTimer);window.clearTimeout(this.usageTimer);this.matcherTestRevision++;this.editorRevision++;
     this.resolveLeave?.(false);this.resolveLeave=null;this.leaveEditorPromise=null;
     super.disconnectedCallback();
   }
@@ -337,8 +337,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   private prepareEditor(): void {
     this.editorRevision++;
-    this.sessionLoadRevision++;
-    if (this.editorHidden) this.editorOpener = (this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
+    if (this.editorHidden) {const opener=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.editorOpener=opener?.closest('#new-response-menu')?this.newResponseOptionsButton:opener;}
     this.autoResponseForm.reset();
     this.matchTestMethod.value='GET';
     this.draftDirty=false;this.batchReviewHidden=true;this.retainAdvancedMatcher=true;this.advancedMatcherText='';this.ruleDiagnosticText='';this.ruleSupersededBy='';this.customMethodHidden=true;
@@ -428,14 +427,6 @@ export class AutomationWorkspace extends WorkspaceElement {
   private renderRuleUsage(status:AutomationStatus):void {
     const usage=status.usage?.find(item=>item.ruleId===this.editingAutoResponseId);
     this.ruleUsageText=usage?`${usage.matches} retained match${usage.matches===1?'':'es'} · Last matched ${new Date(usage.lastMatchedAt).toLocaleString()}`:'No matches in retained Traffic.';
-  }
-  allowSessionDrop(event: DragEvent): void { if (!this.savingAutoResponse && event.dataTransfer?.types.some(type=>type==='application/x-transmog-session' || type==='application/x-transmog-sessions')) event.preventDefault(); }
-  dropSession(event: DragEvent): void {
-    event.preventDefault();
-    const ids=event.dataTransfer?.getData('application/x-transmog-sessions');
-    if(ids){try{void this.beginBatch(JSON.parse(ids));}catch{this.automationText='The dropped selection is invalid.';}return;}
-    const sessionId = event.dataTransfer?.getData('application/x-transmog-session');
-    if (sessionId) void this.beginAutoResponseFromSessionId(sessionId);
   }
   dragRule(id: string,event: DragEvent): void {
     if (this.savingAutoResponse || this.changingAutoResponse) { event.preventDefault(); return; }
@@ -539,6 +530,12 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
   }
 
+  async beginCapturedResponseFlow():Promise<void> {
+    if(this.savingAutoResponse || this.changingAutoResponse)return;
+    if(this.selection?.reusable)await this.beginAutoResponseFromSelected();
+    else this.activateView('traffic');
+  }
+
   async beginAutoResponseFromSelected(): Promise<void> {
     if (this.savingAutoResponse) return;
     if (this.selection === null) {
@@ -546,20 +543,6 @@ export class AutomationWorkspace extends WorkspaceElement {
       return;
     }
     await this.populateCapturedAutoResponse(this.selection.sessionId, this.selection.detail);
-  }
-
-  async beginAutoResponseFromSessionId(sessionId: string): Promise<void> {
-    if (this.savingAutoResponse) return;
-    const revision = this.editorRevision;
-    const loadRevision = ++this.sessionLoadRevision;
-    try {
-      const detail = await loadSessionDetail(sessionId, true);
-      if (revision !== this.editorRevision || loadRevision !== this.sessionLoadRevision || !this.isConnected || this.savingAutoResponse) return;
-      if (this.selection?.sessionId === sessionId) this.selection = { ...this.selection, detail };
-      await this.populateCapturedAutoResponse(sessionId, detail);
-    } catch (error: unknown) {
-      if (revision === this.editorRevision && loadRevision === this.sessionLoadRevision) this.showNotice('Response cannot be reused', describeError(error), null, null);
-    }
   }
 
   async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail): Promise<void> {
