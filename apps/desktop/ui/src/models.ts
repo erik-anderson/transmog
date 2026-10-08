@@ -57,6 +57,7 @@ export interface SessionPage {
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {
   id: string;
+  startedAt?:number;
   caller: ClientIdentity;
   requests: HeadView[];
   responses: HeadView[];
@@ -153,6 +154,7 @@ export interface WorkspacePreferences {
   requestSplit: number;
   requestBodySplit: number;
   responseBodySplit: number;
+  autoresponseSplit:number;
   wrapCells: boolean;
   compactRows: boolean;
   columns: ColumnPreference[];
@@ -162,10 +164,10 @@ export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equal
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 export type QueryCondition = {kind:'exact';value:string|null} | {kind:'parameters';value:Array<{name:string;value:string}>} | {kind:'ignore'};
 export type UrlCondition = {kind:'exact';value:string} | {kind:'pattern';value:{address:string;query:QueryCondition;caseSensitive:boolean}} | {kind:'regex';value:{pattern:string;scope:'url'|'path';whole:boolean;caseSensitive:boolean;query:QueryCondition|null}};
-export interface MatchExample {method:string;url:string;expected:boolean;}
+export interface MatchExample {method:string;url:string;expected:boolean;headers?:Array<{name:string;value:string}>;}
 export interface MatchTestResult {
   test:{matched:boolean;normalizedUrl:string;checks:Array<{label:string;matched:boolean;detail:string}>;captures:Array<{label:string;value:string}>};
-  wouldServe:boolean;explanation:string;winningRule:string|null;examples:Array<{url:string;passed:boolean}>;
+  wouldServe:boolean;explanation:string;winningRule:string|null;examples:Array<{method:string;url:string;passed:boolean}>;
 }
 export interface AutomationRule {
   id: string;

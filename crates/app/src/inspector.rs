@@ -75,6 +75,8 @@ pub struct HeadView {
 pub struct SessionDetail {
     /// Opaque session identifier.
     pub id: String,
+    /// Start timestamp in Unix milliseconds, also used by batch review.
+    pub started_at: u64,
     /// Best-effort caller identity captured when the connection opened.
     pub caller: ClientIdentityView,
     /// Request heads at original/effective boundaries.
@@ -316,6 +318,15 @@ pub(crate) fn session_detail(
     };
     Ok(SessionDetail {
         id: id.to_ascii_lowercase(),
+        started_at: u64::try_from(
+            snapshot
+                .metadata
+                .started_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
         caller: client_identity_view(&snapshot.metadata.client_identity),
         requests,
         responses,

@@ -77,12 +77,19 @@ pub struct WorkspacePreferences {
     pub request_body_split: u8,
     /// Response headers/body split percentage.
     pub response_body_split: u8,
+    /// Percentage allocated to the autoresponse rule list beside its properties.
+    #[serde(default = "default_autoresponse_split")]
+    pub autoresponse_split: u8,
     /// Wrap table cell contents.
     pub wrap_cells: bool,
     /// Use compact row spacing.
     pub compact_rows: bool,
     /// Ordered column presentation preferences.
     pub columns: Vec<ColumnPreference>,
+}
+
+fn default_autoresponse_split() -> u8 {
+    45
 }
 
 impl Default for WorkspacePreferences {
@@ -98,6 +105,7 @@ impl Default for WorkspacePreferences {
             request_split: 45,
             request_body_split: 35,
             response_body_split: 35,
+            autoresponse_split: 45,
             wrap_cells: false,
             compact_rows: true,
             columns: [
@@ -145,6 +153,7 @@ impl WorkspacePreferences {
                 self.request_split,
                 self.request_body_split,
                 self.response_body_split,
+                self.autoresponse_split,
             ]
             .into_iter()
             .all(|split| (15..=85).contains(&split))

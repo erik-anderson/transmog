@@ -7,10 +7,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
 import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, editableCharacterEncoding, encodeEditedText, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
-import { formatBytes } from '../table-model.js';
+import { defaultWorkspace, formatBytes } from '../table-model.js';
+import {ListSelection,isTextEditing} from '../list-selection.js';
 
 const AUTORESPONSE_PRIORITY_BASE = -1_000_000;
 const MAX_AUTORESPONSE_EDIT_BYTES = 16 * 1024 * 1024;
+type RuleRow=AutomationRule & {order:number;name:string;criteria:string;state:string;toggleLabel:string;first:boolean;last:boolean;selected:boolean;selectionState:string;tabIndex:string;shadowedName:string;shadowedBy:string;diagnostic:string;responseText:string};
+type BatchRow={id:string;name:string;method:string;url:string;eligible:boolean;reason:string;duplicate:string;startedAt:number};
 
 export class AutomationWorkspace extends WorkspaceElement {
   @attr view = 'traffic';
@@ -27,9 +30,14 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable existingResponse=false;
   @observable ruleUsageText='';
   @observable requestHeadersOpen=false;
+  @observable customMethodHidden=true;
+  @observable advancedMatcherText='';
+  autoResponseCustomMethod!:HTMLInputElement;
+  private retainAdvancedMatcher=true;
   matchEditor!:MatchEditor;
   matchTestUrl!:HTMLInputElement;
   matchTestHeaders!:HTMLTextAreaElement;
+  matchTestMethod!:HTMLInputElement;
   autoResponseEnabled!:HTMLInputElement;
   private savedResponse:ResponseAssetInspection|null=null;
   private responseBodyPath:string|null=null;
@@ -40,7 +48,38 @@ export class AutomationWorkspace extends WorkspaceElement {
   autoresponseStateChanged():void {if(this.autoresponseState && this.autoresponseState!==this.automationStatus)this.renderAutomation(this.autoresponseState);}
   @observable automationText = initialState.automationText;
   @observable automationKind = initialState.automationKind;
-  @observable rules: Array<AutomationRule & {order: number; name: string; criteria: string; state: string; toggleLabel: string; first: boolean; last: boolean}> = initialState.rules;
+  @observable rules:RuleRow[] = initialState.rules;
+  @observable visibleRules:RuleRow[]=[];
+  @observable ruleSearch='';
+  @observable ruleFilter='all';
+  @observable ruleSelectionCount=0;
+  @observable ruleSelectionText='Select a rule to edit its properties.';
+  @observable ruleDiagnosticText='';
+  @observable ruleSupersededBy='';
+  @observable draftDirty=false;
+  @observable batchReviewHidden=true;
+  @observable batchRows:BatchRow[]=[];
+  @observable batchLoading=false;
+  @observable batchEligibleCount=0;
+  @observable batchReviewText='';
+  @observable batchError='';
+  @observable ruleListShare='45%';
+  @observable ruleListSplit=45;
+  @observable ruleMenuX='12px';
+  @observable ruleMenuY='80px';
+  @observable loadingSavedResponse=false;
+  ruleMoreButton!:HTMLButtonElement;
+  @observable preferences=defaultWorkspace();
+  @observable allRulesSelected=false;
+  ruleMenu!:HTMLElement;
+  newRuleMenu!:HTMLElement;
+  unsavedDialog!:HTMLDialogElement;
+  private ruleSelection=new ListSelection();
+  private assetsIndex=new Map<string,ResponseAsset>();
+  private ruleHistory:Array<{before:AutomationRule[];after:AutomationRule[];label:string}>=[];
+  private leaveEditorPromise:Promise<boolean>|null=null;
+  private resolveLeave:((value:boolean)=>void)|null=null;
+  private batchGeneration=0;
   @observable editorHidden = initialState.editorHidden;
   @observable editorTitle = initialState.editorTitle;
   @observable sourceText = initialState.sourceText;
@@ -85,42 +124,203 @@ export class AutomationWorkspace extends WorkspaceElement {
   private sessionLoadRevision = 0;
   private editorOpener: HTMLElement | null = null;
   private sourceQuery: Promise<void> | null = null;
-  private removedRule: {rule: AutomationRule; index: number} | null = null;
 
   protected hydratedCallback(): void { void this.refreshAutomation(); }
+  disconnectedCallback():void {
+    window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.editorRevision++;this.sessionLoadRevision++;
+    this.resolveLeave?.(false);this.resolveLeave=null;this.leaveEditorPromise=null;
+    super.disconnectedCallback();
+  }
   viewChanged(): void { if (this.view === 'automation') void this.refreshSourceAvailability(); }
   private currentMatcher(data:FormData,existing?:AutomationRule):AutomationRule['matcher'] {
-    const method=String(data.get('method')??'GET').toUpperCase();
+    const selectedMethod=String(data.get('method')??'GET');const method=(selectedMethod==='CUSTOM'?String(data.get('customMethod')??''):selectedMethod).toUpperCase();
     const exact=this.parseEditorHeaders('requestHeaders',data).map(header=>({name:header.name,condition:{kind:'exact',value:Array.from(new TextEncoder().encode(header.value))}}));
-    const extra=existing?.matcher.requestHeaders.filter(header=>header.condition.kind!=='exact')??[];
-    return {...existing?.matcher,method:method==='ANY'?null:method,url:this.matchEditor.value,examples:this.matchExamples,scheme:existing?.matcher.scheme??null,host:existing?.matcher.host??null,port:existing?.matcher.port??null,pathPrefix:existing?.matcher.pathPrefix??null,query:existing?.matcher.query??null,requestHeaders:[...exact,...extra],responseHeaders:existing?.matcher.responseHeaders??[],responseStatus:existing?.matcher.responseStatus??null,responseStatusClass:existing?.matcher.responseStatusClass??null};
+    const extra=this.retainAdvancedMatcher?existing?.matcher.requestHeaders.filter(header=>header.condition.kind!=='exact')??[]:[];
+    const advanced=this.retainAdvancedMatcher?existing?.matcher:undefined;
+    return {...existing?.matcher,method:method==='ANY'?null:method,url:this.matchEditor.value,examples:this.matchExamples,scheme:advanced?.scheme??null,host:advanced?.host??null,port:advanced?.port??null,pathPrefix:advanced?.pathPrefix??null,query:advanced?.query??null,requestHeaders:[...exact,...extra],responseHeaders:advanced?.responseHeaders??[],responseStatus:advanced?.responseStatus??null,responseStatusClass:advanced?.responseStatusClass??null};
   }
-  onMatcherChange():void {window.clearTimeout(this.matcherTimer);this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
+  removeAdvancedConditions():void {this.retainAdvancedMatcher=false;this.advancedMatcherText='';this.draftDirty=true;this.scheduleMatcherTest();}
+  private setEditorMethod(method:string|null):void {
+    const value=method??'ANY';const known=['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','ANY'].includes(value);
+    this.autoResponseMethod.value=known?value:'CUSTOM';this.autoResponseCustomMethod.value=known?'':value;this.customMethodHidden=known;
+  }
+  markDraftDirty(event:Event):void {
+    const target=event.target as HTMLElement;
+    if(target.closest('[data-matcher-test],[data-placeholder-editor]') || (target instanceof HTMLInputElement && target.name==='enabled' && this.editingAutoResponseId))return;
+    this.draftDirty=true;
+  }
+  onMatcherChange():void {this.draftDirty=true;this.scheduleMatcherTest();}
+  scheduleMatcherTest():void {window.clearTimeout(this.matcherTimer);this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
+  formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
+  async canLeaveEditor():Promise<boolean> {
+    if(this.savingAutoResponse)return false;
+    if(!this.draftDirty || this.editorHidden)return true;
+    if(this.leaveEditorPromise)return this.leaveEditorPromise;
+    this.leaveEditorPromise=new Promise(resolve=>{this.resolveLeave=resolve;});this.unsavedDialog.showModal();
+    return this.leaveEditorPromise;
+  }
+  async resolveUnsaved(choice:string):Promise<void> {
+    if(choice==='save') {if(this.autoResponseForm.reportValidity())await this.saveAutoResponse(new Event('submit',{cancelable:true}));if(this.draftDirty)choice='stay';}
+    if(choice==='discard')this.draftDirty=false;
+    this.unsavedDialog.close();const resolve=this.resolveLeave;this.resolveLeave=null;this.leaveEditorPromise=null;resolve?.(choice!=='stay');
+  }
+  unsavedCancelled(event:Event):void {event.preventDefault();void this.resolveUnsaved('stay');}
+  async revertAutoResponse():Promise<void> {
+    const rule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);this.draftDirty=false;
+    if(rule)await this.editAutoResponse(rule,true);else await this.beginScratchAutoResponse();
+  }
+  async setEditorEnabled():Promise<void> {
+    const id=this.editingAutoResponseId;if(!id){this.draftDirty=true;return;}
+    await this.mutateAutoResponse(id,'toggle');
+    this.autoResponseEnabled.checked=this.automationStatus?.rules.find(rule=>rule.id===id)?.enabled??true;
+  }
+  private ruleOrder():string[] {return this.visibleRules.map(rule=>rule.id);}
+  preferencesChanged():void {this.ruleListSplit=this.preferences.autoresponseSplit??45;this.ruleListShare=this.ruleListSplit+'%';}
+  private renderRuleSelection():void {
+    this.ruleSelectionCount=this.ruleSelection.ids.size;
+    this.ruleSelectionText=this.ruleSelectionCount?`${this.ruleSelectionCount} rule${this.ruleSelectionCount===1?'':'s'} selected`:'Select a rule to edit its properties.';
+    this.rules=this.rules.map(rule=>({...rule,selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1'}));
+    const search=this.ruleSearch.toLowerCase();
+    this.visibleRules=this.rules.filter(rule=>(!search || (rule.name+' '+rule.criteria).toLowerCase().includes(search)) && (this.ruleFilter==='all' || (this.ruleFilter==='enabled' && rule.enabled!==false) || (this.ruleFilter==='disabled' && rule.enabled===false) || (this.ruleFilter==='shadowed' && Boolean(rule.shadowedBy))));
+    if(!this.visibleRules.some(rule=>rule.tabIndex==='0') && this.visibleRules[0])this.visibleRules=this.visibleRules.map((rule,index)=>({...rule,tabIndex:index===0?'0':'-1'}));
+    this.allRulesSelected=this.visibleRules.length>0 && this.visibleRules.every(rule=>this.ruleSelection.ids.has(rule.id));
+  }
+  searchRules(event:Event):void {this.ruleSearch=(event.target as HTMLInputElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
+  filterRules(event:Event):void {this.ruleFilter=(event.target as HTMLSelectElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
+  async selectRule(rule:AutomationRule,event?:MouseEvent,checkbox=false):Promise<void> {
+    if(this.savingAutoResponse || this.changingAutoResponse)return;
+    const next=this.ruleSelection.clone();next.choose(rule.id,this.ruleOrder(),checkbox?{ctrlKey:true,shiftKey:event?.shiftKey??false}:event??{});
+    if((next.ids.size!==1 || !next.ids.has(this.editingAutoResponseId??'')) && !await this.canLeaveEditor())return;
+    this.ruleSelection=next;this.batchReviewHidden=true;this.renderRuleSelection();
+    if(next.ids.size===1){const selected=this.rules.find(rule=>next.ids.has(rule.id));if(selected)await this.editAutoResponse(selected);}
+    else {this.editorRevision++;this.editorHidden=true;this.editingAutoResponseId=null;this.autoResponseSourceState=null;}
+    this.ruleSelection.focused=rule.id;this.renderRuleSelection();this.focusRule(rule.id);
+  }
+  selectRuleCheckbox(rule:AutomationRule,event:MouseEvent):void {event.stopPropagation();void this.selectRule(rule,event,true);}
+  async ruleKeyboard(rule:AutomationRule,event:KeyboardEvent):Promise<void> {
+    if(isTextEditing(event))return;
+    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();if(!this.editorHidden)this.autoResponseForm.requestSubmit();return;}
+    if(event.key==='Delete'){event.preventDefault();await this.mutateSelectedRules('remove');return;}
+    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();await this.undoRemoveAutoResponse();return;}
+    if((event.ctrlKey||event.metaKey) && event.altKey && (event.key==='ArrowUp'||event.key==='ArrowDown')){event.preventDefault();await this.mutateSelectedRules(event.key==='ArrowUp'?'up':'down');return;}
+    const next=this.ruleSelection.clone();if(!next.key(rule.id,this.ruleOrder(),event))return;
+    if((next.ids.size!==1 || !next.ids.has(this.editingAutoResponseId??'')) && !await this.canLeaveEditor())return;
+    this.ruleSelection=next;this.renderRuleSelection();this.$flushUpdates();
+    const focused=this.rules.find(rule=>rule.id===next.focused);if(focused){this.focusRule(focused.id);const selected=this.rules.find(row=>next.ids.has(row.id));if(next.ids.size===1 && selected)await this.editAutoResponse(selected);else if(next.ids.size!==1){this.editorRevision++;this.editorHidden=true;}this.ruleSelection.focused=focused.id;this.renderRuleSelection();this.focusRule(focused.id);}
+    else {this.editorRevision++;this.editorHidden=true;this.editingAutoResponseId=null;}
+  }
+  listKeyboard(event:KeyboardEvent):void {
+    if(event.defaultPrevented || isTextEditing(event))return;
+    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();void this.undoRemoveAutoResponse();}
+    else if(event.key==='Delete'){event.preventDefault();void this.mutateSelectedRules('remove');}
+  }
+  positionRuleMenu(event:MouseEvent):void {const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();this.ruleMenuX=Math.max(10,Math.min(rect.left,window.innerWidth-260))+'px';this.ruleMenuY=Math.max(50,Math.min(rect.bottom+4,window.innerHeight-320))+'px';this.$flushUpdates();}
+  async openRuleMenu(rule:AutomationRule,event:MouseEvent):Promise<void> {event.preventDefault();if(!this.ruleSelection.ids.has(rule.id))await this.selectRule(rule);if(this.ruleSelection.ids.has(rule.id)){this.ruleMenuX=Math.max(10,Math.min(event.clientX,window.innerWidth-260))+'px';this.ruleMenuY=Math.max(50,Math.min(event.clientY,window.innerHeight-320))+'px';this.$flushUpdates();this.ruleMenu.showPopover();}}
+  async selectAllRules(event:Event):Promise<void> {const input=event.target as HTMLInputElement,checked=input.checked;if(!await this.canLeaveEditor()){input.checked=this.allRulesSelected;return;}this.ruleSelection.ids=new Set(checked?this.visibleRules.map(rule=>rule.id):[]);this.renderRuleSelection();const selected=this.rules.find(rule=>this.ruleSelection.ids.has(rule.id));if(this.ruleSelectionCount===1 && selected)await this.editAutoResponse(selected);else {this.editorRevision++;this.editorHidden=true;}}
+  resizeRuleList(event:CustomEvent<{value:number;committed:boolean}>):void {this.ruleListSplit=event.detail.value;this.ruleListShare=event.detail.value+'%';this.$emit('workspace-change',{patch:{autoresponseSplit:event.detail.value},committed:event.detail.committed});}
+  private rememberRuleChange(before:AutomationRule[],after:AutomationRule[],label:string):void {
+    this.ruleHistory.push({before:structuredClone(before),after:structuredClone(after),label});if(this.ruleHistory.length>20)this.ruleHistory.shift();this.undoRemoveText=label;
+  }
+  async mutateSelectedRules(mutation:'enable'|'disable'|'remove'|'up'|'down'|'duplicate'):Promise<void> {
+    if(this.savingAutoResponse || this.changingAutoResponse || !this.ruleSelection.ids.size)return;
+    if((mutation==='remove' || mutation==='duplicate') && !await this.canLeaveEditor())return;
+    this.ruleMenu.hidePopover();this.changingAutoResponse=true;const originalSelection=this.ruleSelection.clone();
+    try {
+      const current=await invoke<AutomationStatus>('automation_status');const before=this.autoResponseRules(current),selected=this.ruleSelection.ids;let ordered=[...before];
+      if(mutation==='remove')ordered=ordered.filter(rule=>!selected.has(rule.id));
+      else if(mutation==='enable' || mutation==='disable')ordered=ordered.map(rule=>selected.has(rule.id)?{...rule,enabled:mutation==='enable',revision:rule.revision+1}:rule);
+      else if(mutation==='duplicate') {
+        const copies:string[]=[];ordered=ordered.flatMap(rule=>{if(!selected.has(rule.id))return [rule];const id='autoresponse-rule-'+crypto.randomUUID().replaceAll('-','');copies.push(id);return [rule,{...rule,id,displayName:Array.from('Copy of '+(rule.displayName??'Auto-response')).slice(0,128).join(''),enabled:false,revision:1}];});this.ruleSelection.ids=new Set(copies);
+      } else if(mutation==='up') {
+        for(let index=1;index<ordered.length;index++)if(selected.has(ordered[index]!.id) && !selected.has(ordered[index-1]!.id))[ordered[index-1],ordered[index]]=[ordered[index]!,ordered[index-1]!];
+      } else {for(let index=ordered.length-2;index>=0;index--)if(selected.has(ordered[index]!.id) && !selected.has(ordered[index+1]!.id))[ordered[index],ordered[index+1]]=[ordered[index+1]!,ordered[index]!];}
+      const label=mutation==='remove'?`Removed ${selected.size} rule${selected.size===1?'':'s'}.`:mutation==='duplicate'?'Created disabled copies.':mutation==='up'||mutation==='down'?'Changed rule priority.':'Changed selected rule enabled states.';
+      const status=await this.activateAutoResponseOrder(current,ordered);this.rememberRuleChange(before,this.autoResponseRules(status),label);this.renderAutomation(status);
+      if(mutation==='remove'){this.ruleSelection.clear();this.editorHidden=true;this.draftDirty=false;this.editorRevision++;this.changingAutoResponse=false;this.$flushUpdates();this.undoRemoveButton.focus();}
+      else {
+        this.renderRuleSelection();const id=[...this.ruleSelection.ids][0];
+        if(mutation==='duplicate'){this.changingAutoResponse=false;this.draftDirty=false;if(this.ruleSelection.ids.size===1 && id)await this.editAutoResponse(status.rules.find(rule=>rule.id===id)!,true);else {this.editorRevision++;this.editorHidden=true;}}
+        if(this.editingAutoResponseId)this.autoResponseEnabled.checked=status.rules.find(rule=>rule.id===this.editingAutoResponseId)?.enabled??true;
+        if(id)this.focusRule(id);
+      }
+    }catch(error:unknown){this.ruleSelection=originalSelection;this.renderRuleSelection();this.automationText='Rule change failed: '+describeError(error);this.automationKind='error';}
+    finally{this.changingAutoResponse=false;}
+  }
+  async beginBatch(ids:string[]):Promise<void> {
+    if(!Array.isArray(ids) || ids.length>256 || ids.some(id=>typeof id!=='string')){this.showNotice('Select fewer responses','Create 1–256 responses per batch. Your Traffic selection is preserved.',null,null);return;}
+    if(!ids.length || !await this.canLeaveEditor())return;
+    this.prepareEditor();this.newRuleMenu.hidePopover();this.editorHidden=true;this.batchReviewHidden=false;this.autoResponseSourceState=null;this.editingAutoResponseId=null;
+    const revision=this.editorRevision;this.batchLoading=true;this.batchError='';
+    this.batchRows=ids.map(id=>({id,name:'Checking response…',method:'',url:'',eligible:false,reason:'Checking retention…',duplicate:'',startedAt:0}));
+    try {
+    const status=await invoke<AutomationStatus>('automation_status');if(revision!==this.editorRevision)return;this.batchGeneration=status.generation;
+    for(let offset=0;offset<ids.length;offset+=8) {
+      const results=await Promise.all(ids.slice(offset,offset+8).map(async id=>{
+        try {const detail=await invoke<SessionDetail>('session_detail',{id});const source=clientResponseSource(detail);const request=detail.requests.find(head=>head.boundary==='client-request');const method=request?.method??'';const url=request?.target??'';return {id,name:method+' '+shortUrl(url),method,url,eligible:Boolean(source),reason:source?'Ready':autoResponseUnavailableReason(detail),duplicate:'',startedAt:detail.startedAt??0};}
+        catch(error:unknown){return {id,name:'Unavailable response',method:'',url:'',eligible:false,reason:describeError(error),duplicate:'',startedAt:0};}
+      }));
+      if(revision!==this.editorRevision)return;const updates=new Map(results.map(row=>[row.id,row]));this.batchRows=this.batchRows.map(row=>updates.get(row.id)??row);this.renderBatchReview();
+    }
+    if(revision===this.editorRevision){this.batchLoading=false;this.renderBatchReview();}
+    }catch(error:unknown){if(revision===this.editorRevision)this.batchError=describeError(error);}
+    finally{if(revision===this.editorRevision)this.batchLoading=false;}
+  }
+  private renderBatchReview():void {
+    const seen=new Set<string>();
+    this.batchRows=this.batchRows.map(row=>{
+      const key=row.method+' '+row.url;let duplicate=row.eligible && seen.has(key)?'Always superseded by an earlier selected response with the same match.':'';
+      if(!duplicate && row.eligible){const existing=this.automationStatus?.rules.find(rule=>rule.request.responseAsset && rule.matcher.method===row.method && rule.matcher.url?.kind==='exact' && rule.matcher.url.value===row.url && rule.matcher.requestHeaders.length===0 && !rule.matcher.host && !rule.matcher.scheme && !rule.matcher.port && !rule.matcher.pathPrefix && rule.matcher.query===null);if(existing)duplicate=`Will have higher priority than existing “${existing.displayName??'Auto-response'}” with the same match.`;}
+      if(row.eligible)seen.add(key);return {...row,duplicate};
+    });
+    this.batchEligibleCount=this.batchRows.filter(row=>row.eligible).length;const unavailable=this.batchRows.length-this.batchEligibleCount;
+    this.batchReviewText=this.batchLoading?`${this.batchRows.length} selected · Checking retained responses…`:`${this.batchRows.length} selected · ${this.batchEligibleCount} ready${unavailable?` · ${unavailable} unavailable`:''}. Rules are added at the top in the order below.`;
+  }
+  skipBatchRow(id:string):void {this.batchRows=this.batchRows.filter(row=>row.id!==id);this.renderBatchReview();}
+  moveBatchRow(id:string,direction:number):void {const rows=[...this.batchRows],index=rows.findIndex(row=>row.id===id),next=index+direction;if(next<0 || next>=rows.length)return;[rows[index],rows[next]]=[rows[next]!,rows[index]!];this.batchRows=rows;this.renderBatchReview();}
+  keepFirstBatchMatches():void {const seen=new Set<string>();this.batchRows=this.batchRows.filter(row=>{const key=row.method+' '+row.url;if(!row.eligible)return true;if(seen.has(key))return false;seen.add(key);return true;});this.renderBatchReview();}
+  keepNewestBatchMatches():void {const newest=new Map<string,BatchRow>();for(const row of this.batchRows)if(row.eligible){const key=row.method+' '+row.url;const previous=newest.get(key);if(!previous || row.startedAt>previous.startedAt)newest.set(key,row);}this.batchRows=this.batchRows.filter(row=>!row.eligible || newest.get(row.method+' '+row.url)===row);this.renderBatchReview();}
+  reviewBatchAgain():void {void this.beginBatch(this.batchRows.map(row=>row.id));}
+  cancelBatch():void {if(this.savingAutoResponse)return;this.editorRevision++;this.batchReviewHidden=true;this.batchLoading=false;this.newResponseButton.focus();}
+  async createBatchRules():Promise<void> {
+    if(this.savingAutoResponse || this.batchLoading || !this.batchEligibleCount)return;this.savingAutoResponse=true;this.batchError='';
+    try {
+      const before=this.automationStatus?this.autoResponseRules(this.automationStatus):[];
+      const result=await invoke<{status:AutomationStatus;createdIds:string[]}>('create_autoresponse_batch',{input:{ids:this.batchRows.filter(row=>row.eligible).map(row=>row.id),generation:this.batchGeneration}});
+      this.rememberRuleChange(before,this.autoResponseRules(result.status),`Created ${result.createdIds.length} rules.`);this.renderAutomation(result.status);await this.refreshAutomation();this.ruleSelection.ids=new Set(result.createdIds);this.ruleSelection.focused=result.createdIds[0]??null;this.batchReviewHidden=true;this.renderRuleSelection();
+      this.savingAutoResponse=false;const id=result.createdIds[0];if(id){this.focusRule(id);if(result.createdIds.length===1)await this.editAutoResponse(this.rules.find(rule=>rule.id===id)!);}
+    }catch(error:unknown){this.batchError=describeError(error);}
+    finally{this.savingAutoResponse=false;}
+  }
   async testMatcher():Promise<void> {
     const revision=++this.matcherTestRevision;
     this.matcherTestBusy=true;this.matcherTestError='';
     try {
       const existing=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
       const matcher=this.currentMatcher(new FormData(this.autoResponseForm),existing);
+      try {await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:matcher.method??'GET',url:'https://example.test/',headers:[],ruleId:this.editingAutoResponseId,enabled:this.autoResponseEnabled.checked}});}
+      catch(error:unknown){if(revision===this.matcherTestRevision)this.matchEditor.matchValidationError=describeError(error);throw error;}
+      if(revision!==this.matcherTestRevision)return;this.matchEditor.matchValidationError='';
+      if(!this.matchTestUrl.value){this.matchTestResult=null;return;}
       const headers=parseHeaderLines(this.matchTestHeaders.value);
-      const result=await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:this.autoResponseMethod.value==='ANY'?'GET':this.autoResponseMethod.value,url:this.matchTestUrl.value,headers,ruleId:this.editingAutoResponseId,enabled:this.autoResponseEnabled.checked}});
+      const result=await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:this.matchTestMethod.value||'GET',url:this.matchTestUrl.value,headers,ruleId:this.editingAutoResponseId,enabled:this.autoResponseEnabled.checked}});
       if(revision===this.matcherTestRevision && !this.editorHidden)this.matchTestResult=result;
     } catch(error:unknown) {if(revision===this.matcherTestRevision){this.matcherTestError=describeError(error);this.matchTestResult=null;}}
     finally {if(revision===this.matcherTestRevision)this.matcherTestBusy=false;}
   }
   addMatchExample(expected:boolean):void {
     if(!this.matchTestUrl.value || this.matchExamples.length>=32)return;
-    const example={method:this.autoResponseMethod.value==='ANY'?'GET':this.autoResponseMethod.value,url:this.matchTestUrl.value,expected};
+    let headers:Array<{name:string;value:string}>;try{headers=parseHeaderLines(this.matchTestHeaders.value);}catch(error:unknown){this.matcherTestError=describeError(error);return;}
+    this.draftDirty=true;const example={method:this.matchTestMethod.value||'GET',url:this.matchTestUrl.value,expected,headers};
     this.matchExamples=[...this.matchExamples.filter(item=>item.url!==example.url || item.method!==example.method),example];void this.testMatcher();
   }
-  removeMatchExample(url:string):void {this.matchExamples=this.matchExamples.filter(example=>example.url!==url);void this.testMatcher();}
+  removeMatchExample(url:string,method?:string):void {this.draftDirty=true;this.matchExamples=this.matchExamples.filter(example=>example.url!==url || (method!==undefined && example.method!==method));void this.testMatcher();}
   async chooseResponseBody():Promise<void> {
     if(this.savingAutoResponse)return;
     const revision=this.editorRevision;
     const path=await invoke<string|null>('pick_response_body');
-    if(path && revision===this.editorRevision){this.responseBodyPath=path;this.responseBodyFile=path.split(/[\\/]/).pop()??'Selected file';}
+    if(path && revision===this.editorRevision){this.draftDirty=true;this.responseBodyPath=path;this.responseBodyFile=path.split(/[\\/]/).pop()??'Selected file';}
   }
-  clearResponseBodyFile():void {this.responseBodyPath=null;this.responseBodyFile='';}
+  clearResponseBodyFile():void {this.draftDirty=true;this.responseBodyPath=null;this.responseBodyFile='';}
   private editableHeaders(asset:ResponseAsset):string {
     this.protectedResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
     for(const field of asset.headers??[]) {
@@ -135,6 +335,9 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.sessionLoadRevision++;
     if (this.editorHidden) this.editorOpener = (this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
     this.autoResponseForm.reset();
+    this.matchTestMethod.value='GET';
+    this.draftDirty=false;this.batchReviewHidden=true;this.retainAdvancedMatcher=true;this.advancedMatcherText='';this.ruleDiagnosticText='';this.ruleSupersededBy='';this.customMethodHidden=true;
+    this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
     this.savedHeaderText='';this.protectedResponseHeaders=[];
     window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;
@@ -145,10 +348,11 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.autoResponseError = ''; this.requestHeadersError = ''; this.responseHeadersError = '';
     this.sourceQuery = null;
   }
-  private openEditor(): void {
+  private openEditor(focusProperties=true): void {
+    this.newRuleMenu.hidePopover();
     this.editorHidden = false; this.$flushUpdates();
     this.autoResponseForm.scrollIntoView({block:'start'});
-    (this.autoResponseForm.elements.namedItem('name') as HTMLInputElement).focus({preventScroll:true});
+    if(focusProperties)(this.autoResponseForm.elements.namedItem('name') as HTMLInputElement).focus({preventScroll:true});
   }
   async refreshSourceAvailability(): Promise<void> {
     const id = this.sourceSessionId;
@@ -202,21 +406,29 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.rules = rules.map((rule,index) => {
       const headers = rule.matcher.requestHeaders.length;
       const enabled = rule.enabled ?? true;
+      const diagnostic=status.diagnostics?.find(item=>item.ruleId===rule.id);const earlier=status.rules.find(item=>item.id===diagnostic?.supersededBy);const asset=this.assetsIndex.get(rule.request.responseAsset??'');
       return { ...rule, enabled, order: index + 1, name: rule.displayName ?? 'Auto-response',
         criteria: `${rule.matcher.method ?? 'ANY'} ${rule.matcher.url?.kind==='exact'?rule.matcher.url.value:rule.matcher.url?.kind==='pattern'?rule.matcher.url.value.address:rule.matcher.url?.kind==='regex'?rule.matcher.url.value.pattern:'any URL'}${headers === 0 ? '' : ` · ${headers} header condition${headers === 1 ? '' : 's'}`} · saved response`,
-        state: enabled ? 'Enabled' : 'Disabled', toggleLabel: enabled ? 'Disable' : 'Enable', first: index === 0, last: index === rules.length - 1 };
+        state: enabled ? status.autoresponsesEnabled===false?'Paused':'Enabled' : 'Disabled', toggleLabel: enabled ? 'Disable' : 'Enable', first: index === 0, last: index === rules.length - 1,
+        selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1',shadowedName:earlier?.displayName??earlier?.id??'',shadowedBy:diagnostic?.supersededBy??'',diagnostic:diagnostic?diagnostic.duplicateResponse?'Duplicate':'Shadowed':'',responseText:asset?`${asset.status} · ${formatBytes(asset.bodyBytes)}`:'Saved response'};
     });
+    this.renderRuleSelection();const selected=this.rules.find(rule=>rule.id===this.editingAutoResponseId);
+    this.ruleSupersededBy=selected?.shadowedBy??'';this.ruleDiagnosticText=selected?.shadowedBy?`${selected.enabled===false?'If enabled, this':'This'} rule is always superseded by “${selected.shadowedName}”, which has equivalent matching conditions${selected.diagnostic==='Duplicate'?' and the same response':''}.`:'';
   }
-  allowSessionDrop(event: DragEvent): void { if (!this.savingAutoResponse && event.dataTransfer?.types.includes('application/x-transmog-session')) event.preventDefault(); }
+  allowSessionDrop(event: DragEvent): void { if (!this.savingAutoResponse && event.dataTransfer?.types.some(type=>type==='application/x-transmog-session' || type==='application/x-transmog-sessions')) event.preventDefault(); }
   dropSession(event: DragEvent): void {
     event.preventDefault();
+    const ids=event.dataTransfer?.getData('application/x-transmog-sessions');
+    if(ids){try{void this.beginBatch(JSON.parse(ids));}catch{this.automationText='The dropped selection is invalid.';}return;}
     const sessionId = event.dataTransfer?.getData('application/x-transmog-session');
     if (sessionId) void this.beginAutoResponseFromSessionId(sessionId);
   }
   dragRule(id: string,event: DragEvent): void {
     if (this.savingAutoResponse || this.changingAutoResponse) { event.preventDefault(); return; }
+    if(!this.ruleSelection.ids.has(id)){if(this.draftDirty){event.preventDefault();return;}this.ruleSelection.replace(id);this.renderRuleSelection();}
     this.draggedRuleId = id;
     event.dataTransfer?.setData('application/x-transmog-autoresponse-rule',id);
+    event.dataTransfer?.setData('application/x-transmog-autoresponse-rules',JSON.stringify([...this.ruleSelection.ids]));
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
   }
   allowRuleDrop(id: string,event: DragEvent): void { if (!this.savingAutoResponse && !this.changingAutoResponse && this.draggedRuleId !== null && this.draggedRuleId !== id) event.preventDefault(); }
@@ -228,18 +440,22 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.draggedRuleId = null;
     const current = this.automationStatus;
     if (!dragged || dragged === id || current === null) return;
-    const ordered = this.autoResponseRules(current);
-    const from = ordered.findIndex((rule) => rule.id === dragged);
-    const to = ordered.findIndex((rule) => rule.id === id);
-    if (from < 0 || to < 0) return;
-    const [moved] = ordered.splice(from,1);
-    if (moved) ordered.splice(to,0,moved);
+    const before = this.autoResponseRules(current);
+    let selected:string[]=[dragged];const multiple=event.dataTransfer?.getData('application/x-transmog-autoresponse-rules');
+    if(multiple){try{const parsed:unknown=JSON.parse(multiple);if(Array.isArray(parsed) && parsed.every(item=>typeof item==='string'))selected=parsed;}catch{return;}}
+    if(selected.includes(id))return;
+    const group=before.filter(rule=>selected.includes(rule.id));const ordered=before.filter(rule=>!selected.includes(rule.id));const to=ordered.findIndex(rule=>rule.id===id);
+    if(!group.length || to<0)return;ordered.splice(to,0,...group);
     this.changingAutoResponse = true;
-    try { this.renderAutomation(await this.activateAutoResponseOrder(current,ordered)); this.focusRule(dragged); }
+    try { const status=await this.activateAutoResponseOrder(current,ordered);this.rememberRuleChange(this.autoResponseRules(current),this.autoResponseRules(status),'Changed rule priority.');this.renderAutomation(status);this.focusRule(dragged); }
     catch (error: unknown) { this.automationText = `Auto-response reorder failed: ${describeError(error)}`; this.automationKind = 'error'; }
     finally { this.changingAutoResponse = false; }
   }
-  showMatchedRule(id: string): void {
+  async showMatchedRule(id: string): Promise<void> {
+    const rule=this.automationStatus?.rules.find(rule=>rule.id===id);
+    if(!rule){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
+    if(!await this.canLeaveEditor())return;
+    this.ruleSearch='';this.ruleFilter='all';this.ruleSelection.replace(id);this.renderRuleSelection();await this.editAutoResponse(rule);
     this.highlightedRuleId = id;
     this.$flushUpdates();
     const card = this.getRootNode() as ShadowRoot;
@@ -287,7 +503,7 @@ export class AutomationWorkspace extends WorkspaceElement {
           responseAsset: null,
           allowNonIdempotentBodyReplacement: false,
         },
-        response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
+                response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
       };
       const rules = current.rules.filter((candidate) => candidate.id !== rule.id);
       rules.push(rule);
@@ -302,7 +518,8 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   async refreshAutomation(): Promise<void> {
     try {
-      this.renderAutomation(await invoke<AutomationStatus>('automation_status'));
+      const [status,assets]=await Promise.all([invoke<AutomationStatus>('automation_status'),invoke<ResponseAsset[]>('response_assets')]);
+      this.assetsIndex=new Map(assets.map(asset=>[`${asset.id}@${asset.revision}`,asset]));this.renderAutomation(status);
     } catch (error: unknown) {
       this.automationText = `Automation query failed: ${describeError(error)}`;
     }
@@ -343,13 +560,16 @@ export class AutomationWorkspace extends WorkspaceElement {
       );
       return;
     }
+    if(!await this.canLeaveEditor() || this.savingAutoResponse)return;
     this.editingAutoResponseId = null;
     this.prepareEditor();
     const elements = this.autoResponseForm.elements;
     (elements.namedItem('name') as HTMLInputElement).value = `${source.request.method} ${shortUrl(source.request.target)}`;
-    this.autoResponseMethod.value = source.request.method.toUpperCase();
+    this.setEditorMethod(source.request.method.toUpperCase());
     (elements.namedItem('url') as HTMLInputElement).value = source.request.target;
     this.matcherCondition={kind:'exact',value:source.request.target};this.matchTestUrl.value=source.request.target;
+    this.matchTestMethod.value=source.request.method;
+    this.matchTestHeaders.value=source.request.headers.filter(header=>!header.sensitive && !header.binary).map(header=>header.name+': '+header.value).join('\n');
     this.autoResponseStatus.value = String(source.response.status);
     this.responseReadOnly = true;
     this.autoResponseMediaType.value = source.body.mediaType ?? '';
@@ -420,8 +640,9 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
   }
 
-  beginScratchAutoResponse(): void {
+  async beginScratchAutoResponse(): Promise<void> {
     if (this.savingAutoResponse) return;
+    if(!await this.canLeaveEditor() || this.savingAutoResponse)return;
     this.prepareEditor();
     this.editingAutoResponseId = null;
     this.autoResponseSourceState = { kind: 'scratch' };
@@ -437,12 +658,14 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.openEditor();
   }
 
-  cancelAutoResponseEdit(): void {
+  async cancelAutoResponseEdit(): Promise<void> {
     if (this.savingAutoResponse) return;
+    if(!await this.canLeaveEditor())return;
     this.editorRevision++;
     this.editorHidden = true;
     this.autoResponseSourceState = null;
     this.editingAutoResponseId = null;
+    this.ruleSelection.clear();this.renderRuleSelection();this.draftDirty=false;
     this.$flushUpdates();
     if (this.editorOpener?.isConnected && this.editorOpener.getClientRects().length) this.editorOpener.focus();
     else this.newResponseButton.focus();
@@ -451,6 +674,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   updateAutoResponseHeaderFilterState(): void {
     this.requestHeadersHidden = false;
     this.requestHeadersOpen=this.autoResponseMethod.value==='POST' || Boolean((this.autoResponseForm.elements.namedItem('requestHeaders') as HTMLTextAreaElement).value);
+    this.customMethodHidden=this.autoResponseMethod.value!=='CUSTOM';
   }
 
   updateAutoResponseBodyEditState(): void {
@@ -470,6 +694,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   async saveAutoResponse(event: Event): Promise<void> {
     event.preventDefault();
     if (this.savingAutoResponse || this.changingAutoResponse) return;
+    if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return;}
     const data = new FormData(this.autoResponseForm);
     const source = this.autoResponseSourceState;
     if (source === null) return;
@@ -490,7 +715,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       const existing = editingId === null ? undefined : current.rules.find((candidate) => candidate.id === editingId);
       if (editingId !== null && existing === undefined) throw new Error('This rule was removed. Cancel editing and create a new rule.');
       const matcher=this.currentMatcher(data,existing);
-      await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:matcher.method??'GET',url:this.matchTestUrl.value||'https://example.test/',headers:[],ruleId:editingId,enabled:this.autoResponseEnabled.checked}});
+      await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:matcher.method??'GET',url:'https://example.test/',headers:[],ruleId:editingId,enabled:this.autoResponseEnabled.checked}});
       let assetReference: string;
       if (source.kind === 'existing') {
         assetReference = source.assetReference;
@@ -540,18 +765,21 @@ export class AutomationWorkspace extends WorkspaceElement {
           headers: [], replaceBody: null, discardBody: false, abortReason: null,
           responseAsset: assetReference, allowNonIdempotentBodyReplacement: false,
         },
-        response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
+        response: existing?.response??{ headers: [], replaceBody: null, discardBody: false, abortReason: null },
       };
       const ordered = this.autoResponseRules(current).filter((candidate) => candidate.id !== id);
       if (existing === undefined) ordered.unshift(rule);
       else ordered.splice(Math.max(0, this.autoResponseRules(current).findIndex((candidate) => candidate.id === id)), 0, rule);
       const status = await this.activateAutoResponseOrder(current, ordered);
+      this.rememberRuleChange(this.autoResponseRules(current),this.autoResponseRules(status),existing?'Saved rule properties.':'Created a new rule.');
       this.renderAutomation(status);
       this.savingAutoResponse = false;
-      this.cancelAutoResponseEdit();
+      this.draftDirty=false;await this.cancelAutoResponseEdit();
+      this.ruleSelection.replace(id);this.renderRuleSelection();
       this.automationText = `Saved “${rule.displayName}”${existing === undefined ? ' at the top' : ''}. The first enabled matching rule will win.`;
       this.automationKind = 'success';
       this.focusRule(id);
+      const saved=status.rules.find(rule=>rule.id===id);if(saved)await this.editAutoResponse(saved,true);
     } catch (error: unknown) {
       this.automationText = `Auto-response could not be saved: ${describeError(error)}`;
       this.automationKind = 'error';
@@ -581,34 +809,9 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
 
   async mutateAutoResponse(ruleId: string, mutation: 'toggle' | 'remove' | 'up' | 'down'): Promise<void> {
-    if (this.savingAutoResponse || this.changingAutoResponse) return;
-    this.changingAutoResponse = true;
-    try {
-      const current = await invoke<AutomationStatus>('automation_status');
-      const ordered = this.autoResponseRules(current);
-      const index = ordered.findIndex((rule) => rule.id === ruleId);
-      if (index < 0) return;
-      const original = ordered[index]!;
-      if (mutation === 'remove') ordered.splice(index, 1);
-      else if (mutation === 'toggle') {
-        const rule = ordered[index];
-        if (rule !== undefined) ordered[index] = { ...rule, enabled: !(rule.enabled ?? true), revision: rule.revision + 1 };
-      } else {
-        const destination = mutation === 'up' ? index - 1 : index + 1;
-        if (destination < 0 || destination >= ordered.length) return;
-        [ordered[index], ordered[destination]] = [ordered[destination]!, ordered[index]!];
-      }
-      this.renderAutomation(await this.activateAutoResponseOrder(current, ordered));
-      if (mutation === 'remove') {
-        this.removedRule = {rule:original,index};
-        this.undoRemoveText = `Removed “${original.displayName ?? 'Auto-response'}”.`;
-        this.changingAutoResponse = false;
-        this.$flushUpdates(); this.undoRemoveButton.focus();
-      } else this.focusRule(ruleId);
-    } catch (error: unknown) {
-      this.automationText = `Auto-response change failed: ${describeError(error)}`;
-      this.automationKind = 'error';
-    } finally { this.changingAutoResponse = false; }
+    this.ruleSelection.replace(ruleId);this.renderRuleSelection();
+    const enabled=this.automationStatus?.rules.find(rule=>rule.id===ruleId)?.enabled??true;
+    await this.mutateSelectedRules(mutation==='toggle'?enabled?'disable':'enable':mutation);
   }
 
   private focusRule(id:string): void {
@@ -618,24 +821,30 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
 
   async undoRemoveAutoResponse(): Promise<void> {
-    const removed = this.removedRule;
-    if (!removed || this.savingAutoResponse || this.changingAutoResponse) return;
+    const action=this.ruleHistory.at(-1);
+    if (!action || this.savingAutoResponse || this.changingAutoResponse || !await this.canLeaveEditor()) return;
     this.changingAutoResponse = true;
     try {
       const current = await invoke<AutomationStatus>('automation_status');
-      const ordered = this.autoResponseRules(current);
-      if (!ordered.some((rule) => rule.id === removed.rule.id)) {
-        ordered.splice(Math.min(removed.index,ordered.length),0,{...removed.rule,revision:removed.rule.revision+1});
-        this.renderAutomation(await this.activateAutoResponseOrder(current,ordered));
-      } else this.renderAutomation(current);
-      this.removedRule = null; this.undoRemoveText = ''; this.focusRule(removed.rule.id);
+      if(JSON.stringify(this.autoResponseRules(current))!==JSON.stringify(action.after))throw new Error('Rules changed outside this action. Refresh before undoing.');
+      const ordered=action.before.map(rule=>({...rule,revision:Math.max(rule.revision,current.rules.find(item=>item.id===rule.id)?.revision??0)+1}));
+      const status=await this.activateAutoResponseOrder(current,ordered);this.ruleHistory.pop();
+      const earlier=this.ruleHistory.at(-1);if(earlier)earlier.after=structuredClone(this.autoResponseRules(status));
+      this.undoRemoveText=earlier?.label??'';this.renderAutomation(status);
+      const restored=ordered.filter(rule=>!action.after.some(item=>item.id===rule.id)).map(rule=>rule.id);
+      const selected=restored.length?restored:ordered.filter(rule=>this.ruleSelection.ids.has(rule.id)).map(rule=>rule.id);
+      this.ruleSelection.ids=new Set(selected);this.renderRuleSelection();this.changingAutoResponse=false;
+      if(selected.length===1){const rule=status.rules.find(rule=>rule.id===selected[0]);if(rule)await this.editAutoResponse(rule,true);}
+      if(selected[0])this.focusRule(selected[0]);
     } catch (error:unknown) {
       this.automationText = 'Rule could not be restored: '+describeError(error); this.automationKind = 'error';
     } finally { this.changingAutoResponse = false; }
   }
 
-  async editAutoResponse(rule: AutomationRule): Promise<void> {
+  async editAutoResponse(rule: AutomationRule,force=false): Promise<void> {
     if (this.savingAutoResponse) return;
+    if(!force && rule.id===this.editingAutoResponseId && !this.editorHidden)return;
+    if(!force && !await this.canLeaveEditor())return;
     this.prepareEditor();
     const revision = this.editorRevision;
     const url = rule.matcher.url?.kind === 'exact' ? rule.matcher.url.value : rule.matcher.url?.kind==='pattern'?rule.matcher.url.value.address:'https://'+(rule.matcher.host??'example.test')+(rule.matcher.pathPrefix??'/');
@@ -643,13 +852,18 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.autoResponseSourceState = { kind: 'existing', assetReference: rule.request.responseAsset ?? '' };
     const elements = this.autoResponseForm.elements;
     (elements.namedItem('name') as HTMLInputElement).value = rule.displayName ?? 'Auto-response';
-    this.autoResponseMethod.value = rule.matcher.method ?? 'GET';
+    this.setEditorMethod(rule.matcher.method);
     (elements.namedItem('url') as HTMLInputElement).value = url;
     this.matcherCondition=rule.matcher.url??null;this.matchExamples=rule.matcher.examples??[];this.matchTestUrl.value=url;this.autoResponseEnabled.checked=rule.enabled??true;
+    this.matchTestMethod.value=rule.matcher.method??'GET';
+    const extras=[rule.matcher.scheme?`Scheme: ${rule.matcher.scheme}`:'',rule.matcher.host?`Host: ${rule.matcher.host}`:'',rule.matcher.port?`Port: ${rule.matcher.port}`:'',rule.matcher.pathPrefix?`Path prefix: ${rule.matcher.pathPrefix}`:'',rule.matcher.query!==null?`Exact query: ${rule.matcher.query}`:'',...rule.matcher.requestHeaders.filter(header=>header.condition.kind!=='exact').map(header=>`${header.name}: ${header.condition.kind}`)].filter(Boolean);
+    this.advancedMatcherText=extras.join('\n');
+    this.ruleSelection.replace(rule.id);this.renderRuleSelection();
     (elements.namedItem('requestHeaders') as HTMLTextAreaElement).value = rule.matcher.requestHeaders
       .filter((header) => header.condition.kind === 'exact')
       .map((header) => `${header.name}: ${new TextDecoder().decode(new Uint8Array(Array.isArray(header.condition.value)?header.condition.value:[]))}`)
       .join('\n');
+    this.matchTestHeaders.value=(elements.namedItem('requestHeaders') as HTMLTextAreaElement).value;
     this.editorTitle = `Edit “${rule.displayName ?? 'Auto-response'}”`;
     this.sourceText = 'Loading saved response…';
     this.responseReadOnly = true;
@@ -659,12 +873,14 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.bodyHidden = true;
     this.autoResponseBody.value = '';
     this.bodyReadOnly = true;
+    this.loadingSavedResponse=true;
     this.updateAutoResponseHeaderFilterState();
-    this.openEditor();
+    this.openEditor(false);
     try {
       const inspection = await invoke<ResponseAssetInspection>('inspect_response_asset',{reference:rule.request.responseAsset});
       if (revision !== this.editorRevision || !this.isConnected) return;
       const asset=inspection.asset;this.savedResponse=inspection;this.existingResponse=true;
+      this.assetsIndex.set(`${asset.id}@${asset.revision}`,asset);this.renderAutoResponseRules(this.automationStatus??{generation:0,rules:[],autoresponsesEnabled:true,diagnostics:[],candidateCount:0,historyCount:0});
       this.sourceText = `${asset.status} · ${formatBytes(asset.bodyBytes)} · ${asset.mediaType ?? 'Unknown content type'} · Saved response`;
       this.autoResponseStatus.value = String(asset.status);
       this.autoResponseMediaType.value = asset.mediaType ?? '';
@@ -685,7 +901,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       }
     } catch (error:unknown) {
       if (revision === this.editorRevision) this.sourceText = 'Saved response metadata could not be loaded: '+describeError(error);
-    }
+    } finally {if(revision===this.editorRevision)this.loadingSavedResponse=false;}
   }
 
   async disableBuiltInAutomation(id: string): Promise<void> {
@@ -718,18 +934,20 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
 
   private renderAutomation(status: AutomationStatus): void {
+    if(this.automationStatus && status.generation<this.automationStatus.generation)return;
     this.automationStatus = status;
     this.$emit('automation-state-change',status);
     this.renderAutoResponseRules(status);
     const actions: string[] = [];
-    if (status.rules.some((rule) => rule.id === 'desktop-user-agent')) actions.push('User-Agent override');
+    if (status.rules.some((rule) => rule.id === 'desktop-user-agent' && rule.enabled!==false)) actions.push('User-Agent override active');
     const autoResponses = this.autoResponseRules(status);
-    if (autoResponses.length > 0) actions.push(`${autoResponses.length} auto-response rule${autoResponses.length === 1 ? '' : 's'}`);
-    const other = status.rules.filter((rule) => !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
+    const enabled=autoResponses.filter(rule=>rule.enabled!==false).length;
+    if (autoResponses.length > 0) actions.push(status.autoresponsesEnabled===false?`Autoresponses paused (${enabled} enabled rules)`:`${enabled} of ${autoResponses.length} autoresponse rules enabled`);
+    const other = status.rules.filter((rule) => rule.enabled!==false && !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
     if (other > 0) actions.push(`${other} advanced rule${other === 1 ? '' : 's'}`);
     this.automationText = actions.length === 0
       ? 'No built-in traffic actions are active.'
-      : `Active for new requests: ${actions.join(', ')}.`;
+      : `${actions.join(' · ')}.`;
     this.automationKind = 'success';
   }
 

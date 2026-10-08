@@ -1,4 +1,4 @@
-<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}">
+<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
@@ -41,7 +41,7 @@
       <main>
         <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
         <breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace>
-        <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></automation-workspace>
+        <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>
         <capture-workspace view="{{activeView}}"></capture-workspace>
         <settings-workspace w-ref="{settings}" view="{{activeView}}"></settings-workspace>

@@ -42,9 +42,20 @@ await page.addInitScript((workspace) => {
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
-    return { id, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
+  const ruleDiagnostics=()=>{
+    const rules=state.automation?.rules??[];const earlier=new Map();const diagnostics=[];
+    for(const rule of [...rules].filter(rule=>rule.request.responseAsset).sort((a,b)=>a.priority-b.priority)) {
+      const matcher=structuredClone(rule.matcher);delete matcher.examples;
+      if(matcher.url?.kind==='pattern')matcher.url.value.address=matcher.url.value.address.replace(/\{[a-zA-Z0-9_]*(:digits|\.\.\.)?\}/g,(_,kind)=>'{'+(kind??'')+'}');
+      const key=JSON.stringify(matcher);const winner=earlier.get(key);
+      if(winner){const asset=reference=>state.assets?.find(asset=>asset.id+'@'+asset.revision===reference);const left=asset(rule.request.responseAsset),right=asset(winner.request.responseAsset);diagnostics.push({ruleId:rule.id,supersededBy:winner.id,duplicateResponse:left?.display===right?.display && left?.status===right?.status});}
+      else if(rule.enabled!==false)earlier.set(key,rule);
+    }
+    if(state.automation)state.automation.diagnostics=diagnostics;
+  };
   const callbacks = new Map();
   let callbackId = 0;
   window.__TAURI_INTERNALS__ = {
@@ -68,7 +79,7 @@ await page.addInitScript((workspace) => {
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
-          let rows = structuredClone(state.sessions).filter(row => !args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase()));
+          let rows = structuredClone(state.sessions).filter(row => !state.dismissedIds?.includes(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
           let offset=args.query.offset??0;
@@ -83,7 +94,7 @@ await page.addInitScript((workspace) => {
         case 'session_detail':
           if (state.deferDetail===args.id) { state.detailPending=true; await new Promise(resolve=>state.releaseDetail=resolve); }
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
-          if (state.evictedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
+          if (state.evictedIds?.includes(args.id) || state.dismissedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
           return detail(args.id);
         case 'save_response_body': {
           state.lastSave=structuredClone(args);
@@ -131,7 +142,7 @@ await page.addInitScript((workspace) => {
           }
           checks.push({label:'Address',matched,detail:'Fixture runtime condition'});
           if(matcher.method){const method=matcher.method===args.input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
-          return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({url:item.url,passed:true}))??[]};
+          return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({method:item.method,url:item.url,passed:true}))??[]};
         }
         case 'response_assets': return structuredClone(state.assets??[]);
         case 'inspect_response_asset': {
@@ -146,6 +157,25 @@ await page.addInitScript((workspace) => {
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
+        case 'remove_traffic_entries': {
+          const dismissed=new Set(state.dismissedIds??[]);const changed=[];
+          for(const id of args.ids)if(state.sessions.some(row=>row.id===id) && (args.restore?dismissed.has(id):!dismissed.has(id))) {if(args.restore)dismissed.delete(id);else dismissed.add(id);changed.push(id);}
+          state.dismissedIds=[...dismissed];return changed;
+        }
+        case 'create_autoresponse_batch': {
+          if(state.batchError)throw new Error('Fixture batch storage failed');
+          if(state.automation.generation!==args.input.generation)throw new Error('Rules changed during batch review');
+          const rules=[],createdIds=[];state.assets??=[];
+          for(const [index,id] of args.input.ids.entries()) {
+            if(state.evictedIds?.includes(id) || state.dismissedIds?.includes(id))throw new Error('Response was evicted during review');
+            const assetId='batch-asset-'+state.assets.length;const asset={id:assetId,revision:1,status:detail(id).responses[0].status,headers:[],display:'body for '+id,bodyBytes:4,sha256:'0'.repeat(64),mediaType:'application/json',provenance:{kind:'session',exchange_id:id,boundary:'client-response'}};
+            state.assets.push(asset);const ruleId='batch-rule-'+assetId;createdIds.push(ruleId);
+            const matcher={method:'GET',url:{kind:'exact',value:detail(id).requests[0].target},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null};
+            rules.push({id:ruleId,displayName:'GET '+detail(id).requests[0].target,enabled:true,revision:1,priority:-1000000+index,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:assetId+'@1',allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}});
+          }
+          const existing=[...state.automation.rules].sort((a,b)=>a.priority-b.priority).map((rule,index)=>({...rule,priority:-1000000+rules.length+index,revision:rule.revision+1}));
+          state.automation={...state.automation,generation:state.automation.generation+1,rules:[...rules,...existing]};ruleDiagnostics();return {status:structuredClone(state.automation),createdIds};
+        }
         case 'create_response_asset':
         case 'create_response_asset_from_session': {
           if (state.assetDelay) await new Promise(resolve=>setTimeout(resolve,state.assetDelay));
@@ -158,6 +188,7 @@ await page.addInitScript((workspace) => {
         case 'validate_automation': state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
         case 'activate_automation':
           state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
+          ruleDiagnostics();
           return structuredClone(state.automation);
         case 'script_declarations': return '';
         case 'script_status': return { generation: 0, active: [], saved: [], candidateCount: 0, historyCount: 0 };
@@ -175,6 +206,10 @@ const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
   await page.locator('#' + name).waitFor({ state: 'visible' });
 };
+const discardIfAsked=async()=>{const dialog=page.locator('.unsaved-rule-dialog');if(await dialog.isVisible())await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();};
+const newScratch=async()=>{await page.getByRole('button',{name:'Add rule…',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
+const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
+const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
   await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded 4 of 4 exchanges.'));
@@ -439,17 +474,17 @@ try {
   assert.equal(await autoField('name').evaluate(input=>input.getRootNode().activeElement===input),true,'Rule editor did not receive focus');
   await sourceLink.getByText('GET example.test/second',{exact:true}).waitFor({state:'visible'});
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await autoEditor.waitFor({state:'hidden'});
+  await savedProperties();
   const capturedRuleId=await page.locator('.auto-response-rule').getAttribute('data-rule-id');
   const capturedRule=page.locator('#rule-'+capturedRuleId);
-  await capturedRule.getByRole('button',{name:'Disable',exact:true}).click();
+  await autoField('enabled').uncheck();
   await capturedRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
-  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await capturedRule.click();
   await sourceLink.waitFor({state:'visible'});
   assert.equal(await autoField('status').inputValue(),'200','Saved response metadata was hidden or lost');
   assert.equal(await autoField('body').isVisible(),true,'Saved response body cannot be edited independently of Traffic');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await autoEditor.waitFor({state:'hidden'});
+  await savedProperties();
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
   // Both views share one gate, preserving each rule's own enabled state.
   await page.locator('#automation autoresponse-switch button').click();
@@ -461,7 +496,7 @@ try {
   await page.waitForFunction(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled===true);
   await view('automation');
   await page.locator('#automation autoresponse-switch button').getByText(/On/).waitFor({state:'visible'});
-  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await capturedRule.click();
   await sourceLink.waitFor({state:'visible'});
 
   // Reveal a source on a later page even when current filters exclude it.
@@ -500,17 +535,17 @@ try {
   await sourceLink.waitFor({state:'detached'});
   await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
   assert.match(await page.locator('.auto-response-source').textContent(),/Saved response/,'Eviction removed the durable response metadata');
-  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
-  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await cancelRule();
+  await capturedRule.click();
   await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await sourceLink.count(),0,'Reopening an evicted source restored a broken link');
   await autoField('body').fill('Edited after source removal');
   await autoField('status').fill('201');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await autoEditor.waitFor({state:'hidden'});
+  await savedProperties();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.decodedBody.length),'Edited after source removal'.length);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets[0].display),'body for second','Editing rewrote historical saved bytes');
-  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await capturedRule.click();
   await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await autoField('status').inputValue(),'201');
   assert.equal(await autoField('body').inputValue(),'Edited after source removal');
@@ -520,7 +555,7 @@ try {
     await traffic.refreshSessions(undefined,true);
   },originalSourceRows);
   await sourceLink.waitFor({state:'visible'});
-  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
+  await cancelRule();
 
   // Neither a slow text preview nor a slow dropped-session lookup can replace a newer draft.
   await page.evaluate(()=>{
@@ -528,7 +563,7 @@ try {
     globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSelected();
   });
   await page.waitForFunction(()=>globalThis.__workspaceFixture.bodyPending);
-  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await newScratch();
   await autoField('body').fill('New scratch draft');
   await page.evaluate(async()=>{globalThis.__workspaceFixture.deferBody=null;globalThis.__workspaceFixture.releaseBody();await globalThis.__pendingAutoResponse;});
   assert.equal(await autoField('body').inputValue(),'New scratch draft','Late captured body overwrote a newer draft');
@@ -538,7 +573,7 @@ try {
     globalThis.__pendingAutoResponse=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').beginAutoResponseFromSessionId('first');
   });
   await page.waitForFunction(()=>globalThis.__workspaceFixture.detailPending);
-  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await newScratch();
   await autoField('name').fill('Newer lookup draft');
   await page.evaluate(async()=>{globalThis.__workspaceFixture.deferDetail=null;globalThis.__workspaceFixture.releaseDetail();await globalThis.__pendingAutoResponse;});
   assert.equal(await autoField('name').inputValue(),'Newer lookup draft','Late dropped-session lookup replaced a newer editor');
@@ -569,29 +604,30 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=false;globalThis.__workspaceFixture.assetDelay=400;});
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click({clickCount:2});
   await autoEditor.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isEnabled(),false,'Creation remains available during a save');
+  assert.equal(await page.getByRole('button',{name:'Add rule…',exact:true}).isEnabled(),false,'Creation remains available during a save');
   assert.equal(await autoField('body').isEnabled(),false,'Body can change during a save');
-  await autoEditor.waitFor({state:'hidden'});
+  await savedProperties();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.displayName==='Authored response').length),1,'Double submit created duplicate rules');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid+1);
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
   const authoredRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
   const authoredRule=page.locator('#rule-'+authoredRuleId);
-  await authoredRule.getByRole('button',{name:'Move Authored response down',exact:true}).click();
+  await authoredRule.click();await page.locator('.rule-selection-toolbar').getByRole('button',{name:'More',exact:true}).click();await page.getByRole('button',{name:'Move later',exact:true}).click();
   await page.waitForFunction(id=>document.querySelector('app-shell').shadowRoot.querySelector('.auto-response-rule').dataset.ruleId!==id,authoredRuleId);
   assert.equal(await authoredRule.locator('.rule-order').textContent(),'2');
   const orderBeforeRemove=await page.locator('.auto-response-rule').evaluateAll(rules=>rules.map(rule=>rule.dataset.ruleId));
-  await capturedRule.getByRole('button',{name:'Remove',exact:true}).click();
-  await page.getByRole('button',{name:'Undo removal',exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.getByRole('button',{name:'Undo removal',exact:true}).evaluate(button=>button.getRootNode().activeElement===button),true,'Removal left keyboard focus on a deleted control');
-  await page.getByRole('button',{name:'Undo removal',exact:true}).click();
+  await capturedRule.click();await capturedRule.press('Delete');
+  await page.getByRole('button',{name:'Undo',exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.getByRole('button',{name:'Undo',exact:true}).evaluate(button=>button.getRootNode().activeElement===button),true,'Removal left keyboard focus on a deleted control');
+  await page.getByRole('button',{name:'Undo',exact:true}).click();
   await capturedRule.waitFor({state:'visible'});
   assert.deepEqual(await page.locator('.auto-response-rule').evaluateAll(rules=>rules.map(rule=>rule.dataset.ruleId)),orderBeforeRemove,'Undo changed first-match order');
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Undo changed the rule enabled state');
-  await capturedRule.locator('.rule-criteria summary').click();
-  assert.equal(await capturedRule.locator('.rule-criteria p').isVisible(),true);
+  await capturedRule.click();
+  assert.match(await capturedRule.locator('.rule-criteria').getAttribute('title'),/example.test/);
+  assert.equal(await autoField('url').inputValue(),'http://example.test/second');
 
-  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await newScratch();
   await autoField('name').fill('Numeric account pattern');
   await autoEditor.getByLabel('URL matching',{exact:true}).selectOption('pattern');
   await autoField('url').fill('https://api.example.test/users/{:digits}');
@@ -607,15 +643,131 @@ try {
   assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
   await autoEditor.getByRole('button',{name:'Remember as a match',exact:true}).click();
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await autoEditor.waitFor({state:'hidden'});
+  await savedProperties();
   const patternRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
-  await page.locator('#rule-'+patternRuleId).getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await page.locator('#rule-'+patternRuleId).click();
   assert.equal(await autoEditor.getByLabel('URL matching',{exact:true}).inputValue(),'pattern');
   assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Numeric account pattern').matcher.examples.length),1);
-  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
+  await cancelRule();
 
-  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  // The dense list shares keyboard range selection, bulk state changes and Undo.
+  const firstRule=page.locator('.auto-response-rule').first();
+  await firstRule.click();await savedProperties();
+  await firstRule.press('Control+Shift+ArrowDown');
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').ruleSelectionCount===2);
+  assert.equal(await page.locator('.auto-response-rule').nth(1).getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('.auto-response-rule').nth(1).locator('input[type="checkbox"]').isChecked(),true);
+  const enabledBeforeBulk=await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.map(rule=>({id:rule.id,enabled:rule.enabled})));
+  await page.locator('.rule-selection-toolbar').getByRole('button',{name:'More',exact:true}).click();
+  await page.locator('#rule-actions-menu').getByRole('button',{name:'Enable selected',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').changingAutoResponse);
+  await page.locator('.auto-response-rule').nth(1).press('Control+z');
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').changingAutoResponse);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.map(rule=>({id:rule.id,enabled:rule.enabled}))),enabledBeforeBulk);
+  await page.locator('#rule-'+patternRuleId).click();await savedProperties();
+  await page.locator('.rule-selection-toolbar').getByRole('button',{name:'More',exact:true}).click();
+  await page.getByRole('button',{name:'Duplicate as disabled copies',exact:true}).click();
+  const copyRule=page.locator('.auto-response-rule').filter({has:page.locator('strong').getByText('Copy of Numeric account pattern',{exact:true})});
+  await copyRule.waitFor({state:'visible'});
+  await copyRule.locator('.rule-warning').getByText('Duplicate',{exact:true}).waitFor({state:'visible'});
+  await copyRule.click();await savedProperties();
+  await autoField('url').fill('https://api.example.test/users/{:digits}');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.equal(await copyRule.locator('.rule-warning').textContent(),'Duplicate','Anonymous annotations changed duplicate matching identity');
+  await autoField('enabled').check();
+  await copyRule.locator('.rule-state').getByText('Enabled',{exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('.rule-diagnostic').textContent(),/always superseded/);
+  await autoField('enabled').uncheck();
+  await copyRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
+  await copyRule.press('Delete');
+  await copyRule.waitFor({state:'detached'});
+  await page.getByRole('button',{name:'Undo',exact:true}).press('Control+z');
+  await copyRule.waitFor({state:'visible'});
+  assert.equal(await copyRule.locator('.rule-state').textContent(),'Disabled');
+
+  // Switching selection cannot silently discard property edits; Del in a field edits text.
+  await authoredRule.click();await savedProperties();
+  await autoField('name').fill('Unsaved name');
+  await capturedRule.click();
+  await page.locator('.unsaved-rule-dialog').getByRole('button',{name:'Keep editing',exact:true}).click();
+  assert.equal(await autoField('name').inputValue(),'Unsaved name');
+  await capturedRule.click();await discardIfAsked();await savedProperties();
+  await autoField('name').fill('Saved while switching');await authoredRule.click();
+  await page.locator('.unsaved-rule-dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await savedProperties();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Saved while switching')!==undefined),true);
+  await capturedRule.click();await savedProperties();
+  const countBeforeTextDelete=await page.locator('.auto-response-rule').count();
+  await autoField('name').fill('Keep');await autoField('name').press('Home');await autoField('name').press('Delete');
+  assert.equal(await autoField('name').inputValue(),'eep');
+  assert.equal(await page.locator('.auto-response-rule').count(),countBeforeTextDelete);
+  await cancelRule();
+
+  await page.getByLabel('Search rules',{exact:true}).fill('Numeric account');
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').visibleRules.length===2);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').ruleSelectionCount),0);
+  await page.getByLabel('Search rules',{exact:true}).fill('');
+  const ruleDivider=page.getByRole('separator',{name:'Resize rule list and properties',exact:true});
+  const ruleSplitBefore=await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').ruleListSplit);
+  await ruleDivider.press('ArrowRight');
+  await page.waitForFunction(before=>globalThis.__workspaceFixture.workspace.autoresponseSplit>before,ruleSplitBefore);
+  await ruleDivider.press('ArrowLeft');
+
+  // Traffic supports multiselection, eligibility review, atomic failure and batch creation.
+  await view('traffic');
+  await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');const state=globalThis.__workspaceFixture;state.pagingRows=structuredClone(state.sessions);for(let index=0;index<10;index++)state.sessions.push({...state.sessions[0],id:'paging-'+index,path:'/paging/'+index,url:'http://example.test/paging/'+index,startedAt:-index});traffic.clearTrafficSelection();traffic.pageSize='10';await traffic.refreshSessions(undefined,true);});
+  await page.locator('tr[data-session-id]').first().click();
+  await page.locator('tr[data-session-id]').first().press('Control+Shift+ArrowDown');
+  await page.getByRole('button',{name:'Next',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').pageIndex===1 && document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions[0].id.startsWith('paging-'));
+  assert.match(await page.locator('.traffic-selection-bar').textContent(),/2 selected · 2 on other pages/);
+  await page.locator('tr[data-session-id]').first().click({modifiers:['Control']});
+  await page.evaluate(async()=>await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true));
+  assert.match(await page.locator('.traffic-selection-bar').textContent(),/3 selected · 2 on other pages/);
+  await page.getByRole('button',{name:'Previous',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.some(row=>row.id==='new'));
+  assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),2);
+  await page.getByLabel('Search traffic',{exact:true}).fill('first');
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched===1);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),0);
+  await page.getByRole('button',{name:'Clear filters',exact:true}).click();
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.pagingRows;delete state.pagingRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';await traffic.refreshSessions(undefined,true);});
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions.find(row=>row.id==='cached').terminal='active';await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
+  await page.locator('tr[data-session-id="first"]').click();
+  await page.locator('tr[data-session-id="second"]').click({modifiers:['Control']});
+  await page.locator('tr[data-session-id="cached"]').click({modifiers:['Control']});
+  assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),3);
+  await page.locator('.traffic-selection-bar').getByRole('button',{name:'Create autoresponses…',exact:true}).click();
+  await page.waitForFunction(()=>{const auto=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !auto.batchReviewHidden && !auto.batchLoading && auto.batchRows.length===3;});
+  assert.match(await page.locator('.batch-review').textContent(),/3 selected · 2 ready · 1 unavailable/);
+  assert.match(await page.locator('.batch-review').textContent(),/Wait for this request to complete/);
+  const rulesBeforeBatch=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation.rules));
+  await page.evaluate(()=>globalThis.__workspaceFixture.batchError=true);
+  await page.getByRole('button',{name:'Create 2 rules',exact:true}).click();
+  await page.locator('.batch-review').getByText('Fixture batch storage failed',{exact:true}).waitFor({state:'visible'});
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules),rulesBeforeBatch);
+  await page.evaluate(()=>globalThis.__workspaceFixture.batchError=false);
+  await page.getByRole('button',{name:'Create 2 rules',exact:true}).click();
+  await page.locator('.batch-review').waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').ruleSelectionCount),2);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.length),rulesBeforeBatch.length+2);
+  await capturedRule.locator('.rule-warning').getByText('Shadowed',{exact:true}).waitFor({state:'visible'});
+
+  await view('traffic');
+  await page.locator('tr[data-session-id="first"]').click();
+  await page.locator('tr[data-session-id="second"]').click({modifiers:['Control']});
+  await page.locator('tr[data-session-id="second"]').press('Delete');
+  await page.locator('tr[data-session-id="first"]').waitFor({state:'detached'});
+  await page.locator('tr[data-session-id="second"]').waitFor({state:'detached'});
+  await page.getByRole('button',{name:'Undo traffic removal',exact:true}).press('Control+z');
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').removingTraffic);
+  await page.locator('tr[data-session-id="first"]').waitFor({state:'visible'});
+  await page.locator('tr[data-session-id="second"]').waitFor({state:'visible'});
+  assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),2);
+  await view('automation');
+
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-dense.png')});
+  await newScratch();
   await autoField('body').fill(Array.from({length:30},(_,index)=>'line '+(index+1)).join('\n'));
   await page.setViewportSize({width:800,height:600});
   await autoEditor.evaluate(form=>form.scrollIntoView({block:'start'}));
@@ -627,8 +779,8 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-dark.png')});
   await page.emulateMedia({colorScheme:'light'});
   await page.setViewportSize({width:1280,height:800});
-  await page.locator('.auto-response-editor').getByRole('button', { name: 'Cancel', exact: true }).first().click();
-  await page.getByRole('button', { name: 'Create from scratch', exact: true }).click();
+  await cancelRule();
+  await newScratch();
   await page.locator('.auto-response-editor input[name="name"]').fill('Preserved draft');
   await page.locator('.auto-response-editor select[name="method"]').selectOption('POST');
   assert.equal(await page.locator('.auto-response-editor textarea[name="requestHeaders"]').isVisible(), true);

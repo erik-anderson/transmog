@@ -103,6 +103,19 @@ pub struct MatchExample {
     pub url: String,
     /// Expected match outcome.
     pub expected: bool,
+    /// Explicit request headers retained with this test case.
+    #[serde(default)]
+    pub headers: Vec<ExampleHeader>,
+}
+
+/// A bounded header in a saved network-free test case.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExampleHeader {
+    /// Valid HTTP field name.
+    pub name: String,
+    /// Exact UTF-8 field value.
+    pub value: String,
 }
 
 /// A named or anonymous matched part of the address.
@@ -306,7 +319,6 @@ impl UrlCondition {
         let mut query = compiled.query;
         if let Some(QueryCondition::Parameters(items)) = &mut query {
             items.sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
-            items.dedup();
         }
         Ok(format!(
             "{:?}|{:?}|{:?}|{:?}|{}|{}",
@@ -491,6 +503,9 @@ pub fn matcher_key(matcher: &RuleMatcher) -> Result<String, String> {
     let mut matcher = matcher.clone();
     matcher.url = None;
     matcher.examples.clear();
+    matcher.response_headers.clear();
+    matcher.response_status = None;
+    matcher.response_status_class = None;
     matcher.method = matcher.method.map(|value| value.to_ascii_uppercase());
     matcher.host = matcher.host.map(|value| value.to_ascii_lowercase());
     matcher.scheme = matcher.scheme.map(|value| value.to_ascii_lowercase());
@@ -531,16 +546,22 @@ fn query_matches(condition: &QueryCondition, query: Option<&str>) -> bool {
         QueryCondition::Exact(expected) => expected.as_deref() == query,
         QueryCondition::Ignore => true,
         QueryCondition::Parameters(required) => {
-            let pairs = query
+            let mut pairs = query
                 .unwrap_or_default()
                 .split('&')
                 .map(|part| part.split_once('=').unwrap_or((part, "")))
                 .map(|(name, value)| (decode_parameter(name), decode_parameter(value)))
                 .collect::<Vec<_>>();
             required.iter().all(|item| {
-                pairs
+                if let Some(index) = pairs
                     .iter()
-                    .any(|(name, value)| name == &item.name && value == &item.value)
+                    .position(|(name, value)| name == &item.name && value == &item.value)
+                {
+                    pairs.swap_remove(index);
+                    true
+                } else {
+                    false
+                }
             })
         }
     }
@@ -551,6 +572,16 @@ fn query_matches(condition: &QueryCondition, query: Option<&str>) -> bool {
 /// # Errors
 /// Returns syntax or resource errors without sending network requests.
 pub fn test_matcher(matcher: &RuleMatcher, request: &RequestHead) -> Result<MatchTest, String> {
+    let url = matcher
+        .url
+        .as_ref()
+        .map(UrlCondition::compile)
+        .transpose()?;
+    for predicate in &matcher.request_headers {
+        if let crate::HeaderCondition::Regex(pattern) = &predicate.condition {
+            crate::compile_regex(pattern).map_err(|error| error.to_string())?;
+        }
+    }
     crate::compile(
         vec![crate::Rule {
             id: "matcher-test".into(),
@@ -565,11 +596,6 @@ pub fn test_matcher(matcher: &RuleMatcher, request: &RequestHead) -> Result<Matc
         AutomationLimits::default(),
     )
     .map_err(|e| e.to_string())?;
-    let url = matcher
-        .url
-        .as_ref()
-        .map(UrlCondition::compile)
-        .transpose()?;
     let mut checks = url
         .as_ref()
         .map_or_else(Vec::new, |url| url_checks(url, &request.target));
@@ -652,14 +678,22 @@ fn url_checks(url: &CompiledUrl, target: &Target) -> Vec<MatchCheck> {
             ),
         }),
         Some(QueryCondition::Parameters(items)) => {
+            let mut grouped = std::collections::BTreeMap::new();
             for item in items {
+                *grouped.entry((&item.name, &item.value)).or_insert(0usize) += 1;
+            }
+            for ((name, value), count) in grouped {
+                let item = QueryParameter {
+                    name: name.clone(),
+                    value: value.clone(),
+                };
                 checks.push(MatchCheck {
                     label: "Required parameter".into(),
                     matched: query_matches(
-                        &QueryCondition::Parameters(vec![item.clone()]),
+                        &QueryCondition::Parameters(vec![item; count]),
                         target.query.as_deref(),
                     ),
-                    detail: format!("{} = {}", item.name, item.value),
+                    detail: format!("{name} = {value} ({count} required)"),
                 });
             }
         }
@@ -778,5 +812,42 @@ mod tests {
                 .unwrap()
                 .matches(&target("https://example.test/items/42/extra"))
         );
+    }
+    #[test]
+    fn tester_and_runtime_agree_on_repeated_query_values() {
+        let condition = pattern(
+            "https://example.test/items",
+            QueryCondition::Parameters(vec![
+                QueryParameter {
+                    name: "tag".into(),
+                    value: "a".into()
+                };
+                2
+            ]),
+        );
+        let matcher = crate::RuleMatcher {
+            url: Some(condition.clone()),
+            ..Default::default()
+        };
+        for (url, expected) in [
+            ("https://example.test/items?tag=a", false),
+            ("https://example.test/items?tag=a&tag=a", true),
+        ] {
+            let request = request_for_test("GET", url, &[]).unwrap();
+            assert_eq!(
+                condition.compile().unwrap().matches(&request.target),
+                expected
+            );
+            let test = test_matcher(&matcher, &request).unwrap();
+            assert_eq!(test.matched, expected);
+            assert_eq!(
+                test.checks
+                    .iter()
+                    .find(|check| check.label == "Required parameter")
+                    .unwrap()
+                    .matched,
+                expected
+            );
+        }
     }
 }

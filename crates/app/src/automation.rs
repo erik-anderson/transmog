@@ -42,6 +42,8 @@ pub struct AutoResponseTestInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExampleResult {
+    /// HTTP method of this saved test request.
+    pub method: String,
     /// URL being checked.
     pub url: String,
     /// Whether the actual outcome agrees with its expectation.
@@ -229,14 +231,21 @@ impl AutomationRegistry {
         };
         let mut examples = Vec::new();
         for example in &input.matcher.examples {
-            let request =
-                transmog_automation::request_for_test(&example.method, &example.url, &headers)
-                    .map_err(|message| {
-                        AppError::new(ErrorCategory::InvalidInput, message, false)
-                    })?;
+            let example_headers = example
+                .headers
+                .iter()
+                .map(|header| (header.name.clone(), header.value.clone()))
+                .collect::<Vec<_>>();
+            let request = transmog_automation::request_for_test(
+                &example.method,
+                &example.url,
+                &example_headers,
+            )
+            .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
             let actual = transmog_automation::test_matcher(&input.matcher, &request)
                 .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
             examples.push(ExampleResult {
+                method: example.method.clone(),
                 url: example.url.clone(),
                 passed: actual.matched == example.expected,
             });
@@ -711,6 +720,56 @@ mod tests {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes).unwrap();
         bytes
+    }
+
+    #[test]
+    fn saved_examples_use_their_own_method_and_headers() {
+        use transmog_automation::{ExampleHeader, HeaderCondition, HeaderPredicate, MatchExample};
+        let registry = AutomationRegistry::load(
+            None,
+            Arc::new(crate::response_assets::ResponseAssetStore::load(None).unwrap()),
+        )
+        .unwrap();
+        let result = registry
+            .test_match(&AutoResponseTestInput {
+                matcher: RuleMatcher {
+                    method: Some("POST".into()),
+                    request_headers: vec![HeaderPredicate {
+                        name: "x-mode".into(),
+                        condition: HeaderCondition::Exact(b"saved".to_vec()),
+                    }],
+                    examples: vec![
+                        MatchExample {
+                            method: "POST".into(),
+                            url: "https://example.test/".into(),
+                            expected: true,
+                            headers: vec![ExampleHeader {
+                                name: "x-mode".into(),
+                                value: "saved".into(),
+                            }],
+                        },
+                        MatchExample {
+                            method: "GET".into(),
+                            url: "https://example.test/".into(),
+                            expected: false,
+                            headers: vec![],
+                        },
+                    ],
+                    ..RuleMatcher::default()
+                },
+                method: "POST".into(),
+                url: "https://example.test/".into(),
+                headers: vec![crate::ComposerHeader {
+                    name: "x-mode".into(),
+                    value: "different".into(),
+                }],
+                rule_id: None,
+                enabled: true,
+            })
+            .unwrap();
+        assert!(!result.test.matched);
+        assert!(result.examples.iter().all(|example| example.passed));
+        assert_eq!(result.examples[1].method, "GET");
     }
 
     #[test]

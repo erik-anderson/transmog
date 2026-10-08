@@ -18,9 +18,10 @@
       <div class="filter-chips"><for each="filter in filters"><button key="{{filter.label}}" type="button" class="filter-chip" aria-label="Remove {{filter.label}} filter" @click="{removeFilter(filter.column,filter.operator)}">{{filter.label}} ×</button></for><button type="button" class="clear-filters" @click="{clearFilters()}">Clear filters</button></div>
     </if>
     <div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
-      <section class="session-list-pane" aria-label="Captured traffic">
+      <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
+        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">Create autoresponses…</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
-          <table w-ref="{trafficTable}" class="traffic-table" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
+          <table w-ref="{trafficTable}" class="traffic-table" role="grid" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
             <thead><tr><for each="column in columns">
               <th key="{{column.id}}" id="header-{{column.id}}" scope="col" data-column-id="{{column.id}}" ?data-pinned="{{column.pinned}}" data-offset="{{column.offsetCss}}" aria-sort="{{column.sortDirection}}" ?data-dragging="{{column.id == draggingColumn}}" ?data-drop-target="{{column.id == dropColumnId}}" data-drop-placement="{{dropPlacement}}">
@@ -31,7 +32,7 @@
             <tbody>
               <if condition="!sessions.length"><tr><td colspan="{{columns.length}}" class="empty-cell">No matching exchanges.<br>Capture traffic or adjust your filters.</td></tr></if>
               <for each="session in sessions">
-                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="0" draggable="true" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-tone="{{session.tone}}" ?data-selected="{{session.id == selectedSessionId}}" aria-selected="{{session.selectionState}}" @click="{inspectSession(session)}" @keydown="{selectWithKeyboard(session,e)}" @dragstart="{dragSession(session,e)}">
+                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="0" draggable="true" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-tone="{{session.tone}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}" @dragstart="{dragSession(session,e)}">
                   <for each="cell in session.cells">
                     <td key="{{cell.id}}" data-column-id="{{cell.id}}" data-offset="{{cell.offsetCss}}" ?data-pinned="{{cell.pinned}}" ?data-numeric="{{cell.numeric}}" title="{{cell.title}}">
                       <if condition="cell.id == 'method'"><button type="button" class="session-link" @click="{selectWithButton(session,e)}">{{cell.text}}</button></if>
@@ -45,6 +46,7 @@
             </tbody>
           </table>
         </div>
+        <div class="traffic-undo" ?hidden="{{!trafficUndoText}}"><span role="status">{{trafficUndoText}}</span><button w-ref="{trafficUndoButton}" type="button" class="secondary compact-button" @click="{undoTrafficRemoval()}" ?disabled="{{removingTraffic}}">Undo traffic removal</button></div>
         <div class="list-footer">
           <span>{{followText}}</span>
           <div class="list-footer-actions">
@@ -68,6 +70,8 @@
         </div>
       </section>
     </div>
+
+    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">Create autoresponses…</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
 
     <div id="column-actions" class="table-popover column-menu" w-ref="{columnMenu}" popover="auto" data-x="{{menuX}}" data-y="{{menuY}}">
       <strong class="popover-title">{{menuColumn.label}}</strong>

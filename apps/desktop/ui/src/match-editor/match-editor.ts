@@ -12,6 +12,9 @@ export class MatchEditor extends WorkspaceElement {
   @observable selectedPart='';
   @observable annotationAvailable=false;
   @observable matchEditorError='';
+  @observable matchValidationError='';
+  @observable annotationX='12px';
+  @observable annotationY='80px';
   addressInput!:HTMLInputElement;
   queryInput!:HTMLTextAreaElement;
   caseInput!:HTMLInputElement;
@@ -25,6 +28,7 @@ export class MatchEditor extends WorkspaceElement {
   conditionChanged():void {
     if(!this.initialized) return;
     const condition=this.condition;
+    this.matchValidationError='';this.matchEditorError='';
     this.matchMode=condition?.kind??'any';
     this.addressInput.value=condition?.kind==='exact'?condition.value:condition?.kind==='pattern'?condition.value.address:condition?.value.pattern??'';
     this.caseInput.checked=condition?.kind==='exact'?true:condition?.value.caseSensitive??true;
@@ -95,8 +99,10 @@ export class MatchEditor extends WorkspaceElement {
     const token=this.addressInput.value.slice(selected.start+1,selected.end-1);
     this.annotationType.value=token.endsWith('...')?'rest':token.endsWith(':digits')?'digits':'segment';
     this.annotationInput.value=token.endsWith('...')?token.slice(0,-3):token.split(':')[0]??'';
-    this.annotationPopover.showPopover();this.annotationInput.focus();
+    const rect=this.addressInput.getBoundingClientRect();this.annotationX=Math.max(10,Math.min(rect.left,window.innerWidth-420))+'px';this.annotationY=Math.max(50,Math.min(rect.bottom+4,window.innerHeight-300))+'px';this.$flushUpdates();this.annotationPopover.showPopover();this.annotationInput.focus();
   }
+  clearAnnotationError():void {this.annotationInput.setCustomValidity('');}
+  annotationKeyboard(event:KeyboardEvent):void {if(event.key==='Enter'){event.preventDefault();this.saveAnnotation();}}
   saveAnnotation():void {
     const selected=this.selection;if(!selected)return;
     const label=this.annotationInput.value.trim();

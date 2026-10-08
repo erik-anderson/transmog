@@ -25,9 +25,9 @@ use transmog_core::{
 mod matching;
 use matching::CompiledUrl;
 pub use matching::{
-    MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition, QueryParameter, RegexScope,
-    UrlCondition, UrlPattern, UrlRegex, matcher_key, request_for_test, same_matching_behavior,
-    test_matcher,
+    ExampleHeader, MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition,
+    QueryParameter, RegexScope, UrlCondition, UrlPattern, UrlRegex, matcher_key, request_for_test,
+    same_matching_behavior, test_matcher,
 };
 
 /// Finite compile-time automation bounds.
@@ -571,12 +571,20 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
     {
         return Err(CompileError::InvalidMatcher(rule.id.clone()));
     }
+    if rule.matcher.url.as_ref().is_some_and(|condition|matches!(condition,UrlCondition::Regex(pattern) if pattern.pattern.len()>limits.max_regex_bytes)) {return Err(CompileError::InvalidRegex(rule.id.clone()));}
     if rule.matcher.examples.len() > 32
-        || rule
-            .matcher
-            .examples
-            .iter()
-            .any(|example| matching::request_for_test(&example.method, &example.url, &[]).is_err())
+        || rule.matcher.examples.iter().any(|example| {
+            matching::request_for_test(
+                &example.method,
+                &example.url,
+                &example
+                    .headers
+                    .iter()
+                    .map(|header| (header.name.clone(), header.value.clone()))
+                    .collect::<Vec<_>>(),
+            )
+            .is_err()
+        })
     {
         return Err(CompileError::InvalidMatcher(rule.id.clone()));
     }

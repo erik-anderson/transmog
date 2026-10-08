@@ -4,6 +4,7 @@ import { WorkspaceElement } from '../workspace-element.js';
 import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
+import {ListSelection,isTextEditing} from '../list-selection.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
@@ -20,6 +21,17 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable columns:Column[] = [];
   @observable settingsColumns:Array<{id:ColumnId;label:string;visible:boolean}> = [];
   @observable selectedSessionId:string | null = null;
+  @observable selectedTrafficCount=0;
+  @observable trafficSelectionText='';
+  @observable removingTraffic=false;
+  @observable trafficUndoText='';
+  @observable trafficMenuX='12px';
+  @observable trafficMenuY='80px';
+  trafficMenu!:HTMLElement;
+  trafficUndoButton!:HTMLButtonElement;
+  private trafficSelection=new ListSelection();
+  private selectedTraffic=new Map<string,SessionSummary>();
+  private trafficUndo:Array<{ids:string[];rows:SessionSummary[]}>=[];
   @observable selectedDetail:SessionDetail | null = null;
   @observable selectedMethodText = '—';
   @observable selectedUrlText = 'Select a request';
@@ -109,8 +121,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(this.sessions);
   }
   private rebuildRows(rows:SessionSummary[]):void {
-    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:row.id === this.selectedSessionId ? 'true' : 'false',rowLabel:row.method+' '+row.host+row.path,
+    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:row.method+' '+row.host+row.path,
       cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))}));
+    for(const row of rows)if(this.trafficSelection.ids.has(row.id))this.selectedTraffic.set(row.id,row);
+    this.selectedTrafficCount=this.trafficSelection.ids.size;
+    const outside=this.selectedTrafficCount-rows.filter(row=>this.trafficSelection.ids.has(row.id)).length;
+    this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
   }
   private measurePinnedColumns():void {
     if (!this.columns.length) return;
@@ -182,12 +198,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     const operator = this.filterOperator.value as TrafficFilter['operator'];
     const others = this.filters.filter((filter) => filter.column !== this.menuColumn.id || filter.operator !== operator);
     if (others.length >= 14) { this.diagnostic = 'Remove a filter before adding another (maximum 14).'; return; }
+    this.clearTrafficSelection();
     this.filters = [...others,{column:this.menuColumn.id,operator,value,label:this.menuColumn.label+' '+operator+' '+value}];
     this.pageIndex = 0; this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
   }
-  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
-  async clearFilters():Promise<void> { this.filters = []; this.searchText = ''; this.searchInput.value = ''; this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async clearFilters():Promise<void> { this.clearTrafficSelection();this.filters = []; this.searchText = ''; this.searchInput.value = ''; this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
   searchChanged(event:Event):void {
+    this.clearTrafficSelection();
     this.searchText = (event.currentTarget as HTMLInputElement).value;
     window.clearTimeout(this.searchTimer);
     this.searchTimer = window.setTimeout(() => { this.pageIndex = 0; this.queryRevision++; void this.refreshSessions(undefined,true); },250);
@@ -290,17 +308,79 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch (error:unknown) { this.watching = false; this.watchError = 'Live refresh failed: '+describeError(error); this.renderSessionState(); }
   }
   sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); } }
-  selectWithButton(session:SessionSummary,event:Event):void { event.stopPropagation(); void this.inspectSession(session); }
-  selectWithKeyboard(session:SessionSummary,event:KeyboardEvent):void {
-    if (event.target instanceof HTMLButtonElement) return;
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void this.inspectSession(session); }
-    else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault(); const index = this.sessions.findIndex((row) => row.id === session.id)+(event.key === 'ArrowDown' ? 1 : -1); const row = this.sessions[index];
-      if (row) { (this.getRootNode() as ShadowRoot).getElementById('session-'+row.id)?.focus(); void this.inspectSession(row); }
-    }
+  private updateTrafficSelection():void {
+    for(const row of this.sessions)if(this.trafficSelection.ids.has(row.id))this.selectedTraffic.set(row.id,row);
+    for(const id of this.selectedTraffic.keys())if(!this.trafficSelection.ids.has(id))this.selectedTraffic.delete(id);
+    this.selectedTrafficCount=this.trafficSelection.ids.size;
+    const outside=this.selectedTrafficCount-this.sessions.filter(row=>this.trafficSelection.ids.has(row.id)).length;
+    this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
+    this.rebuildRows(this.sessions);
   }
-  dragSession(session:SessionSummary,event:DragEvent):void { event.dataTransfer?.setData('application/x-transmog-session',session.id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'; }
-  private async inspectSession(session:SessionSummary):Promise<void> {
+  clearTrafficSelection():void {this.trafficSelection.clear();this.selectedTraffic.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}
+  selectTraffic(session:SessionSummary,event:MouseEvent):void {
+    this.trafficSelection.choose(session.id,this.sessions.map(row=>row.id),event);this.updateTrafficSelection();
+    void this.inspectSession(session,true);
+  }
+  selectWithButton(session:SessionSummary,event:MouseEvent):void {event.stopPropagation();this.selectTraffic(session,event);}
+  selectWithKeyboard(session:SessionSummary,event:KeyboardEvent):void {
+    if(isTextEditing(event))return;
+    if(event.key==='Delete') {event.preventDefault();void this.removeSelectedTraffic();return;}
+    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z') {event.preventDefault();void this.undoTrafficRemoval();return;}
+    if(!this.trafficSelection.key(session.id,this.sessions.map(row=>row.id),event))return;
+    this.updateTrafficSelection();this.$flushUpdates();
+    const id=this.trafficSelection.focused;const row=this.sessions.find(row=>row.id===id);
+    if(row){(this.getRootNode() as ShadowRoot).getElementById('session-'+row.id)?.focus();if(this.trafficSelection.ids.has(row.id))void this.inspectSession(row,true);}
+  }
+  listKeyboard(event:KeyboardEvent):void {
+    if(event.defaultPrevented || isTextEditing(event))return;
+    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();void this.undoTrafficRemoval();}
+    else if(event.key==='Delete'){event.preventDefault();void this.removeSelectedTraffic();}
+  }
+  positionTrafficMenu(event:MouseEvent):void {
+    const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.trafficMenuX=Math.max(10,Math.min(event.type==='contextmenu'?event.clientX:rect.left,window.innerWidth-320))+'px';
+    this.trafficMenuY=Math.max(50,Math.min(event.type==='contextmenu'?event.clientY:rect.bottom+4,window.innerHeight-230))+'px';this.$flushUpdates();
+  }
+  openTrafficMenu(session:SessionSummary,event:MouseEvent):void {
+    event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectSession(session,true);}
+    this.positionTrafficMenu(event);this.trafficMenu.showPopover();
+  }
+  selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.selectedTraffic.keys()));}
+  async removeSelectedTraffic():Promise<void> {
+    if(this.removingTraffic || !this.trafficSelection.ids.size)return;this.removingTraffic=true;
+    const ids=[...this.trafficSelection.ids],rows=[...this.selectedTraffic.values()];const index=this.sessions.findIndex(row=>row.id===this.trafficSelection.focused);
+    try {
+      const removed=await invoke<string[]>('remove_traffic_entries',{ids,restore:false});
+      this.trafficUndo.push({ids:removed,rows});if(this.trafficUndo.length>20)this.trafficUndo.shift();
+      this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
+      this.clearTrafficSelection();this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);
+      const next=this.sessions[Math.max(0,Math.min(index,this.sessions.length-1))];
+      if(next){this.trafficSelection.replace(next.id);this.updateTrafficSelection();await this.inspectSession(next,true);this.$flushUpdates();(this.getRootNode() as ShadowRoot).getElementById('session-'+next.id)?.focus();}
+      else {this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);this.removingTraffic=false;this.$flushUpdates();this.trafficUndoButton.focus();}
+      this.trafficMenu.hidePopover();
+    }catch(error:unknown){this.diagnostic='Traffic removal failed: '+describeError(error);}
+    finally{this.removingTraffic=false;}
+  }
+  async undoTrafficRemoval():Promise<void> {
+    const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
+    try {
+      const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo.pop();
+      this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':'';
+      this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);
+      this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();
+      const id=restored[0];if(id){await this.revealSession(id);this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);this.updateTrafficSelection();}
+      this.diagnostic=restored.length===action.ids.length?'Traffic entries restored.':`${restored.length} entries restored; others were evicted after removal.`;
+    }catch(error:unknown){this.diagnostic='Traffic Undo failed: '+describeError(error);}
+    finally{this.removingTraffic=false;}
+  }
+  dragSession(session:SessionSummary,event:DragEvent):void {
+    if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
+    event.dataTransfer?.setData('application/x-transmog-session',session.id);
+    event.dataTransfer?.setData('application/x-transmog-sessions',JSON.stringify([...this.trafficSelection.ids]));
+    if(event.dataTransfer)event.dataTransfer.effectAllowed='copy';
+  }
+  private async inspectSession(session:SessionSummary,retainSelection=false):Promise<void> {
+    if(!retainSelection){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
     const generation = ++this.inspectionGeneration;
     this.selectedSessionId = session.id; this.selectedDetail = null; this.followLatest = false; this.renderFollowState();
     this.selectedMethodText = session.method; this.selectedUrlText = session.url ?? session.host+session.path; this.selectedStatusText = session.status === 304 ? '304 Not Modified' : session.status === null ? 'Pending' : String(session.status); this.selectedTone = statusTone(session);

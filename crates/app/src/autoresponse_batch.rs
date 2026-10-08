@@ -48,6 +48,15 @@ impl Application {
             ));
         }
         let current = self.automation_status();
+        if current.rules.len() + input.ids.len()
+            > transmog_automation::AutomationLimits::default().max_rules
+        {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "This batch would exceed the 1024-rule limit. Remove rules or select fewer responses.",
+                false,
+            ));
+        }
         if current.generation != input.generation {
             return Err(AppError::new(
                 ErrorCategory::Conflict,

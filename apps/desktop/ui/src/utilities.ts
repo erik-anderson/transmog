@@ -156,12 +156,16 @@ export function clientResponseSource(detail: SessionDetail): {request: HeadView;
   const request = detail.requests.find((head) => head.boundary === 'client-request');
   const response = detail.responses.find((head) => head.boundary === 'client-response');
   const body = detail.storedBodies.find((candidate) => candidate.boundary === 'client-response');
-  return request !== undefined && response !== undefined && body?.availability === 'complete'
+  return detail.terminal==='completed' && (detail.sequenceLoss??0)===0 && request?.method!==null && request?.target!==null && request !== undefined && response !== undefined && response.status!==null && response.status>=200 && response.status<=599 && body?.availability === 'complete'
     ? { request, response, body }
     : null;
 }
 
 export function autoResponseUnavailableReason(detail: SessionDetail): string {
+  if(detail.terminal!=='completed')return 'Wait for this request to complete before saving its response.';
+  if((detail.sequenceLoss??0)>0)return 'Some exchange evidence was lost; this response cannot be copied faithfully.';
+  const status=detail.responses.find(head=>head.boundary==='client-response')?.status;
+  if(status!==undefined && status!==null && (status<200 || status>599))return 'This response status cannot be replayed as a saved response.';
   if (!detail.requests.some((head) => head.boundary === 'client-request')) {
     return 'The original client request is unavailable.';
   }

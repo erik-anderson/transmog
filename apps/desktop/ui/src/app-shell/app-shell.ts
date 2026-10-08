@@ -167,6 +167,7 @@ export class AppShell extends WebUIElement {
   async onAutoResponse(event: CustomEvent<SelectedResponse>): Promise<void> {
     if (await this.activateView('automation')) await this.automation.populateCapturedAutoResponse(event.detail.sessionId, event.detail.detail);
   }
+  async onAutoResponseBatch(event:CustomEvent<string[]>):Promise<void> {if(await this.activateView('automation'))await this.automation.beginBatch(event.detail);}
   async onSourceTraffic(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('traffic')) {
       if (!await this.traffic.revealSession(event.detail)) await this.automation.refreshSourceAvailability();
@@ -183,12 +184,16 @@ export class AppShell extends WebUIElement {
   }
   disconnectedCallback(): void { window.clearTimeout(this.saveTimer); super.disconnectedCallback(); }
   allowSessionDrop(event: DragEvent): void {
-    if (event.dataTransfer?.types.includes('application/x-transmog-session')) event.preventDefault();
+    if (event.dataTransfer?.types.some(type=>type==='application/x-transmog-session' || type==='application/x-transmog-sessions')) event.preventDefault();
   }
   async dropSession(event: DragEvent): Promise<void> {
     event.preventDefault();
+    const ids=event.dataTransfer?.getData('application/x-transmog-sessions');
     const id = event.dataTransfer?.getData('application/x-transmog-session');
-    if (id && await this.activateView('automation')) await this.automation.beginAutoResponseFromSessionId(id);
+    if(await this.activateView('automation')) {
+      if(ids) {try {await this.automation.beginBatch(JSON.parse(ids));}catch(error:unknown){this.diagnosticText='Responses could not be prepared: '+describeError(error);}}
+      else if(id)await this.automation.beginAutoResponseFromSessionId(id);
+    }
   }
 }
 
