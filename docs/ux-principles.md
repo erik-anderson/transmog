@@ -142,6 +142,12 @@ finish; idle clients do not delay shutdown. Keep **Start proxy** available durin
 this state so turning it back on resumes the same run without disrupting work.
 Reject stale shutdown and status results after a new state transition.
 
+Request-body retention defaults to **25 MB** (25,000,000 bytes). **Unlimited**
+removes the per-request cap while preserving overall cache and trace budgets.
+Keep forwarding independent from capture limits; report a retained prefix as
+incomplete while preserving full measured byte counts. Explain that cache
+changes apply to new requests and recording changes to the next recording.
+
 Full traffic search starts with **Search** or Enter, so typing does not repeatedly
 read and decode captured bodies. Results describe a completed search snapshot;
 new traffic remains capturable and a new search refreshes that snapshot. Search

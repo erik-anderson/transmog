@@ -20,8 +20,8 @@ use std::{
 
 use bytes::Bytes;
 use transmog_capture::{
-    CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter, JsonLinesExporter,
-    RecoveredCapture, loss_record, record_from_observer, recover,
+    CaptureBodyRetention, CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter,
+    JsonLinesExporter, RecoveredCapture, loss_record, record_from_observer, recover,
 };
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{
@@ -251,6 +251,7 @@ fn build_components(
 
 struct LiveCaptureState {
     writer: CaptureWriter<File>,
+    retention: CaptureBodyRetention,
     last_sequences: HashMap<u128, u64>,
 }
 
@@ -279,6 +280,7 @@ fn open_live_capture(path: &Path) -> Result<LiveCapture, Box<dyn Error>> {
     let writer = CaptureWriter::new(file, CaptureLimits::default())?;
     Ok(Arc::new(Mutex::new(LiveCaptureState {
         writer,
+        retention: CaptureBodyRetention::default(),
         last_sequences: HashMap::new(),
     })))
 }
@@ -309,7 +311,8 @@ fn append_observer_event(
         )
         .into());
     }
-    if let Some(record) = record_from_observer(event, policy) {
+    if let Some(mut record) = record_from_observer(event, policy) {
+        state.retention.apply(&mut record, policy);
         state.writer.append(&record)?;
     }
     state.last_sequences.insert(exchange_id, event.sequence);
@@ -622,7 +625,7 @@ fn print_usage() {
     println!(
         "transmog-cli\n\n\
          Guided support capture (press Ctrl+C to stop and save):\n  \
-         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context]\n  \
+         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context] [--request-body-limit bytes|--unlimited-request-bodies]\n  \
          [--install-root|--no-install-root] [--no-system-proxy] [--listen 127.0.0.1:0] [--allow-remote] [--route auto|h1|h2|h3]\n\n\
          Remove CLI-owned roots, including retrying canceled OS prompts:\n  \
          transmog-cli roots cleanup [--include-persistent]\n\n\

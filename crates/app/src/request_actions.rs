@@ -1065,6 +1065,14 @@ mod tests {
                 .content_codings,
             ["gzip"]
         );
+        let wire = store.metadata(ExchangeId(1));
+        assert_eq!(
+            wire.iter()
+                .find(|body| body.boundary == "client-request")
+                .unwrap()
+                .wire_body_bytes,
+            Some(bytes.len() as u64)
+        );
         drop(store);
     }
 

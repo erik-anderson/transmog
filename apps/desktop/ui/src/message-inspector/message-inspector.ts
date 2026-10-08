@@ -141,7 +141,7 @@ export class MessageInspector extends WebUIElement {
   }
   private retentionFacts(body:StoredBodyMetadata):string {
     const bytes = (value:number) => body.availability === 'complete' ? formatBytes(value) : value.toLocaleString()+' B';
-    return (body.mediaType ?? 'Unknown content type')+' · '+bytes(body.retainedBytes)+' retained / '+bytes(body.observedBytes)+' observed · '+body.availability+(body.reason ? ' · '+body.reason : '');
+    return (body.mediaType ?? 'Unknown content type')+' · '+bytes(body.retainedBytes)+' retained / '+bytes(body.observedBytes)+' observed'+(body.contentCodings.length&&body.wireBodyBytes!=null?' · '+body.wireBodyBytes.toLocaleString()+' wire body bytes ('+body.contentCodings.join(', ')+', excludes framing/TLS)':'')+' · '+body.availability+(body.reason ? ' · '+body.reason : '');
   }
   private retentionReason(body:StoredBodyMetadata):string {
     const reasons:Record<string,string> = {

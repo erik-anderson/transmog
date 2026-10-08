@@ -130,6 +130,10 @@ pub(crate) async fn start_proxy(
             allow_remote_clients: request.allow_remote_clients,
         },
         route_policy: route_policy(request.route),
+        limits: transmog_runtime::RuntimeLimits {
+            max_request_body_bytes: usize::MAX,
+            ..transmog_runtime::RuntimeLimits::default()
+        },
         ..ProxyConfig::default()
     };
     let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).map_err(|_| {

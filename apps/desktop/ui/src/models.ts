@@ -105,6 +105,7 @@ export interface StoredBodyMetadata {
   exchangeId: string;
   boundary: string;
   observedBytes: number;
+  wireBodyBytes?:number|null;
   retainedBytes: number;
   availability: string;
   mediaType: string | null;
@@ -160,7 +161,7 @@ export interface TrafficSearchProgress {operationId:string;completed:number;tota
 export interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };
-  privacy: { retainRequestBodies: boolean; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
+  privacy: { retainRequestBodies: boolean; requestBodyLimit?: number | null; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
   workspace: WorkspacePreferences;

@@ -23,6 +23,13 @@ struct PrivacyRecord {
     schema: u32,
     generation: u64,
     redact_sensitive_headers: bool,
+    #[serde(default = "default_request_body_limit")]
+    request_body_limit: Option<u64>,
+}
+
+#[allow(clippy::unnecessary_wraps)] // Serde needs the optional field type; null means Unlimited.
+const fn default_request_body_limit() -> Option<u64> {
+    Some(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES)
 }
 
 pub(crate) trait RootTrust {
@@ -63,7 +70,22 @@ impl RootLedger {
     pub(crate) fn directory(&self) -> &Path {
         &self.directory
     }
+    #[cfg(test)]
     pub(crate) fn redaction(&self, choice: Option<bool>) -> io::Result<bool> {
+        self.preferences(choice, None).map(|(redact, _)| redact)
+    }
+
+    #[allow(clippy::option_option)] // None preserves the preference; Some(None) selects Unlimited.
+    pub(crate) fn preferences(
+        &self,
+        redaction: Option<bool>,
+        body_limit: Option<Option<u64>>,
+    ) -> io::Result<(bool, Option<u64>)> {
+        if body_limit == Some(Some(0)) {
+            return Err(io::Error::other(
+                "Request body limit must be positive or Unlimited",
+            ));
+        }
         let mut paths = Vec::new();
         for entry in fs::read_dir(&self.directory)? {
             let entry = entry?;
@@ -87,6 +109,7 @@ impl RootLedger {
             if let Ok(bytes) = read_bounded(path, 8192)
                 && let Ok(record) = serde_json::from_slice::<PrivacyRecord>(&bytes)
                 && record.schema == 1
+                && record.request_body_limit != Some(0)
                 && path.file_name().is_some_and(|name| {
                     name == format!("privacy-{:020}.json", record.generation).as_str()
                 })
@@ -104,11 +127,17 @@ impl RootLedger {
         let previous = latest
             .as_ref()
             .is_some_and(|record| record.redact_sensitive_headers);
-        let Some(redact) = choice else {
-            return Ok(previous);
-        };
-        if latest.is_some() && redact == previous {
-            return Ok(redact);
+        let previous_limit = latest
+            .as_ref()
+            .map_or(default_request_body_limit(), |record| {
+                record.request_body_limit
+            });
+        let redact = redaction.unwrap_or(previous);
+        let limit = body_limit.unwrap_or(previous_limit);
+        if redaction.is_none() && body_limit.is_none()
+            || latest.is_some() && redact == previous && limit == previous_limit
+        {
+            return Ok((redact, limit));
         }
         let generation = paths
             .iter()
@@ -127,6 +156,7 @@ impl RootLedger {
             schema: 1,
             generation,
             redact_sensitive_headers: redact,
+            request_body_limit: limit,
         };
         write_new(
             &self
@@ -139,7 +169,7 @@ impl RootLedger {
                 remove_if_present(path)?;
             }
         }
-        Ok(redact)
+        Ok((redact, limit))
     }
     fn path(&self, hash: &str, extension: &str) -> PathBuf {
         self.directory.join(format!("root-{hash}.{extension}"))
@@ -529,6 +559,27 @@ mod tests {
         assert!(ledger.redaction(None).unwrap());
         assert!(!ledger.redaction(Some(false)).unwrap());
         assert!(!ledger.redaction(None).unwrap());
+    }
+    #[test]
+    fn request_retention_limit_persists_and_preserves_redaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        assert_eq!(
+            ledger.preferences(None, None).unwrap(),
+            (false, Some(25_000_000))
+        );
+        assert_eq!(
+            ledger.preferences(Some(true), Some(None)).unwrap(),
+            (true, None)
+        );
+        drop(ledger);
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        assert_eq!(ledger.preferences(None, None).unwrap(), (true, None));
+        assert_eq!(
+            ledger.preferences(None, Some(Some(25_000_000))).unwrap(),
+            (true, Some(25_000_000))
+        );
+        assert!(ledger.preferences(None, Some(Some(0))).is_err());
     }
     #[test]
     fn corrupt_newest_privacy_falls_back_and_next_save_uses_a_fresh_generation() {

@@ -87,6 +87,9 @@ pub struct PrivacySettings {
     /// Retain request bodies for command generation and replay.
     #[serde(default = "default_true")]
     pub retain_request_bodies: bool,
+    /// Retained bytes per request; None is Unlimited within overall storage limits.
+    #[serde(default = "default_request_body_limit")]
+    pub request_body_limit: Option<u64>,
     /// Remove credential and cookie values from subsequently captured traffic.
     #[serde(default)]
     pub redact_sensitive_headers: bool,
@@ -108,6 +111,7 @@ impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
             retain_request_bodies: true,
+            request_body_limit: default_request_body_limit(),
             redact_sensitive_headers: false,
             retain_response_bodies: true,
             retain_body_samples: true,
@@ -115,6 +119,11 @@ impl Default for PrivacySettings {
             include_paths_in_support_bundles: false,
         }
     }
+}
+
+#[allow(clippy::unnecessary_wraps)] // Serde needs the optional field type; null means Unlimited.
+const fn default_request_body_limit() -> Option<u64> {
+    Some(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES)
 }
 
 const fn default_true() -> bool {
@@ -290,6 +299,7 @@ fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
         || !(480..=16_384).contains(&state.window.height)
         || !(10..=200).contains(&state.preferences.session_page_size)
         || state.recent_artifacts.len() > MAX_RECENT_ARTIFACTS
+        || state.privacy.request_body_limit == Some(0)
         || !state.workspace.is_valid()
     {
         return Err(invalid("product state exceeds a configured bound"));
@@ -533,6 +543,19 @@ mod tests {
         assert!(store.snapshot().privacy.retain_request_bodies);
         assert!(store.snapshot().privacy.retain_body_samples);
         assert!(!store.snapshot().privacy.redact_sensitive_headers);
+        assert_eq!(
+            store.snapshot().privacy.request_body_limit,
+            Some(25_000_000)
+        );
+        let mut unlimited = store.snapshot();
+        unlimited.privacy.request_body_limit = None;
+        assert_eq!(
+            store.save(unlimited).unwrap().privacy.request_body_limit,
+            None
+        );
+        let mut zero = store.snapshot();
+        zero.privacy.request_body_limit = Some(0);
+        assert!(store.save(zero).is_err());
         let mut invalid = store.snapshot();
         invalid.window.width = 1;
         assert!(store.save(invalid).is_err());
@@ -551,6 +574,10 @@ mod tests {
         old["privacy"]
             .as_object_mut()
             .unwrap()
+            .remove("requestBodyLimit");
+        old["privacy"]
+            .as_object_mut()
+            .unwrap()
             .remove("retainRequestBodies");
         old["privacy"]
             .as_object_mut()
@@ -562,6 +589,7 @@ mod tests {
         let mut stale = store.snapshot();
         assert_eq!(stale.workspace, WorkspacePreferences::default());
         assert!(stale.privacy.retain_request_bodies);
+        assert_eq!(stale.privacy.request_body_limit, Some(25_000_000));
         assert!(!stale.privacy.redact_sensitive_headers);
         stale.privacy.redact_sensitive_headers = true;
         let mut layout = stale.workspace.clone();

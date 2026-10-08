@@ -10,7 +10,8 @@ use std::{
 
 use thiserror::Error;
 use transmog_capture::{
-    CaptureLimits, CapturePolicy, CaptureWriter, loss_record, record_from_observer,
+    CaptureBodyRetention, CaptureLimits, CapturePolicy, CaptureWriter, loss_record,
+    record_from_observer,
 };
 use transmog_core::observe::ObserverEvent;
 
@@ -100,6 +101,7 @@ struct ActiveCapture {
     path: PathBuf,
     writer: CaptureWriter<File>,
     policy: CapturePolicy,
+    retention: CaptureBodyRetention,
     last_sequences: HashMap<u128, u64>,
 }
 
@@ -350,6 +352,7 @@ fn start_capture(
         path: request.path,
         writer,
         policy: request.policy,
+        retention: CaptureBodyRetention::default(),
         last_sequences: HashMap::new(),
     });
     Ok(())
@@ -427,7 +430,8 @@ fn append_event(
         )
         .into());
     }
-    if let Some(record) = record_from_observer(event, &capture.policy) {
+    if let Some(mut record) = record_from_observer(event, &capture.policy) {
+        capture.retention.apply(&mut record, &capture.policy);
         capture.writer.append(&record)?;
     }
     capture.last_sequences.insert(exchange_id, event.sequence);

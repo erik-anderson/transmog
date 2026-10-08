@@ -319,6 +319,7 @@ mod tests {
             exchange_id: format!("{:032x}", 1),
             boundary: "client-response",
             observed_bytes: length as u64,
+            wire_body_bytes: Some(length as u64),
             retained_bytes: length as u64,
             availability: BodyAvailability::Complete,
             media_type: Some("image/webp".to_owned()),

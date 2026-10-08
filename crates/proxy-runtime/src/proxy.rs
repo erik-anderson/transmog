@@ -461,6 +461,7 @@ impl ProxyServer {
         config.websocket.validate()?;
         if config.limits.max_connections == 0
             || config.limits.max_request_body_bytes == 0
+            || config.limits.max_buffered_request_body_bytes == 0
             || config.limits.max_response_body_bytes == 0
             || config.limits.max_local_response_body_bytes == 0
             || config.limits.body_channel_capacity == 0
@@ -1335,7 +1336,13 @@ impl ProxyState {
         }
 
         if let Some(mode) = self
-            .streaming_hyper_mode(&request_head, plan.pool_key.version_policy)
+            .streaming_hyper_mode(
+                &request_head,
+                plan.pool_key.version_policy,
+                request.body().size_hint().upper().is_none_or(|bytes| {
+                    bytes > self.config.limits.max_buffered_request_body_bytes as u64
+                }),
+            )
             .await
         {
             return self
@@ -1353,7 +1360,10 @@ impl ProxyState {
 
         let raw_body = collect_incoming(
             request.body_mut(),
-            self.config.limits.max_request_body_bytes,
+            self.config
+                .limits
+                .max_request_body_bytes
+                .min(self.config.limits.max_buffered_request_body_bytes),
             self.config.limits.body_idle_timeout,
         )
         .await;
@@ -1991,6 +2001,7 @@ impl ProxyState {
         &self,
         request: &RequestHead,
         route_policy: RoutePolicy,
+        requires_streaming: bool,
     ) -> Option<HyperEgressMode> {
         match route_policy {
             RoutePolicy::Http1Only => Some(HyperEgressMode::Http1Only),
@@ -2007,7 +2018,7 @@ impl ProxyState {
                     .await
                     .get(&origin, self.clock.instant())
                     .is_some();
-                (!has_h3_alternative).then_some(HyperEgressMode::Auto)
+                (!has_h3_alternative || requires_streaming).then_some(HyperEgressMode::Auto)
             }
         }
     }
@@ -2969,7 +2980,10 @@ impl ProxyState {
             pipeline,
             &request_head.headers,
             frames,
-            self.config.limits.max_request_body_bytes,
+            self.config
+                .limits
+                .max_request_body_bytes
+                .min(self.config.limits.max_buffered_request_body_bytes),
         )
         .await
     }
@@ -3167,7 +3181,7 @@ impl ProxyState {
             max_output_bytes_per_call: NonZeroUsize::new(
                 self.config
                     .limits
-                    .max_request_body_bytes
+                    .max_buffered_request_body_bytes
                     .max(self.config.limits.max_response_body_bytes),
             )
             .expect("runtime body limits are validated as nonzero"),
@@ -6593,6 +6607,71 @@ mod tests {
         client.read_to_end(&mut response).await.unwrap();
         assert!(response.starts_with(b"HTTP/1.1 200"));
 
+        shutdown_tx.send(()).unwrap();
+        proxy_task.await.unwrap().unwrap();
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn streaming_request_can_exceed_capture_and_buffering_limits() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = origin.local_addr().unwrap();
+        let bytes = 32 * 1024 * 1024;
+        let origin_task = tokio::spawn(async move {
+            let (stream, _) = origin.accept().await.unwrap();
+            let service = service_fn(move |mut request: Request<Incoming>| async move {
+                let mut received = 0;
+                while let Some(frame) = request.body_mut().frame().await {
+                    if let Ok(data) = frame.unwrap().into_data() {
+                        assert!(data.iter().all(|byte| *byte == 42));
+                        received += data.len();
+                    }
+                }
+                assert_eq!(received, bytes);
+                Ok::<_, Infallible>(Response::new(http_body_util::Full::new(
+                    Bytes::from_static(b"ok"),
+                )))
+            });
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await
+                .unwrap();
+        });
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 54).unwrap());
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                route_policy: RoutePolicy::Http1Only,
+                limits: RuntimeLimits {
+                    max_request_body_bytes: usize::MAX,
+                    max_buffered_request_body_bytes: 1024,
+                    body_channel_capacity: 1,
+                    ..RuntimeLimits::default()
+                },
+                ..ProxyConfig::default()
+            },
+            ProxyCa::generate("Transmog large request streaming", 2).unwrap(),
+            trust,
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let proxy_task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+        let mut client = TcpStream::connect(proxy_address).await.unwrap();
+        client.write_all(format!("POST http://{address}/large HTTP/1.1\r\nHost: {address}\r\nContent-Length: {bytes}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let chunk = vec![42; 32 * 1024];
+        for _ in 0..1024 {
+            client.write_all(&chunk).await.unwrap();
+        }
+        let mut response = Vec::new();
+        timeout(Duration::from_secs(10), client.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
         origin_task.await.unwrap();

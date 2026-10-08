@@ -297,6 +297,7 @@ impl Application {
         );
         if let Some(store) = &body_store {
             let privacy = product_state.snapshot().privacy;
+            store.set_request_body_limit(privacy.request_body_limit);
             store.set_privacy(
                 privacy.retain_request_bodies,
                 privacy.retain_response_bodies,
@@ -364,6 +365,7 @@ impl Application {
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
         }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
+            store.set_request_body_limit(state.privacy.request_body_limit);
             store.set_privacy(
                 state.privacy.retain_request_bodies,
                 state.privacy.retain_response_bodies,
@@ -1304,7 +1306,12 @@ impl Application {
         &self,
         request: CaptureStartRequest,
     ) -> Result<CaptureReadModel, AppError> {
-        artifacts::start_capture(&self.service, request).await
+        artifacts::start_capture(
+            &self.service,
+            request,
+            self.product_state().privacy.request_body_limit,
+        )
+        .await
     }
 
     /// Seals and stops the active native capture.

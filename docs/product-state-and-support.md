@@ -36,7 +36,14 @@ Redaction preserves their names, order, duplicates and original byte lengths,
 so authorization presence and oversized headers remain diagnosable. It does
 not rewrite existing traffic or saved files. Body retention changes apply to
 new exchanges; an in-flight body never becomes falsely complete after a toggle.
-The circular body cache holds at most 1 GiB across both directions.
+The circular body cache holds at most 1 GiB across both directions. Request
+bodies default to a 25 MB cap (25,000,000 bytes) per original/effective boundary.
+The persistent Unlimited choice removes that per-request cap, while the overall
+cache and trace file budgets remain finite. Cache changes apply to new requests;
+a recording snapshots its policy when started and saves that limit in metadata. Capture limits retain a prefix and
+full observed byte counts; they do not reject forwarding. Non-streaming
+processing retains its separate bounded memory limit. Oversized or unknown-length
+requests in Auto mode use streaming HTTP/1 or HTTP/2 instead of buffered H3 retries.
 
 On Windows these files live under `%LOCALAPPDATA%\Transmog` using the
 `preferences.<generation>.json` name family. Save, migration, read-only

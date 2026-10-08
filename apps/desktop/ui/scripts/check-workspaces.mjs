@@ -1167,11 +1167,18 @@ try {
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   assert.equal(await preferences.getByLabel('Theme',{exact:true}).inputValue(),'system');
   await preferences.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
+  assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'25000000');
+  await preferences.getByLabel('Request body limit',{exact:true}).selectOption('unlimited');
   await preferences.getByLabel('Entries per page',{exact:true}).fill('75');
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await preferences.getByText('Settings saved.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.redactSensitiveHeaders),true);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.retainRequestBodies),true);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.requestBodyLimit),null);
+  await preferences.getByLabel('Request body limit',{exact:true}).selectOption('25000000');
+  await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'unlimited');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences.sessionPageSize),75,'Disabled form controls were omitted from the saved preferences');
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').pageSize),'75','Saving failed to apply the page size to Traffic');
   assert.equal(await preferences.getByRole('button',{name:'Save settings',exact:true}).isDisabled(),true);

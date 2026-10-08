@@ -6,7 +6,7 @@
 //! prefix remains readable after a crash-truncated final record.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     io::{self, Read, Write},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -22,6 +22,9 @@ use transmog_core::{
 
 const MAGIC: [u8; 8] = *b"TMCAP01\0";
 const FRAME_HEADER_BYTES: usize = 8;
+
+/// Default retained request-body limit (25 decimal MB); file budgets still apply.
+pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 
 /// Native capture format revision.
 pub const CAPTURE_FORMAT_REVISION: u32 = 3;
@@ -73,6 +76,8 @@ pub struct CapturePolicy {
     response_header_names: BTreeSet<String>,
     /// Whether observer body samples are retained.
     pub retain_body_samples: bool,
+    /// Maximum retained bytes per request boundary; None removes that cap.
+    pub request_body_limit: Option<u64>,
 }
 
 impl Default for CapturePolicy {
@@ -84,6 +89,7 @@ impl Default for CapturePolicy {
                 .collect(),
             response_header_names: ["set-cookie"].into_iter().map(str::to_owned).collect(),
             retain_body_samples: false,
+            request_body_limit: Some(DEFAULT_REQUEST_BODY_CAPTURE_BYTES),
         }
     }
 }
@@ -106,6 +112,53 @@ impl CapturePolicy {
     pub fn redact_response_header(&mut self, name: impl Into<String>) {
         self.response_header_names
             .insert(name.into().to_ascii_lowercase());
+    }
+}
+
+/// Streaming retention accounting shared by native capture consumers.
+/// File size and record limits remain enforced by the writer in Unlimited mode.
+#[derive(Debug, Default)]
+pub struct CaptureBodyRetention {
+    request_bytes: HashMap<(u128, bool), u64>,
+}
+impl CaptureBodyRetention {
+    /// Clips request samples to the configured prefix without altering observed
+    /// byte counts. Terminal records release per-exchange accounting.
+    pub fn apply(&mut self, record: &mut CaptureRecord, policy: &CapturePolicy) {
+        match &mut record.kind {
+            CaptureRecordKind::BodySegment {
+                boundary,
+                byte_count,
+                bytes,
+                truncated,
+            } if matches!(
+                boundary,
+                ExchangeBoundary::ClientRequest | ExchangeBoundary::UpstreamRequest
+            ) =>
+            {
+                if let (Some(limit), Some(sample)) = (policy.request_body_limit, bytes) {
+                    let used = self
+                        .request_bytes
+                        .entry((
+                            record.exchange_id,
+                            *boundary == ExchangeBoundary::UpstreamRequest,
+                        ))
+                        .or_default();
+                    let remaining = limit.saturating_sub(*used);
+                    let take = usize::try_from(remaining)
+                        .unwrap_or(usize::MAX)
+                        .min(sample.len());
+                    sample.truncate(take);
+                    *used = used.saturating_add(take as u64);
+                    *truncated |= take < *byte_count;
+                }
+            }
+            CaptureRecordKind::Completed | CaptureRecordKind::Failed { .. } => {
+                self.request_bytes.remove(&(record.exchange_id, false));
+                self.request_bytes.remove(&(record.exchange_id, true));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -382,6 +435,56 @@ impl<W: Write> CaptureWriter<W> {
     pub fn append(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
         if self.sealed {
             return Err(CaptureError::AlreadySealed);
+        }
+        if let CaptureRecordKind::BodySegment {
+            boundary,
+            byte_count,
+            bytes: Some(bytes),
+            truncated,
+        } = &record.kind
+        {
+            // JSON byte arrays can require four payload bytes per body byte.
+            // Each fragment keeps its observer sequence; file order determines
+            // body order. Only the final fragment carries unretained counts.
+            let part_bytes = self.limits.max_record_bytes.saturating_sub(1024) / 4;
+            if bytes.len() > part_bytes && part_bytes > 0 {
+                let mut counted = 0;
+                for part in bytes.chunks(part_bytes) {
+                    let last = counted + part.len() == bytes.len();
+                    let fragment = CaptureRecord {
+                        sequence: record.sequence,
+                        exchange_id: record.exchange_id,
+                        kind: CaptureRecordKind::BodySegment {
+                            boundary: *boundary,
+                            byte_count: if last {
+                                byte_count.saturating_sub(counted)
+                            } else {
+                                part.len()
+                            },
+                            bytes: Some(part.to_vec()),
+                            truncated: *truncated,
+                        },
+                    };
+                    self.append_record(&fragment)?;
+                    counted += part.len();
+                }
+                return Ok(());
+            }
+            if bytes.len() > self.limits.max_record_bytes {
+                return Err(CaptureError::RecordTooLarge {
+                    actual: bytes.len(),
+                    limit: self.limits.max_record_bytes,
+                });
+            }
+        }
+        self.append_record(record)
+    }
+
+    fn append_record(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
+        // Reserve the final record for a seal so a healthy writer always creates
+        // an artifact readable under the same recovery limits.
+        if self.records_written >= self.limits.max_records.saturating_sub(1) as u64 {
+            return Err(CaptureError::RecordCountExceeded);
         }
         let stored = store(record)?;
         let payload = serde_json::to_vec(&stored)?;
@@ -1412,7 +1515,7 @@ mod tests {
         let limits = CaptureLimits {
             max_file_bytes: 24,
             max_record_bytes: 1024,
-            max_records: 1,
+            max_records: 2,
         };
         let mut writer = CaptureWriter::new(Vec::new(), limits).unwrap();
         assert!(matches!(
@@ -1519,6 +1622,109 @@ mod tests {
             kind: ObserverEventKind::RequestHeadFinalized(head),
         };
         assert!(record_from_observer(&legacy, &CapturePolicy::default()).is_none());
+    }
+
+    #[test]
+    fn large_body_frames_split_without_losing_bytes_counts_or_sequence() {
+        let limits = CaptureLimits {
+            max_record_bytes: 4096,
+            ..CaptureLimits::default()
+        };
+        let bytes = vec![255; 32 * 1024];
+        let record = CaptureRecord {
+            exchange_id: 7,
+            sequence: 2,
+            kind: CaptureRecordKind::BodySegment {
+                boundary: ExchangeBoundary::ClientRequest,
+                byte_count: 50_000,
+                bytes: Some(bytes.clone()),
+                truncated: true,
+            },
+        };
+        let mut writer = CaptureWriter::new(Vec::new(), limits).unwrap();
+        writer.append(&record).unwrap();
+        writer.seal().unwrap();
+        let recovered = recover(&writer.into_inner()[..], limits).unwrap();
+        assert!(recovered.sealed);
+        let mut exact = Vec::new();
+        let mut observed = 0;
+        let mut parts = 0;
+        for record in recovered.records {
+            if let CaptureRecordKind::BodySegment {
+                bytes: Some(bytes),
+                byte_count,
+                truncated,
+                ..
+            } = record.kind
+            {
+                assert_eq!(record.sequence, 2);
+                assert!(truncated);
+                exact.extend(bytes);
+                observed += byte_count;
+                parts += 1;
+            }
+        }
+        assert!(parts > 1);
+        assert_eq!(exact, bytes);
+        assert_eq!(observed, 50_000);
+        let limits = CaptureLimits {
+            max_records: 2,
+            ..limits
+        };
+        let mut writer = CaptureWriter::new(Vec::new(), limits).unwrap();
+        writer.append(&completed(1)).unwrap();
+        assert!(matches!(
+            writer.append(&completed(2)),
+            Err(CaptureError::RecordCountExceeded)
+        ));
+        writer.seal().unwrap();
+        assert!(recover(&writer.into_inner()[..], limits).unwrap().sealed);
+    }
+
+    #[test]
+    fn request_sample_limit_preserves_counts_boundaries_and_unlimited() {
+        let mut policy = CapturePolicy {
+            retain_body_samples: true,
+            request_body_limit: Some(5),
+            ..CapturePolicy::default()
+        };
+        let mut retention = CaptureBodyRetention::default();
+        let segment = |boundary, bytes: Vec<u8>| CaptureRecord {
+            sequence: 1,
+            exchange_id: 7,
+            kind: CaptureRecordKind::BodySegment {
+                boundary,
+                byte_count: bytes.len(),
+                bytes: Some(bytes),
+                truncated: false,
+            },
+        };
+        let mut client = segment(ExchangeBoundary::ClientRequest, vec![1; 3]);
+        retention.apply(&mut client, &policy);
+        let mut next = segment(ExchangeBoundary::ClientRequest, vec![2; 4]);
+        retention.apply(&mut next, &policy);
+        assert!(
+            matches!(&next.kind,CaptureRecordKind::BodySegment {byte_count:4,bytes:Some(bytes),truncated:true,..} if bytes==&vec![2;2])
+        );
+        let mut upstream = segment(ExchangeBoundary::UpstreamRequest, vec![3; 5]);
+        retention.apply(&mut upstream, &policy);
+        assert!(
+            matches!(&upstream.kind,CaptureRecordKind::BodySegment {bytes:Some(bytes),truncated:false,..} if bytes.len()==5)
+        );
+        let mut response = segment(ExchangeBoundary::ClientResponse, vec![4; 8]);
+        retention.apply(&mut response, &policy);
+        assert!(
+            matches!(&response.kind,CaptureRecordKind::BodySegment {bytes:Some(bytes),truncated:false,..} if bytes.len()==8)
+        );
+        let mut end = completed(2);
+        retention.apply(&mut end, &policy);
+        assert!(retention.request_bytes.is_empty());
+        policy.request_body_limit = None;
+        let mut unlimited = segment(ExchangeBoundary::ClientRequest, vec![5; 20]);
+        retention.apply(&mut unlimited, &policy);
+        assert!(
+            matches!(&unlimited.kind,CaptureRecordKind::BodySegment {bytes:Some(bytes),truncated:false,..} if bytes.len()==20)
+        );
     }
 
     #[test]

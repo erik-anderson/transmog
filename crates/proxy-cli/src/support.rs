@@ -37,13 +37,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     }
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
-    let redact = ledger.redaction(if arguments.iter().any(|arg| arg == "--redact") {
-        Some(true)
-    } else if arguments.iter().any(|arg| arg == "--retain-sensitive") {
-        Some(false)
-    } else {
-        None
-    })?;
+    let (redact, request_body_limit) = recording_preferences(arguments, &ledger)?;
     if ledger.cleanup_ephemeral(&trust)? > 0 {
         eprintln!(
             "Previous roots still need removal. Their identities are preserved; this capture will use a new root."
@@ -69,7 +63,16 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             "ephemeral; its private key stays in memory and its trust is removed afterward"
         }
     );
-    let result = run_capture(arguments, &native, &ledger, &root, ca, redact).await;
+    let result = run_capture(
+        arguments,
+        &native,
+        &ledger,
+        &root,
+        ca,
+        redact,
+        request_body_limit,
+    )
+    .await;
     // Always attempt removal after setup/start/record errors too. Metadata stays
     // on disk until OS removal succeeds; ephemeral private keys never do.
     let cleanup = if persistent {
@@ -105,6 +108,40 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn recording_preferences(
+    arguments: &[String],
+    ledger: &RootLedger,
+) -> Result<(bool, Option<u64>), Box<dyn Error>> {
+    let body_choice = if arguments
+        .iter()
+        .any(|arg| arg == "--unlimited-request-bodies")
+    {
+        Some(None)
+    } else {
+        crate::option(arguments, "--request-body-limit")
+            .map(|value| value.parse::<u64>().map(Some))
+            .transpose()?
+    };
+    let (redact, request_body_limit) = ledger.preferences(
+        if arguments.iter().any(|arg| arg == "--redact") {
+            Some(true)
+        } else if arguments.iter().any(|arg| arg == "--retain-sensitive") {
+            Some(false)
+        } else {
+            None
+        },
+        body_choice,
+    )?;
+    println!(
+        "Request body retention: {}. The overall trace file budget is 4 GiB; reaching a retention limit keeps byte counts and marks bodies incomplete.",
+        request_body_limit.map_or_else(
+            || "Unlimited per request".into(),
+            |limit| format!("{limit} bytes per request")
+        )
+    );
+    Ok((redact, request_body_limit))
+}
+
 async fn original_trace_context(arguments: &[String]) -> serde_json::Value {
     let network = if arguments
         .iter()
@@ -118,6 +155,17 @@ async fn original_trace_context(arguments: &[String]) -> serde_json::Value {
     serde_json::json!({"application":"Transmog CLI", "version":env!("CARGO_PKG_VERSION"), "networkContext":network})
 }
 
+fn capture_policy(redact: bool, request_body_limit: Option<u64>) -> CapturePolicy {
+    let mut policy = if redact {
+        CapturePolicy::default()
+    } else {
+        CapturePolicy::default().retain_sensitive_headers()
+    };
+    policy.retain_body_samples = true;
+    policy.request_body_limit = request_body_limit;
+    policy
+}
+
 async fn run_capture(
     arguments: &[String],
     native: &Path,
@@ -125,6 +173,7 @@ async fn run_capture(
     root: &crate::roots::RootRecord,
     ca: transmog_tls::ProxyCa,
     redact: bool,
+    request_body_limit: Option<u64>,
 ) -> Result<(), Box<dyn Error>> {
     setup_root(arguments, ledger, root)?;
     println!(
@@ -145,6 +194,10 @@ async fn run_capture(
             allow_remote_clients: arguments.iter().any(|arg| arg == "--allow-remote"),
         },
         route_policy: crate::parse_route(crate::option(arguments, "--route").unwrap_or("auto"))?,
+        limits: transmog_runtime::RuntimeLimits {
+            max_request_body_bytes: usize::MAX,
+            ..transmog_runtime::RuntimeLimits::default()
+        },
         ..ProxyConfig::default()
     };
     let (components, _) = crate::build_components(
@@ -161,13 +214,9 @@ async fn run_capture(
         service.prepare_components(components),
     )
     .await?;
-    let mut policy = if redact {
-        CapturePolicy::default()
-    } else {
-        CapturePolicy::default().retain_sensitive_headers()
-    };
-    policy.retain_body_samples = true;
-    let metadata = original_trace_context(arguments).await;
+    let policy = capture_policy(redact, request_body_limit);
+    let mut metadata = original_trace_context(arguments).await;
+    metadata["requestBodyLimit"] = serde_json::json!(request_body_limit);
     service
         .start_capture(CaptureStart {
             metadata: Some(metadata),
@@ -361,7 +410,7 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
-            "--output" | "--listen" | "--route" | "--upstream-ca-cert" => {
+            "--output" | "--listen" | "--route" | "--upstream-ca-cert" | "--request-body-limit" => {
                 if arguments
                     .get(index + 1)
                     .is_none_or(|arg| arg.starts_with("--"))
@@ -380,7 +429,8 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
             | "--redact"
             | "--retain-sensitive"
             | "--allow-remote"
-            | "--include-network-context" => index += 1,
+            | "--include-network-context"
+            | "--unlimited-request-bodies" => index += 1,
             unknown => {
                 return Err(crate::invalid_input(format!(
                     "Unknown record option {unknown}"
@@ -400,6 +450,22 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
     {
         return Err(crate::invalid_input(
             "Choose only one header redaction option",
+        ));
+    }
+    if arguments
+        .iter()
+        .any(|arg| arg == "--unlimited-request-bodies")
+        && crate::option(arguments, "--request-body-limit").is_some()
+    {
+        return Err(crate::invalid_input(
+            "Choose only one request body retention limit",
+        ));
+    }
+    if let Some(value) = crate::option(arguments, "--request-body-limit")
+        && value.parse::<u64>().map_or(true, |limit| limit == 0)
+    {
+        return Err(crate::invalid_input(
+            "--request-body-limit requires a positive byte count",
         ));
     }
     let listener = ListenerConfig {
@@ -497,6 +563,13 @@ mod tests {
             vec!["--output"],
             vec!["--install-root", "--no-install-root"],
             vec!["--unknown"],
+            vec!["--request-body-limit", "0"],
+            vec!["--request-body-limit", "invalid"],
+            vec![
+                "--request-body-limit",
+                "25000000",
+                "--unlimited-request-bodies",
+            ],
         ] {
             assert!(
                 validate_options(&args.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err()

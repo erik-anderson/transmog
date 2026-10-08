@@ -24,11 +24,24 @@ PowerShell in that folder, and run:
    **Files → Open in a separate viewer…**. Review the capture and share that one
    compressed file with your support contact.
 
-The default captures complete headers and bodies, including cookies and
-credentials. To redact `Authorization`, `Proxy-Authorization`, `Cookie` and
+The default captures complete headers, including cookies and credentials, and
+retains up to 25 MB (25,000,000 bytes) per request body. Response bodies and
+observed byte counts remain available within the overall trace file budget.
+Large requests continue forwarding when their capture prefix reaches the cap. To redact `Authorization`, `Proxy-Authorization`, `Cookie` and
 `Set-Cookie` values, add `--redact`. This choice persists for subsequent CLI
 captures. Use `--retain-sensitive` to change it back. Bodies can still contain
 private information, so review the trace before sharing.
+
+To remove the per-request capture cap while retaining the 4 GiB file budget:
+
+```powershell
+.\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap.gz
+```
+
+This preference persists for subsequent CLI runs. Use --request-body-limit
+25000000 to restore the default, or supply another positive byte count. The
+console prints the active limit before recording. Overall file limits and
+separate bounded body-processing limits still apply.
 
 Existing files are never overwritten. Choose another filename for the next
 capture. Compression streams the saved native file; if compression fails, the

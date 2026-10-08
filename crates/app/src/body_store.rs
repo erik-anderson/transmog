@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     time::Duration,
@@ -111,6 +111,8 @@ pub struct StoredBodyMetadata {
     pub boundary: &'static str,
     /// Total bytes reported by the runtime observer.
     pub observed_bytes: u64,
+    /// Complete observed entity bytes, still content-encoded; excludes HTTP framing and TLS.
+    pub wire_body_bytes: Option<u64>,
     /// Bytes currently retained on disk.
     pub retained_bytes: u64,
     /// Current availability state.
@@ -328,6 +330,10 @@ impl StoredBody {
             } else {
                 self.observed_bytes
             },
+            wire_body_bytes: (self.terminal
+                && self.availability != BodyAvailability::Lost
+                && !self.source_size_deferred)
+                .then_some(self.observed_bytes),
             retained_bytes: self
                 .source
                 .as_ref()
@@ -364,6 +370,7 @@ struct ExchangeRetention {
     mode: RetentionMode,
     requests: bool,
     responses: bool,
+    request_limit: u64,
 }
 
 impl ExchangeRetention {
@@ -389,6 +396,7 @@ enum WorkerCommand {
 struct BodyStoreInner {
     redact_sensitive: AtomicBool,
     retain_requests: AtomicBool,
+    request_limit: AtomicU64,
     retain_responses: AtomicBool,
     config: BodyStoreConfig,
     state: Mutex<StoreState>,
@@ -472,6 +480,7 @@ impl BodyStore {
         let inner = Arc::new(BodyStoreInner {
             redact_sensitive: AtomicBool::new(false),
             retain_requests: AtomicBool::new(config.retain_requests),
+            request_limit: AtomicU64::new(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES),
             retain_responses: AtomicBool::new(true),
             state: Mutex::new(StoreState {
                 mode: config.mode,
@@ -531,6 +540,13 @@ impl BodyStore {
             .retain_responses
             .store(responses, Ordering::Release);
         self.inner.redact_sensitive.store(redact, Ordering::Release);
+    }
+
+    /// Changes the per-request cap for subsequent exchanges; None is Unlimited.
+    pub fn set_request_body_limit(&self, limit: Option<u64>) {
+        self.inner
+            .request_limit
+            .store(limit.unwrap_or(0), Ordering::Release);
     }
 
     /// Returns aggregate retained-byte and loss counters.
@@ -814,6 +830,7 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
             let retention = ExchangeRetention {
                 mode: state.mode,
                 requests: inner.retain_requests.load(Ordering::Acquire),
+                request_limit: inner.request_limit.load(Ordering::Acquire),
                 responses: inner.retain_responses.load(Ordering::Acquire),
             };
             state.exchange_modes.insert(event.exchange_id, retention);
@@ -877,6 +894,7 @@ fn exchange_mode(
         .unwrap_or(ExchangeRetention {
             mode: state.mode,
             requests: inner.retain_requests.load(Ordering::Acquire),
+            request_limit: inner.request_limit.load(Ordering::Acquire),
             responses: inner.retain_responses.load(Ordering::Acquire),
         })
         .for_direction(direction)
@@ -942,6 +960,16 @@ fn observe_chunk(
         boundary: BoundaryKey::from_boundary(chunk.boundary),
     };
     let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
+    let request_limit = state.exchange_modes.get(&exchange_id).map_or_else(
+        || inner.request_limit.load(Ordering::Acquire),
+        |retention| retention.request_limit,
+    );
+    let boundary_limit = if key.boundary.direction() == BodyDirection::Request && request_limit > 0
+    {
+        inner.config.max_body_bytes.min(request_limit)
+    } else {
+        inner.config.max_body_bytes
+    };
     let lossy = state.lossy_exchanges.contains(&exchange_id);
     let record = state.records.entry(key).or_insert_with(|| {
         StoredBody::new(if mode == RetentionMode::Off {
@@ -974,10 +1002,7 @@ fn observe_chunk(
     if sample.is_empty() {
         return;
     }
-    let per_body_remaining = inner
-        .config
-        .max_body_bytes
-        .saturating_sub(record.retained_bytes);
+    let per_body_remaining = boundary_limit.saturating_sub(record.retained_bytes);
     let desired = u64::try_from(sample.len())
         .unwrap_or(u64::MAX)
         .min(per_body_remaining);
@@ -1355,6 +1380,51 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    #[test]
+    fn request_limit_snapshots_and_unlimited_keeps_the_aggregate_budget() {
+        let root = root("request-cap");
+        let store = BodyStore::new(config(root.clone(), 64)).unwrap();
+        store.set_privacy(true, true, false);
+        store.set_request_body_limit(Some(16));
+        push(&store, [started(1)]);
+        store.set_request_body_limit(None);
+        let request_chunk = |id, sequence, len| {
+            event(
+                id,
+                sequence,
+                ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: len,
+                    sample: Some(Bytes::from(vec![b'x'; len])),
+                    truncated: false,
+                }),
+            )
+        };
+        push(&store, [request_chunk(1, 2, 32), completed(1, 3)]);
+        let first = store.metadata(ExchangeId(1));
+        assert_eq!(first[0].observed_bytes, 32);
+        assert_eq!(first[0].retained_bytes, 16);
+        assert_eq!(first[0].availability, BodyAvailability::Truncated);
+        push(
+            &store,
+            [started(2), request_chunk(2, 2, 48), completed(2, 3)],
+        );
+        let second = store.metadata(ExchangeId(2));
+        assert_eq!(second[0].retained_bytes, 48);
+        assert_eq!(second[0].availability, BodyAvailability::Complete);
+        push(
+            &store,
+            [started(3), request_chunk(3, 2, 80), completed(3, 3)],
+        );
+        let third = store.metadata(ExchangeId(3));
+        assert_eq!(third[0].observed_bytes, 80);
+        assert_eq!(third[0].retained_bytes, 64);
+        assert_eq!(third[0].availability, BodyAvailability::Truncated);
+        assert!(store.counters().retained_bytes <= 64);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

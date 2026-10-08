@@ -139,11 +139,27 @@ qualified baseline, not completion of the complete plan.
     Windows PowerShell 5.1, PowerShell 7 and Bash. App copy actions never send.
     App tests/clippy, browser flow checks and documented UX semantics pass.
 
+17. Request-body capture: 25 MB (25,000,000 bytes) default and persistent
+    Unlimited in desktop settings and guided CLI recording. Per-request cap
+    removal preserves the one-GiB body cache and each recording's file budget.
+    Cache limits snapshot at admission; recordings snapshot their policy and
+    record it in trace metadata. Native writing clips retained samples while
+    preserving observed counts. Oversized observer frames split into bounded
+    native records; the writer reserves room in its record budget for sealing.
+    Capture limits do not reject forwarding;
+    non-streaming processing keeps a separate bounded allocation policy.
+    Auto streams large/unknown-length bodies through HTTP/1 or HTTP/2 instead
+    of buffered H3 retries; explicitly selected H3 continues streaming.
+    Known compressed entity-body wire counts are exposed with framing/TLS
+    exclusions, independently of retained size. A 32-MiB real request streams
+    beyond the capture/buffering limits. App, native writer, session, CLI and
+    full runtime protocol/content tests pass; clippy and browser/native checks
+    pass. Reviewed populated wide and compact retention settings.
+
 Remaining isolated phases:
 
-- Request-body capture: persistent 25 MB (25,000,000 bytes) default, Unlimited
-  per-request option with finite overall storage; forwarding and file-backed
-  Composer replay of larger bodies; replay history/result source associations.
+- Composer replay: file-backed replay of larger bodies, with source trace and
+  entry associations retained in history and results.
 
 - Performance: shared H2/H3 setup normalized to each request, setup age and
   request wait; waterfall and copied report; separately measured proxy work,

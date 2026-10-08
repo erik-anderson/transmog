@@ -143,6 +143,7 @@ pub struct ExportResult {
 pub(crate) async fn start_capture(
     service: &ApplicationSessionService,
     request: CaptureStartRequest,
+    request_body_limit: Option<u64>,
 ) -> Result<CaptureReadModel, AppError> {
     if request.max_file_bytes <= 1024 || request.max_file_bytes > MAX_IMPORT_BYTES {
         return Err(AppError::new(
@@ -159,9 +160,10 @@ pub(crate) async fn start_capture(
     // The session observer has already applied the application's privacy choice.
     let mut policy = CapturePolicy::default().retain_sensitive_headers();
     policy.retain_body_samples = request.retain_body_samples;
+    policy.request_body_limit = request_body_limit;
     service
         .start_capture(CaptureStart {
-            metadata: Some(serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"), "networkContext":network_context})),
+            metadata: Some(serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"), "networkContext":network_context,"requestBodyLimit":request_body_limit})),
             path: request.path,
             limits: CaptureLimits {
                 max_file_bytes: request.max_file_bytes,
