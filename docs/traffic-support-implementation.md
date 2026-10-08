@@ -45,7 +45,7 @@ checkout contains independent updater work and is preserved.
     script parsing and release-provenance/publication/lifecycle checks pass.
     Actual signing remains part of the protected release workflow.
 
-11. Measured client/proxy/upstream timeline and physical transport evidence,
+11. `7316847`: measured client/proxy/upstream timeline and physical transport evidence,
     including client acceptance, first read, process attribution and TLS; Hyper
     DNS/TCP/TLS setup and failures, exact HTTP boundary versions/reason phrases;
     shared pool counters and measured QUIC path/recovery statistics. Native v3
@@ -55,9 +55,16 @@ checkout contains independent updater work and is preserved.
     browser UX and native WebView2 checks pass. Reviewed populated and compact
     layouts; improved legacy import presentation to put saved timers first.
 
+12. Source-aware streaming native/gzip Save trace in main and saved viewers, with
+    original source metadata, request identifiers, heads/timers and terminal times.
+    Optional bounded network configuration in desktop recording/saving and CLI,
+    with platform, UTC collection time and failures shown in Trace metadata.
+    Original context survives SAZ conversion. Aggregate merged import limits are
+    enforced before atomic publication. Round-trip, missing-body, removal, failed
+    overwrite, metadata quota and Unicode subprocess tests pass. Browser and native
+    UX checks cover defaults, cancellation, retry drafts, compact/populated layout.
+
 ## Remaining isolated phases
-- Save/export original trace metadata, with opt-in `ipconfig /all` or platform
-  analogue; preserve source associations for merged traces.
 - Windows captured HTML preview in a separate WebView, captured resources only,
   empty-body 404 for misses, no proxy dependency, security warning with an
   Enable scripts choice. Use an isolated untrusted-content profile and prevent

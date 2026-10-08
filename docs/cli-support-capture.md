@@ -93,3 +93,10 @@ use `--no-system-proxy` and configure that device with the listener address.
 
 The lower-level `serve`, `ca` and `capture` commands remain available for existing
 operator workflows. `transmog-cli help` lists their options.
+
+To include network configuration for a support investigation, add
+`--include-network-context`. The trace records `ipconfig /all` on Windows,
+interface/DNS/route context on macOS, or `ip` and `resolvectl` output on Linux.
+This is optional because adapter addresses, DNS configuration and computer names
+may be private. Collection is bounded and failures remain in Trace metadata.
+Open the saved trace and use **Trace metadata** before sharing.

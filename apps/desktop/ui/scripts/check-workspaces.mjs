@@ -73,6 +73,7 @@ await page.addInitScript((workspace) => {
         case 'pick_trace_path': return state.pickedTrace??null;
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
+        case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap.gz',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
         case 'trace_metadata_list': return structuredClone(state.traces??[]);
         case 'cancel_trace_import': state.importCanceled=true;return;
         case 'import_trace': {
@@ -1280,7 +1281,7 @@ try {
   await page.getByText('Capture viewer',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);
   assert.equal(await page.locator('settings-workspace').count(),0);
-  assert.equal(await page.getByRole('button',{name:'Export TMCap',exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Save trace…',exact:true}).count(),1);
   await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).waitFor();
   await page.evaluate(async()=>{globalThis.__workspaceFixture.openedTraces=['C:/captures/viewer.saz'];await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').takeOpenedTraces();});
   await page.locator('.trace-import-status').getByText(/Imported 1 entry from viewer.saz/).waitFor();
@@ -1289,6 +1290,20 @@ try {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.open_main_window),1);
   await page.setViewportSize({width:800,height:600});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/capture-viewer-compact.png')});
+  await page.getByRole('button',{name:'Save trace…',exact:true}).click();
+  const saveTrace=page.locator('.trace-save-dialog[open]');
+  assert.equal(await saveTrace.getByLabel('Compress for sharing (.tmcap.gz)',{exact:true}).isChecked(),true);
+  assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isChecked(),false);
+  await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).check();
+  await page.evaluate(()=>globalThis.__workspaceFixture.saveTraceError=true);
+  await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();
+  await saveTrace.getByText(/Trace could not be saved:/).waitFor();assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isChecked(),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/save-trace-compact.png')});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.saveTraceError=false;globalThis.__workspaceFixture.cancelTraceSave=true;});
+  await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await saveTrace.getByText('Save canceled.',{exact:true}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.cancelTraceSave=false);
+  await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
+  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{includeNetworkContext:true},compressed:true});
   await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.performance={points:[{milestone:'client-connected',unixMillis:1800000000000,offsetMicros:-2500},{milestone:'request-headers',unixMillis:1800000000002,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000005,offsetMicros:3500}],protocols:[],transports:[{leg:'upstream',connectionId:'shared-h2-fixture',shared:true,outcome:'connected',sampledOffsetMicros:3000,peer:'192.0.2.1:443',local:'192.0.2.2:54321',dnsMicros:null,tcpMicros:1200,tlsMicros:500,tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256',alpn:'h2',bytesRead:10240,bytesWritten:1024}]};state.savedTiming={ClientBeginRequest:'00:00:00.000'};});
   await page.locator('.session-link').first().click();
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();

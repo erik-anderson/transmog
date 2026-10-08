@@ -25,6 +25,7 @@ mod scripts;
 mod search;
 mod sessions;
 mod trace_body;
+mod trace_save;
 mod traces;
 mod version;
 mod workspace;
@@ -79,6 +80,7 @@ pub use sessions::{
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
 };
 use thiserror::Error;
+pub use trace_save::{TraceSaveOptions, TraceSaveResult};
 pub use traces::{TraceImportProgress, TraceImportRequest, TraceImportResult, TraceMetadataView};
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
@@ -1081,6 +1083,18 @@ impl Application {
     /// Cancels an in-progress saved-file import before catalog publication.
     pub fn cancel_trace_import(&self, operation_id: &str) {
         self.traces.cancel(operation_id);
+    }
+
+    /// Saves every retained Traffic entry with its original trace association.
+    ///
+    /// # Errors
+    /// Returns bounded storage, metadata collection, or output failures.
+    pub async fn save_traffic_trace(
+        &self,
+        destination: PathBuf,
+        options: TraceSaveOptions,
+    ) -> Result<TraceSaveResult, AppError> {
+        trace_save::save(self.clone(), destination, options).await
     }
 
     /// Lists source metadata for every trace in this window's saved workspace.

@@ -121,6 +121,14 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+**Save trace** saves every retained entry in the current window, across pages and
+search results, excluding entries removed from Traffic. Offer compression for
+sharing by default. Preserve original source metadata and request associations
+when saving merged captures. Network configuration from the saving computer is
+an explicit, unchecked option and stays separate from imported source context;
+show collection time, platform and failures in Trace metadata. Report incomplete
+bodies and keep existing destination files intact when a save fails.
+
 The installer offers SAZ registration as an explicit choice. Preserve an existing
 Windows default, explain how Windows may ask for a default-app choice, and remove
 only registrations owned by the uninstalling executable's exact path.

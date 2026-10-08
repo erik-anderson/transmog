@@ -12,6 +12,7 @@ name = "transmog-cli"
 path = "src/main.rs"
 
 [dependencies]
+transmog-network = { version = "=0.1.0", path = "../network" }
 bytes.workspace = true
 boring.workspace = true
 flate2.workspace = true

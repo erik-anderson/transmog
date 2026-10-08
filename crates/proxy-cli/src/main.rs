@@ -622,7 +622,7 @@ fn print_usage() {
     println!(
         "transmog-cli\n\n\
          Guided support capture (press Ctrl+C to stop and save):\n  \
-         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive]\n  \
+         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context]\n  \
          [--install-root|--no-install-root] [--no-system-proxy] [--listen 127.0.0.1:0] [--allow-remote] [--route auto|h1|h2|h3]\n\n\
          Remove CLI-owned roots, including retrying canceled OS prompts:\n  \
          transmog-cli roots cleanup [--include-persistent]\n\n\

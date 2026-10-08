@@ -44,7 +44,7 @@ impl Default for SazImportLimits {
             max_total_bytes: 8 * 1024 * 1024 * 1024,
             max_head_bytes: 1024 * 1024,
             max_index_bytes: 256 * 1024 * 1024,
-            max_metadata_bytes: 1024 * 1024,
+            max_metadata_bytes: 4 * 1024 * 1024,
         }
     }
 }

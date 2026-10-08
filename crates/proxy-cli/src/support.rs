@@ -105,6 +105,19 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn original_trace_context(arguments: &[String]) -> serde_json::Value {
+    let network = if arguments
+        .iter()
+        .any(|arg| arg == "--include-network-context")
+    {
+        println!("Collecting network configuration for the trace…");
+        Some(transmog_network::context::collect().await)
+    } else {
+        None
+    };
+    serde_json::json!({"application":"Transmog CLI", "version":env!("CARGO_PKG_VERSION"), "networkContext":network})
+}
+
 async fn run_capture(
     arguments: &[String],
     native: &Path,
@@ -154,8 +167,10 @@ async fn run_capture(
         CapturePolicy::default().retain_sensitive_headers()
     };
     policy.retain_body_samples = true;
+    let metadata = original_trace_context(arguments).await;
     service
         .start_capture(CaptureStart {
+            metadata: Some(metadata),
             path: native.to_path_buf(),
             limits: CaptureLimits::default(),
             policy,
@@ -358,8 +373,14 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
                 }
                 index += 2;
             }
-            "--persistent-root" | "--install-root" | "--no-install-root" | "--no-system-proxy"
-            | "--redact" | "--retain-sensitive" | "--allow-remote" => index += 1,
+            "--persistent-root"
+            | "--install-root"
+            | "--no-install-root"
+            | "--no-system-proxy"
+            | "--redact"
+            | "--retain-sensitive"
+            | "--allow-remote"
+            | "--include-network-context" => index += 1,
             unknown => {
                 return Err(crate::invalid_input(format!(
                     "Unknown record option {unknown}"
@@ -484,6 +505,7 @@ mod tests {
         assert!(
             validate_options(&[
                 "--persistent-root".into(),
+                "--include-network-context".into(),
                 "--output".into(),
                 "my trace.tmcap.gz".into()
             ])

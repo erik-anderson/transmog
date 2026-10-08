@@ -158,6 +158,12 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
             entries: 2,
             ..SazReport::default()
         };
+        report.entries += write_trace_context(
+            &mut writer,
+            capture,
+            options,
+            self.limits.max_entries.saturating_sub(report.entries),
+        )?;
         let mut manifest = Vec::new();
         for (exchange_id, session) in &mut sessions {
             let (Some(request), Some(response)) = (&session.request, &session.response) else {
@@ -461,6 +467,38 @@ const fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
+fn write_trace_context<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    capture: &RecoveredCapture,
+    options: SimpleFileOptions,
+    remaining: usize,
+) -> Result<usize, SazError> {
+    let metadata = capture
+        .records
+        .iter()
+        .rev()
+        .find_map(|record| match &record.kind {
+            CaptureRecordKind::Unknown { kind, payload }
+                if record.exchange_id == 0 && kind == "trace-metadata" =>
+            {
+                Some(payload)
+            }
+            _ => None,
+        });
+    let Some(metadata) = metadata else {
+        return Ok(0);
+    };
+    if remaining == 0 {
+        return Err(SazError::EntryLimitExceeded);
+    }
+    let bytes = serde_json::to_vec(metadata)?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(SazError::MetadataLimitExceeded);
+    }
+    write_member(writer, "transmog/trace-metadata.json", &bytes, options)?;
+    Ok(1)
+}
+
 fn write_member<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     name: &str,
@@ -505,6 +543,9 @@ pub enum SazError {
     /// ZIP member count exceeded its finite bound.
     #[error("SAZ entry limit exceeded")]
     EntryLimitExceeded,
+    /// Capture context exceeds the bounded importer-compatible metadata size.
+    #[error("SAZ trace metadata exceeds its four MiB limit")]
+    MetadataLimitExceeded,
     /// Retained body bytes exceeded the per-direction bound.
     #[error("SAZ body limit exceeded")]
     BodyLimitExceeded,
@@ -630,6 +671,31 @@ mod tests {
         let mut value = Vec::new();
         file.read_to_end(&mut value).unwrap();
         value
+    }
+
+    #[test]
+    fn original_optional_trace_context_survives_both_saz_profiles() {
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let mut source = capture(true, true);
+            let context = serde_json::json!({"networkContext":{"platform":"fixture","output":"original adapter context"}});
+            source.records.insert(
+                0,
+                CaptureRecord {
+                    sequence: 0,
+                    exchange_id: 0,
+                    kind: CaptureRecordKind::Unknown {
+                        kind: "trace-metadata".into(),
+                        payload: context.clone(),
+                    },
+                },
+            );
+            let (bytes, _) = export(mode, &source);
+            let mut archive =
+                crate::SazArchive::open(Cursor::new(bytes), crate::SazImportLimits::default())
+                    .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(index.trace_metadata, Some(context));
+        }
     }
 
     #[test]

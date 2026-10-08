@@ -24,6 +24,9 @@ use tokio::time::{Instant, sleep_until};
 /// Physical socket payload measurement, independent of HTTP streams.
 pub mod metrics;
 
+/// Explicitly requested, bounded machine network configuration for support traces.
+pub mod context;
+
 const MAX_ATTEMPT_DELAY: Duration = Duration::from_secs(2);
 const MAX_CANDIDATES: usize = 64;
 

@@ -21,6 +21,9 @@ const MAX_RECORDS: usize = 10_000_000;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStartRequest {
+    /// Include this machine's network configuration in original capture metadata.
+    #[serde(default)]
+    pub include_network_context: bool,
     /// Create-new native artifact path.
     pub path: PathBuf,
     /// Maximum complete file bytes.
@@ -148,11 +151,17 @@ pub(crate) async fn start_capture(
             false,
         ));
     }
+    let network_context = if request.include_network_context {
+        Some(transmog_network::context::collect().await)
+    } else {
+        None
+    };
     // The session observer has already applied the application's privacy choice.
     let mut policy = CapturePolicy::default().retain_sensitive_headers();
     policy.retain_body_samples = request.retain_body_samples;
     service
         .start_capture(CaptureStart {
+            metadata: Some(serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"), "networkContext":network_context})),
             path: request.path,
             limits: CaptureLimits {
                 max_file_bytes: request.max_file_bytes,

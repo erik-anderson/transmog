@@ -33,7 +33,7 @@ use transmog_app::{
     ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
     ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
     SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
-    WindowState, WorkspacePreferences,
+    TraceSaveOptions, TraceSaveResult, WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -490,6 +490,7 @@ async fn start_proxy(
             state
                 .application
                 .start_capture(CaptureStartRequest {
+                    include_network_context: false,
                     path: path.clone(),
                     max_file_bytes: AUTOMATIC_CAPTURE_BYTES,
                     retain_body_samples: state
@@ -936,6 +937,33 @@ async fn inspect_body(
 }
 
 #[tauri::command]
+async fn save_traffic_trace(
+    options: TraceSaveOptions,
+    compressed: bool,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<TraceSaveResult>, AppError> {
+    let application = state.window_application(&window)?;
+    let picker = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save traffic trace")
+        .set_file_name(if compressed {
+            "Transmog-trace.tmcap.gz"
+        } else {
+            "Transmog-trace.tmcap"
+        })
+        .add_filter("Traffic traces", &["tmcap.gz", "tmcap"]);
+    let Some(file) = picker.save_file().await else {
+        return Ok(None);
+    };
+    let result = application
+        .save_traffic_trace(file.path().to_owned(), options)
+        .await?;
+    application.remember_artifact(result.destination.clone(), ArtifactKind::NativeCapture);
+    Ok(Some(result))
+}
+
+#[tauri::command]
 async fn save_response_body(
     session_id: String,
     boundary: String,
@@ -1334,6 +1362,7 @@ pub fn run() {
                 save_request_body,
                 inspect_body,
                 save_response_body,
+                save_traffic_trace,
                 watch_sessions,
                 enable_breakpoints,
                 breakpoint_status,

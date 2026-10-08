@@ -57,7 +57,7 @@
             <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
             <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}">Follow live</button>
             <span class="page-controls" ?hidden="{{totalMatched <= pageLimit}}"><button type="button" class="secondary compact-button" @click="{navigatePage(-1)}" ?disabled="{{pageIndex == 0}}">Previous</button><button type="button" class="secondary compact-button" @click="{navigatePage(1)}" ?disabled="{{pageEnd >= totalMatched}}">Next</button></span>
-            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{exportLiveCapture()}">Export TMCap</button>
+            <button type="button" class="secondary compact-button" @click="{showSaveTrace()}" ?disabled="{{savingTrace}}">Save trace…</button>
           </div>
         </div>
       </section>
@@ -84,6 +84,10 @@
       <h2 id="trace-open-heading">Open saved traffic</h2><p class="full-value">{{openedTraceName}}</p><p>Import this capture into the current session, or open it in a separate capture viewer?</p>
       <footer class="actions"><button type="button" @click="{chooseOpenedTrace(false)}">Import into this session</button><button type="button" class="secondary" @click="{chooseOpenedTrace(true)}">Open separate viewer</button><button type="button" class="secondary" @click="{cancelOpenedTrace()}">Cancel</button></footer>
     </dialog>
+    <dialog w-ref="{saveTraceDialog}" class="trace-save-dialog" aria-labelledby="save-trace-heading">
+      <h2 id="save-trace-heading">Save traffic trace</h2><p class="field-help">Save all retained entries in this window, including entries outside the current page or search. Removed entries are excluded. Original source metadata stays associated with each request.</p>
+      <form w-ref="{saveTraceForm}" @submit="{saveTrafficTrace(e)}"><fieldset ?disabled="{{savingTrace}}"><label class="checkbox-label"><input name="compress" type="checkbox" checked> Compress for sharing (.tmcap.gz)</label><label class="checkbox-label"><input name="networkContext" type="checkbox"> Include this computer’s network configuration</label><p class="field-help">Network configuration includes adapter addresses, DNS settings and computer names. It is stored separately from imported traces’ original context.</p><p class="field-help">Captured headers and bodies may contain private data. Active or unavailable bodies are marked incomplete.</p></fieldset><if condition="saveTraceStatus"><p role="status">{{saveTraceStatus}}</p></if><footer class="actions"><button type="submit" ?disabled="{{savingTrace}}">Save as…</button><button type="button" class="secondary" @click="{closeSaveTrace()}">Close</button></footer></form>
+    </dialog>
     <dialog w-ref="{timingDialog}" class="timing-dialog" aria-labelledby="timing-heading" @close="{timingsClosed()}">
       <h2 id="timing-heading">{{timingTitle}}</h2><p class="field-help">{{timingSummary}}</p><p role="status">{{timingError}}</p>
       <div class="timing-scroll">
@@ -102,7 +106,7 @@
     <dialog w-ref="{metadataDialog}" class="trace-metadata-dialog" aria-labelledby="trace-metadata-heading">
       <h2 id="trace-metadata-heading">Trace metadata</h2><p class="field-help">Original context belongs to its source capture. Requests imported from different files keep their own trace association.</p>
       <label>Source trace<select w-ref="{metadataSelector}" @change="{changeMetadataTrace(e)}" ?disabled="{{metadataBusy || !traceMetadataRows.length}}"><for each="trace in metadataTraceOptions"><option key="{{trace.id}}" value="{{trace.id}}">{{trace.label}}</option></for></select></label>
-      <h3>{{metadataTraceName}}</h3><p class="full-value">{{metadataSummary}}</p><p role="status">{{metadataError}}</p><if condition="metadataNetworkContext"><h3>{{metadataNetworkTitle}}</h3><pre class="trace-context">{{metadataNetworkContext}}</pre></if><if condition="metadataContext"><pre class="trace-context">{{metadataContext}}</pre></if>
+      <h3>{{metadataTraceName}}</h3><p class="full-value">{{metadataSummary}}</p><p role="status">{{metadataError}}</p><if condition="metadataNetworkTitle"><h3>{{metadataNetworkTitle}}</h3><p class="field-help">{{metadataNetworkSummary}}</p><if condition="metadataNetworkContext"><pre class="trace-context">{{metadataNetworkContext}}</pre></if><if condition="!metadataNetworkContext"><p>No network configuration output was available.</p></if></if><if condition="metadataContext"><pre class="trace-context">{{metadataContext}}</pre></if>
       <for each="note in metadataNotes"><p key="{{note.id}}" class="field-help">{{note.text}}</p></for><footer class="actions"><button type="button" class="secondary" @click="{closeMetadata()}">Close</button></footer>
     </dialog>
     <div id="traffic-search-options" class="table-popover search-options" popover="auto"><strong>Search options</strong>

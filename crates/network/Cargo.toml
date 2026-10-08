@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+serde.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

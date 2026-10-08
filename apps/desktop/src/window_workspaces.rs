@@ -68,6 +68,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "save_request_body"
             | "inspect_body"
             | "save_response_body"
+            | "save_traffic_trace"
             | "watch_sessions"
             | "execute_composer"
             | "composer_history"

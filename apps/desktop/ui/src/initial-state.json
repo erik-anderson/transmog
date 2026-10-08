@@ -713,5 +713,8 @@
   "timingPhases": [],
   "timingRows": [],
   "timingTransports": [],
-  "timingSaved": []
+  "timingSaved": [],
+  "metadataNetworkSummary": "",
+  "savingTrace": false,
+  "saveTraceStatus": ""
 }

@@ -6065,6 +6065,7 @@ dependencies = [
  "transmog-content",
  "transmog-core",
  "transmog-host-windows",
+ "transmog-network",
  "transmog-runtime",
  "transmog-saz",
  "transmog-session",
@@ -6096,6 +6097,7 @@ dependencies = [
  "transmog-control-transport",
  "transmog-core",
  "transmog-http",
+ "transmog-network",
  "transmog-preview-worker",
  "transmog-runtime",
  "transmog-saz",
@@ -6279,6 +6281,7 @@ name = "transmog-network"
 version = "0.1.0+0"
 dependencies = [
  "futures-util",
+ "serde",
  "thiserror 2.0.21",
  "tokio",
 ]
@@ -6383,6 +6386,7 @@ version = "0.1.0+0"
 dependencies = [
  "bytes",
  "http",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "transmog-capture",

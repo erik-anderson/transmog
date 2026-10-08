@@ -93,7 +93,8 @@ pub struct TraceImportResult {
     pub issues: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TraceEntry {
     pub trace_id: String,
     pub original_id: String,
@@ -106,6 +107,8 @@ pub(crate) struct TraceEntry {
 
 #[derive(Default)]
 struct State {
+    index_bytes: usize,
+    metadata_bytes: usize,
     metadata: BTreeMap<String, TraceMetadataView>,
     entries: HashMap<String, TraceEntry>,
     operations: HashMap<String, Arc<AtomicBool>>,
@@ -113,6 +116,7 @@ struct State {
 
 #[derive(Clone, Default)]
 pub(crate) struct TraceRegistry {
+    publication: Arc<Mutex<()>>,
     state: Arc<Mutex<State>>,
 }
 impl TraceRegistry {
@@ -219,7 +223,7 @@ impl TraceRegistry {
                 total,
             });
         };
-        let imported = if request
+        let mut imported = if request
             .path
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("saz"))
@@ -245,13 +249,59 @@ impl TraceRegistry {
             path: request.path.clone(),
             sessions: imported.sessions.len(),
             imported_at: millis(SystemTime::now()),
-            context: imported.context,
-            notes: imported
-                .notes
+            context: std::mem::take(&mut imported.context),
+            notes: std::mem::take(&mut imported.notes)
                 .into_iter()
                 .chain(imported.issues.iter().cloned())
                 .collect(),
         };
+        self.publish_import(imported, service, store, trace)
+    }
+
+    fn publish_import(
+        &self,
+        imported: ImportData,
+        service: &ApplicationSessionService,
+        store: &BodyStore,
+        trace: TraceMetadataView,
+    ) -> Result<TraceImportResult, AppError> {
+        let trace_id = trace.id.clone();
+        let _publication = self
+            .publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let extra_metadata = std::iter::once(&trace)
+            .chain(imported.sources.values())
+            .try_fold(0usize, |total, source| {
+                serde_json::to_vec(source).map(|bytes| total.saturating_add(bytes.len()))
+            })
+            .map_err(|_| invalid("Invalid trace source metadata"))?;
+        {
+            let state = self.lock();
+            if state.index_bytes.saturating_add(imported.index_bytes) > MAX_HEAD_BYTES * 2
+                || state.metadata_bytes.saturating_add(extra_metadata) > MAX_HEAD_BYTES
+                || state
+                    .metadata
+                    .len()
+                    .saturating_add(imported.sources.len())
+                    .saturating_add(1)
+                    > 10_000
+            {
+                return Err(invalid(
+                    "The viewer's combined trace index limit was reached",
+                ));
+            }
+            if state.metadata.contains_key(&trace.id)
+                || imported
+                    .sources
+                    .keys()
+                    .any(|id| state.metadata.contains_key(id))
+            {
+                return Err(invalid(
+                    "Trace source namespace collided; import the file again",
+                ));
+            }
+        }
         // Catalog publication is atomic. All fallible source/index work precedes
         // it, so canceling or a bad file never leaves half an import in Traffic.
         service
@@ -269,6 +319,9 @@ impl TraceRegistry {
                     );
                 }
                 let mut state = self.lock();
+                state.index_bytes = state.index_bytes.saturating_add(imported.index_bytes);
+                state.metadata_bytes = state.metadata_bytes.saturating_add(extra_metadata);
+                state.metadata.extend(imported.sources);
                 state.metadata.insert(trace_id, trace.clone());
                 state.entries.extend(imported.entries);
             })
@@ -336,6 +389,8 @@ struct ImportedBody {
     complete: bool,
 }
 struct ImportData {
+    index_bytes: usize,
+    sources: BTreeMap<String, TraceMetadataView>,
     format: &'static str,
     sessions: Vec<SessionSnapshot>,
     entries: HashMap<String, TraceEntry>,
@@ -370,6 +425,8 @@ fn import_saz(
         .map_err(|error| invalid(&format!("SAZ could not be indexed: {error}")))?;
     let mut result = ImportData {
         format: "saz",
+        sources: BTreeMap::new(),
+        index_bytes: 0,
         sessions: Vec::new(),
         entries: HashMap::new(),
         bodies: Vec::new(),
@@ -470,6 +527,27 @@ fn import_saz(
             let Some(message) = message else {
                 continue;
             };
+            let version = if boundary == ExchangeBoundary::ClientRequest {
+                message.start_line.split_ascii_whitespace().last()
+            } else {
+                message.start_line.split_ascii_whitespace().next()
+            };
+            if let Some(version) = version {
+                snapshot.performance.protocols.push(
+                    transmog_core::performance::ProtocolObservation {
+                        boundary: crate::inspector::boundary(boundary),
+                        version: version.into(),
+                        reason: (boundary == ExchangeBoundary::ClientResponse).then(|| {
+                            message
+                                .start_line
+                                .splitn(3, ' ')
+                                .nth(2)
+                                .unwrap_or("")
+                                .to_owned()
+                        }),
+                    },
+                );
+            }
             head_bytes = head_bytes.saturating_add(message.raw_head.len());
             if head_bytes > MAX_HEAD_BYTES {
                 return Err(invalid("Saved trace headers exceed the viewer index limit"));
@@ -510,11 +588,13 @@ fn import_saz(
         );
         result.sessions.push(snapshot);
     }
+    result.index_bytes = head_bytes;
     Ok(result)
 }
 
 #[derive(Default)]
 struct NativeSession {
+    provenance: Option<SavedEntry>,
     performance_bytes: usize,
     performance: transmog_core::performance::PerformanceEvidence,
     client: Option<SocketAddr>,
@@ -557,6 +637,7 @@ fn import_native(
     .map_err(|_| invalid("The selected file is not a valid native capture"))?;
     let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
     let mut context = Value::Null;
+    let mut sources = BTreeMap::new();
     let mut budget = 0_usize;
     while let Some(frame) = capture
         .read_next()
@@ -566,10 +647,26 @@ fn import_native(
             return Err(unavailable("Trace import canceled"));
         }
         if frame.record.exchange_id == 0 {
-            if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind
-                && kind == "trace-metadata"
-            {
-                context = payload;
+            if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind {
+                let bytes = serde_json::to_vec(&payload)
+                    .map_err(|_| invalid("Invalid trace metadata"))?
+                    .len();
+                budget = budget.saturating_add(bytes);
+                if budget > MAX_HEAD_BYTES {
+                    return Err(invalid("Trace source metadata exceeds its index limit"));
+                }
+                if kind == "trace-metadata" {
+                    context = payload;
+                } else if kind == "trace-source" {
+                    let source = saved_source(payload, trace_id)?;
+                    if sources.len() >= MAX_SESSIONS
+                        || sources.insert(source.id.clone(), source).is_some()
+                    {
+                        return Err(invalid(
+                            "Saved trace contains duplicate or excessive sources",
+                        ));
+                    }
+                }
             }
             progress(capture.valid_bytes(), max_bytes);
             continue;
@@ -586,6 +683,8 @@ fn import_native(
     }
     let mut result = ImportData {
         format: "native",
+        sources: BTreeMap::new(),
+        index_bytes: 0,
         sessions: Vec::new(),
         bodies: Vec::new(),
         entries: HashMap::new(),
@@ -593,6 +692,8 @@ fn import_native(
         notes: vec![],
         issues: Vec::new(),
     };
+    result.sources = sources;
+    result.index_bytes = budget;
     if capture.truncated_tail() {
         result.notes.push(
             "Recovered the valid prefix of an interrupted file. The original file is unchanged."
@@ -619,6 +720,20 @@ fn apply_native_frame(
 ) -> Result<(), AppError> {
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
+        CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|_| invalid("Invalid entry provenance"))?
+                .len();
+            let provenance: SavedEntry = serde_json::from_value(payload)
+                .map_err(|_| invalid("Invalid saved entry provenance"))?;
+            if row.provenance.is_some() || !provenance.valid() {
+                return Err(invalid(
+                    "Saved entry provenance exceeds its limits or is repeated",
+                ));
+            }
+            *budget = budget.saturating_add(bytes);
+            row.provenance = Some(provenance);
+        }
         CaptureRecordKind::Performance(evidence) => {
             if !evidence.valid() {
                 return Err(invalid(
@@ -844,6 +959,13 @@ fn append_native(
         .and_then(|point| {
             SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(point.unix_millis))
         });
+    if snapshot.terminal_at.is_none() {
+        snapshot.terminal_at = row
+            .provenance
+            .as_ref()
+            .and_then(|saved| saved.terminal_unix_millis)
+            .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
+    }
     snapshot.performance = row.performance;
     if !row.completed || row.failed {
         snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
@@ -925,8 +1047,14 @@ fn append_native(
             complete,
         });
     }
-    result.entries.insert(
-        format!("{:032x}", id.0),
+    let entry = if let Some(mut saved) = row.provenance {
+        let source = source_namespace(trace_id, &saved.source.trace_id);
+        if !result.sources.contains_key(&source) {
+            return Err(invalid("Saved entry refers to missing source metadata"));
+        }
+        saved.source.trace_id = source;
+        saved.source
+    } else {
         TraceEntry {
             trace_id: trace_id.into(),
             original_id: format!("{original:032x}"),
@@ -935,8 +1063,9 @@ fn append_native(
             protocol_known,
             target_known: request.is_some(),
             diagnostics: row.diagnostics,
-        },
-    );
+        }
+    };
+    result.entries.insert(format!("{:032x}", id.0), entry);
     result.sessions.push(snapshot);
     Ok(())
 }
@@ -1091,6 +1220,85 @@ fn invalid(message: &str) -> AppError {
 }
 fn unavailable(message: &str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, true)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedEntry {
+    source: TraceEntry,
+    terminal_unix_millis: Option<u64>,
+}
+impl SavedEntry {
+    fn valid(&self) -> bool {
+        let source = &self.source;
+        source.trace_id.len() <= 256
+            && source.original_id.len() <= 128
+            && source
+                .raw_headers
+                .as_ref()
+                .is_none_or(|head| head.len() <= 2 * 1024 * 1024)
+            && source.timings.len() <= 512
+            && source
+                .timings
+                .iter()
+                .all(|(name, value)| name.len() <= 256 && value.len() <= 8192)
+            && source.diagnostics.len() <= 64
+            && source.diagnostics.iter().all(|note| note.len() <= 8192)
+            && self
+                .terminal_unix_millis
+                .is_none_or(|millis| millis <= 253_402_300_799_999)
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SavedSource {
+    id: String,
+    name: String,
+    format: String,
+    path: PathBuf,
+    sessions: usize,
+    imported_at: u64,
+    context: Value,
+    notes: Vec<String>,
+}
+fn source_namespace(parent: &str, source: &str) -> String {
+    format!(
+        "{parent}-{:016x}",
+        u64::from_le_bytes(
+            Sha256::digest(source.as_bytes())[..8]
+                .try_into()
+                .expect("digest length")
+        )
+    )
+}
+fn saved_source(value: Value, parent: &str) -> Result<TraceMetadataView, AppError> {
+    let source: SavedSource =
+        serde_json::from_value(value).map_err(|_| invalid("Invalid saved trace source"))?;
+    if source.id.len() > 256
+        || source.name.len() > 1024
+        || source.path.as_os_str().len() > 32768
+        || source.sessions > MAX_SESSIONS
+        || source.notes.len() > 128
+        || source.notes.iter().any(|note| note.len() > 8192)
+    {
+        return Err(invalid("Saved source metadata exceeds its limits"));
+    }
+    let format = match source.format.as_str() {
+        "saz" => "saz",
+        "native" => "native",
+        "live" => "live",
+        _ => return Err(invalid("Unknown saved source format")),
+    };
+    Ok(TraceMetadataView {
+        id: source_namespace(parent, &source.id),
+        name: source.name,
+        format,
+        path: source.path,
+        sessions: source.sessions,
+        imported_at: source.imported_at,
+        context: source.context,
+        notes: source.notes,
+    })
 }
 
 #[cfg(test)]
@@ -1277,6 +1485,190 @@ mod tests {
                 .unwrap()
                 .contains("HTTP/1.0 204 Custom phrase")
         );
+    }
+
+    #[tokio::test]
+    async fn saved_merged_workspace_keeps_original_sources_bodies_and_duration() {
+        let root = tempfile::tempdir().unwrap();
+        let native_path = root.path().join("original.tmcap");
+        let saz_path = root.path().join("original.saz");
+        native(&native_path, Some(vec![0, 255, 7]), 3);
+        saz(&saz_path);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(native_path, "native"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        workspace
+            .import_trace(request(saz_path, "saz"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let path = root.path().join("merged.tmcap.gz");
+        let saved = workspace
+            .save_traffic_trace(
+                path.clone(),
+                crate::TraceSaveOptions {
+                    include_network_context: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.entries, 2);
+        assert_eq!(saved.incomplete_bodies, 0);
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(path, "merged"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(reopened.trace_metadata_list().len(), 3);
+        let native_row = rows
+            .iter()
+            .find(|row| {
+                reopened
+                    .trace_metadata(row.trace_id.as_deref().unwrap())
+                    .unwrap()
+                    .name
+                    == "original.tmcap"
+            })
+            .unwrap();
+        let native_context = reopened
+            .trace_metadata(native_row.trace_id.as_deref().unwrap())
+            .unwrap();
+        assert_eq!(native_context.context["networkContext"], "original machine");
+        assert_eq!(
+            reopened
+                .session_detail(&native_row.id)
+                .unwrap()
+                .original_id
+                .as_deref(),
+            Some("00000000000000000000000000000007")
+        );
+        let saz_row = rows
+            .iter()
+            .find(|row| {
+                reopened
+                    .trace_metadata(row.trace_id.as_deref().unwrap())
+                    .unwrap()
+                    .name
+                    == "original.saz"
+            })
+            .unwrap();
+        assert_eq!(saz_row.duration_ms, Some(250));
+        assert!(
+            reopened
+                .copy_all_headers(&saz_row.id)
+                .unwrap()
+                .contains("404 Custom reason")
+        );
+        assert_eq!(
+            reopened.composer_source(&saz_row.id).unwrap().body,
+            "616263"
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_save_marks_missing_bodies_excludes_removed_rows_and_preserves_existing_files_on_failure()
+     {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.tmcap");
+        native(&source, None, 3);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "missing"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let destination = root.path().join("missing.tmcap");
+        let report = workspace
+            .save_traffic_trace(
+                destination.clone(),
+                crate::TraceSaveOptions {
+                    include_network_context: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.incomplete_bodies, 1);
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(destination, "missing-save"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        assert!(
+            reopened
+                .request_command(&rows[0].id, RequestCommandFormat::Curl)
+                .unwrap()
+                .body_file_required
+        );
+        reopened
+            .remove_traffic_entries(&[rows[0].id.clone()], false)
+            .unwrap();
+        let empty = reopened
+            .save_traffic_trace(
+                root.path().join("empty.tmcap"),
+                crate::TraceSaveOptions {
+                    include_network_context: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.entries, 0);
+        let good = root.path().join("good.tmcap");
+        native(&good, Some(vec![0, 255, 7]), 3);
+        let workspace = app(&root.path().join("changed"));
+        workspace
+            .import_trace(request(good.clone(), "changed"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let output = root.path().join("existing.tmcap");
+        std::fs::write(&output, b"keep original").unwrap();
+        std::fs::write(
+            &good,
+            vec![0u8; usize::try_from(std::fs::metadata(&good).unwrap().len()).unwrap()],
+        )
+        .unwrap();
+        assert!(
+            workspace
+                .save_traffic_trace(
+                    output.clone(),
+                    crate::TraceSaveOptions {
+                        include_network_context: false
+                    }
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(output).unwrap(), b"keep original");
+    }
+
+    #[tokio::test]
+    async fn combined_index_limit_rejects_before_publishing_new_entries_or_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.tmcap");
+        native(&path, Some(vec![1]), 1);
+        let application = app(root.path());
+        application.traces.lock().index_bytes = MAX_HEAD_BYTES * 2;
+        let rejected = application
+            .import_trace(request(path, "full-index"), Arc::new(|_| {}))
+            .await
+            .unwrap_err();
+        assert!(rejected.message.contains("combined trace index limit"));
+        assert!(
+            application
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions
+                .is_empty()
+        );
+        assert!(application.trace_metadata_list().is_empty());
     }
 
     #[tokio::test]

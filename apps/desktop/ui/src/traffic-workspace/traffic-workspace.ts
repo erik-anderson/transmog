@@ -26,6 +26,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   timingDialog!:HTMLDialogElement;
   private timingId="";
   private timingGeneration=0;
+  @observable savingTrace=false;
+  @observable saveTraceStatus='';
+  saveTraceDialog!:HTMLDialogElement;
+  saveTraceForm!:HTMLFormElement;
   @observable importingTrace=false;
   @observable importStatus='';
   @observable importPercent=0;
@@ -37,6 +41,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable metadataSummary='';
   @observable metadataContext='';
   @observable metadataNetworkTitle='';
+  @observable metadataNetworkSummary='';
   @observable metadataNetworkContext='';
   @observable metadataNotes:Array<{id:string;text:string}>=[];
   @observable metadataError='';
@@ -242,16 +247,16 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeTimings():void {this.timingDialog.close();}
   timingsClosed():void {this.timingGeneration++;this.timingBusy=false;}
   async showTraceMetadata(id?:string):Promise<void> {
-    this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
+    this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNetworkTitle='';this.metadataNetworkContext='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
     try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows.sort((a,b)=>b.importedAt-a.importedAt);this.loadTraceMetadata(id??rows[0]?.id??'');}
-    catch(error:unknown){this.metadataError='Trace metadata could not be loaded: '+describeError(error);}
+    catch(error:unknown){if(generation===this.metadataGeneration)this.metadataError='Trace metadata could not be loaded: '+describeError(error);}
     finally{if(generation===this.metadataGeneration)this.metadataBusy=false;}
   }
   loadTraceMetadata(id:string):void {
     this.metadataTraceId=id;const generation=this.metadataGeneration;
     const trace=this.traceMetadataRows.find(trace=>trace.id===id);this.metadataTraceName=trace?.name??'No imported traces';this.metadataSummary=trace?`${trace.sessions} ${trace.sessions===1?'entry':'entries'} · ${trace.format.toUpperCase()} · ${trace.path}`:'Import a saved capture to see its original trace metadata here.';
     this.metadataContext=trace?.context==null?'No additional trace metadata was saved.':JSON.stringify(trace.context,null,2);
-    this.metadataNetworkTitle='';this.metadataNetworkContext='';
+    this.metadataNetworkTitle='';this.metadataNetworkContext='';this.metadataNetworkSummary='';
     if(trace?.context&&typeof trace.context==='object'&&!Array.isArray(trace.context)){
       const context=trace.context as Record<string,unknown>, network=context.networkContext;
       if(typeof network==='string')this.metadataNetworkContext=network;
@@ -259,8 +264,11 @@ export class TrafficWorkspace extends WorkspaceElement {
         const fields=network as Record<string,unknown>;
         if(typeof fields.output==='string')this.metadataNetworkContext=fields.output;
         if(typeof fields.command==='string')this.metadataNetworkTitle=fields.command;
+        const collected=typeof fields.collectedAt==='number'?new Date(fields.collectedAt):null;
+        this.metadataNetworkSummary=[typeof fields.platform==='string'?fields.platform:'',collected&&Number.isFinite(collected.getTime())?'Collected '+collected.toISOString():''].filter(Boolean).join(' · ');
+        if(Array.isArray(fields.notes))this.metadataNetworkSummary+='. '+fields.notes.filter(note=>typeof note==='string').join(' ');
       }
-      if(this.metadataNetworkContext){this.metadataNetworkTitle||='Network context';const additional={...context};delete additional.networkContext;this.metadataContext=Object.keys(additional).length?JSON.stringify(additional,null,2):'';}
+      if(this.metadataNetworkContext||this.metadataNetworkTitle){this.metadataNetworkTitle||='Network context';const additional={...context};delete additional.networkContext;this.metadataContext=Object.keys(additional).length?JSON.stringify(additional,null,2):'';}
     }
     this.metadataNotes=trace?.notes.map((text,index)=>({id:String(index),text}))??[];
     this.$flushUpdates();if(generation===this.metadataGeneration)this.metadataSelector.value=id;
@@ -706,6 +714,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     const capturing = this.lifecycle === 'running' && !this.pending;
     const held = this.selectedSessionId ? 'Inspection pinned' : 'Row positions held';
     this.followText = this.viewerMode ? 'Showing saved traffic' : this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
+  }
+  showSaveTrace():void {if(this.savingTrace)return;this.saveTraceStatus='';this.saveTraceDialog.showModal();}
+  closeSaveTrace():void {this.saveTraceDialog.close();}
+  async saveTrafficTrace(event:Event):Promise<void> {
+    event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
+    try {const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{includeNetworkContext:data.get('networkContext')==='on'},compressed:data.get('compress')==='on'});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
+    catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);if(!this.saveTraceDialog.open)this.showNotice('Trace save failed',describeError(error),null,null);}}
+    finally {this.savingTrace=false;}
   }
   async exportLiveCapture():Promise<void> {
     try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }

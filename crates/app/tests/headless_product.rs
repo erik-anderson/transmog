@@ -72,6 +72,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let listener = start(&application, &environment).await;
     application
         .start_capture(CaptureStartRequest {
+            include_network_context: false,
             path: workspace.capture.clone(),
             max_file_bytes: 64 * 1024 * 1024,
             retain_body_samples: true,

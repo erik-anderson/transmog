@@ -23,6 +23,8 @@ pub struct CaptureStart {
     pub limits: CaptureLimits,
     /// Redaction and body-sample retention policy.
     pub policy: CapturePolicy,
+    /// Original capture-level context, collected before recording starts.
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Successfully sealed artifact metadata.
@@ -312,6 +314,13 @@ fn start_capture(
     if matches!(current_status(status), CaptureStatus::Shutdown) {
         return Err(CaptureServiceError::WorkerUnavailable);
     }
+    if request.metadata.as_ref().is_some_and(|value| {
+        serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > 4 * 1024 * 1024)
+    }) {
+        return Err(CaptureServiceError::Writer(
+            "Trace context exceeds its finite limit".into(),
+        ));
+    }
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -323,8 +332,13 @@ fn start_capture(
                 CaptureServiceError::Writer(error.to_string())
             }
         })?;
-    let writer = CaptureWriter::new(file, request.limits)
-        .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
+    let writer = match prepare_writer(file, request.limits, request.metadata) {
+        Ok(writer) => writer,
+        Err(error) => {
+            let _ = std::fs::remove_file(&request.path);
+            return Err(error);
+        }
+    };
     set_status(
         status,
         CaptureStatus::Active {
@@ -339,6 +353,28 @@ fn start_capture(
         last_sequences: HashMap::new(),
     });
     Ok(())
+}
+
+fn prepare_writer(
+    file: File,
+    limits: CaptureLimits,
+    metadata: Option<serde_json::Value>,
+) -> Result<CaptureWriter<File>, CaptureServiceError> {
+    let mut writer = CaptureWriter::new(file, limits)
+        .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
+    if let Some(metadata) = metadata {
+        writer
+            .append(&transmog_capture::CaptureRecord {
+                sequence: 0,
+                exchange_id: 0,
+                kind: transmog_capture::CaptureRecordKind::Unknown {
+                    kind: "trace-metadata".into(),
+                    payload: metadata,
+                },
+            })
+            .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
+    }
+    Ok(writer)
 }
 
 fn stop_capture(
@@ -489,6 +525,7 @@ mod tests {
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
         manager
             .start(CaptureStart {
+                metadata: None,
                 path: path.clone(),
                 limits: CaptureLimits::default(),
                 policy: CapturePolicy::default(),
@@ -510,6 +547,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_precedes_exchange_records_without_changing_their_sequence() {
+        let path = temp_path();
+        let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
+        manager.start(CaptureStart{path:path.clone(),limits:CaptureLimits::default(),policy:CapturePolicy::default(),metadata:Some(serde_json::json!({"networkContext":{"platform":"fixture","output":"original machine"}}))}).await.unwrap();
+        manager.record(start_event(1));
+        let sealed = manager.stop().await.unwrap();
+        let capture = recover(File::open(&sealed.path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(capture.sealed);
+        assert_eq!(capture.records[0].exchange_id, 0);
+        assert!(
+            matches!(&capture.records[0].kind,CaptureRecordKind::Unknown{kind,payload} if kind=="trace-metadata" && payload["networkContext"]["output"]=="original machine")
+        );
+        assert_eq!(capture.records[1].sequence, 1);
+        std::fs::remove_file(path).unwrap();
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn context_that_does_not_fit_never_leaves_a_retry_blocking_destination() {
+        let path = temp_path();
+        let manager = CaptureManager::new(NonZeroUsize::new(1).unwrap()).unwrap();
+        assert!(
+            manager
+                .start(CaptureStart {
+                    path: path.clone(),
+                    limits: CaptureLimits {
+                        max_file_bytes: 32,
+                        max_record_bytes: 16,
+                        max_records: 2
+                    },
+                    policy: CapturePolicy::default(),
+                    metadata: Some(serde_json::json!({"networkContext":"fixture"}))
+                })
+                .await
+                .is_err()
+        );
+        assert!(!path.exists());
+        assert!(matches!(manager.status(), CaptureStatus::Idle));
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn existing_destination_and_idle_stop_are_typed() {
         let path = temp_path();
         File::create(&path).unwrap();
@@ -517,6 +596,7 @@ mod tests {
         assert_eq!(
             manager
                 .start(CaptureStart {
+                    metadata: None,
                     path: path.clone(),
                     limits: CaptureLimits::default(),
                     policy: CapturePolicy::default(),
@@ -535,6 +615,7 @@ mod tests {
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
         manager
             .start(CaptureStart {
+                metadata: None,
                 path: path.clone(),
                 limits: CaptureLimits {
                     max_file_bytes: 32,

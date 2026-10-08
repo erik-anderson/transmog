@@ -65,6 +65,11 @@ try{
   assert.ok(timingState.open);assert.match(timingState.summary,/no measured proxy timeline/);assert.equal(timingState.unknown,'Unavailable');
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timings.png'),Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeTimings()`);
+  await viewer.evaluate(`${traffic}.showSaveTrace()`);
+  const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked})`);
+  assert.ok(saveChoices.open);assert.ok(saveChoices.compressed);assert.equal(saveChoices.network,false);
+  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-save.png'),Buffer.from(image.data,'base64'));}
+  await viewer.evaluate(`${traffic}.closeSaveTrace()`);
   const before=(await targets()).map(target=>target.id);
   await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(source)}]})`);
   const additional=await waitFor(async()=>{const all=await targets();return all.find(target=>!before.includes(target.id));},'Additional viewer did not open');
