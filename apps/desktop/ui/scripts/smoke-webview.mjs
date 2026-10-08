@@ -203,7 +203,7 @@ try {
       [...unsavedDialog.querySelectorAll('button')].find(button=>button.textContent.trim()==='Keep editing').click();
       await waitFor(()=>!unsavedDialog.open,'Keep editing did not close the dialog');
       const setField=(name,value)=>{const field=autoResponseEditor.elements.namedItem(name);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};
-      setField('name','Native numeric pattern');setField('body','native saved response');
+      setField('name','Native numeric pattern');setField('body','native saved response');setField('responseHeaders','Content-Length: 999\\nContent-Encoding: gzip');
       const matcher=workspace.matchEditor;
       const matchMode=matcher.querySelector('select[aria-label="URL matching"]');
       matchMode.value='pattern';matchMode.dispatchEvent(new Event('change',{bubbles:true}));
@@ -215,6 +215,8 @@ try {
       const nativePatternRejected=workspace.matchTestResult?.test.matched===false;
       autoResponseEditor.requestSubmit();
       await waitFor(()=>workspace.rules.length===1 && !workspace.savingAutoResponse && !workspace.loadingSavedResponse && workspace.existingResponse,'Native rule save failed');
+      const assetHeaders=workspace.savedResponse.asset.headers.map(field=>({name:new TextDecoder().decode(new Uint8Array(field.name)).toLowerCase(),value:new TextDecoder().decode(new Uint8Array(field.value))}));
+      const computedEntityHeaders=assetHeaders.filter(field=>field.name==='content-length').length===1 && assetHeaders.find(field=>field.name==='content-length').value===String(new TextEncoder().encode('native saved response').length) && !assetHeaders.some(field=>field.name==='content-encoding');
       const denseRuleList=automation.querySelector('.rule-table[aria-multiselectable="true"]')!==null && automation.querySelectorAll('.auto-response-rule').length===1;
       const savedRules=JSON.stringify(element.autoresponseState.rules);
       automation.querySelector('autoresponse-switch button').click();
@@ -285,6 +287,7 @@ try {
           nativePatternMatched,
           nativePatternRejected,
           denseRuleList,
+          computedEntityHeaders,
           sharedSwitchWorked,
           disabledPreserved,
           deleteUndoWorked,
@@ -346,7 +349,7 @@ try {
     && result.ux.callerColumn && result.ux.brandIconLoaded && result.ux.resizableLayout && result.ux.proxyToggle,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
   assert(result.ux.unsavedPromptWorked && result.ux.nativePatternMatched && result.ux.nativePatternRejected
-    && result.ux.denseRuleList && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
+    && result.ux.denseRuleList && result.ux.computedEntityHeaders && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
     `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 

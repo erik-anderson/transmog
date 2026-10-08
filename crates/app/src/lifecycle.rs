@@ -497,15 +497,17 @@ mod tests {
         };
         let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/account", origin.local_addr().unwrap());
-        let encoded =
-            crate::inspector::encode_content(&["gzip".to_owned()], b"original response".to_vec())
-                .await
-                .unwrap();
+        let encoded = crate::inspector::encode_content(
+            &["gzip".to_owned(), "br".to_owned()],
+            b"original response".to_vec(),
+        )
+        .await
+        .unwrap();
         let origin_body = encoded.clone();
         let origin_task = tokio::spawn(async move {
             let (mut socket, _) = origin.accept().await.unwrap();
             read_http_head(&mut socket).await;
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", origin_body.len()).as_bytes()).await.unwrap();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Encoding: br\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", origin_body.len()).as_bytes()).await.unwrap();
             socket.write_all(&origin_body).await.unwrap();
             socket.shutdown().await.unwrap();
         });
@@ -623,7 +625,7 @@ mod tests {
         let restarted = crate::Application::new(config).unwrap();
         assert!(restarted.session_detail(&source_id).is_err());
         assert_eq!(restarted.response_assets().len(), 3);
-        restarted.start_proxy(start, None).await.unwrap();
+        restarted.start_proxy(start.clone(), None).await.unwrap();
         let (head, _) = request(
             restarted.status().listener.unwrap(),
             &url,
@@ -631,7 +633,14 @@ mod tests {
         )
         .await;
         assert!(head.starts_with("HTTP/1.1 200"));
-        assert!(head.to_ascii_lowercase().contains("content-encoding: gzip"));
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("content-encoding: gzip, br")
+        );
+        assert!(
+            head.to_ascii_lowercase()
+                .contains(&format!("content-length: {}\r\n", edited.body_bytes))
+        );
         restarted.shutdown().await.unwrap();
         let row = &restarted
             .query_sessions(crate::SessionQueryInput::default())
@@ -651,6 +660,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(inspection.display, "edited response");
+        let identity_body = "updated response: café".as_bytes().to_vec();
+        let headers = transmog_core::HeaderBlock::from_fields(vec![
+            transmog_core::HeaderField::try_new("Content-Length", "999").unwrap(),
+            transmog_core::HeaderField::try_new("content-length", "1").unwrap(),
+            transmog_core::HeaderField::try_new("Content-Encoding", "gzip").unwrap(),
+        ]);
+        let identity = restarted
+            .edit_response_asset(crate::ResponseAssetEdit {
+                asset_reference: edited.asset_ref(),
+                status: 201,
+                headers: headers.clone(),
+                media_type: edited.media_type.clone(),
+                decoded_body: Some(identity_body.clone()),
+                body_path: None,
+                preserve_content_encoding: false,
+            })
+            .await
+            .unwrap();
+        let activate = |asset: &crate::ResponseAsset| {
+            let mut document = restarted.automation_status();
+            let mut rule = document.rules.pop().unwrap();
+            rule.revision += 1;
+            rule.request.response_asset = Some(asset.asset_ref());
+            let candidate = restarted
+                .validate_automation(crate::AutomationRuleSet {
+                    rules: vec![rule],
+                    generation: document.generation,
+                    ..Default::default()
+                })
+                .unwrap();
+            restarted
+                .activate_automation(&candidate.candidate_id)
+                .unwrap();
+        };
+        activate(&identity);
+        restarted.start_proxy(start.clone(), None).await.unwrap();
+        let (head, body) = request(
+            restarted.status().listener.unwrap(),
+            &url,
+            identity_body.len(),
+        )
+        .await;
+        assert_eq!(body, identity_body);
+        assert!(head.starts_with("HTTP/1.1 201"));
+        assert!(!head.to_ascii_lowercase().contains("content-encoding:"));
+        assert!(
+            head.to_ascii_lowercase()
+                .contains(&format!("content-length: {}\r\n", body.len()))
+        );
+        let file = root.path().join("replacement.bin");
+        let replacement_body = b"replacement file bytes";
+        std::fs::write(&file, replacement_body).unwrap();
+        let replacement = restarted
+            .edit_response_asset(crate::ResponseAssetEdit {
+                asset_reference: edited.asset_ref(),
+                status: 200,
+                headers,
+                media_type: edited.media_type.clone(),
+                decoded_body: None,
+                body_path: Some(file),
+                preserve_content_encoding: true,
+            })
+            .await
+            .unwrap();
+        activate(&replacement);
+        let (head, body) = request(
+            restarted.status().listener.unwrap(),
+            &url,
+            replacement_body.len(),
+        )
+        .await;
+        assert_eq!(body, replacement_body);
+        assert!(!head.to_ascii_lowercase().contains("content-encoding:"));
+        assert!(
+            head.to_ascii_lowercase()
+                .contains(&format!("content-length: {}\r\n", body.len()))
+        );
+        restarted.shutdown().await.unwrap();
     }
 
     #[tokio::test]

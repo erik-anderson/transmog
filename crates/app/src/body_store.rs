@@ -753,13 +753,7 @@ fn observe_head(
                 .then(|| value.trim().trim_matches('"').to_ascii_lowercase())
         });
     }
-    if let Some(codings) = header_text(headers, "content-encoding") {
-        record.content_codings = codings
-            .split(',')
-            .map(|coding| coding.trim().to_ascii_lowercase())
-            .filter(|coding| !coding.is_empty() && coding != "identity")
-            .collect();
-    }
+    record.content_codings = crate::response_assets::asset_codings(headers);
 }
 
 fn observe_chunk(
@@ -1193,6 +1187,27 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    #[test]
+    fn content_coding_metadata_preserves_repeated_header_fields_in_order() {
+        let root = root("coding-stack");
+        let store = BodyStore::new(config(root.clone(), 32)).unwrap();
+        let mut response = head(1, 2);
+        if let ObserverEventKind::ResponseHeadObserved { head, .. } = &mut response.kind {
+            head.headers
+                .push(HeaderField::try_new("Content-Encoding", "gzip, zstd").unwrap());
+        }
+        push(
+            &store,
+            [started(1), response, chunk(1, 3, b"hello"), completed(1, 4)],
+        );
+        assert_eq!(
+            store.metadata(ExchangeId(1))[0].content_codings,
+            ["br", "gzip", "zstd"]
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -595,7 +595,7 @@ try {
   await autoField('responseHeaders').fill('Also not a header');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await page.locator('#auto-response-headers-error').waitFor({state:'visible'});
-  await autoField('responseHeaders').fill('X-Fixture: yes');
+  await autoField('responseHeaders').fill('X-Fixture: yes\nContent-Length: 999\nContent-Encoding: gzip\nContent-Type: incorrect/type');
   await autoField('body').fill('Authored response body');
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=true;});
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
@@ -609,6 +609,7 @@ try {
   await savedProperties();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.displayName==='Authored response').length),1,'Double submit created duplicate rules');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid+1);
+  assert.deepEqual(await page.evaluate(()=>{const asset=globalThis.__workspaceFixture.assets.find(asset=>asset.id+'@'+asset.revision===globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Authored response').request.responseAsset);return asset.headers.map(header=>new TextDecoder().decode(new Uint8Array(header.name)));}),['X-Fixture']);
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
   const authoredRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
   const authoredRule=page.locator('#rule-'+authoredRuleId);

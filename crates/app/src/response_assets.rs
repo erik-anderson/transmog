@@ -328,7 +328,9 @@ impl ResponseAssetStore {
         } else {
             None
         };
-        if replacement_file.is_none() && (encoded.is_none() || input.preserve_content_encoding) {
+        if encoded.is_some() && input.preserve_content_encoding {
+            set_content_encoding(&mut headers, &codings)?;
+        } else if replacement_file.is_none() && encoded.is_none() {
             for field in source
                 .headers
                 .iter()
@@ -618,7 +620,7 @@ impl ResponseAssetStore {
     }
 }
 
-fn asset_codings(headers: &HeaderBlock) -> Vec<String> {
+pub(crate) fn asset_codings(headers: &HeaderBlock) -> Vec<String> {
     headers
         .values("content-encoding")
         .filter_map(|value| std::str::from_utf8(value).ok())
@@ -626,6 +628,21 @@ fn asset_codings(headers: &HeaderBlock) -> Vec<String> {
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| value != "identity" && !value.is_empty())
         .collect()
+}
+
+/// Sets the representation header from the exact stack used to encode edited bytes.
+pub(crate) fn set_content_encoding(
+    headers: &mut HeaderBlock,
+    codings: &[String],
+) -> Result<(), AppError> {
+    headers.remove_all("content-encoding");
+    if !codings.is_empty() {
+        headers.push(
+            HeaderField::try_new("content-encoding", codings.join(", "))
+                .map_err(|_| invalid("Response content encoding is invalid."))?,
+        );
+    }
+    Ok(())
 }
 
 impl ResponseAssetResolver for ResponseAssetStore {
@@ -670,7 +687,12 @@ impl ResponseAssetResolver for ResponseAssetStore {
         }
         let head = ResponseHead {
             status: asset.status,
-            headers: asset.headers.clone(),
+            headers: repair_headers(
+                &asset.headers,
+                asset.body_bytes,
+                asset.media_type.as_deref(),
+            )
+            .map_err(|error| error.to_string())?,
             source_version: HttpLegVersion::Http1,
         };
         if asset.body_bytes <= BUFFERED_RESPONSE_BYTES {
@@ -780,6 +802,8 @@ fn repair_headers(
         HeaderField::try_new(field.name().to_vec(), field.value().to_vec())
             .map_err(|_| invalid("response asset contains an invalid header"))?;
         let name = String::from_utf8_lossy(field.name()).to_ascii_lowercase();
+        // This is a new local response. Its encoding describes the stored bytes;
+        // an old Connection nomination cannot remove that representation metadata.
         if matches!(
             name.as_str(),
             "connection"
@@ -792,7 +816,7 @@ fn repair_headers(
                 | "content-length"
                 | "content-md5"
                 | "digest"
-        ) || nominated.iter().any(|nominated| nominated == &name)
+        ) || (name != "content-encoding" && nominated.iter().any(|nominated| nominated == &name))
         {
             continue;
         }
@@ -1037,6 +1061,204 @@ mod tests {
             [asset]
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    async fn returned_body(
+        store: &ResponseAssetStore,
+        asset: &ResponseAsset,
+    ) -> (HeaderBlock, Vec<u8>) {
+        let (head, frames) =
+            match ResponseAssetResolver::resolve(store, &asset.asset_ref()).unwrap() {
+                AutomationResponse::Buffered(response) => (response.head, response.body),
+                AutomationResponse::Streaming(mut response) => {
+                    let mut frames = Vec::new();
+                    while let Some(frame) = response.body.recv().await {
+                        frames.push(frame.unwrap());
+                    }
+                    (response.head, frames)
+                }
+            };
+        let mut body = Vec::new();
+        for frame in frames {
+            if let BodyFrame::Data(bytes) = frame {
+                body.extend_from_slice(&bytes);
+            }
+        }
+        let expected = body.len().to_string();
+        assert_eq!(
+            head.headers.values("content-length").collect::<Vec<_>>(),
+            vec![expected.as_bytes()]
+        );
+        assert_eq!(asset.body_bytes, u64::try_from(body.len()).unwrap());
+        (head.headers, body)
+    }
+
+    fn stale_entity_headers() -> HeaderBlock {
+        HeaderBlock::from_fields(vec![
+            HeaderField::try_new("Connection", "Content-Encoding").unwrap(),
+            HeaderField::try_new("Content-Length", "999").unwrap(),
+            HeaderField::try_new("content-length", "1").unwrap(),
+            HeaderField::try_new("Content-Encoding", "incorrect").unwrap(),
+            HeaderField::try_new("content-encoding", "br").unwrap(),
+        ])
+    }
+
+    #[tokio::test]
+    async fn edited_assets_return_framing_for_the_actual_compressed_or_identity_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        for (index, codings) in [
+            vec![],
+            vec!["gzip"],
+            vec!["br"],
+            vec!["deflate"],
+            vec!["zstd"],
+            vec!["gzip", "br"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let codings = codings.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let mut headers = HeaderBlock::new();
+            set_content_encoding(&mut headers, &codings).unwrap();
+            let original = store
+                .create_authored(AuthoredResponseAsset {
+                    id: format!("source-{index}"),
+                    revision: 1,
+                    status: 200,
+                    headers,
+                    body: crate::inspector::encode_content(&codings, b"original".to_vec())
+                        .await
+                        .unwrap(),
+                    media_type: None,
+                })
+                .unwrap();
+            let decoded = "changed UTF-8 response: café".as_bytes().to_vec();
+            let edit = ResponseAssetEdit {
+                asset_reference: original.asset_ref(),
+                status: 200,
+                headers: stale_entity_headers(),
+                media_type: None,
+                decoded_body: Some(decoded.clone()),
+                body_path: None,
+                preserve_content_encoding: true,
+            };
+            let compressed = store.edit(edit).await.unwrap();
+            let (headers, body) = returned_body(&store, &compressed).await;
+            assert_eq!(asset_codings(&headers), codings);
+            assert_eq!(
+                headers.values("content-encoding").count(),
+                usize::from(!codings.is_empty())
+            );
+            let actual = if codings.is_empty() {
+                body
+            } else {
+                crate::inspector::decode_content(&codings, body)
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(actual, decoded);
+
+            let identity = store
+                .edit(ResponseAssetEdit {
+                    asset_reference: compressed.asset_ref(),
+                    status: 201,
+                    headers: stale_entity_headers(),
+                    media_type: None,
+                    decoded_body: Some(decoded.clone()),
+                    body_path: None,
+                    preserve_content_encoding: false,
+                })
+                .await
+                .unwrap();
+            let (headers, body) = returned_body(&store, &identity).await;
+            assert!(headers.values("content-encoding").next().is_none());
+            assert_eq!(body, decoded);
+
+            let retained = store
+                .edit(ResponseAssetEdit {
+                    asset_reference: original.asset_ref(),
+                    status: 202,
+                    headers: stale_entity_headers(),
+                    media_type: None,
+                    decoded_body: None,
+                    body_path: None,
+                    preserve_content_encoding: false,
+                })
+                .await
+                .unwrap();
+            let (headers, body) = returned_body(&store, &retained).await;
+            assert_eq!(asset_codings(&headers), codings);
+            assert_eq!(
+                body,
+                std::fs::read(body_path(root.path(), &original.sha256)).unwrap()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn replacement_files_and_empty_edits_clear_encoding_and_repair_returned_lengths() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        let source = store
+            .create_authored(AuthoredResponseAsset {
+                id: "replacement".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("content-encoding", "gzip").unwrap(),
+                ]),
+                body: crate::inspector::encode_content(&["gzip".into()], b"original".to_vec())
+                    .await
+                    .unwrap(),
+                media_type: None,
+            })
+            .unwrap();
+        let file = root.path().join("body.input");
+        let expected = vec![0x5a; usize::try_from(BUFFERED_RESPONSE_BYTES).unwrap() + 17];
+        std::fs::write(&file, &expected).unwrap();
+        let replacement = store
+            .edit(ResponseAssetEdit {
+                asset_reference: source.asset_ref(),
+                status: 200,
+                headers: stale_entity_headers(),
+                media_type: None,
+                decoded_body: None,
+                body_path: Some(file),
+                preserve_content_encoding: true,
+            })
+            .await
+            .unwrap();
+        let (headers, body) = returned_body(&store, &replacement).await;
+        assert!(headers.values("content-encoding").next().is_none());
+        assert_eq!(body, expected);
+        let empty = store
+            .edit(ResponseAssetEdit {
+                asset_reference: source.asset_ref(),
+                status: 200,
+                headers: stale_entity_headers(),
+                media_type: None,
+                decoded_body: Some(vec![]),
+                body_path: None,
+                preserve_content_encoding: false,
+            })
+            .await
+            .unwrap();
+        // Even an older stored header block must not override framing on return.
+        store
+            .assets
+            .write()
+            .unwrap()
+            .get_mut(&empty.asset_ref())
+            .unwrap()
+            .headers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("Content-Length", "999").unwrap(),
+            HeaderField::try_new("content-length", "1").unwrap(),
+        ]);
+        let (headers, body) = returned_body(&store, &empty).await;
+        assert!(body.is_empty());
+        assert!(headers.values("content-encoding").next().is_none());
+        assert_eq!(headers.values("content-length").next(), Some(&b"0"[..]));
     }
 
     #[test]

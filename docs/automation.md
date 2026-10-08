@@ -91,8 +91,12 @@ inferred from sample URLs.
 
 Saved response status, content type, ordered headers and text remain editable
 after the original Traffic entry disappears. Body replacement from a file also
-supports binary responses. Response edits create an immutable asset revision;
-earlier revisions and captured evidence remain intact. The response body editor
+supports binary responses. Content-Length always reflects the final encoded
+body bytes. Compressed edits rebuild Content-Encoding from the applied stack;
+identity edits and replacement files remove it. Pasted framing and encoding
+fields cannot override these choices in the editor. Response edits create an
+immutable asset revision; earlier revisions and captured evidence remain
+intact. The response body editor
 starts at twelve lines. A friendly source link opens the original request when
 it is still retained; otherwise the label remains plain text. Match counts and
 last-match times describe only retained Traffic.

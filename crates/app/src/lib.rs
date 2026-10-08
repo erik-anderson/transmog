@@ -652,7 +652,12 @@ impl Application {
                 ));
             }
             if input.preserve_content_encoding {
-                Some(inspector::encode_content(&metadata.content_codings, decoded).await?)
+                let encoded = inspector::encode_content(&metadata.content_codings, decoded).await?;
+                response_assets::set_content_encoding(
+                    &mut head.headers,
+                    &metadata.content_codings,
+                )?;
+                Some(encoded)
             } else {
                 head.headers.remove_all("content-encoding");
                 Some(decoded)

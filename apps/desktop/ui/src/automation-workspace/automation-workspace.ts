@@ -722,7 +722,9 @@ export class AutomationWorkspace extends WorkspaceElement {
     try {
       const displayName = String(data.get('name') ?? '').trim();
       if (!displayName) throw new Error('Enter a rule name.');
-      const responseHeaders = source.kind === 'scratch' || source.kind==='existing' ? [...encodeHeaders(this.parseEditorHeaders('responseHeaders',data)),...this.protectedResponseHeaders] : [];
+      const editableResponseHeaders=source.kind==='scratch' || source.kind==='existing'
+        ? this.parseEditorHeaders('responseHeaders',data).filter(header=>!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase())):[];
+      const responseHeaders=[...encodeHeaders(editableResponseHeaders),...this.protectedResponseHeaders];
       const editedBody = source.kind === 'captured' && replaceBody
         ? encodeEditedText(String(data.get('body') ?? ''), source.textEncoding) : null;
       const current = await invoke<AutomationStatus>('automation_status');
