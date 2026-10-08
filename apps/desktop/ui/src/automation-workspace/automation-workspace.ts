@@ -641,8 +641,10 @@ export class AutomationWorkspace extends WorkspaceElement {
     rules: AutomationStatus['rules'],
     generation: number,
   ): Promise<AutomationStatus> {
+    const current=await invoke<AutomationStatus>('automation_status');
+    if (current.generation !== generation) throw new Error('Rules changed while you were editing. Refresh before saving.');
     const candidate = await invoke<AutomationCandidate>('validate_automation', {
-      document: { schemaVersion: 1, generation, rules },
+      document: { schemaVersion: 1, generation, rules, autoresponsesEnabled:current.autoresponsesEnabled ?? true },
     });
     return invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
   }

@@ -53,8 +53,29 @@ identity output. Binary and oversized sources retain exact replay behavior.
 Matching uses the original client request, before request mutations. Method and
 case-sensitive exact URL are the default conditions. The desktop adds
 exact request-header conditions only for POST and does not inspect request
-bodies. URL regular-expression matching is future work listed in the
-[roadmap](roadmap.md).
+bodies. Native rules support exact URLs, address patterns and bounded regular
+expressions through the same matcher used by network-free editor tests.
+
+Address patterns keep the scheme and host literal. In the path, `{id}` or `{}`
+matches one nonempty segment; `{id:digits}` or `{:digits}` matches decimal
+digits; a final `{path...}` or `{...}` matches one or more remaining segments.
+Names are optional annotations and have no effect on matching. Repeated names
+do not require equal values. Literal path portions are case sensitive by
+default. Query matching is explicit: exact (including absence and ordering),
+required decoded name/value pairs (including repeated names), or ignore.
+Regex rules explicitly select URL or path scope, whole-value or substring
+matching, and case sensitivity. Expressions compile once under finite bounds.
+
+The persisted autoresponse gate controls registrations for newly admitted
+requests without changing any rule's enabled state, revision, response or
+priority. Pausing leaves other native automation active. Existing exchanges
+retain their original hook snapshot. Older workspaces default to the gate
+being on. Validation and activation reject stale generations.
+
+Guaranteed shadowing diagnostics compare equivalent matching behavior in
+first-match order, ignoring annotations and regression examples. They identify
+the earlier enabled rule; arbitrary regular-expression equivalence is not
+inferred from sample URLs.
 
 When a rule wins, session summary and detail data retain its friendly name,
 stable ID, revision, evaluation position, response asset, status, and body

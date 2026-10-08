@@ -29,7 +29,10 @@ pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
 };
-pub use automation::{AutomationCandidate, AutomationRuleSet, AutomationStatus};
+pub use automation::{
+    AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
+    AutomationStatus, ExampleResult, RuleDiagnostic,
+};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
     BodyStoreError, DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
@@ -400,6 +403,30 @@ impl Application {
     /// Returns active native automation and candidate/history counts.
     pub fn automation_status(&self) -> AutomationStatus {
         self.automation.status()
+    }
+
+    /// Changes the global autoresponse hook gate, preserving all rule properties.
+    ///
+    /// # Errors
+    /// Rejects stale generations or failed persistence without changing active traffic.
+    pub fn set_autoresponses_enabled(
+        &self,
+        enabled: bool,
+        generation: u64,
+    ) -> Result<AutomationStatus, AppError> {
+        self.automation
+            .set_autoresponses_enabled(enabled, generation)
+    }
+
+    /// Tests a draft rule against a synthetic request without network traffic.
+    ///
+    /// # Errors
+    /// Rejects invalid URLs, expressions, headers or finite resource bounds.
+    pub fn test_autoresponse_match(
+        &self,
+        input: &AutoResponseTestInput,
+    ) -> Result<AutoResponseTestResult, AppError> {
+        self.automation.test_match(input)
     }
 
     /// Validates and compiles native automation without changing traffic.

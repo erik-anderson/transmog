@@ -191,6 +191,8 @@ export interface AutomationRule {
 }
 export interface AutomationStatus {
   generation: number;
+  autoresponsesEnabled: boolean;
+  diagnostics: Array<{ruleId:string; supersededBy:string; duplicateResponse:boolean}>;
   rules: AutomationRule[];
   candidateCount: number;
   historyCount: number;

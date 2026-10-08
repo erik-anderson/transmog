@@ -22,6 +22,13 @@ use transmog_core::{
     },
 };
 
+mod matching;
+use matching::CompiledUrl;
+pub use matching::{
+    MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition, QueryParameter, RegexScope,
+    UrlCondition, UrlPattern, UrlRegex, request_for_test, same_matching_behavior, test_matcher,
+};
+
 /// Finite compile-time automation bounds.
 #[derive(Clone, Copy, Debug)]
 pub struct AutomationLimits {
@@ -75,21 +82,13 @@ pub enum HeaderCondition {
     Regex(String),
 }
 
-/// Match operation for a complete normalized absolute request URL.
-///
-/// The tagged representation deliberately leaves room for bounded regular
-/// expression matching without changing the surrounding rule document.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
-pub enum UrlCondition {
-    /// Case-sensitive comparison with the complete normalized absolute URL.
-    Exact(String),
-}
-
 /// Conservative bounded rule predicate.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuleMatcher {
+    /// Network-free regression examples; these do not affect matching.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<MatchExample>,
     /// Optional ASCII case-insensitive exact method.
     pub method: Option<String>,
     /// Optional complete normalized absolute-URL condition.
@@ -118,13 +117,16 @@ pub struct RuleMatcher {
 }
 
 impl RuleMatcher {
-    fn matches_request(&self, request: &RequestHead, regexes: &[Option<Regex>]) -> bool {
+    fn matches_request(
+        &self,
+        request: &RequestHead,
+        regexes: &[Option<Regex>],
+        url: Option<&CompiledUrl>,
+    ) -> bool {
         self.method
             .as_ref()
             .is_none_or(|method| request.method.eq_ignore_ascii_case(method))
-            && self.url.as_ref().is_none_or(|condition| match condition {
-                UrlCondition::Exact(expected) => absolute_url(&request.target) == *expected,
-            })
+            && url.is_none_or(|url| url.matches(&request.target))
             && self
                 .scheme
                 .as_ref()
@@ -155,8 +157,9 @@ impl RuleMatcher {
         response: &ResponseHead,
         request_regexes: &[Option<Regex>],
         response_regexes: &[Option<Regex>],
+        url: Option<&CompiledUrl>,
     ) -> bool {
-        self.matches_request(request, request_regexes)
+        self.matches_request(request, request_regexes, url)
             && self
                 .response_status
                 .is_none_or(|status| response.status == status)
@@ -175,6 +178,8 @@ impl RuleMatcher {
             && match (&self.url, &other.url) {
                 (Some(UrlCondition::Exact(left)), Some(UrlCondition::Exact(right))) => {
                     left == right
+                        || UrlCondition::Exact(left.clone()).matching_key().ok()
+                            == UrlCondition::Exact(right.clone()).matching_key().ok()
                 }
                 _ => true,
             }
@@ -561,18 +566,16 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
         .matcher
         .url
         .as_ref()
-        .is_some_and(|condition| match condition {
-            UrlCondition::Exact(value) => {
-                value.is_empty()
-                    || value.len() > 8_192
-                    || value.chars().any(char::is_control)
-                    || value.parse::<http::Uri>().map_or(true, |uri| {
-                        uri.scheme().is_none()
-                            || uri.authority().is_none()
-                            || !uri.path().starts_with('/')
-                    })
-            }
-        })
+        .is_some_and(|condition| condition.compile().is_err())
+    {
+        return Err(CompileError::InvalidMatcher(rule.id.clone()));
+    }
+    if rule.matcher.examples.len() > 32
+        || rule
+            .matcher
+            .examples
+            .iter()
+            .any(|example| matching::request_for_test(&example.method, &example.url, &[]).is_err())
     {
         return Err(CompileError::InvalidMatcher(rule.id.clone()));
     }
@@ -724,18 +727,6 @@ fn optional_ascii_values_overlap(left: Option<&str>, right: Option<&str>) -> boo
         .is_none_or(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
-fn absolute_url(target: &transmog_core::Target) -> String {
-    target.query.as_ref().map_or_else(
-        || format!("{}://{}{}", target.scheme, target.authority, target.path),
-        |query| {
-            format!(
-                "{}://{}{}?{query}",
-                target.scheme, target.authority, target.path
-            )
-        },
-    )
-}
-
 fn prefixes_overlap(left: Option<&str>, right: Option<&str>) -> bool {
     left.zip(right)
         .is_none_or(|(left, right)| left.starts_with(right) || right.starts_with(left))
@@ -771,6 +762,11 @@ fn registration(
             .unwrap_or_else(|| format!("Automation rule {}", rule.id)),
         Arc::new(RuleFactory {
             rule: Arc::new(rule.clone()),
+            url: rule
+                .matcher
+                .url
+                .as_ref()
+                .map(|condition| Arc::new(condition.compile().expect("validated URL condition"))),
             request_regexes: compile_predicates(&rule.matcher.request_headers),
             response_regexes: compile_predicates(&rule.matcher.response_headers),
             resolver,
@@ -795,6 +791,7 @@ fn compile_predicates(predicates: &[HeaderPredicate]) -> Arc<[Option<Regex>]> {
 
 struct RuleFactory {
     rule: Arc<Rule>,
+    url: Option<Arc<CompiledUrl>>,
     request_regexes: Arc<[Option<Regex>]>,
     response_regexes: Arc<[Option<Regex>]>,
     resolver: Option<Arc<dyn ResponseAssetResolver>>,
@@ -808,6 +805,7 @@ impl InterceptorFactory for RuleFactory {
     ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
         Ok(Arc::new(RuleInterceptor {
             rule: Arc::clone(&self.rule),
+            url: self.url.clone(),
             request_regexes: Arc::clone(&self.request_regexes),
             response_regexes: Arc::clone(&self.response_regexes),
             resolver: self.resolver.clone(),
@@ -818,6 +816,7 @@ impl InterceptorFactory for RuleFactory {
 
 struct RuleInterceptor {
     rule: Arc<Rule>,
+    url: Option<Arc<CompiledUrl>>,
     request_regexes: Arc<[Option<Regex>]>,
     response_regexes: Arc<[Option<Regex>]>,
     resolver: Option<Arc<dyn ResponseAssetResolver>>,
@@ -827,10 +826,11 @@ struct RuleInterceptor {
 impl ExchangeInterceptor for RuleInterceptor {
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         if self.direction != RuleDirection::Request
-            || !self
-                .rule
-                .matcher
-                .matches_request(&event.head, &self.request_regexes)
+            || !self.rule.matcher.matches_request(
+                &event.head,
+                &self.request_regexes,
+                self.url.as_deref(),
+            )
         {
             return Box::pin(async { RequestHeadAction::Continue });
         }
@@ -871,10 +871,11 @@ impl ExchangeInterceptor for RuleInterceptor {
 
     fn on_request_body(&self, event: RequestBodyEvent) -> BoxHookFuture<'_, RequestBodyAction> {
         let selected = (self.direction == RuleDirection::Request
-            && self
-                .rule
-                .matcher
-                .matches_request(&event.head, &self.request_regexes)
+            && self.rule.matcher.matches_request(
+                &event.head,
+                &self.request_regexes,
+                self.url.as_deref(),
+            )
             && (self.rule.request.allow_non_idempotent_body_replacement
                 || method_is_idempotent(&event.head.method)))
         .then(|| {
@@ -906,6 +907,7 @@ impl ExchangeInterceptor for RuleInterceptor {
                 &event.head,
                 &self.request_regexes,
                 &self.response_regexes,
+                self.url.as_deref(),
             )
         {
             return Box::pin(async { ResponseHeadAction::Continue });
@@ -932,6 +934,7 @@ impl ExchangeInterceptor for RuleInterceptor {
                 &event.response_head,
                 &self.request_regexes,
                 &self.response_regexes,
+                self.url.as_deref(),
             ))
         .then(|| {
             self.rule.response.replace_body.clone().map_or_else(

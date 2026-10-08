@@ -19,11 +19,11 @@ use tauri::{
 };
 use transmog_app::{
     AppConfig, AppError, AppStatus, Application, ArtifactKind, AuthoredResponseAsset,
-    AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
-    BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
-    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
-    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
+    AutomationStatus, BodyInspection, BodyInspectionRequest, BodyStoreConfig, BreakpointDecision,
+    BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel,
+    CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot,
+    DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
     ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
     ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
     ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
@@ -136,6 +136,25 @@ fn record_frontend_diagnostic(code: String, message: String, state: State<'_, De
 #[tauri::command]
 fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
     state.application.automation_status()
+}
+
+#[tauri::command]
+fn set_autoresponses_enabled(
+    enabled: bool,
+    generation: u64,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    state
+        .application
+        .set_autoresponses_enabled(enabled, generation)
+}
+
+#[tauri::command]
+fn test_autoresponse_match(
+    input: AutoResponseTestInput,
+    state: State<'_, DesktopState>,
+) -> Result<AutoResponseTestResult, AppError> {
+    state.application.test_autoresponse_match(&input)
 }
 
 #[tauri::command]
@@ -847,6 +866,8 @@ pub fn run() {
             desktop_bootstrap,
             record_frontend_diagnostic,
             automation_status,
+            set_autoresponses_enabled,
+            test_autoresponse_match,
             validate_automation,
             activate_automation,
             script_status,

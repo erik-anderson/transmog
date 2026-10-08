@@ -17,6 +17,53 @@ use transmog_core::intercept::{
 
 use crate::{AppError, ErrorCategory};
 
+/// A network-free draft matcher evaluation.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutoResponseTestInput {
+    /// Draft matching conditions, never activated by testing.
+    pub matcher: transmog_automation::RuleMatcher,
+    /// Method of the synthetic request.
+    pub method: String,
+    /// Absolute URL of the synthetic request.
+    pub url: String,
+    /// Optional request headers for testing additional conditions.
+    #[serde(default)]
+    pub headers: Vec<crate::ComposerHeader>,
+    /// Existing rule position, or null for a new highest-priority rule.
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    /// Draft rule's enabled state.
+    #[serde(default = "default_autoresponses_enabled")]
+    pub enabled: bool,
+}
+
+/// One saved regression expectation after evaluating the draft matcher.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleResult {
+    /// URL being checked.
+    pub url: String,
+    /// Whether the actual outcome agrees with its expectation.
+    pub passed: bool,
+}
+
+/// Draft matcher outcome and actual rule-group eligibility.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoResponseTestResult {
+    /// Independent match checks and captures from the runtime matcher.
+    pub test: transmog_automation::MatchTest,
+    /// Whether this draft would serve the synthetic request if saved.
+    pub would_serve: bool,
+    /// Concise explanation including pause and first-match ordering.
+    pub explanation: String,
+    /// Earlier matching rule, when applicable.
+    pub winning_rule: Option<String>,
+    /// Saved examples evaluated against the current draft.
+    pub examples: Vec<ExampleResult>,
+}
+
 const AUTOMATION_SCHEMA_VERSION: u32 = 1;
 const MAX_AUTOMATION_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CANDIDATES: usize = 16;
@@ -32,6 +79,13 @@ pub struct AutomationRuleSet {
     pub generation: u64,
     /// Ordered native automation sources.
     pub rules: Vec<Rule>,
+    /// Global hook gate; individual rule enabled states remain unchanged.
+    #[serde(default = "default_autoresponses_enabled")]
+    pub autoresponses_enabled: bool,
+}
+
+fn default_autoresponses_enabled() -> bool {
+    true
 }
 
 impl Default for AutomationRuleSet {
@@ -40,6 +94,7 @@ impl Default for AutomationRuleSet {
             schema_version: AUTOMATION_SCHEMA_VERSION,
             generation: 0,
             rules: Vec::new(),
+            autoresponses_enabled: true,
         }
     }
 }
@@ -64,10 +119,26 @@ pub struct AutomationStatus {
     pub generation: u64,
     /// Active rules, including stable IDs and revisions.
     pub rules: Vec<Rule>,
+    /// Whether autoresponse hook registrations are active for new requests.
+    pub autoresponses_enabled: bool,
+    /// Guaranteed identical-match shadowing in priority order.
+    pub diagnostics: Vec<RuleDiagnostic>,
     /// Number of validated candidates awaiting explicit activation.
     pub candidate_count: usize,
     /// Number of retained prior in-memory revisions available for rollback.
     pub history_count: usize,
+}
+
+/// An autoresponse which is always superseded by an earlier enabled equivalent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleDiagnostic {
+    /// Lower-priority rule identifier.
+    pub rule_id: String,
+    /// Earlier enabled rule with the same matching behavior.
+    pub superseded_by: String,
+    /// Both rules refer to the same response asset.
+    pub duplicate_response: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +157,7 @@ struct CandidateEntry {
 /// Thread-safe validate-then-activate registry and core registration provider.
 #[derive(Clone)]
 pub struct AutomationRegistry {
+    mutation: Arc<Mutex<()>>,
     active: Arc<RwLock<Arc<ActiveAutomation>>>,
     candidates: Arc<Mutex<VecDeque<CandidateEntry>>>,
     history: Arc<Mutex<VecDeque<Arc<ActiveAutomation>>>>,
@@ -95,6 +167,74 @@ pub struct AutomationRegistry {
 }
 
 impl AutomationRegistry {
+    pub(crate) fn test_match(
+        &self,
+        input: &AutoResponseTestInput,
+    ) -> Result<AutoResponseTestResult, AppError> {
+        let headers = input
+            .headers
+            .iter()
+            .map(|header| (header.name.clone(), header.value.clone()))
+            .collect::<Vec<_>>();
+        let request = transmog_automation::request_for_test(&input.method, &input.url, &headers)
+            .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
+        let test = transmog_automation::test_matcher(&input.matcher, &request)
+            .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
+        let status = self.status();
+        let mut ordered = status
+            .rules
+            .iter()
+            .filter(|rule| rule.request.response_asset.is_some())
+            .collect::<Vec<_>>();
+        ordered.sort_by_key(|rule| (rule.priority, &rule.id));
+        let position = input
+            .rule_id
+            .as_ref()
+            .and_then(|id| ordered.iter().position(|rule| &rule.id == id))
+            .unwrap_or(0);
+        let winner = ordered[..position].iter().find(|rule| {
+            rule.enabled
+                && transmog_automation::test_matcher(&rule.matcher, &request)
+                    .is_ok_and(|test| test.matched)
+        });
+        let would_serve =
+            test.matched && input.enabled && status.autoresponses_enabled && winner.is_none();
+        let explanation = if !test.matched {
+            "This request does not match the draft rule.".to_owned()
+        } else if !input.enabled {
+            "The request matches, but this rule is disabled.".to_owned()
+        } else if !status.autoresponses_enabled {
+            "The request matches, but autoresponses are paused.".to_owned()
+        } else if let Some(rule) = winner {
+            format!(
+                "The request matches, but “{}” wins earlier.",
+                rule.display_name.as_deref().unwrap_or(&rule.id)
+            )
+        } else {
+            "This rule would serve the saved response.".to_owned()
+        };
+        let mut examples = Vec::new();
+        for example in &input.matcher.examples {
+            let request =
+                transmog_automation::request_for_test(&example.method, &example.url, &headers)
+                    .map_err(|message| {
+                        AppError::new(ErrorCategory::InvalidInput, message, false)
+                    })?;
+            let actual = transmog_automation::test_matcher(&input.matcher, &request)
+                .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
+            examples.push(ExampleResult {
+                url: example.url.clone(),
+                passed: actual.matched == example.expected,
+            });
+        }
+        Ok(AutoResponseTestResult {
+            test,
+            would_serve,
+            explanation,
+            winning_rule: winner.map(|rule| rule.id.clone()),
+            examples,
+        })
+    }
     pub(crate) fn load(
         path: Option<PathBuf>,
         assets: Arc<dyn ResponseAssetResolver>,
@@ -105,9 +245,9 @@ impl AutomationRegistry {
             .and_then(|path| load_latest(path, &assets))
             .unwrap_or_default();
         validate_document(&document)?;
-        let compiled = compile_with_assets(document.rules.clone(), limits, Some(assets.clone()))
-            .map_err(compile_error)?;
+        let compiled = compile_document(&document, limits, assets.clone())?;
         Ok(Self {
+            mutation: Arc::new(Mutex::new(())),
             active: Arc::new(RwLock::new(Arc::new(ActiveAutomation {
                 document,
                 compiled,
@@ -129,26 +269,27 @@ impl AutomationRegistry {
         mut document: AutomationRuleSet,
     ) -> Result<AutomationCandidate, AppError> {
         validate_document(&document)?;
-        document.generation = self
+        let generation = self
             .active
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .document
-            .generation
-            .checked_add(1)
-            .ok_or_else(|| {
-                AppError::new(
-                    ErrorCategory::Limit,
-                    "automation generation is exhausted",
-                    false,
-                )
-            })?;
-        let compiled = compile_with_assets(
-            document.rules.clone(),
-            self.limits,
-            Some(self.assets.clone()),
-        )
-        .map_err(compile_error)?;
+            .generation;
+        if document.generation != generation {
+            return Err(AppError::new(
+                ErrorCategory::Conflict,
+                "Rules changed while you were editing. Refresh before saving.",
+                true,
+            ));
+        }
+        document.generation = generation.checked_add(1).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Limit,
+                "automation generation is exhausted",
+                false,
+            )
+        })?;
+        let compiled = compile_document(&document, self.limits, self.assets.clone())?;
         let encoded = serde_json::to_vec(&document).map_err(|_| {
             AppError::new(
                 ErrorCategory::Internal,
@@ -192,6 +333,10 @@ impl AutomationRegistry {
     /// # Errors
     /// Returns a conflict for an unknown/stale token or a durable-write error.
     pub fn activate(&self, candidate_id: &str) -> Result<AutomationStatus, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let candidate = {
             let mut candidates = self
                 .candidates
@@ -209,6 +354,21 @@ impl AutomationRegistry {
                 })?;
             candidates.remove(index).expect("located candidate exists")
         };
+        if candidate.document.generation
+            != self
+                .active
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .document
+                .generation
+                .saturating_add(1)
+        {
+            return Err(AppError::new(
+                ErrorCategory::Conflict,
+                "Rules changed before activation. Refresh before saving.",
+                true,
+            ));
+        }
         if let Some(path) = self.path.as_deref() {
             persist(path, &candidate.document)?;
         }
@@ -248,6 +408,8 @@ impl AutomationRegistry {
         AutomationStatus {
             generation: active.document.generation,
             rules: active.document.rules.clone(),
+            autoresponses_enabled: active.document.autoresponses_enabled,
+            diagnostics: rule_diagnostics(&active.document.rules),
             candidate_count: self
                 .candidates
                 .lock()
@@ -260,6 +422,89 @@ impl AutomationRegistry {
                 .len(),
         }
     }
+
+    /// Changes only the global autoresponse gate in one atomic persisted generation.
+    ///
+    /// # Errors
+    /// Returns a stale-generation, validation or persistence failure.
+    pub fn set_autoresponses_enabled(
+        &self,
+        enabled: bool,
+        generation: u64,
+    ) -> Result<AutomationStatus, AppError> {
+        let mut document = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .document
+            .clone();
+        if document.generation != generation {
+            return Err(AppError::new(
+                ErrorCategory::Conflict,
+                "Autoresponse state changed. Refresh and try again.",
+                true,
+            ));
+        }
+        if document.autoresponses_enabled == enabled {
+            return Ok(self.status());
+        }
+        document.autoresponses_enabled = enabled;
+        let candidate = self.validate(document)?;
+        self.activate(&candidate.candidate_id)
+    }
+}
+
+fn compile_document(
+    document: &AutomationRuleSet,
+    limits: AutomationLimits,
+    assets: Arc<dyn ResponseAssetResolver>,
+) -> Result<CompiledAutomation, AppError> {
+    let compiled = compile_with_assets(document.rules.clone(), limits, Some(assets.clone()))
+        .map_err(compile_error)?;
+    if document.autoresponses_enabled {
+        return Ok(compiled);
+    }
+    compile_with_assets(
+        document
+            .rules
+            .iter()
+            .filter(|rule| rule.request.response_asset.is_none())
+            .cloned()
+            .collect(),
+        limits,
+        Some(assets),
+    )
+    .map_err(compile_error)
+}
+
+fn rule_diagnostics(rules: &[Rule]) -> Vec<RuleDiagnostic> {
+    let mut ordered = rules
+        .iter()
+        .filter(|rule| rule.request.response_asset.is_some())
+        .collect::<Vec<_>>();
+    ordered.sort_by_key(|rule| (rule.priority, &rule.id));
+    ordered
+        .iter()
+        .enumerate()
+        .filter_map(|(index, rule)| {
+            ordered[..index]
+                .iter()
+                .find(|earlier| {
+                    earlier.enabled
+                        && transmog_automation::same_matching_behavior(
+                            &earlier.matcher,
+                            &rule.matcher,
+                        )
+                        .unwrap_or(false)
+                })
+                .map(|earlier| RuleDiagnostic {
+                    rule_id: rule.id.clone(),
+                    superseded_by: earlier.id.clone(),
+                    duplicate_response: rule.request.response_asset
+                        == earlier.request.response_asset,
+                })
+        })
+        .collect()
 }
 
 impl InterceptorRegistrationProvider for AutomationRegistry {
@@ -393,7 +638,7 @@ mod tests {
     fn document(value: &str) -> AutomationRuleSet {
         AutomationRuleSet {
             schema_version: 1,
-            generation: 999,
+            generation: 0,
             rules: vec![Rule {
                 id: "conditional-ua".to_owned(),
                 display_name: None,
@@ -411,6 +656,7 @@ mod tests {
                 },
                 response: ResponseActions::default(),
             }],
+            autoresponses_enabled: true,
         }
     }
 
@@ -440,7 +686,9 @@ mod tests {
             AutomationRegistry::load(Some(path.clone()), Arc::new(assets.clone())).unwrap();
         let first = registry.validate(document("one")).unwrap();
         registry.activate(&first.candidate_id).unwrap();
-        let second = registry.validate(document("two")).unwrap();
+        let mut second_document = document("two");
+        second_document.generation = 1;
+        let second = registry.validate(second_document).unwrap();
         registry.activate(&second.candidate_id).unwrap();
         std::fs::write(slot_path(&path, 0), b"not-json").unwrap();
 
@@ -453,5 +701,76 @@ mod tests {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes).unwrap();
         bytes
+    }
+
+    #[test]
+    fn pause_preserves_rule_state_snapshots_and_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let assets =
+            crate::response_assets::ResponseAssetStore::load(Some(root.path().join("assets")))
+                .unwrap();
+        let asset = assets
+            .create_authored(crate::AuthoredResponseAsset {
+                id: "saved".into(),
+                revision: 1,
+                status: 200,
+                headers: transmog_core::HeaderBlock::new(),
+                body: b"saved".to_vec(),
+                media_type: None,
+            })
+            .unwrap();
+        let path = root.path().join("rules");
+        let registry =
+            AutomationRegistry::load(Some(path.clone()), Arc::new(assets.clone())).unwrap();
+        let mut document = document("agent");
+        let mut response = document.rules[0].clone();
+        response.id = "response".into();
+        response.priority = -10;
+        response.request = RequestActions {
+            response_asset: Some(asset.asset_ref()),
+            ..RequestActions::default()
+        };
+        document.rules.push(response.clone());
+        let mut duplicate = response;
+        duplicate.id = "duplicate".into();
+        duplicate.priority = -9;
+        document.rules.push(duplicate);
+        let candidate = registry.validate(document).unwrap();
+        let initial = registry.activate(&candidate.candidate_id).unwrap();
+        assert_eq!(initial.diagnostics[0].superseded_by, "response");
+        assert!(initial.diagnostics[0].duplicate_response);
+        let snapshot = registry.active.read().unwrap().clone();
+        assert_eq!(snapshot.compiled.registrations().len(), 3);
+        let paused = registry
+            .set_autoresponses_enabled(false, initial.generation)
+            .unwrap();
+        assert_eq!(paused.rules, initial.rules);
+        assert!(!paused.autoresponses_enabled);
+        assert_eq!(
+            registry
+                .active
+                .read()
+                .unwrap()
+                .compiled
+                .registrations()
+                .len(),
+            1
+        );
+        assert_eq!(snapshot.compiled.registrations().len(), 3);
+        assert!(
+            registry
+                .set_autoresponses_enabled(true, initial.generation)
+                .is_err()
+        );
+        let loaded = AutomationRegistry::load(Some(path), Arc::new(assets)).unwrap();
+        assert!(!loaded.status().autoresponses_enabled);
+        assert_eq!(loaded.status().rules, initial.rules);
+        let resumed = loaded
+            .set_autoresponses_enabled(true, paused.generation)
+            .unwrap();
+        assert_eq!(resumed.rules, initial.rules);
+        let old: AutomationRuleSet =
+            serde_json::from_str(r#"{"schemaVersion":1,"generation":0,"rules":[]}"#).unwrap();
+        assert!(old.autoresponses_enabled);
     }
 }

@@ -20,9 +20,6 @@ are checked in.
   import/export and conflict handling for automation collections.
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
-- Add bounded URL regular-expression matching as an explicit alternative to
-  exact URL matching. First-enabled-match ordering and audit attribution must
-  remain unchanged.
 - Build a user-facing command-line application workflow over `transmog-app` for
   unattended capture, automation, and native streaming export. The existing
   CLI remains the lower-level proxy and capture utility.

@@ -577,6 +577,7 @@ mod tests {
         let candidate = application
             .validate_automation(crate::AutomationRuleSet {
                 rules: vec![rule],
+                generation: application.automation_status().generation,
                 ..Default::default()
             })
             .unwrap();
