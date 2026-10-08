@@ -51,7 +51,7 @@ try {
     $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     })
-    [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; Version = $build.Version; Publisher = $env:SIGNING_PUBLISHER; Installer = $installerEvidence.Name; CleanWindows11Checklist = 'deferred by maintainer'; Files = $files } |
+    [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; SourceBranch = $build.SourceBranch; Version = $build.Version; Channel = $build.Channel; ReleaseType = $build.ReleaseType; Publisher = $env:SIGNING_PUBLISHER; Installer = $installerEvidence.Name; CleanWindows11Checklist = 'deferred by maintainer'; Files = $files } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json') -Encoding utf8NoBOM
     $files | ForEach-Object { "$($_.Sha256.ToLowerInvariant())  $($_.Name)" } | Set-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS') -Encoding utf8NoBOM
     if ($env:GITHUB_STEP_SUMMARY) { "Signed **$($installerEvidence.Name)** as **$env:SIGNING_PUBLISHER** with RFC 3161 timestamps. Other-profile signing returned HTTP 403. SHA-256: $($installerEvidence.Sha256)." | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }

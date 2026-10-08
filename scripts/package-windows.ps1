@@ -29,11 +29,14 @@ if (-not $UnsignedDevelopment -and -not $SigningMetadataPath -and $SigningCertif
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'release-version-common.ps1')
+$releaseState = Get-ReleaseVersionState $repositoryRoot
 $desktopRoot = Join-Path $repositoryRoot 'apps\desktop'
 $artifactRoot = Join-Path $repositoryRoot 'artifacts\windows-package'
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 
 $bundleConfig = Get-Content -Raw -LiteralPath (Join-Path $desktopRoot 'tauri.conf.json') | ConvertFrom-Json
+if ($bundleConfig.version -cne $releaseState.SemVer) { throw 'Tauri version differs from release-version.json.' }
 if ($bundleConfig.bundle.windows.webviewInstallMode.type -ne 'skip') {
     throw 'Release packaging relies on the inbox Evergreen WebView2 prerequisite and must not bundle a fixed runtime or installer.'
 }
@@ -146,15 +149,19 @@ try {
 }
 
 if ($BuildOnly) {
-    [pscustomobject]@{ BuildDirectory = (Join-Path $repositoryRoot 'target\release'); Version = $bundleConfig.version; Target = 'x86_64-pc-windows-msvc' }
+    [pscustomobject]@{ BuildDirectory = (Join-Path $repositoryRoot 'target\release'); Version = $releaseState.Version; Channel = $releaseState.Channel; Target = 'x86_64-pc-windows-msvc' }
     return
 }
 
-$installer = Get-ChildItem (Join-Path $repositoryRoot 'target\release\bundle\nsis\Transmog_*-setup.exe') |
-    Sort-Object LastWriteTimeUtc -Descending |
-    Select-Object -First 1
-if ($null -eq $installer) {
+$installerPath = Join-Path $repositoryRoot "target\release\bundle\nsis\Transmog_$($bundleConfig.version)_x64-setup.exe"
+if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw 'The NSIS installer was not produced.'
+}
+$installer = Get-Item -LiteralPath $installerPath
+$releaseInstallerPath = Join-Path $installer.DirectoryName "Transmog_$($releaseState.Version)_x64-setup.exe"
+if ($installer.FullName -cne $releaseInstallerPath) {
+    Move-Item -LiteralPath $installer.FullName -Destination $releaseInstallerPath -Force
+    $installer = Get-Item -LiteralPath $releaseInstallerPath
 }
 
 $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName

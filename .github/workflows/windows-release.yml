@@ -2,6 +2,16 @@ name: Windows signed draft release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_type:
+        description: Use the checked-in release track, or choose Beta/Stable for a release branch; main is Canary
+        type: choice
+        default: Branch default
+        options:
+          - Branch default
+          - Beta
+          - Stable
+          - Canary
 
 permissions: {}
 concurrency:
@@ -14,7 +24,7 @@ defaults:
 
 jobs:
   build:
-    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    if: github.repository == 'erik-anderson/transmog' && github.event.repository.private == false && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: windows-2025
     timeout-minutes: 120
     permissions:
@@ -26,6 +36,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check release track, reserved majors, and published versions before setup
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_RELEASE_TYPE: ${{ inputs.release_type }}
+        run: ./scripts/check-published-release-version.ps1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24.21.0'
@@ -36,6 +51,8 @@ jobs:
           $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
           rustup toolchain install $pin --profile minimal --component clippy --component rustfmt --target x86_64-pc-windows-msvc
           ./scripts/setup-release-validation-tools.ps1
+      - name: Check committed release versions before building
+        run: ./scripts/set-release-version.ps1 -Check
       - name: Install locked UI and browser-test dependencies
         run: |
           ./scripts/setup-windows-webview-ci.ps1
@@ -211,7 +228,7 @@ jobs:
           New-Item -ItemType Directory -Force artifacts/attestation | Out-Null
           Copy-Item -LiteralPath $env:BUNDLE_PATH -Destination artifacts/attestation/provenance.sigstore.json
           $installer = Get-ChildItem artifacts/windows-signed/*-setup.exe
-          gh attestation verify $installer.FullName --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref refs/heads/main --source-digest $env:GITHUB_SHA
+          gh attestation verify $installer.FullName --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw 'Attestation verification failed.' }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

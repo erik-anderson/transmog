@@ -1165,7 +1165,7 @@ fn create_main_window(
     let url =
         tauri::Url::parse("transmog-ui://localhost/").expect("fixed application URL must parse");
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
-        .title("Transmog")
+        .title(format!("Transmog {}", transmog_app::application_version()))
         .inner_size(f64::from(initial.width), f64::from(initial.height))
         .min_inner_size(760.0, 520.0)
         .data_directory(webview_data_path)

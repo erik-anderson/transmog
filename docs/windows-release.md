@@ -5,6 +5,172 @@ current-user NSIS installer that uses the Evergreen WebView2 runtime already
 present on the supported Windows host. The app does not bundle a browser or
 WebView runtime, require administrator installation, or fetch runtime UI assets.
 
+## Manual GitHub release process
+
+The normal release path is **commit a version → manually build a signed draft →
+review the installer → publish that draft**. Building and publication are separate
+decisions. No push or tag automatically starts a release build.
+
+1. Choose an unused `major.minor.patch.revision` version, for example `0.1.0.1`, and run from
+   the repository root:
+
+   ```powershell
+   pwsh ./scripts/set-release-version.ps1 -Version 0.1.0.1
+   git diff
+   ```
+
+   `release-version.json` records the four-part version, source channel, and default
+   release track. `main` uses `Canary`; a release branch has the neutral `Release`
+   source channel and a `Beta` or `Stable` track. The command preserves that track
+   unless `-ReleaseType` is supplied. It synchronizes the Cargo workspace and exact
+   internal dependency pins, both Cargo lockfiles, the Tauri installer/app version,
+   and the private desktop UI package/lockfile. It uses the installed Rust tools
+   and cached Cargo dependencies, without updating external dependency versions.
+   If cached dependencies are missing, restore them using the normal build setup
+   before retrying. `pwsh ./scripts/set-release-version.ps1 -Check` checks version
+   consistency without changing files. Each numeric component must fit in
+   `0..65535`. Cargo, npm, and Tauri require SemVer, so `0.1.0.1` maps internally
+   to `0.1.0+1`; release tags, installer filenames/display versions, Windows numeric
+   version resources, the product title/diagnostics, and the SBOM use the four-part
+   product version. The NSIS template compares all four numeric parts for updates
+   and downgrade prevention. The app title and diagnostics add `Canary` on main.
+   Beta and Stable installers from a release branch use neutral product branding,
+   so the same reviewed Beta installer can be promoted to Stable without rebuilding.
+
+2. Review the version diff, commit the version changes with the code to release,
+   and push them to `main` (or the approved hotfix branch described below). This
+   commit is the release source. The workflow checks
+   committed versions before compilation; the release manifest, installer, and
+   SBOM use that version. Changing the draft's title or tag cannot change the
+   version embedded in an already-built installer. Published versions, mismatched
+   branch majors/tracks, and Canaries on a reserved release major fail before builds.
+
+3. Open [Actions → Windows signed draft release](https://github.com/erik-anderson/transmog/actions/workflows/windows-release.yml),
+   click **Run workflow**, select **main** (or the approved hotfix branch), and
+   click **Run workflow** again. With
+   Leave **Release type** at **Branch default** to use the checked-in track. You
+   can explicitly choose **Beta** or **Stable** on a release branch; main permits
+   only **Canary**. With GitHub CLI installed and authenticated, the equivalent is:
+
+   ```powershell
+   gh workflow run windows-release.yml --repo erik-anderson/transmog --ref main
+   ```
+
+   The workflow builds the selected branch's commit at dispatch. Later pushes to
+   that branch do not change the run. The first successful build took about an hour,
+   including a 30-minute WebView soak; signing and qualification then took a few
+   minutes after approval. The separate **Windows unsigned installer** workflow
+   is available for development builds that do not need signing or a release.
+
+4. When the build passes, open the run's **Review deployments** prompt and approve
+   `release-signing` after checking the source commit. This authorizes signing;
+   it does not publish a release. Wait for all six jobs to succeed, then follow
+   the signed-draft link in the final job summary or open
+   [Releases](https://github.com/erik-anderson/transmog/releases).
+
+5. Download the installer from the `v<version>` draft, confirm the desired version
+   and publisher, and exercise the app features you intend to ship. Review the
+   attached checksums, test reports, and provenance as needed. The clean Windows
+   11 checklist below remains deferred; it is not an additional pipeline approval
+   gate. If code needs fixing, commit it and dispatch a new build for the same
+   unpublished version. A successful replacement run updates that version's
+   draft and assets; repeat your review using the replacement installer. Do not
+   edit release notes until the final candidate, since rebuilding resets them.
+
+6. Edit the **existing draft**, add release notes, and choose **This is a
+   pre-release** for a Beta or Canary, or clear it for Stable. The workflow sets
+   that flag from the selected release type. For Stable, choose **Set as latest release**
+   if appropriate. Keep the generated tag/version and the pinned source commit;
+   do not retarget it to newer branch code. Click **Publish release** when ready.
+   This publishes the same signed installer you reviewed, without rebuilding or
+   another Azure signing request. GitHub creates the version tag at the pinned
+   commit if it does not already exist; there is no need to create a tag first.
+
+Once published, treat a version as final: the workflow refuses to overwrite it.
+Use a new revision or another unused four-part version for subsequent fixes.
+Before publication, start a fresh
+manual run or use **Re-run all jobs**; **Re-run failed jobs** alone is insufficient
+because this workflow's artifacts are specific to the run attempt. Leave the
+current run's draft unpublished if it is not the candidate you want to ship.
+
+### Branch creation, Beta-to-Stable promotion, and Canaries
+
+Use one release branch per major: `release/0` for `0.x`, `release/1` for `1.x`,
+and so on. Create it when preparing the first Beta of that major. Its version's
+major must match its name. For the current `0.x` line, after pushing this tooling:
+
+```powershell
+git switch main
+git pull --ff-only
+git switch -c release/0
+git push -u origin release/0
+```
+
+Wait for **Maintain release and Canary versions** to finish, then pull the bot's
+initialization commit on your release branch. The creation event sets its default
+track to Beta with neutral Release branding and moves main to the next full major
+Canary version. The same major is checked again at publication as a recovery path.
+
+| Event | Release branch | Main |
+| --- | --- | --- |
+| Create `release/1` while main is on major 1 or earlier | Existing version, Beta track | `2.0.0.0 Canary` |
+| Publish Beta `1.2.3.7` from `release/1` | `1.2.3.8`, still Beta | Later major retained |
+| Promote that published Beta to Stable | `1.2.3.8`, switch to Stable | Later major retained |
+| Publish Stable `1.2.3.8` from `release/1` | `1.2.3.9`, still Stable | Later major retained |
+| Publish Canary `2.0.0.0` from main | Unchanged | `2.0.0.1 Canary` |
+
+The local fixture in `scripts/test-release-lifecycle.ps1` exercises these events
+against a disposable Git remote, including retries, old-major hotfixes, and deleted
+branches. It is part of the release safety gate and does not contact GitHub or Azure.
+
+Main's reservation rule compares **major numbers**: a release branch with an equal
+or higher major moves main to `release-major + 1`, resetting its other components
+to zero. Main already on a later major is left alone. Canary publication increments
+the least significant component. Canaries are rejected before building and again
+before draft creation if `release/<their-major>` exists, covering the window while
+the branch-creation hook is pending. Never rewind main to an already-reserved major.
+
+Promote a reviewed Beta by editing its existing published GitHub Release, clearing
+**This is a pre-release**, removing Beta from the title, and saving it. Keep the
+tag, source commit, and assets. The hook changes that branch's default track to
+Stable without consuming another version; subsequent **Branch default** builds
+remain Stable. Its attested manifest retains the original Beta build type as
+provenance. Alternatively, choose Stable for a new draft on that same branch.
+Canaries stay prereleases on main; stable releases come from release branches.
+
+For an urgent fix, use the existing per-major release branch, commit the fix at its
+next unused version, build/review the draft, and publish it. Older-major releases
+do not bump newer main development. Carry the bug fix back to main separately;
+do not merge an old release branch's version metadata over main's newer version.
+
+The signing environment allows `main` and `release/*` with the existing required
+review and disabled administrator bypass. Workflow checks narrow that pattern to
+the matching numeric major. Azure's environment identity and profile-scoped signer
+role need no additional permissions.
+
+Repeated creation/publication events do not increment twice. Promotion persists
+Stable, and a delayed Beta event cannot reset that track. Deleted branches are
+skipped without being recreated. A reset release branch older than its published
+version fails for inspection. Concurrent pushes are retried without force-pushing;
+published tags are preserved. Numeric component overflow carries to the next
+component; a release branch cannot cross into another major.
+
+The maintenance job has only `contents: write` and no signing environment or
+Azure access. It loads its implementation from `main`, then inspects the affected
+branch. If branch protection prevents the bot commit, the job fails visibly;
+apply the version command manually and commit it through the branch's normal
+review process. The published-version preflight still prevents duplicate builds
+while the hook is pending or failed. Legacy three-part releases do not trigger
+a version bump. Create branches and publish/promote releases through the GitHub
+UI or an authenticated user CLI: events created by another workflow's `GITHUB_TOKEN`
+do not trigger this hook automatically. These branches must include the release
+tooling; start from updated main or a release tag that already contains it.
+
+GitHub documents [manual workflow dispatch](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+and [editing and publishing releases](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository),
+[release events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release),
+and [workflow-token event behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow).
+
 ## Release prerequisites
 
 In addition to [building.md](building.md), the release workstation needs:
@@ -21,7 +187,7 @@ No certificate identity, private key, token, or password belongs in this
 repository. The release wrapper injects the certificate thumbprint in a
 temporary ignored config overlay and removes that overlay after packaging.
 
-For hosted releases, dispatch **Windows signed draft release** on `main` and
+For hosted releases, dispatch **Windows signed draft release** on an approved branch and
 approve its protected `release-signing` job after the build passes. The workflow
 uses Azure Artifact Signing through profile-scoped OIDC, signs the inner binaries
 and NSIS bundle, verifies timestamps/publisher, tests permission rejection, and

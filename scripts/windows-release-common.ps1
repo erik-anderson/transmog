@@ -1,6 +1,7 @@
 # Shared checks used by the build, signing, qualification, and publication jobs.
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
+. (Join-Path $PSScriptRoot 'release-version-common.ps1')
 
 function Resolve-WindowsSignTool {
     $sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin'
@@ -65,7 +66,8 @@ function Assert-ReleasePayload {
     }
     $actualFiles = @(Get-ChildItem -LiteralPath $PayloadRoot -File -Recurse | Where-Object { $_.FullName -ne (Join-Path $PayloadRoot 'build-manifest.json') })
     if ($actualFiles.Count -ne $seen.Count) { throw 'The build payload contains unlisted files.' }
-    if ($manifest.Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid release version.' }
+    ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
+    Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
     foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
@@ -76,7 +78,9 @@ function Assert-ReleasePayload {
 function Assert-SignedRelease {
     param([string]$ReleaseRoot, [string]$Commit, [string]$RunId)
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot 'release-manifest.json') | ConvertFrom-Json
-    if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId -or $manifest.Version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Signed release provenance mismatch.' }
+    if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId) { throw 'Signed release provenance mismatch.' }
+    ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
+    Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
     foreach ($entry in $manifest.Files) {
         if ($entry.Name -notmatch '^[A-Za-z0-9_.-]+$' -or $entry.Sha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'Invalid release asset.' }
         if ((Get-FileHash -LiteralPath (Join-Path $ReleaseRoot $entry.Name) -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Release asset checksum mismatch: $($entry.Name)" }

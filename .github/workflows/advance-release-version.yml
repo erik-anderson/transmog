@@ -1,0 +1,36 @@
+name: Maintain release and Canary versions
+
+on:
+  create:
+  release:
+    types: [published, released, edited]
+
+permissions: {}
+concurrency:
+  group: release-version-maintenance
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    if: github.repository == 'erik-anderson/transmog' && github.event.repository.private == false && ((github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/')) || (github.event_name == 'release' && github.event.release.draft == false))
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Load version maintenance implementation from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Set up the pinned Rust tools
+        run: |
+          $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
+          rustup toolchain install $pin --profile minimal
+      - name: Reserve release majors and maintain branch versions and tracks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/advance-release-version.ps1

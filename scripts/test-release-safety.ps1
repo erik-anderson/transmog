@@ -7,7 +7,7 @@ $files = foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transm
     'fixture' | Set-Content -LiteralPath $path
     [ordered]@{ Path = "target/release/$name"; Sha256 = (Get-FileHash -LiteralPath $path).Hash }
 }
-$baseline = [ordered]@{ Commit = 'test-commit'; RunId = '123'; Target = 'x86_64-pc-windows-msvc'; Version = '0.1.0'; Files = @($files) } | ConvertTo-Json -Depth 5
+$baseline = [ordered]@{ Commit = 'test-commit'; RunId = '123'; SourceBranch = 'main'; Target = 'x86_64-pc-windows-msvc'; Version = '0.1.0.0'; Channel = 'Canary'; ReleaseType = 'Canary'; Files = @($files) } | ConvertTo-Json -Depth 5
 $manifestPath = Join-Path $fixture 'build-manifest.json'
 function Set-TestManifest { $baseline | Set-Content -LiteralPath $manifestPath }
 function Require-Rejection([scriptblock]$Action, [string]$Reason) {
@@ -41,3 +41,5 @@ Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-co
 Write-Host 'Release payload safety checks passed.'
 & (Join-Path $PSScriptRoot 'test-release-publication.ps1')
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
+& (Join-Path $PSScriptRoot 'test-release-version.ps1')
+& (Join-Path $PSScriptRoot 'test-release-lifecycle.ps1')

@@ -340,54 +340,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "transmog-content"
-version = "0.1.0"
-dependencies = [
- "async-compression",
- "bytes",
- "transmog-core",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "transmog-content-fuzz"
-version = "0.0.0"
-dependencies = [
- "bytes",
- "libfuzzer-sys",
- "transmog-content",
- "transmog-core",
- "transmog-websocket",
- "tokio",
-]
-
-[[package]]
-name = "transmog-core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http",
- "serde",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "transmog-websocket"
-version = "0.1.0"
-dependencies = [
- "base64",
- "bytes",
- "flate2",
- "futures-util",
- "getrandom",
- "sha1",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -522,6 +474,54 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "transmog-content"
+version = "0.1.0+0"
+dependencies = [
+ "async-compression",
+ "bytes",
+ "thiserror",
+ "tokio",
+ "transmog-core",
+]
+
+[[package]]
+name = "transmog-content-fuzz"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "libfuzzer-sys",
+ "tokio",
+ "transmog-content",
+ "transmog-core",
+ "transmog-websocket",
+]
+
+[[package]]
+name = "transmog-core"
+version = "0.1.0+0"
+dependencies = [
+ "bytes",
+ "http",
+ "serde",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "transmog-websocket"
+version = "0.1.0+0"
+dependencies = [
+ "base64",
+ "bytes",
+ "flate2",
+ "futures-util",
+ "getrandom",
+ "sha1",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

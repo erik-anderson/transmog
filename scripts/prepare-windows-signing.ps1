@@ -7,6 +7,7 @@ foreach ($entry in $manifest.Files | Where-Object { $_.Path -match '^(target/rel
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath (Join-Path $PayloadRoot $entry.Path) -Destination $destination -Force
 }
-$configuredVersion = (Get-Content -Raw -LiteralPath (Join-Path $repositoryRoot 'apps\desktop\tauri.conf.json') | ConvertFrom-Json).version
-if ($configuredVersion -cne $manifest.Version) { throw 'Build version differs from the checked-out Tauri configuration.' }
+. (Join-Path $PSScriptRoot 'release-version-common.ps1')
+$state = Get-ReleaseVersionState $repositoryRoot
+if ($state.Version -cne $manifest.Version -or $state.Channel -cne $manifest.Channel) { throw 'Build version/channel differs from the checked-out source.' }
 Write-Host "Verified same-run build payload at $($manifest.Commit)."

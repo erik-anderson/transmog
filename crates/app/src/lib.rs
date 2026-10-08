@@ -22,6 +22,7 @@ mod response_file;
 mod response_filename;
 mod scripts;
 mod sessions;
+mod version;
 mod workspace;
 
 use std::{path::PathBuf, sync::Arc};
@@ -75,6 +76,7 @@ use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
     ServiceStatus,
 };
+pub use version::application_version;
 pub use workspace::{ColumnPreference, TrafficColumn, TrafficLayout, WorkspacePreferences};
 
 /// Stable application failure category suitable for presentation boundaries.

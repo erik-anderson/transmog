@@ -3,10 +3,34 @@
 ## Signed draft releases
 
 Dispatch **Windows signed draft release** (`.github/workflows/windows-release.yml`)
-on `main`. It uses standard `windows-2025` runners and skips private repositories
+on `main` for Canaries, or a numeric per-major release branch such as `release/1`
+for Beta/Stable. It uses standard
+`windows-2025` runners and skips private repositories
 and other branches. It has no automatic push, tag, schedule, or pull-request
 trigger. Runs are serialized, time-limited, and retain intermediate artifacts
 for seven days; compiled targets and signing tools are never restored from caches.
+
+For each release, set and commit the version with
+`pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch.revision>`,
+push it to the selected branch, then use
+**Actions > Windows signed draft release > Run workflow** and select that branch.
+**Branch default** uses the checked-in Canary/Beta/Stable track. A release branch
+can override its build to Beta or Stable; main can only build Canary.
+Approve the signing environment after the build passes. Download and review the
+resulting draft's installer, then edit and publish that same draft when ready.
+The [manual release process](../docs/windows-release.md#manual-github-release-process)
+documents version selection, rebuilds, previews, and publication. The workflow
+checks that Cargo, Tauri, and desktop UI versions agree before compiling.
+The canonical four-part version, source channel, and release track live in `release-version.json`;
+Cargo/npm/Tauri use a compatible SemVer mapping with a numeric revision after `+`.
+Published versions, wrong branch majors/tracks, and reserved Canary majors fail
+before build setup. **Maintain release and Canary versions** initializes new
+release branches to Beta and reserves their major by advancing main to the next
+major Canary version. Publication advances the source revision; Beta promotion
+persists Stable on that branch without another version increment. Publication also
+checks main's major as a fallback. The job has only `contents: write`, with no
+Azure identity or signing access. Release branches use neutral Release product
+branding, so reviewed Beta assets can become Stable without another build/signing.
 
 | Job | GitHub permissions | Azure access |
 | --- | --- | --- |
@@ -46,7 +70,7 @@ hash-verified unsigned baseline solely as a test application. Its optional fast
 smoke mode avoids recompiling Rust. This baseline is never used for a signed
 release; release artifacts still require same-run source/hash validation.
 
-The `release-signing` environment allows only the `main` branch, requires
+The `release-signing` environment allows `main` and `release/*`. It requires
 `erik-anderson` approval, allows self-review for this solo repository, and disables
 administrator bypass. Approve the pending signing job after reviewing its source
 commit and successful build. Azure uses a dedicated, secretless Entra application
@@ -90,13 +114,13 @@ has not changed the user proxy or root certificates.
 
 `actions/attest` generates provenance for the **final signed installer**, release
 manifest, and dependency SBOM file. Its SHA is pinned, and the attestation job
-verifies the Sigstore bundle against this repository, workflow, `main`, and the
+verifies the Sigstore bundle against this repository, workflow, the selected branch, and the
 source commit. This is a provenance attestation, not an assertion that the SBOM
 includes every OS/NSIS component. The bundle is included in the draft release.
 Consumers can verify the downloaded installer with a recent GitHub CLI:
 
 ```powershell
-gh attestation verify ./Transmog_0.1.0_x64-setup.exe `
+gh attestation verify ./Transmog_0.1.0.0_x64-setup.exe `
   --repo erik-anderson/transmog `
   --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml `
   --source-ref refs/heads/main
@@ -104,8 +128,9 @@ gh attestation verify ./Transmog_0.1.0_x64-setup.exe `
 
 Add `--bundle ./provenance.sigstore.json` to use the downloaded bundle and
 `--source-digest <release-commit>` to enforce a particular source revision.
+For a hotfix, replace `refs/heads/main` with its source branch.
 
-Publication creates or updates only a draft prerelease for the configured Tauri
+Publication creates or updates only a draft for the configured product
 version. It refuses to overwrite a published release. The draft contains the
 installer, SHA-256 catalog, signing and permission reports, desktop/installer test
 evidence, third-party notices, SBOM, source manifest, and attestation bundle. The

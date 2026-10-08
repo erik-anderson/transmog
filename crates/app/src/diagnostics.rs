@@ -150,7 +150,7 @@ impl DiagnosticLog {
         runtime.architecture = bounded(&runtime.architecture, 32);
         runtime.webview_version = runtime.webview_version.map(|value| bounded(&value, 128));
         DiagnosticsReport {
-            application_version: env!("CARGO_PKG_VERSION").to_owned(),
+            application_version: crate::application_version().to_owned(),
             dependencies: vec![
                 format!("transmog-app {}", env!("CARGO_PKG_VERSION")),
                 "Tauri 2.12.1".to_owned(),

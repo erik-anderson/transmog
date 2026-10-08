@@ -14,6 +14,8 @@ if (-not $SbomPath) {
 }
 
 $metadata = cargo metadata --format-version 1 --locked | ConvertFrom-Json
+. (Join-Path $PSScriptRoot 'release-version-common.ps1')
+$releaseVersion = (Get-ReleaseVersionState $repositoryRoot).Version
 $packagesById = @{}
 foreach ($package in $metadata.packages) {
     $packagesById[$package.id] = $package
@@ -142,7 +144,7 @@ $sbom = [ordered]@{
         component = @{
             type = 'application'
             name = 'transmog'
-            version = '0.1.0'
+            version = $releaseVersion
         }
     }
     components = $components

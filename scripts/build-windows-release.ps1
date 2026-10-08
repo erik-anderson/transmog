@@ -47,7 +47,7 @@ try {
     $files = @(Get-ChildItem -LiteralPath $payloadRoot -File -Recurse | ForEach-Object {
         [pscustomobject]@{ Path = [System.IO.Path]::GetRelativePath($payloadRoot, $_.FullName).Replace('\', '/'); Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     })
-    $manifest = [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; Version = $buildResult.Version; Target = $buildResult.Target; BuiltAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); Files = $files }
+    $manifest = [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; SourceBranch = $env:GITHUB_REF_NAME; Version = $buildResult.Version; Channel = $buildResult.Channel; ReleaseType = $env:RELEASE_TYPE; Target = $buildResult.Target; BuiltAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); Files = $files }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $payloadRoot 'build-manifest.json') -Encoding utf8NoBOM
     if ($env:GITHUB_OUTPUT) { "version=$($buildResult.Version)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
     Write-Host "Prepared tested unsigned build payload for Transmog $($buildResult.Version)."
