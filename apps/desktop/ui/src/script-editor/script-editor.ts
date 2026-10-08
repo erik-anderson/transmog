@@ -3,8 +3,8 @@ import '../editor-surface/editor-surface.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { ScriptDraft, ScriptStatus, ScriptCandidate } from '../models.js';
-import { describeError, optionalText } from '../utilities.js';
+import type { ScriptDraft, ScriptStatus, ScriptCandidate, SelectedResponse } from '../models.js';
+import { describeError, optionalText, parseHeaderLines } from '../utilities.js';
 
 import type * as Monaco from 'monaco-editor/editor/editor.api';
 import { loadMonaco, waitForStyles } from '../editor-runtime.js';
@@ -25,6 +25,31 @@ export function onRequestHead(_context: Context, request: Request): Action {
 
 export class ScriptEditor extends WorkspaceElement {
   @attr theme = 'system';
+  @observable selection:SelectedResponse|null=null;
+  @observable scriptBusy=false;
+  @observable scriptStage='Draft';
+  @observable scriptDirty=true;
+  @observable canEnable=false;
+  @observable scriptActive=false;
+  @observable activeScriptText='Paused';
+  @observable testHandlers:Array<{name:string}>=[{name:'onRequestHead'}];
+  scriptTestUrl!:HTMLInputElement;
+  scriptTestMethod!:HTMLInputElement;
+  scriptTestHeaders!:HTMLTextAreaElement;
+  scriptTestBody!:HTMLTextAreaElement;
+  scriptTestHandler!:HTMLSelectElement;
+  private editVersion=0;
+  private hasLoadedDraft=false;
+  markScriptChanged():void {this.editVersion++;this.candidate=null;this.canEnable=false;this.scriptDirty=true;this.scriptStage='Draft';}
+  scriptKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();void this.saveScript();}}
+  private async runScript(operation:()=>Promise<void>):Promise<void> {if(this.scriptBusy)return;this.scriptBusy=true;try {await operation();}finally {this.scriptBusy=false;}}
+  async saveScript():Promise<void> {await this.runScript(()=>this.saveDraft());}
+  async validateScript(event?:Event):Promise<void> {event?.preventDefault();await this.runScript(()=>this.validateDraft());}
+  async testScript():Promise<void> {await this.runScript(()=>this.testDraft());}
+  async activateScript():Promise<void> {await this.runScript(()=>this.activateDraft());}
+  async disableScript():Promise<void> {await this.runScript(()=>this.disableActive());}
+  async compareActiveScript():Promise<void> {await this.runScript(()=>this.compareDraft());}
+  useSelectedTestRequest():void {const request=this.selection?.detail.requests.find(head=>head.boundary==='client-request');if(!request)return;this.scriptTestUrl.value=request.target??'';this.scriptTestMethod.value=request.method??'GET';this.scriptTestHeaders.value=request.headers.filter(header=>!header.sensitive).map(header=>header.name+': '+header.value).join('\n');}
   @attr({mode:'boolean'}) active = false;
   @observable scriptText = initialState.scriptText;
   @observable editorLoaded = initialState.editorLoaded;
@@ -109,24 +134,29 @@ export class ScriptEditor extends WorkspaceElement {
       tabFocusMode: true,
       theme: this.monacoTheme(),
     });
-    this.sourceEditor.onDidChangeModelContent(() => { this.candidate = null; });
+    this.sourceEditor.onDidChangeModelContent(() => this.markScriptChanged());
     this.scriptText = 'Ready. Monaco diagnostics are advisory; Rust validation is authoritative.';
     await this.refreshScripts();
   }
 
-  async saveScript(): Promise<void> {
+  private async saveDraft(): Promise<void> {
+    const version=this.editVersion;
     try {
       const status = await invoke<ScriptStatus>('save_script', { draft: this.scriptDraft() });
-      this.renderScriptStatus('Draft saved without activation.', status);
+      this.renderScriptStatus('Draft saved.', status);
+      if(version===this.editVersion){this.scriptDirty=false;this.scriptStage='Saved';}
     } catch (error: unknown) {
       this.scriptFailure('Save failed', error);
     }
   }
 
-  async validateScript(event?: Event): Promise<void> {
-    event?.preventDefault();
+  private async validateDraft(): Promise<void> {
+    const version=this.editVersion;
     try {
-      this.candidate = await invoke<ScriptCandidate>('validate_script', { draft: this.scriptDraft() });
+      const draft=this.scriptDraft();
+      const candidate=await invoke<ScriptCandidate>('validate_script',{draft});
+      if(version!==this.editVersion){this.scriptText='The draft changed during validation. Validate the current changes.';return;}
+      this.candidate=candidate;this.canEnable=true;this.scriptStage='Validated';this.testHandlers=draft.handlers.map(name=>({name}));
       const model = this.sourceEditor?.getModel();
       if (model !== null && model !== undefined) {
         this.monaco!.editor.setModelMarkers(model, 'transmog-rust', []);
@@ -138,12 +168,14 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
 
-  async testScript(): Promise<void> {
+  private async testDraft(): Promise<void> {
+    const version=this.editVersion;
     try {
-      if (this.candidate === null) await this.validateScript();
+      if (this.candidate === null) await this.validateDraft();
       if (this.candidate === null) return;
       const draft = this.scriptDraft();
-      const handler = draft.handlers[0];
+      const handler=draft.handlers.find(name=>name===this.scriptTestHandler.value)??draft.handlers[0];
+      const target=new URL(this.scriptTestUrl.value);if(!['http:','https:'].includes(target.protocol))throw new Error('Use an HTTP or HTTPS test URL');
       if (handler === undefined) throw new Error('export at least one supported handler');
       const responseHandler = handler.startsWith('onResponse');
       const bodyHandler = handler.endsWith('Body');
@@ -152,30 +184,29 @@ export class ScriptEditor extends WorkspaceElement {
         invocation: {
           context: { exchangeId: 'editor-test', nowUnixMs: 0, handler },
           request: {
-            method: 'GET',
-            scheme: 'https',
-            host: draft.prefilter.host ?? 'example.test',
-            port: 443,
-            path: draft.prefilter.pathPrefix ?? '/',
-            query: null,
-            headers: [{ name: 'User-Agent', value: Array.from(new TextEncoder().encode('Transmog editor test')), sensitive: false }],
+            method:this.scriptTestMethod.value,scheme:target.protocol.slice(0,-1),host:target.hostname,port:Number(target.port|| (target.protocol==='https:'?443:80)),path:target.pathname,query:target.search?target.search.slice(1):null,
+            headers:parseHeaderLines(this.scriptTestHeaders.value).map(header=>({name:header.name,value:Array.from(new TextEncoder().encode(header.value)),sensitive:false})),
           },
           response: responseHandler ? { status: 200, headers: [] } : null,
-          body: bodyHandler ? { bytes: Array.from(new TextEncoder().encode('editor test body')), truncated: false } : null,
+          body: bodyHandler ? { bytes: Array.from(new TextEncoder().encode(this.scriptTestBody.value)), truncated: false } : null,
         },
       });
+      if(version!==this.editVersion){this.scriptText='The test used an earlier draft. Test the current changes.';return;}
+      this.scriptStage='Tested';
       this.scriptText = `Sandbox test passed with action “${String(action.action ?? 'continue')}”. No traffic was changed.`;
     } catch (error: unknown) {
       this.scriptFailure('Sandbox test aborted', error);
     }
   }
 
-  async activateScript(): Promise<void> {
+  private async activateDraft(): Promise<void> {
+    const version=this.editVersion;
     try {
-      if (this.candidate === null) await this.validateScript();
+      if (this.candidate === null) await this.validateDraft();
       if (this.candidate === null) return;
       const status = await invoke<ScriptStatus>('activate_script', { candidateId: this.candidate.candidateId });
       this.candidate = null;
+      this.canEnable=false;if(version===this.editVersion)this.scriptStage='Active';
       this.renderScriptStatus('Validated script enabled for new requests.', status);
       this.scriptRevision += 1;
     } catch (error: unknown) {
@@ -183,16 +214,17 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
 
-  async disableScript(): Promise<void> {
+  private async disableActive(): Promise<void> {
     try {
       const status = await invoke<ScriptStatus>('disable_script', { scriptId: 'user-script' });
-      this.renderScriptStatus('Script disabled for new exchanges.', status);
+      this.scriptStage=this.scriptDirty?'Draft':'Saved';
+      this.renderScriptStatus('Script paused for new requests.', status);
     } catch (error: unknown) {
       this.scriptFailure('Disable failed', error);
     }
   }
 
-  async compareActiveScript(): Promise<void> {
+  private async compareDraft(): Promise<void> {
     try {
       const status = await invoke<ScriptStatus>('script_status');
       const draft = this.scriptDraft();
@@ -224,7 +256,9 @@ export class ScriptEditor extends WorkspaceElement {
 
   private async refreshScripts(): Promise<void> {
     try {
-      this.renderScriptStatus('Script workspace loaded.', await invoke<ScriptStatus>('script_status'));
+      const status=await invoke<ScriptStatus>('script_status');
+      if(!this.hasLoadedDraft){this.hasLoadedDraft=true;const draft=status.saved.find(item=>item.id==='user-script');if(draft){this.sourceEditor?.setValue(draft.source);this.scriptRevision=draft.revision;const set=(name:string,value:string|boolean)=>{const input=this.scriptForm.elements.namedItem(name) as HTMLInputElement;if(typeof value==='boolean')input.checked=value;else input.value=value;};set('scriptHost',draft.prefilter.host??'');set('scriptPath',draft.prefilter.pathPrefix??'');set('scriptHeaders',draft.capabilities.writeHeaders.join(', '));set('readBodies',draft.capabilities.readBodies);set('writeBody',draft.capabilities.writeBody);set('respond',draft.capabilities.respond);set('abort',draft.capabilities.abort);set('sensitive',draft.capabilities.readSensitiveHeaders);this.scriptDirty=false;this.scriptStage='Saved';}}
+      this.renderScriptStatus('Script workspace loaded.',status);
     } catch (error: unknown) {
       this.scriptFailure('Script workspace unavailable', error);
     }
@@ -267,10 +301,12 @@ export class ScriptEditor extends WorkspaceElement {
   }
 
   private renderScriptStatus(message: string, status: ScriptStatus): void {
+    const active=status.active.find(item=>item.manifest.id==='user-script');this.scriptActive=Boolean(active);this.activeScriptText=active?'On · revision '+active.manifest.revision:'Paused';
     this.scriptText = `${message} ${status.active.length} active script${status.active.length === 1 ? '' : 's'}; ${status.saved.length} saved draft${status.saved.length === 1 ? '' : 's'}.`;
   }
 
   private scriptFailure(prefix: string, error: unknown): void {
+    this.canEnable=false;
     const message = describeError(error);
     this.scriptText = `${prefix}: ${message}\n\nThe draft was not activated. Correct the source or capabilities, validate again, and rerun the sandbox test.`;
     const model = this.sourceEditor?.getModel();

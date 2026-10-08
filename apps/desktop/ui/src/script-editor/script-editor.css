@@ -1,1 +1,3 @@
 script-editor { display: contents; }
+
+.script-state { display:flex; flex-wrap:wrap; align-items:baseline; gap:.5rem 1rem; margin-bottom:.5rem; }.script-state h2 { margin:0; }.script-state span { font-size:.8125rem; color:var(--muted); }.script-test-fields { display:grid; grid-template-columns:minmax(0,2fr) minmax(5rem,1fr); gap:.5rem; padding:.5rem 0; }.script-test-fields label:has(textarea) { grid-column:1/-1; }.script-test { margin-top:.5rem; }.script-test .actions { margin:.3rem 0; }.script-menu { inset:auto; margin:auto; }

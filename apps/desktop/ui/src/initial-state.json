@@ -599,5 +599,16 @@
   "breakpointError": "",
   "pausedCount": 0,
   "expired": false,
-  "phaseLabel": ""
+  "phaseLabel": "",
+  "scriptBusy": false,
+  "scriptStage": "Draft",
+  "scriptDirty": true,
+  "canEnable": false,
+  "scriptActive": false,
+  "activeScriptText": "Paused",
+  "testHandlers": [
+    {
+      "name": "onRequestHead"
+    }
+  ]
 }

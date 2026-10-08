@@ -1,23 +1,21 @@
 <template>
 <if condition="editorLoaded"><link w-ref="{monacoStyles}" rel="stylesheet" href="/monaco.css"></if>
-<section class="script-workspace" aria-labelledby="script-heading">
-      <p class="section-label">Sandboxed TypeScript</p>
-      <h2 id="script-heading">Traffic scripts</h2>
-      <p>Save a draft, validate it, and test it in the sandbox before enabling it for new requests.</p>
+<section class="script-workspace" aria-labelledby="script-heading" @keydown="{scriptKeyboard(e)}">
+
+<header class="script-state"><h2 id="script-heading">Traffic scripts</h2><span role="status">{{scriptStage}}<if condition="scriptDirty"> · Unsaved</if></span><span>{{activeScriptText}}</span></header>
       <editor-surface label="TypeScript source" @editor-expanded="{focusEditor()}" @editor-restored="{focusEditor()}">
         <div slot="actions" class="script-actions actions">
-          <button type="button" class="secondary" @click="{saveScript()}">Save draft</button>
-          <button type="button" @click="{validateScript()}">Validate</button>
-          <button type="button" class="secondary" @click="{testScript()}">Test in sandbox</button>
-          <button type="button" class="secondary" @click="{activateScript()}">Enable</button>
-          <button type="button" class="secondary" @click="{disableScript()}">Disable</button>
-          <button type="button" class="secondary" @click="{compareActiveScript()}">Compare with active</button>
+          <button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{saveScript()}">Save draft</button>
+          <button type="button" ?disabled="{{scriptBusy}}" @click="{validateScript()}">Validate</button>
+          <button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{testScript()}">Test in sandbox</button>
+          <button type="button" class="secondary" ?disabled="{{scriptBusy || !canEnable}}" @click="{activateScript()}">Enable</button>
+          <button type="button" class="secondary" popovertarget="script-actions-menu" ?disabled="{{scriptBusy}}" ?hidden="{{!scriptActive}}">More</button>
         </div>
         <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
       </editor-surface>
       <details>
       <summary>Filters and capabilities</summary>
-      <form w-ref="{scriptForm}" @submit="{validateScript(e)}" class="script-form">
+      <form w-ref="{scriptForm}" @submit="{validateScript(e)}" @input="{markScriptChanged()}" @change="{markScriptChanged()}" class="script-form">
         <label>Host filter (optional) <input name="scriptHost" value="example.test" maxlength="255"></label>
         <label>Path-prefix filter (optional) <input name="scriptPath" maxlength="2048" placeholder="/api"></label>
         <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096"></label>
@@ -31,10 +29,12 @@
         </fieldset>
       </form>
       </details>
+      <details class="script-test"><summary>Sandbox request</summary><div class="script-test-fields"><label>Test URL <input w-ref="{scriptTestUrl}" type="url" value="https://example.test/" maxlength="8192"></label><label>Method <input w-ref="{scriptTestMethod}" value="GET" maxlength="32"></label><label>Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label><label>Headers <textarea w-ref="{scriptTestHeaders}" rows="3" maxlength="65536"></textarea></label><label>Body <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label></div><div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Testing evaluates this input without sending a request.</span></div></details>
+      <div id="script-actions-menu" class="table-popover script-menu" popover="auto"><button type="button" @click="{compareActiveScript()}" ?disabled="{{scriptBusy}}">Compare with active</button><button type="button" @click="{disableScript()}" ?disabled="{{scriptBusy}}">Pause script</button></div>
       <p class="editor-label">Press <kbd>Ctrl</kbd>+<kbd>M</kbd> to toggle Tab movement in the editor.</p>
       <editor-surface label="Active and draft comparison" ?hidden="{{!diffVisible}}">
         <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison"></div>
       </editor-surface>
-      <pre tabindex="0" aria-live="polite">{{scriptText}}</pre>
+      <output class="operation-status" aria-live="polite">{{scriptText}}</output>
     </section>
 </template>
