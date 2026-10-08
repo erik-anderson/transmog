@@ -254,7 +254,12 @@ pub(crate) fn copy_all_headers(
         "{} {} {}",
         head.method,
         url(head),
-        protocol(head.source_version)
+        snapshot
+            .performance
+            .protocols
+            .iter()
+            .find(|item| item.boundary == "client-request")
+            .map_or(protocol(head.source_version), |item| item.version.as_str())
     );
     append_headers(&mut out, &head.headers)?;
     let response = snapshot
@@ -263,15 +268,26 @@ pub(crate) fn copy_all_headers(
         .find(|item| item.boundary == ExchangeBoundary::ClientResponse)
         .or_else(|| snapshot.response_heads.last());
     if let Some(response) = response {
-        let reason = http::StatusCode::from_u16(response.head.status)
-            .ok()
-            .and_then(|status| status.canonical_reason())
+        let observed = snapshot
+            .performance
+            .protocols
+            .iter()
+            .find(|item| item.boundary == crate::inspector::boundary(response.boundary));
+        let reason = observed
+            .and_then(|item| item.reason.as_deref())
+            .or_else(|| {
+                http::StatusCode::from_u16(response.head.status)
+                    .ok()
+                    .and_then(|status| status.canonical_reason())
+            })
             .unwrap_or("");
         // Three CRLFs terminate the request line/block and leave two blank lines.
         write!(
             out,
             "\r\n\r\n\r\n{} {}",
-            protocol(response.head.source_version),
+            observed.map_or(protocol(response.head.source_version), |item| item
+                .version
+                .as_str()),
             response.head.status
         )
         .expect("string write");

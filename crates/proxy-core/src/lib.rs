@@ -11,6 +11,8 @@ pub mod intercept;
 mod message;
 /// Bounded, immutable, redacted lifecycle observation.
 pub mod observe;
+/// Measured local timings and physical transport facts.
+pub mod performance;
 mod policy;
 mod protocol;
 pub mod route;

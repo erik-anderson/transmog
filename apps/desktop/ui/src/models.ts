@@ -59,6 +59,7 @@ export interface SessionPage {
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {
+  performance?: { points:Array<{milestone:string;unixMillis:number;offsetMicros:number}>; protocols:Array<{boundary:string;version:string;reason:string|null}>; transports:Array<{leg:string;connectionId:string;shared:boolean;outcome:string;sampledOffsetMicros:number;peer:string|null;local:string|null;dnsMicros:number|null;tcpMicros:number|null;tlsMicros:number|null;tlsVersion:string|null;tlsResumed:boolean|null;cipher:string|null;alpn:string|null;bytesRead:number|null;bytesWritten:number|null;quic?:{rttMicros:number|null;congestionWindow:number|null;packetsSent:number;packetsReceived:number;packetsLost:number;retransmittedBytes:number}|null}> };
   traceId?:string|null; originalId?:string|null;
   savedEvidence?: Record<string, string>;
   sourceIp?: string;

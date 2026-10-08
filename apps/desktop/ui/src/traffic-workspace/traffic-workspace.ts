@@ -1,3 +1,4 @@
+import {timingView, type TimingRow, type TimelineRow, type TransportView} from '../timings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -14,6 +15,17 @@ type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;c
 
 export class TrafficWorkspace extends WorkspaceElement {
   @attr({attribute:'viewer-mode',mode:'boolean'}) viewerMode = false;
+  @observable timingTitle="Timings and transport";
+  @observable timingSummary="";
+  @observable timingError="";
+  @observable timingBusy=false;
+  @observable timingPhases:TimingRow[]=[];
+  @observable timingRows:TimelineRow[]=[];
+  @observable timingTransports:TransportView[]=[];
+  @observable timingSaved:TimingRow[]=[];
+  timingDialog!:HTMLDialogElement;
+  private timingId="";
+  private timingGeneration=0;
   @observable importingTrace=false;
   @observable importStatus='';
   @observable importPercent=0;
@@ -217,6 +229,18 @@ export class TrafficWorkspace extends WorkspaceElement {
     finally{onProgress.onmessage=()=>{};if(this.importOperation===operationId){this.importOperation='';this.importingTrace=false;}}
   }
   async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
+  async showTimings():Promise<void> {
+    this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;
+    this.timingId=id;this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
+  }
+  async refreshTimings():Promise<void> {
+    const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;}
+    catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
+    finally {if(generation===this.timingGeneration)this.timingBusy=false;}
+  }
+  closeTimings():void {this.timingDialog.close();}
+  timingsClosed():void {this.timingGeneration++;this.timingBusy=false;}
   async showTraceMetadata(id?:string):Promise<void> {
     this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
     try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows.sort((a,b)=>b.importedAt-a.importedAt);this.loadTraceMetadata(id??rows[0]?.id??'');}

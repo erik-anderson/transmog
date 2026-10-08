@@ -995,17 +995,25 @@ impl Application {
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
         let mut detail = inspector::session_detail(&self.service, self.body_store.as_ref(), id)?;
         if let Some(entry) = self.traces.entry(id) {
+            let native = entry.raw_headers.is_none();
             detail.trace_id = Some(entry.trace_id);
             detail.original_id = Some(entry.original_id);
             detail.saved_evidence = entry.timings;
             detail.diagnostics.extend(entry.diagnostics);
-            if !entry.protocol_known {
+            if !entry.protocol_known || native {
                 for head in detail
                     .requests
                     .iter_mut()
                     .chain(detail.responses.iter_mut())
                 {
-                    head.protocol = "Unavailable".into();
+                    if !detail
+                        .performance
+                        .protocols
+                        .iter()
+                        .any(|item| item.boundary == head.boundary)
+                    {
+                        head.protocol = "Unavailable".into();
+                    }
                 }
             }
         }

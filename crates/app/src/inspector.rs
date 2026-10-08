@@ -78,6 +78,8 @@ pub struct HeadView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Measured local milestones, actual protocols and shared transport facts.
+    pub performance: transmog_core::performance::PerformanceEvidence,
     /// Direct association with the saved source's trace metadata.
     pub trace_id: Option<String>,
     /// Original source identifier, before viewer namespace assignment.
@@ -265,7 +267,11 @@ pub(crate) fn session_detail(
                 .as_bytes(),
             )),
             status: None,
-            protocol: format!("{:?}", observed.head.source_version),
+            protocol: message_protocol(
+                &snapshot.performance,
+                &boundary(observed.boundary),
+                observed.head.source_version,
+            ),
             headers: headers(&observed.head.headers),
         })
         .collect();
@@ -277,7 +283,11 @@ pub(crate) fn session_detail(
             method: None,
             target: None,
             status: Some(observed.head.status),
-            protocol: format!("{:?}", observed.head.source_version),
+            protocol: message_protocol(
+                &snapshot.performance,
+                &boundary(observed.boundary),
+                observed.head.source_version,
+            ),
             headers: headers(&observed.head.headers),
         })
         .collect();
@@ -336,6 +346,7 @@ pub(crate) fn session_detail(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        performance: snapshot.performance.clone(),
         trace_id: None,
         original_id: None,
         saved_evidence: std::collections::BTreeMap::new(),
@@ -1092,6 +1103,18 @@ pub(crate) fn boundary(value: ExchangeBoundary) -> String {
         ExchangeBoundary::ClientResponse => "client-response",
     }
     .to_owned()
+}
+
+pub(crate) fn message_protocol(
+    evidence: &transmog_core::performance::PerformanceEvidence,
+    boundary: &str,
+    fallback: transmog_core::HttpLegVersion,
+) -> String {
+    evidence
+        .protocols
+        .iter()
+        .find(|item| item.boundary == boundary)
+        .map_or_else(|| format!("{fallback:?}"), |item| item.version.clone())
 }
 
 #[cfg(test)]

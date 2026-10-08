@@ -38,20 +38,24 @@ checkout contains independent updater work and is preserved.
    cancellable gzip imports keep body reads lazy. CLI, facade and host tests,
    browser checks, a real console capture, and native compressed-viewer checks
    pass. The support guide covers start, reproduce, stop, review and sharing.
-10. Optional current-user SAZ registration, owned-path uninstall and update
+10. `329c175`: optional current-user SAZ registration, owned-path uninstall and update
     preservation. Standalone CLI release build/signing, four-part Windows
     resources, required release asset/checksums/signature evidence, qualification
     and provenance. CLI tests, compiled NSIS bundle/isolated registry fixtures,
     script parsing and release-provenance/publication/lifecycle checks pass.
     Actual signing remains part of the protected release workflow.
 
-## Remaining isolated phases
+11. Measured client/proxy/upstream timeline and physical transport evidence,
+    including client acceptance, first read, process attribution and TLS; Hyper
+    DNS/TCP/TLS setup and failures, exact HTTP boundary versions/reason phrases;
+    shared pool counters and measured QUIC path/recovery statistics. Native v3
+    persists bounded evidence and keeps v1/v2 readable. Traffic Timings provides
+    overlapping phases, UTC timeline, reused connections and original SAZ timers.
+    Monotonic/merge/I/O/pool/import tests, protocol matrix, desktop tests, clippy,
+    browser UX and native WebView2 checks pass. Reviewed populated and compact
+    layouts; improved legacy import presentation to put saved timers first.
 
-- Client/proxy/upstream timing and transport observations, including incoming
-  proxy connection timing; shared physical connections versus HTTP streams;
-  measured L4–6 information and explicit unavailable/reused states. Persist
-  these fields and import compatible SAZ timing evidence without treating local
-  send completion as actual server receipt or inventing server CPU time.
+## Remaining isolated phases
 - Save/export original trace metadata, with opt-in `ipconfig /all` or platform
   analogue; preserve source associations for merged traces.
 - Windows captured HTML preview in a separate WebView, captured resources only,

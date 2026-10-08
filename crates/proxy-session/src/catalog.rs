@@ -105,6 +105,8 @@ pub enum SessionTerminal {
 /// Immutable point-in-time representation of one exchange.
 #[derive(Clone, Debug)]
 pub struct SessionSnapshot {
+    /// Measured local timing and physical connection observations.
+    pub performance: transmog_core::performance::PerformanceEvidence,
     /// Whether this is immutable saved evidence, independent of live retention.
     pub imported: bool,
     /// Stable exchange identifier.
@@ -258,6 +260,7 @@ struct MutableBody {
 
 #[derive(Debug)]
 struct MutableSession {
+    performance: transmog_core::performance::PerformanceEvidence,
     imported: bool,
     metadata: Arc<ExchangeMetadata>,
     last_sequence: u64,
@@ -278,6 +281,7 @@ struct MutableSession {
 impl MutableSession {
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
+            performance: self.performance.clone(),
             imported: self.imported,
             exchange_id: self.metadata.exchange_id,
             metadata: Arc::clone(&self.metadata),
@@ -371,6 +375,7 @@ impl SessionCatalog {
             state.by_id.insert(
                 exchange_id,
                 MutableSession {
+                    performance: transmog_core::performance::PerformanceEvidence::default(),
                     imported: false,
                     metadata: Arc::clone(metadata),
                     last_sequence: 0,
@@ -500,6 +505,7 @@ impl SessionCatalog {
                 id,
                 MutableSession {
                     imported: true,
+                    performance: snapshot.performance,
                     metadata: snapshot.metadata,
                     last_sequence: snapshot.last_sequence,
                     sequence_loss: snapshot.sequence_loss,
@@ -792,6 +798,7 @@ fn apply_kind(
     detail_dropped: &mut u64,
 ) {
     match kind {
+        ObserverEventKind::Performance(evidence) => session.performance.merge(&evidence),
         ObserverEventKind::ExchangeStarted { .. } => {}
         ObserverEventKind::HookInitializationSkipped(diagnostic) => push_bounded(
             &mut session.initialization_diagnostics,

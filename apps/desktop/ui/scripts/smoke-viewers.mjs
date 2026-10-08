@@ -59,6 +59,12 @@ try{
   await waitFor(()=>viewer.evaluate(`${traffic}.metadataTraceName==='viewer-fixture.saz'`),'Request trace metadata navigation failed');
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot,Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeMetadata()`);
+  await viewer.evaluate(`${traffic}.showTimings()`);
+  await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingSaved.length>0`),'Imported SAZ timer evidence did not appear');
+  const timingState=await viewer.evaluate(`({open:${traffic}.timingDialog.open,summary:${traffic}.timingSummary,unknown:${traffic}.timingPhases[0].value})`);
+  assert.ok(timingState.open);assert.match(timingState.summary,/no measured proxy timeline/);assert.equal(timingState.unknown,'Unavailable');
+  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timings.png'),Buffer.from(image.data,'base64'));}
+  await viewer.evaluate(`${traffic}.closeTimings()`);
   const before=(await targets()).map(target=>target.id);
   await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(source)}]})`);
   const additional=await waitFor(async()=>{const all=await targets();return all.find(target=>!before.includes(target.id));},'Additional viewer did not open');

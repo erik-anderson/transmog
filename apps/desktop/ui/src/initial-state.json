@@ -705,5 +705,13 @@
   "contentSearchStatus": "",
   "contentSearchLabel": "",
   "contentMatchCount": 0,
-  "contentSearchActive": false
+  "contentSearchActive": false,
+  "timingTitle": "Timings and transport",
+  "timingSummary": "",
+  "timingError": "",
+  "timingBusy": false,
+  "timingPhases": [],
+  "timingRows": [],
+  "timingTransports": [],
+  "timingSaved": []
 }

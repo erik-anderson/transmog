@@ -6,9 +6,12 @@ use std::{
     num::NonZeroUsize,
     pin::Pin,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     task::{Context, Poll},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use boring::ssl::NameType;
@@ -47,6 +50,9 @@ use transmog_core::{
         ObservedRouteAttempt, Observer, ObserverConfig, ObserverEventKind, ObserverHub,
         ObserverStats,
     },
+    performance::{
+        Milestone, PerformanceRecorder, ProtocolObservation, TransportObservation, TransportOutcome,
+    },
     prepare_headers,
     route::{
         OriginalDestinationOnly, PolicyRouteSelector, RouteError, RouteInput,
@@ -60,7 +66,10 @@ use transmog_h3::{
 use transmog_http::{
     ConnectAuthority, HyperEgressMode, HyperOriginClient, HyperOriginError, HyperUpgradeResponse,
 };
-use transmog_network::HappyEyeballsConfig;
+use transmog_network::{
+    HappyEyeballsConfig,
+    metrics::{ConnectionMetrics, MeteredIo},
+};
 use transmog_tls::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
     DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, LeafCacheError, ProxyCa,
@@ -553,6 +562,8 @@ impl ProxyServer {
                         continue;
                     };
                     let proxy_addr = stream.local_addr()?;
+                    let accepted_at = self.state.clock.instant();
+                    let metrics = Arc::new(ConnectionMetrics::default());
                     let state = Arc::clone(&self.state);
                     let identity_resolver = Arc::clone(&state.client_identity_resolver);
                     let connection_id = ConnectionId(
@@ -576,6 +587,11 @@ impl ProxyServer {
                             state,
                             stream,
                             ConnectionContext {
+                                accepted_at,
+                                identity_done: Instant::now(),
+                                socket_metrics: metrics,
+                                exchange_count: Arc::new(AtomicU64::new(0)),
+                                tls: None,
                                 client_addr,
                                 proxy_addr,
                                 client_identity: identity,
@@ -651,6 +667,13 @@ struct UpstreamGeneration {
 }
 
 impl UpstreamGeneration {
+    fn observed(&self, performance: Option<PerformanceRecorder>) -> Self {
+        Self {
+            hyper: self.hyper.clone().with_performance(performance.clone()),
+            h3: self.h3.clone().with_performance(performance),
+            trust_generation: self.trust_generation,
+        }
+    }
     fn new(
         trust: Arc<TrustSnapshot>,
         h3_limits: H3TransportLimits,
@@ -670,11 +693,25 @@ impl UpstreamGeneration {
 
 #[derive(Clone)]
 struct ConnectionContext {
+    accepted_at: Instant,
+    identity_done: Instant,
+    socket_metrics: Arc<ConnectionMetrics>,
+    exchange_count: Arc<AtomicU64>,
+    tls: Option<Arc<ClientTlsObservation>>,
     client_addr: SocketAddr,
     proxy_addr: SocketAddr,
     client_identity: transmog_core::ClientIdentity,
     connection_id: ConnectionId,
     tunnel: Option<TunnelContext>,
+}
+
+struct ClientTlsObservation {
+    began: Instant,
+    done: Instant,
+    version: String,
+    resumed: bool,
+    cipher: Option<String>,
+    alpn: Option<String>,
 }
 
 #[derive(Clone)]
@@ -760,6 +797,7 @@ async fn serve_explicit_connection(
     stream: TcpStream,
     context: ConnectionContext,
 ) -> Result<(), ProxyRuntimeError> {
+    let stream = MeteredIo::new(stream, context.socket_metrics.clone());
     let shutdown = state.final_shutdown.clone();
     let header_read_timeout = state.config.limits.header_read_timeout;
     let max_header_count = state.config.limits.max_header_count;
@@ -768,6 +806,7 @@ async fn serve_explicit_connection(
         let state = Arc::clone(&state);
         let context = context.clone();
         async move {
+            let client_version = request.version();
             let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
                 return Ok::<_, Infallible>(draining_response());
             };
@@ -779,6 +818,7 @@ async fn serve_explicit_connection(
                 }
             };
             response.body_mut().activity = Some(activity);
+            *response.version_mut() = client_version;
             Ok::<_, Infallible>(response)
         }
     });
@@ -888,6 +928,7 @@ impl ProxyState {
             .resolve(&identity, self.clock.system_time())?;
         validate_resolved_leaf(&identity, &leaf)?;
         let acceptor = self.downstream_tls.acceptor(&leaf)?;
+        let tls_began = self.clock.instant();
         let tls = timeout(
             self.config.limits.tls_handshake_timeout,
             tokio_boring::accept(&acceptor, transport),
@@ -897,10 +938,25 @@ impl ProxyState {
         .map_err(|error| ProxyRuntimeError::DownstreamTlsHandshake(error.to_string()))?;
         normalize_connect_identity(authority.host(), tls.ssl().servername(NameType::HOST_NAME))?;
         let negotiated_h2 = tls.ssl().selected_alpn_protocol() == Some(b"h2");
+        let tls_observation = Arc::new(ClientTlsObservation {
+            began: tls_began,
+            done: self.clock.instant(),
+            version: tls.ssl().version_str().into(),
+            resumed: tls.ssl().session_reused(),
+            cipher: tls
+                .ssl()
+                .current_cipher()
+                .map(|cipher| cipher.name().into()),
+            alpn: tls
+                .ssl()
+                .selected_alpn_protocol()
+                .map(|alpn| String::from_utf8_lossy(alpn).into_owned()),
+        });
         drop(handshake);
         self.serve_intercepted_http(
             tls,
             ConnectionContext {
+                tls: Some(tls_observation),
                 tunnel: Some(TunnelContext {
                     authority,
                     protocol: TunnelProtocol::InterceptedTls,
@@ -933,6 +989,7 @@ impl ProxyState {
             let state = Arc::clone(&self);
             let context = context.clone();
             async move {
+                let client_version = request.version();
                 let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
                     return Ok::<_, Infallible>(draining_response());
                 };
@@ -945,6 +1002,7 @@ impl ProxyState {
                         }
                     };
                 response.body_mut().activity = Some(activity);
+                *response.version_mut() = client_version;
                 Ok::<_, Infallible>(response)
             }
         });
@@ -985,6 +1043,26 @@ impl ProxyState {
             return Err(ProxyRuntimeError::NestedConnectUnsupported);
         }
         let ingress_version = protocol_version(request.version())?;
+        let performance = PerformanceRecorder::new(self.clock.system_time(), self.clock.instant());
+        performance.mark_at(Milestone::RequestHeaders, self.clock.instant());
+        performance.mark_at(Milestone::ClientConnected, context.accepted_at);
+        performance.mark_at(Milestone::ClientIdentityDone, context.identity_done);
+        if let Some(first) = context.socket_metrics.first_read_at() {
+            performance.mark_at(Milestone::ClientFirstByte, first);
+        }
+        if let Some(tls) = &context.tls {
+            performance.mark_at(Milestone::ClientTlsBegin, tls.began);
+            performance.mark_at(Milestone::ClientTlsDone, tls.done);
+        }
+        performance.protocol(ProtocolObservation {
+            boundary: "client-request".into(),
+            version: format!("{:?}", request.version()),
+            reason: None,
+        });
+        if request.body().is_end_stream() {
+            performance.mark(Milestone::ClientRequestDone);
+        }
+        let shared_connection = context.exchange_count.fetch_add(1, Ordering::Relaxed) > 0;
         let mut request_head = canonical_head(&request, &context, ingress_version)?;
         if context
             .tunnel
@@ -1042,6 +1120,16 @@ impl ProxyState {
             .context()
             .extensions()
             .insert(RuntimeExchangeObserver(Arc::clone(&observer)));
+        chain.context().extensions().insert(performance);
+        chain
+            .context()
+            .extensions()
+            .insert(ClientPerformanceSource {
+                context: context.clone(),
+                shared: shared_connection,
+            });
+        publish_performance(&chain, None).await;
+        watch_performance(&chain);
         for diagnostic in chain.initialization_diagnostics() {
             observer
                 .emit(ObserverEventKind::HookInitializationSkipped(
@@ -1120,8 +1208,14 @@ impl ProxyState {
             .await;
         let chain = Arc::new(chain);
 
-        let upstream = self.upstream.read().await.clone();
+        let upstream = Arc::new(
+            self.upstream
+                .read()
+                .await
+                .observed(performance_recorder(&chain)),
+        );
         let replayability = request_replayability(&request_head);
+        publish_performance(&chain, Some(Milestone::RouteBegin)).await;
         let plan = match self
             .select_route(
                 &chain,
@@ -1153,6 +1247,7 @@ impl ProxyState {
                 reason: Arc::clone(&plan.reason),
             })
             .await;
+        publish_performance(&chain, Some(Milestone::RouteDone)).await;
         apply_route_destination(&mut request_head.target, &plan);
 
         let expected_tls_policy = format!("system-trust-v{}", upstream.trust_generation);
@@ -1276,6 +1371,7 @@ impl ProxyState {
                 return Err(error);
             }
         };
+        publish_performance(&chain, Some(Milestone::ClientRequestDone)).await;
         let request_body_outcome = self
             .process_request_body(&chain, &request_head, raw_body)
             .await;
@@ -2771,6 +2867,8 @@ impl ProxyState {
             request_head: request.clone(),
             response_head: response.clone(),
         };
+        publish_performance(chain, Some(Milestone::ClientResponseQueued)).await;
+        publish_performance(chain, Some(Milestone::ExchangeDone)).await;
         let report = chain.completed(outcome.clone()).await;
         for error in report.errors() {
             warn!(%error, "terminal hook cleanup failed");
@@ -2844,6 +2942,7 @@ impl ProxyState {
             response_committed,
             message,
         };
+        publish_performance(chain, Some(Milestone::ExchangeDone)).await;
         let report = chain.failed(failure.clone()).await;
         for error in report.errors() {
             warn!(%error, "terminal hook cleanup failed");
@@ -3261,6 +3360,117 @@ fn runtime_observer(chain: &ExchangeChain) -> Option<Arc<ExchangeObserver>> {
         .map(|observer| Arc::clone(&observer.0))
 }
 
+fn performance_recorder(chain: &ExchangeChain) -> Option<PerformanceRecorder> {
+    chain
+        .context()
+        .extensions()
+        .get::<PerformanceRecorder>()
+        .map(|recorder| (*recorder).clone())
+}
+
+struct ClientPerformanceSource {
+    context: ConnectionContext,
+    shared: bool,
+}
+impl ClientPerformanceSource {
+    fn sample(&self, recorder: &PerformanceRecorder) {
+        let read = self.context.socket_metrics.bytes_read();
+        let written = self.context.socket_metrics.bytes_written();
+        if recorder.snapshot().transports.iter().any(|transport| {
+            transport.leg == "client"
+                && transport.bytes_read == Some(read)
+                && transport.bytes_written == Some(written)
+        }) {
+            return;
+        }
+        let tls = self.context.tls.as_deref();
+        recorder.transport(TransportObservation {
+            leg: "client".into(),
+            connection_id: format!("client-{:032x}", self.context.connection_id.0),
+            outcome: TransportOutcome::Connected,
+            peer: Some(self.context.client_addr.to_string()),
+            local: Some(self.context.proxy_addr.to_string()),
+            shared: self.shared,
+            tls_micros: tls.map(|tls| {
+                u64::try_from(tls.done.saturating_duration_since(tls.began).as_micros())
+                    .unwrap_or(u64::MAX)
+            }),
+            tls_version: tls.map(|tls| tls.version.clone()),
+            tls_resumed: tls.map(|tls| tls.resumed),
+            cipher: tls.and_then(|tls| tls.cipher.clone()),
+            alpn: tls.and_then(|tls| tls.alpn.clone()),
+            bytes_read: Some(read),
+            bytes_written: Some(written),
+            ..TransportObservation::default()
+        });
+    }
+}
+
+async fn publish_performance(chain: &ExchangeChain, point: Option<Milestone>) {
+    let Some(recorder) = performance_recorder(chain) else {
+        return;
+    };
+    if let Some(point) = point {
+        recorder.mark(point);
+    }
+    if let Some(source) = chain
+        .context()
+        .extensions()
+        .get::<ClientPerformanceSource>()
+    {
+        source.sample(&recorder);
+    }
+    if let Some(observer) = runtime_observer(chain) {
+        observer
+            .emit(ObserverEventKind::Performance(recorder.snapshot()))
+            .await;
+    }
+}
+
+fn watch_performance(chain: &ExchangeChain) {
+    let Some(recorder) = chain.context().extensions().get::<PerformanceRecorder>() else {
+        return;
+    };
+    let Some(source) = chain
+        .context()
+        .extensions()
+        .get::<ClientPerformanceSource>()
+    else {
+        return;
+    };
+    let Some(observer) = runtime_observer(chain) else {
+        return;
+    };
+    let (recorder, source, observer) = (
+        Arc::downgrade(&recorder),
+        Arc::downgrade(&source),
+        Arc::downgrade(&observer),
+    );
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(250));
+        let mut previous = None;
+        loop {
+            tick.tick().await;
+            let (Some(recorder), Some(source), Some(observer)) =
+                (recorder.upgrade(), source.upgrade(), observer.upgrade())
+            else {
+                break;
+            };
+            if recorder.finished() {
+                break;
+            }
+            source.sample(&recorder);
+            let snapshot = recorder.snapshot();
+            if previous.as_ref() != Some(&snapshot) {
+                observer
+                    .emit(ObserverEventKind::Performance(snapshot.clone()))
+                    .await;
+                previous = Some(snapshot);
+            }
+        }
+    });
+}
+
 fn hook_failure_kind(error: &ChainExecutionError) -> ExchangeFailureKind {
     match error.source {
         HookExecutionError::TimedOut => ExchangeFailureKind::HookTimedOut,
@@ -3369,6 +3579,9 @@ async fn observe_request_head(
     boundary: ExchangeBoundary,
     head: &RequestHead,
 ) {
+    if boundary == ExchangeBoundary::UpstreamRequest {
+        publish_performance(chain, Some(Milestone::UpstreamBegin)).await;
+    }
     if let Some(observer) = runtime_observer(chain) {
         observer
             .emit(ObserverEventKind::RequestHeadObserved {
@@ -3384,6 +3597,55 @@ async fn observe_response_head(
     boundary: ExchangeBoundary,
     head: &ResponseHead,
 ) {
+    if let Some(recorder) = performance_recorder(chain) {
+        let version = if boundary == ExchangeBoundary::ClientResponse {
+            recorder
+                .snapshot()
+                .protocols
+                .iter()
+                .find(|protocol| protocol.boundary == "client-request")
+                .map(|protocol| protocol.version.clone())
+        } else {
+            Some(
+                match head.source_version {
+                    HttpLegVersion::Http1 => "HTTP/1.1",
+                    HttpLegVersion::Http2 => "HTTP/2",
+                    HttpLegVersion::Http3 => "HTTP/3",
+                }
+                .into(),
+            )
+        };
+        if let Some(version) = version {
+            // Hyper's origin adapter has the exact upstream minor version and
+            // reason phrase; keep it rather than replacing it with a fallback.
+            let name = if boundary == ExchangeBoundary::ClientResponse {
+                "client-response"
+            } else {
+                "upstream-response"
+            };
+            if !recorder
+                .snapshot()
+                .protocols
+                .iter()
+                .any(|protocol| protocol.boundary == name)
+            {
+                recorder.protocol(ProtocolObservation {
+                    boundary: name.into(),
+                    version,
+                    reason: None,
+                });
+            }
+        }
+    }
+    publish_performance(
+        chain,
+        Some(if boundary == ExchangeBoundary::UpstreamResponse {
+            Milestone::ResponseHeaders
+        } else {
+            Milestone::ClientResponseBegin
+        }),
+    )
+    .await;
     if let Some(observer) = runtime_observer(chain) {
         observer
             .emit(ObserverEventKind::ResponseHeadObserved {
@@ -3605,6 +3867,7 @@ async fn stream_incoming_through_hooks(
             return;
         }
     }
+    publish_performance(&chain, Some(Milestone::ClientRequestDone)).await;
     match pipeline.finish().await {
         Ok(frames) => {
             observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
@@ -3699,6 +3962,7 @@ async fn stream_response_through_hooks(
             return;
         }
     }
+    publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
     let frames = match pipeline.finish().await {
         Ok(frames) => frames,
         Err(error) => {
@@ -3821,6 +4085,8 @@ async fn stream_local_response_through_hooks(
         request_head,
         response_head,
     };
+    publish_performance(&chain, Some(Milestone::ClientResponseQueued)).await;
+    publish_performance(&chain, Some(Milestone::ExchangeDone)).await;
     let report = chain.completed(outcome.clone()).await;
     for error in report.errors() {
         warn!(%error, "terminal hook cleanup failed");
@@ -3848,6 +4114,8 @@ async fn complete_hook_streaming_exchange(
         request_head: request_head.clone(),
         response_head: response_head.clone(),
     };
+    publish_performance(chain, Some(Milestone::ClientResponseQueued)).await;
+    publish_performance(chain, Some(Milestone::ExchangeDone)).await;
     let report = chain.completed(outcome.clone()).await;
     for error in report.errors() {
         warn!(%error, "terminal hook cleanup failed");
@@ -3911,6 +4179,7 @@ async fn emit_hook_failure(
         response_committed: stage == ExchangeStage::ResponseBody,
         message,
     };
+    publish_performance(chain, Some(Milestone::ExchangeDone)).await;
     let report = chain.failed(failure.clone()).await;
     for error in report.errors() {
         warn!(%error, "terminal hook cleanup failed");
@@ -4649,6 +4918,7 @@ mod tests {
     }
 
     struct LifecycleObserver {
+        performance: Arc<StdMutex<transmog_core::performance::PerformanceEvidence>>,
         phases: Arc<StdMutex<Vec<&'static str>>>,
         client_identity: Arc<StdMutex<Option<transmog_core::ClientIdentity>>>,
     }
@@ -5137,6 +5407,10 @@ mod tests {
                 *self.client_identity.lock().unwrap() = Some(metadata.client_identity.clone());
             }
             let phase = match event.kind {
+                ObserverEventKind::Performance(evidence) => {
+                    self.performance.lock().unwrap().merge(&evidence);
+                    return Box::pin(async { Ok(()) });
+                }
                 ObserverEventKind::ExchangeStarted { .. } => "started",
                 ObserverEventKind::RequestHeadObserved { .. } => "request-head-boundary",
                 ObserverEventKind::RequestHeadFinalized(_) => "request-head",
@@ -5181,10 +5455,14 @@ mod tests {
             )
             .unwrap(),
         );
+        let performance = Arc::new(StdMutex::new(
+            transmog_core::performance::PerformanceEvidence::default(),
+        ));
         let phases = Arc::new(StdMutex::new(Vec::new()));
         let client_identity = Arc::new(StdMutex::new(None));
         let observers = ObserverHub::new(vec![(
             Arc::new(LifecycleObserver {
+                performance: performance.clone(),
                 phases: Arc::clone(&phases),
                 client_identity: Arc::clone(&client_identity),
             }),
@@ -5268,6 +5546,52 @@ mod tests {
                 if *pid == std::process::id()
         ));
 
+        let timing = performance.lock().unwrap().clone();
+        assert!(timing.valid());
+        assert!(timing.elapsed_micros().is_some());
+        for milestone in [
+            Milestone::ClientConnected,
+            Milestone::ClientFirstByte,
+            Milestone::ClientIdentityDone,
+            Milestone::RequestHeaders,
+            Milestone::ClientRequestDone,
+            Milestone::RouteDone,
+            Milestone::ClientResponseQueued,
+            Milestone::ExchangeDone,
+        ] {
+            assert!(
+                timing
+                    .points
+                    .iter()
+                    .any(|point| point.milestone == milestone),
+                "{milestone:?}"
+            );
+        }
+        assert!(
+            timing
+                .points
+                .iter()
+                .find(|point| point.milestone == Milestone::ClientConnected)
+                .unwrap()
+                .offset_micros
+                <= 0
+        );
+        assert_eq!(
+            timing
+                .protocols
+                .iter()
+                .find(|item| item.boundary == "client-request")
+                .unwrap()
+                .version,
+            "HTTP/1.1"
+        );
+        assert!(
+            timing
+                .transports
+                .iter()
+                .any(|connection| connection.leg == "client"
+                    && connection.bytes_read.is_some_and(|count| count > 0))
+        );
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
     }

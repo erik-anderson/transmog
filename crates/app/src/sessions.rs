@@ -400,6 +400,11 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
         .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
         .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+    let duration_ms = snapshot
+        .performance
+        .elapsed_micros()
+        .map(|micros| micros / 1_000)
+        .or(duration_ms);
     let (request_bytes, response_bytes) =
         snapshot
             .bodies
@@ -470,7 +475,11 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
             || target.path.clone(),
             |query| format!("{}?{query}", target.path),
         ),
-        protocol: format!("{:?}", snapshot.metadata.ingress_version),
+        protocol: crate::inspector::message_protocol(
+            &snapshot.performance,
+            "client-request",
+            snapshot.metadata.ingress_version,
+        ),
         status: snapshot.response_heads.last().map(|head| head.head.status),
         duration_ms,
         request_bytes,

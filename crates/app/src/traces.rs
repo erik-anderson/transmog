@@ -515,6 +515,8 @@ fn import_saz(
 
 #[derive(Default)]
 struct NativeSession {
+    performance_bytes: usize,
+    performance: transmog_core::performance::PerformanceEvidence,
     client: Option<SocketAddr>,
     caller: ClientIdentity,
     started: Option<SystemTime>,
@@ -582,7 +584,15 @@ fn import_native(
         }
         progress(capture.valid_bytes(), max_bytes);
     }
-    let mut result = ImportData { format: "native", sessions: Vec::new(), bodies: Vec::new(), entries: HashMap::new(), context, notes: vec!["This native format does not record HTTP versions or precise terminal timestamps; those fields remain unavailable.".into()], issues: Vec::new() };
+    let mut result = ImportData {
+        format: "native",
+        sessions: Vec::new(),
+        bodies: Vec::new(),
+        entries: HashMap::new(),
+        context,
+        notes: vec![],
+        issues: Vec::new(),
+    };
     if capture.truncated_tail() {
         result.notes.push(
             "Recovered the valid prefix of an interrupted file. The original file is unchanged."
@@ -609,6 +619,21 @@ fn apply_native_frame(
 ) -> Result<(), AppError> {
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
+        CaptureRecordKind::Performance(evidence) => {
+            if !evidence.valid() {
+                return Err(invalid(
+                    "Saved performance evidence exceeds its limits or has invalid fields",
+                ));
+            }
+            row.performance.merge(&evidence);
+            let bytes = serde_json::to_vec(&row.performance)
+                .map_err(|_| invalid("Invalid saved performance evidence"))?
+                .len();
+            *budget = budget
+                .saturating_sub(row.performance_bytes)
+                .saturating_add(bytes);
+            row.performance_bytes = bytes;
+        }
         CaptureRecordKind::ExchangeStarted {
             client_addr,
             client_identity,
@@ -755,6 +780,33 @@ fn append_native(
     original: u128,
     mut row: NativeSession,
 ) -> Result<(), AppError> {
+    let protocol_known = row
+        .performance
+        .protocols
+        .iter()
+        .any(|item| item.boundary == "client-request");
+    let ingress = row
+        .performance
+        .protocols
+        .iter()
+        .find(|item| item.boundary == "client-request")
+        .map_or(HttpLegVersion::Http1, |item| {
+            if item.version.starts_with("HTTP/2") {
+                HttpLegVersion::Http2
+            } else if item.version.starts_with("HTTP/3") {
+                HttpLegVersion::Http3
+            } else {
+                HttpLegVersion::Http1
+            }
+        });
+    if !protocol_known
+        && !result
+            .notes
+            .iter()
+            .any(|note| note.starts_with("Some native entries"))
+    {
+        result.notes.push("Some native entries predate timing and protocol retention; unavailable fields are left blank.".into());
+    }
     let request = row
         .requests
         .iter()
@@ -776,7 +828,7 @@ fn append_native(
         row.client
             .unwrap_or_else(|| "127.0.0.1:0".parse().expect("constant peer")),
         row.caller,
-        HttpLegVersion::Http1,
+        ingress,
         row.started.unwrap_or(SystemTime::UNIX_EPOCH),
     );
     let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), None);
@@ -784,6 +836,15 @@ fn append_native(
     snapshot.response_heads = row.responses;
     snapshot.sequence_loss = row.loss;
     snapshot.last_sequence = row.sequence;
+    snapshot.terminal_at = row
+        .performance
+        .points
+        .iter()
+        .find(|point| point.milestone == transmog_core::performance::Milestone::ExchangeDone)
+        .and_then(|point| {
+            SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(point.unix_millis))
+        });
+    snapshot.performance = row.performance;
     if !row.completed || row.failed {
         snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
     }
@@ -871,7 +932,7 @@ fn append_native(
             original_id: format!("{original:032x}"),
             raw_headers: None,
             timings: BTreeMap::new(),
-            protocol_known: false,
+            protocol_known,
             target_known: request.is_some(),
             diagnostics: row.diagnostics,
         },
@@ -955,6 +1016,7 @@ fn empty_snapshot(
     };
     SessionSnapshot {
         imported: true,
+        performance: transmog_core::performance::PerformanceEvidence::default(),
         exchange_id: metadata.exchange_id,
         metadata,
         last_sequence: 0,
@@ -1139,6 +1201,82 @@ mod tests {
             zip.write_all(value.as_bytes()).unwrap();
         }
         std::fs::write(path, zip.finish().unwrap().into_inner()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn measured_native_import_restores_protocols_reason_and_submillisecond_duration() {
+        use transmog_core::performance::{
+            Milestone, PerformanceEvidence, ProtocolObservation, TimingPoint,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("old.tmcap");
+        native(&old, Some(vec![1]), 1);
+        let recovered =
+            transmog_capture::recover(File::open(&old).unwrap(), CaptureLimits::default()).unwrap();
+        let path = root.path().join("measured.tmcap");
+        let mut writer =
+            CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default()).unwrap();
+        for record in recovered
+            .records
+            .iter()
+            .filter(|record| !matches!(record.kind, CaptureRecordKind::Seal { .. }))
+        {
+            writer.append(record).unwrap();
+        }
+        writer
+            .append(&CaptureRecord {
+                sequence: 6,
+                exchange_id: 7,
+                kind: CaptureRecordKind::Performance(PerformanceEvidence {
+                    points: vec![
+                        TimingPoint {
+                            milestone: Milestone::RequestHeaders,
+                            unix_millis: 1_800_000_000_000,
+                            offset_micros: 0,
+                        },
+                        TimingPoint {
+                            milestone: Milestone::ExchangeDone,
+                            unix_millis: 1_800_000_000_000,
+                            offset_micros: 550,
+                        },
+                    ],
+                    protocols: vec![
+                        ProtocolObservation {
+                            boundary: "client-request".into(),
+                            version: "HTTP/1.0".into(),
+                            reason: None,
+                        },
+                        ProtocolObservation {
+                            boundary: "client-response".into(),
+                            version: "HTTP/1.0".into(),
+                            reason: Some("Custom phrase".into()),
+                        },
+                    ],
+                    transports: vec![],
+                }),
+            })
+            .unwrap();
+        writer.seal().unwrap();
+        let application = app(root.path());
+        application
+            .import_trace(request(path, "measured"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = application
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        assert_eq!(rows[0].protocol, "HTTP/1.0");
+        assert_eq!(rows[0].duration_ms, Some(0));
+        let detail = application.session_detail(&rows[0].id).unwrap();
+        assert_eq!(detail.performance.elapsed_micros(), Some(550));
+        assert_eq!(detail.responses[0].protocol, "HTTP/1.0");
+        assert!(
+            application
+                .copy_all_headers(&rows[0].id)
+                .unwrap()
+                .contains("HTTP/1.0 204 Custom phrase")
+        );
     }
 
     #[tokio::test]

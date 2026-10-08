@@ -48,10 +48,13 @@ impl Service<Name> for HappyEyeballsResolver {
     }
 
     fn call(&mut self, name: Name) -> Self::Future {
+        let started = std::time::Instant::now();
         let resolution = self.inner.call(name);
         let limit = self.happy_eyeballs.max_candidates();
         Box::pin(async move {
-            let addresses = resolution.await?;
+            let result = resolution.await;
+            crate::metrics::dns_finished(started.elapsed(), result.is_ok());
+            let addresses = result?;
             Ok(interleave_candidates(addresses, limit).into_iter())
         })
     }
@@ -72,7 +75,7 @@ pub enum HyperEgressMode {
 }
 
 impl HyperEgressMode {
-    fn alpn(self) -> &'static [u8] {
+    pub(crate) fn alpn(self) -> &'static [u8] {
         match self {
             Self::Http1Only => b"\x08http/1.1",
             Self::Http2Only => b"\x02h2",

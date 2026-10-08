@@ -45,7 +45,7 @@ await page.addInitScript((workspace) => {
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
-    return { id, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const ruleDiagnostics=()=>{
@@ -1289,6 +1289,26 @@ try {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.open_main_window),1);
   await page.setViewportSize({width:800,height:600});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/capture-viewer-compact.png')});
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.performance={points:[{milestone:'client-connected',unixMillis:1800000000000,offsetMicros:-2500},{milestone:'request-headers',unixMillis:1800000000002,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000005,offsetMicros:3500}],protocols:[],transports:[{leg:'upstream',connectionId:'shared-h2-fixture',shared:true,outcome:'connected',sampledOffsetMicros:3000,peer:'192.0.2.1:443',local:'192.0.2.2:54321',dnsMicros:null,tcpMicros:1200,tlsMicros:500,tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256',alpn:'h2',bytesRead:10240,bytesWritten:1024}]};state.savedTiming={ClientBeginRequest:'00:00:00.000'};});
+  await page.locator('.session-link').first().click();
+  await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
+  const timing=page.locator('.timing-dialog[open]');
+  await timing.getByText('3.5 ms',{exact:true}).waitFor();
+  assert.match(await timing.textContent(),/Negative offsets/);
+  await timing.getByText('Proxy ↔ upstream',{exact:true}).click();
+  assert.ok((await timing.textContent()).includes('Reused / shared connection'));
+  assert.match(await timing.textContent(),/TLSv1.3/);
+  await timing.getByText('Original imported timing and session evidence',{exact:true}).click();
+  await timing.getByText('00:00:00.000',{exact:true}).waitFor();
+  await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-wide.png')});
+  await page.setViewportSize({width:800,height:600});
+  const timingBounds=await timing.boundingBox();assert.ok(timingBounds.width<=800&&timingBounds.height<=600);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-compact.png')});
+  await timing.getByRole('button',{name:'Close',exact:true}).click();
+  assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.performance=undefined;});
+  await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
+  await timing.getByText(/no measured proxy timeline/).waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.timing-dialog[open]').count(),0);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

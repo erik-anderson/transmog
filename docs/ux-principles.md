@@ -139,6 +139,13 @@ selection with current matches. Remove selected and remove unselected act on
 the whole workspace and support Undo. Skip inapplicable binary bodies quietly;
 report unavailable text evidence once in the search summary.
 
+Timings opens a snapshot of the selected exchange, with an explicit Refresh.
+Present measured local milestones and overlapping latency phases. Distinguish
+zero from unavailable, shared connection setup from per-request work, and bytes
+queued by the proxy from delivery to the client. Response wait does not identify
+server CPU time. Keep original imported timers available with their own labels
+and clocks, without inventing missing measurements.
+
 
 For a UI change, walk through the affected task with representative populated
 data as well as the empty state. Inspect wide and narrow layouts, resized panes,

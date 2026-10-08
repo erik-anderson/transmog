@@ -24,7 +24,7 @@ const MAGIC: [u8; 8] = *b"TMCAP01\0";
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Native capture format revision.
-pub const CAPTURE_FORMAT_REVISION: u32 = 2;
+pub const CAPTURE_FORMAT_REVISION: u32 = 3;
 
 /// Finite writer and recovery limits.
 #[derive(Clone, Copy, Debug)]
@@ -124,6 +124,8 @@ pub struct CapturedHeader {
 /// Durable record payload. New readers preserve unknown kinds.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CaptureRecordKind {
+    /// Bounded measured milestone, protocol and transport evidence.
+    Performance(transmog_core::performance::PerformanceEvidence),
     /// Exchange lifecycle started.
     ExchangeStarted {
         /// Client peer address.
@@ -264,6 +266,7 @@ struct StoredRecord {
 #[derive(Deserialize, Serialize)]
 struct StartedPayload {
     client_addr: String,
+    #[serde(default)]
     client_identity: ClientIdentity,
     listener_addr: String,
     authority: String,
@@ -756,6 +759,9 @@ pub fn record_from_observer(
     let response_headers =
         |headers: &HeaderBlock| captured_headers(headers, &policy.response_header_names);
     let kind = match &event.kind {
+        ObserverEventKind::Performance(evidence) => {
+            CaptureRecordKind::Performance(evidence.clone())
+        }
         ObserverEventKind::ExchangeStarted { metadata } => CaptureRecordKind::ExchangeStarted {
             client_addr: metadata.client_addr.to_string(),
             client_identity: metadata.client_identity.clone(),
@@ -935,6 +941,9 @@ fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, CaptureError>
 #[allow(clippy::too_many_lines)]
 fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
     let (kind, payload) = match &record.kind {
+        CaptureRecordKind::Performance(evidence) => {
+            ("performance", serde_json::to_value(evidence)?)
+        }
         CaptureRecordKind::ExchangeStarted {
             client_addr,
             client_identity,
@@ -1077,10 +1086,11 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
 
 #[allow(clippy::too_many_lines)]
 fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
-    if record.revision != CAPTURE_FORMAT_REVISION {
+    if !(1..=CAPTURE_FORMAT_REVISION).contains(&record.revision) {
         return Err(CaptureError::UnsupportedRevision(record.revision));
     }
     let kind = match record.kind.as_str() {
+        "performance" => CaptureRecordKind::Performance(decode(record.payload)?),
         "exchange-started" => {
             let value: StartedPayload = decode(record.payload)?;
             CaptureRecordKind::ExchangeStarted {
@@ -1259,6 +1269,35 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn old_revisions_remain_readable_and_new_performance_round_trips() {
+        for revision in [1, 2] {
+            let mut old = store(&completed(3)).unwrap();
+            old.revision = revision;
+            assert_eq!(load(old).unwrap(), completed(3));
+        }
+        let evidence = transmog_core::performance::PerformanceEvidence {
+            points: vec![transmog_core::performance::TimingPoint {
+                milestone: transmog_core::performance::Milestone::ClientConnected,
+                unix_millis: 1_800_000_000_000,
+                offset_micros: -123,
+            }],
+            ..Default::default()
+        };
+        let record = CaptureRecord {
+            sequence: 1,
+            exchange_id: 7,
+            kind: CaptureRecordKind::Performance(evidence),
+        };
+        let recovered = recover(
+            Cursor::new(artifact(std::slice::from_ref(&record), true)),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(recovered.records[0], record);
+        assert!(recovered.sealed);
+    }
 
     fn completed(sequence: u64) -> CaptureRecord {
         CaptureRecord {

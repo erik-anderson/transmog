@@ -2,6 +2,7 @@
 
 mod authority;
 mod client;
+mod metrics;
 mod service;
 mod upstream;
 
