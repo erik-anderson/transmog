@@ -39,9 +39,26 @@ export class SettingsWorkspace extends WorkspaceElement {
   settingsForm!: HTMLFormElement;
   supportForm!: HTMLFormElement;
   ready!: Promise<void>;
+  private drainTimer: number | undefined;
+  private statusRevision = 0;
 
   protected hydratedCallback(): void { this.ready = this.initializeShell(); }
-  private renderAppStatus(status: AppStatus): void { this.hostRecoveryPending=status.hostRestorePending;this.proxyLifecycle = status.lifecycle; this.$emit('status-changed', status); }
+  private renderAppStatus(status: AppStatus): void {
+    this.statusRevision++;
+    this.hostRecoveryPending = status.hostRestorePending;
+    this.proxyLifecycle = status.lifecycle;
+    this.$emit('status-changed', status);
+    window.clearTimeout(this.drainTimer);
+    if (status.lifecycle === 'draining' || status.lifecycle === 'stopping') {
+      this.drainTimer = window.setTimeout(() => {
+        if (this.isConnected) void this.refreshStatus();
+      }, 750);
+    }
+  }
+  disconnectedCallback(): void {
+    window.clearTimeout(this.drainTimer);
+    super.disconnectedCallback();
+  }
   private applyTheme(theme: ProductState['preferences']['theme'], workspace?: WorkspacePreferences): void {
     this.$emit('preferences-changed', { theme, pageSize: Number((this.settingsForm.elements.namedItem('pageSize') as HTMLInputElement).value), workspace });
   }
@@ -108,6 +125,8 @@ export class SettingsWorkspace extends WorkspaceElement {
   async stopProxy(): Promise<void> { await this.runProxyChange('stopping', () => this.stopProxyNow()); }
   private async runProxyChange(kind: string, operation: () => Promise<void>): Promise<void> {
     if (this.proxyPending) return;
+    this.statusRevision++;
+    window.clearTimeout(this.drainTimer);
     this.proxyPending = kind;
     this.$emit('proxy-operation',kind);
     try { await operation(); await this.refreshStatus(); }
@@ -116,8 +135,17 @@ export class SettingsWorkspace extends WorkspaceElement {
 
   private async startProxyNow(event?: Event): Promise<void> {
     event?.preventDefault();
+
     const data = new FormData(this.proxyForm);
     try {
+      if (this.proxyLifecycle === 'draining') {
+        const resumed = await invoke<AppStatus>('resume_application');
+        this.renderAppStatus(resumed);
+        if (resumed.lifecycle === 'running') {
+          this.setProxyOutput('Proxy resumed. Existing requests and connections remain active.', 'success');
+          return;
+        }
+      }
       const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
       this.updateCertificateState(bootstrap);
       if (bootstrap.hostRestorePending) {
@@ -324,7 +352,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     try {
       const status = await invoke<AppStatus>('stop_application');
       this.renderAppStatus(status);
-      this.setProxyOutput('Proxy stopped and any current-user Windows proxy changes were restored.', 'success');
+      this.setProxyOutput(status.lifecycle==='draining'?'Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener.':'Proxy stopped and any current-user Windows proxy changes were restored.', status.lifecycle==='draining'?'progress':'success');
     } catch (error: unknown) {
       const message = `Stop failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
@@ -355,9 +383,10 @@ export class SettingsWorkspace extends WorkspaceElement {
   async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.renderAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
 
   async refreshStatus(): Promise<string | null> {
+    const revision = this.statusRevision;
     try {
       const status = await invoke<AppStatus>('app_status');
-      this.renderAppStatus(status);
+      if (revision === this.statusRevision) this.renderAppStatus(status);
       return null;
     } catch (error: unknown) {
       const message = `Status unavailable: ${describeError(error)}`;

@@ -90,7 +90,7 @@ export class AppShell extends WebUIElement {
   }
   onStatus(event: CustomEvent<AppStatus>): void { this.applyStatus(event.detail); }
   private applyStatus(status: AppStatus): void {
-    this.lifecycleLabel = lifecycleLabel(status.lifecycle);
+    this.lifecycleLabel = status.lifecycle==='draining'?status.summary:lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;
     this.listener = status.listener ?? 'Not listening';
     if(status.hostRestorePending)this.diagnosticText='Host restoration is pending and must be retried before restart.';

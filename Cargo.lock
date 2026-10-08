@@ -6380,6 +6380,7 @@ dependencies = [
  "transmog-control-transport",
  "transmog-core",
  "transmog-runtime",
+ "transmog-tls",
 ]
 
 [[package]]

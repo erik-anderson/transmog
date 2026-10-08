@@ -3,7 +3,8 @@ import type { Lifecycle, ClientIdentity, SessionDetail, HeadView, StoredBodyMeta
 
 export function lifecycleLabel(lifecycle: Lifecycle): string {
   switch (lifecycle) {
-    case 'running': return 'Running';
+      case 'running': return 'Running';
+      case 'draining': return 'Finishing requests';
     case 'stopping': return 'Stopping';
     case 'failed': return 'Needs attention';
     default: return 'Stopped';

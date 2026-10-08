@@ -89,6 +89,11 @@ pub(crate) struct HostTransaction {
 }
 
 impl HostTransaction {
+    pub(crate) fn plan(&self) -> HostIntegrationPlan {
+        HostIntegrationPlan {
+            integration: self.integration.clone(),
+        }
+    }
     pub(crate) fn apply(
         plan: HostIntegrationPlan,
         endpoint: SocketAddr,

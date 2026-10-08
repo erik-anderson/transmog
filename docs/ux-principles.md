@@ -121,6 +121,12 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+Turning the proxy off restores the host proxy settings first. Show **Finishing
+requests** while admitted requests, TLS handshakes or upgraded connections
+finish; idle clients do not delay shutdown. Keep **Start proxy** available during
+this state so turning it back on resumes the same run without disrupting work.
+Reject stale shutdown and status results after a new state transition.
+
 Full traffic search starts with **Search** or Enter, so typing does not repeatedly
 read and decode captured bodies. Results describe a completed search snapshot;
 new traffic remains capturable and a new search refreshes that snapshot. Search

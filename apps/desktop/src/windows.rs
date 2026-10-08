@@ -430,8 +430,12 @@ async fn prepare_update_handoff(state: State<'_, DesktopState>) -> Result<AppSta
 
 #[tauri::command]
 async fn stop_application(state: State<'_, DesktopState>) -> Result<AppStatus, AppError> {
-    state.application.shutdown().await?;
-    Ok(state.application.status())
+    state.application.stop_proxy().await
+}
+
+#[tauri::command]
+async fn resume_application(state: State<'_, DesktopState>) -> Result<AppStatus, AppError> {
+    state.application.resume_proxy().await
 }
 
 #[tauri::command]
@@ -1314,6 +1318,7 @@ pub fn run() {
                 prepare_update_handoff,
                 start_proxy,
                 stop_application,
+                resume_application,
                 retry_host_restore,
                 recover_windows_proxy,
                 certificate_is_trusted,

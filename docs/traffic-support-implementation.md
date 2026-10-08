@@ -25,14 +25,14 @@ checkout contains independent updater work and is preserved.
    source trace metadata view and request navigation. Browser and real WebView2
    verification covers file launch, handoff, permission denial, independent
    catalogs, compact layout, accessibility, contrast, DPI and long labels.
+7. `42dd7e1`: full retained-header and decoded-body search, quiet binary skips,
+   bounded regex, all-match selection and whole-workspace removal with Undo.
+8. Graceful desktop Off restores host settings first, keeps admitted work alive,
+   excludes idle clients, and permits resume on the same listener. Generations
+   invalidate old shutdowns and stale UI status. Real streaming integration,
+   protocol matrix, browser and native WebView2 checks pass.
 
 ## Remaining isolated phases
-
-Current verified phase: full-header and decoded-body search, string/case/accent
-and bounded regex options, quiet binary skips, complete result handles before
-paging, all-match selection with reset on rerun, and whole-session selected or
-unselected removal with Undo. Browser and real WebView2 checks pass; toolbar
-grouping keeps dynamic status rows above the list and inspector.
 
 - Client/proxy/upstream timing and transport observations, including incoming
   proxy connection timing; shared physical connections versus HTTP streams;
@@ -51,9 +51,6 @@ grouping keeps dynamic status rows above the list and inspector.
   root-ownership ledger in Local AppData, retain removal-failure metadata, retry
   orphan cleanup on later runs, and permit a fresh root without losing prior
   identities. Document start, reproduce, stop and compressed sharing.
-- Graceful desktop proxy off: restore system configuration first, preserve
-  active requests/connections, stop after drain, and safely cancel a pending
-  off transition when switched on again. Idle clients must not block drain.
 - Installer offers SAZ association. Release pipeline builds and signs a
   separate `transmog-cli.exe` artifact without bundling it in the app installer.
 - Final full UX review and appropriate integrated release/interop checks.

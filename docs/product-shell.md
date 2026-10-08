@@ -45,7 +45,11 @@ Undo. Column filters remain applicable to search results and bulk selection.
 - Desktop Start always journals the exact current-user Windows proxy registry
   values, starts an automatic bounded native capture, binds the listener, and
   then applies the loopback proxy. Stop and normal/OS-requested exit restore the
-  exact prior values. The durable journal is recovered on next launch after a
+  exact prior values. Stop restores routing first, then shows **Finishing
+  requests** until admitted HTTP responses, TLS handshakes and upgraded relays
+  finish. Idle clients do not delay shutdown. **Start proxy** during this state
+  resumes the same listener and run; an old drain cannot stop the resumed run.
+  The durable journal is recovered on next launch after a
   hard termination.
 - Certificate trust installation/removal remains an explicit exact-SHA-256
   operation and can display an OS consent dialog. The setup action warns before

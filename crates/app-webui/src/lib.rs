@@ -42,6 +42,7 @@ impl From<&AppStatus> for ShellView {
         let (lifecycle_label, lifecycle_kind) = match status.lifecycle {
             AppLifecycle::Stopped => ("Stopped", "stopped"),
             AppLifecycle::Running => ("Running", "running"),
+            AppLifecycle::Draining => ("Finishing requests", "draining"),
             AppLifecycle::Stopping => ("Stopping", "stopping"),
             AppLifecycle::Failed => ("Needs attention", "failed"),
         };

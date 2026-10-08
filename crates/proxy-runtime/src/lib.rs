@@ -6,8 +6,11 @@ use transmog_core::intercept::HookLimits;
 
 use thiserror::Error;
 
+mod activity;
 mod provider;
 mod proxy;
+
+pub use activity::ProxyActivity;
 
 pub use provider::{
     AtomicRuntimeIdGenerator, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind, SystemRuntimeClock,

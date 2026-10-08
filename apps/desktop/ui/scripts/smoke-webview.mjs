@@ -372,6 +372,21 @@ try {
 
   result.hexViewer = await smokeHexViewer(evaluate, call);
 
+  result.drainFeedback = await evaluate(`(async () => {
+    const shell = document.querySelector('app-shell');
+    const settings = shell.shadowRoot.querySelector('settings-workspace');
+    const before = await window.__TAURI_INTERNALS__.invoke('app_status');
+    try {
+      settings.renderAppStatus({...before, lifecycle: 'draining', summary: 'Finishing 2 active requests'});
+      settings.$flushUpdates(); shell.$flushUpdates();
+      const toggle = shell.shadowRoot.querySelector('proxy-toggle'); toggle.$flushUpdates();
+      const button = toggle.querySelector('button');
+      if (button.disabled || button.textContent.trim() !== 'Start proxy') throw new Error('Cannot resume from drain');
+      if (!shell.shadowRoot.querySelector('.listener-status').textContent.includes('Finishing 2 active requests')) throw new Error('Drain progress is missing');
+      return {resumeEnabled: true, activeWorkExplained: true};
+    } finally {settings.renderAppStatus(before); settings.$flushUpdates(); shell.$flushUpdates();}
+  })()`);
+
   result.stoppedProxyBreakpoints = await evaluate(`(async () => {
     const shell = document.querySelector('app-shell');
     const root = shell.shadowRoot;

@@ -1,4 +1,4 @@
-export type Lifecycle = 'stopped' | 'running' | 'stopping' | 'failed';
+export type Lifecycle = 'stopped' | 'running' | 'draining' | 'stopping' | 'failed';
 
 export interface AppStatus {
   lifecycle: Lifecycle;

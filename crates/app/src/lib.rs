@@ -160,6 +160,8 @@ pub enum AppLifecycle {
     Stopped,
     /// The proxy listener is active.
     Running,
+    /// Host proxy settings are restored while admitted work finishes.
+    Draining,
     /// Graceful shutdown is in progress.
     Stopping,
     /// The last proxy run failed.
@@ -728,6 +730,21 @@ impl Application {
                 summary: "Proxy listening".to_owned(),
                 host_restore_pending: pending,
             },
+            ServiceStatus::Draining { local_addr } => {
+                let active = self.service.proxy_control().map_or(0, |control| {
+                    let activity = control.activity();
+                    activity.requests + activity.transports
+                });
+                AppStatus {
+                    lifecycle: AppLifecycle::Draining,
+                    listener: Some(local_addr.to_string()),
+                    summary: format!(
+                        "Finishing {active} active request/connection{}",
+                        if active == 1 { "" } else { "s" }
+                    ),
+                    host_restore_pending: pending,
+                }
+            }
             ServiceStatus::Stopping { local_addr } => AppStatus {
                 lifecycle: AppLifecycle::Stopping,
                 listener: Some(local_addr.to_string()),
@@ -774,6 +791,24 @@ impl Application {
         result
     }
 
+    /// Turns proxy routing off before draining existing work without a deadline.
+    ///
+    /// # Errors
+    /// Returns host restoration failures while keeping admitted work usable.
+    pub async fn stop_proxy(&self) -> Result<AppStatus, AppError> {
+        self.service.begin_drain().await.map_err(AppError::from)?;
+        Ok(self.status())
+    }
+
+    /// Resumes an existing pending drain without creating a second listener.
+    ///
+    /// # Errors
+    /// Returns exact host configuration recovery/application failures.
+    pub async fn resume_proxy(&self) -> Result<AppStatus, AppError> {
+        self.service.resume_drain().await.map_err(AppError::from)?;
+        Ok(self.status())
+    }
+
     /// Binds and starts the product proxy using validated local CA material.
     ///
     /// The optional host adapter is caller-owned so this crate remains
@@ -786,6 +821,9 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
+        if self.service.resume_drain().await.map_err(AppError::from)? {
+            return Ok(self.status());
+        }
         let result = lifecycle::start_proxy(
             &self.service,
             Arc::clone(&self.runtime_ids),

@@ -37,10 +37,10 @@ use transmog_core::{
     body_semantics,
     intercept::{
         BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, ChainExecutionError,
-        ChainInitError, CompletedExchange, ExchangeChain, ExchangeFailure, ExchangeFailureKind,
-        ExchangeMetadata, ExchangeStage, HookAbort, HookExecutionError, InterceptorChainFactory,
-        InterceptorFactory, InterceptorRegistration, InterceptorRequirement, RequestHeadOutcome,
-        ResponseHeadOutcome,
+        ChainInitError, CompletedExchange, ExchangeCancellation, ExchangeChain, ExchangeFailure,
+        ExchangeFailureKind, ExchangeMetadata, ExchangeStage, HookAbort, HookExecutionError,
+        InterceptorChainFactory, InterceptorFactory, InterceptorRegistration,
+        InterceptorRequirement, RequestHeadOutcome, ResponseHeadOutcome,
     },
     observe::{
         ExchangeBoundary, ExchangeObserver, ObservedBodyChunk, ObservedBodyTrailers,
@@ -78,6 +78,7 @@ use transmog_websocket::{
 use crate::{
     AtomicRuntimeIdGenerator, ListenerConfigError, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind,
     RuntimeLimits, SystemRuntimeClock,
+    activity::{ActivityKind, ActivityLease, ActivityTracker},
 };
 
 const FAILED_EXCHANGE_BODY: &[u8] = b"Transmog exchange failed\n";
@@ -313,6 +314,15 @@ pub struct ProxyServer {
     connections: Arc<Semaphore>,
 }
 
+impl Drop for ProxyServer {
+    fn drop(&mut self) {
+        self.state.final_shutdown.cancel();
+        if let Ok(mut tunnels) = self.state.tunnels.try_lock() {
+            tunnels.abort_all();
+        }
+    }
+}
+
 /// Cloneable control plane for changing generation-scoped proxy state.
 #[derive(Clone)]
 pub struct ProxyControl {
@@ -320,6 +330,26 @@ pub struct ProxyControl {
 }
 
 impl ProxyControl {
+    /// Current requests, negotiations, relays and connected clients.
+    pub fn activity(&self) -> crate::ProxyActivity {
+        self.state.activity.snapshot()
+    }
+    /// Pauses admission while existing exchanges and relays remain active.
+    pub fn begin_drain(&self) -> u64 {
+        self.state.activity.drain()
+    }
+    /// Cancels the named pending drain, preserving the existing listener.
+    pub fn resume_drain(&self, generation: u64) -> bool {
+        self.state.activity.resume(generation)
+    }
+    /// Waits without a deadline for active work, or returns false after resume.
+    pub async fn wait_for_drain(&self, generation: u64) -> bool {
+        self.state.activity.idle(generation).await
+    }
+    /// Atomically commits an idle, still-current drain to final shutdown.
+    pub fn finish_drain(&self, generation: u64) -> bool {
+        self.state.activity.seal(generation)
+    }
     /// Replaces the complete upstream TLS context and connection-pool generation.
     ///
     /// Exchanges that already captured the previous generation may finish on
@@ -447,6 +477,9 @@ impl ProxyServer {
         let (evidence, _) = broadcast::channel(1_024);
         let (websocket_evidence, _) = broadcast::channel(1_024);
         let state = Arc::new(ProxyState {
+            activity: Arc::new(ActivityTracker::default()),
+            final_shutdown: ExchangeCancellation::new(),
+            tunnels: Mutex::new(JoinSet::new()),
             hooks: components.hooks,
             content: components.content,
             observers: components.observers,
@@ -514,6 +547,7 @@ impl ProxyServer {
                 () = &mut shutdown => break,
                 accepted = self.listener.accept() => {
                     let (stream, client_addr) = accepted?;
+                    if !self.state.activity.snapshot().accepting { continue; }
                     let Ok(permit) = Arc::clone(&self.connections).try_acquire_owned() else {
                         warn!(%client_addr, "downstream connection limit reached");
                         continue;
@@ -526,6 +560,7 @@ impl ProxyServer {
                     );
                     tasks.spawn(async move {
                         let _permit = permit;
+                        let _client = state.activity.acquire(ActivityKind::Client);
                         let identity = tokio::task::spawn_blocking(move || {
                             identity_resolver.resolve(client_addr, proxy_addr)
                         })
@@ -554,18 +589,40 @@ impl ProxyServer {
                 }
             }
         }
-        while timeout(self.state.config.limits.shutdown_timeout, tasks.join_next())
+        let unbounded = self.state.activity.finalized();
+        self.state.activity.drain();
+        self.state.final_shutdown.cancel();
+        if unbounded {
+            while tasks.join_next().await.is_some() {}
+            while self.state.tunnels.lock().await.join_next().await.is_some() {}
+        } else {
+            while timeout(self.state.config.limits.shutdown_timeout, tasks.join_next())
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {}
+            let mut tunnels = self.state.tunnels.lock().await;
+            while timeout(
+                self.state.config.limits.shutdown_timeout,
+                tunnels.join_next(),
+            )
             .await
             .ok()
             .flatten()
             .is_some()
-        {}
+            {}
+            tunnels.abort_all();
+        }
         self.state.observers.shutdown().await;
         Ok(())
     }
 }
 
 struct ProxyState {
+    activity: Arc<ActivityTracker>,
+    final_shutdown: ExchangeCancellation,
+    tunnels: Mutex<JoinSet<()>>,
     hooks: InterceptorChainFactory,
     content: ContentPolicy,
     observers: ObserverHub,
@@ -703,6 +760,7 @@ async fn serve_explicit_connection(
     stream: TcpStream,
     context: ConnectionContext,
 ) -> Result<(), ProxyRuntimeError> {
+    let shutdown = state.final_shutdown.clone();
     let header_read_timeout = state.config.limits.header_read_timeout;
     let max_header_count = state.config.limits.max_header_count;
     let max_header_bytes = state.config.limits.max_header_bytes;
@@ -710,13 +768,18 @@ async fn serve_explicit_connection(
         let state = Arc::clone(&state);
         let context = context.clone();
         async move {
-            match Box::pin(state.handle_outer_request(request, context)).await {
-                Ok(response) => Ok::<_, Infallible>(response),
+            let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
+                return Ok::<_, Infallible>(draining_response());
+            };
+            let mut response = match Box::pin(state.handle_outer_request(request, context)).await {
+                Ok(response) => response,
                 Err(error) => {
                     warn!(%error, "explicit proxy request failed");
-                    Ok(failed_exchange_response(&error))
+                    failed_exchange_response(&error)
                 }
-            }
+            };
+            response.body_mut().activity = Some(activity);
+            Ok::<_, Infallible>(response)
         }
     });
     let mut builder = hyper::server::conn::http1::Builder::new();
@@ -725,10 +788,14 @@ async fn serve_explicit_connection(
         .header_read_timeout(header_read_timeout)
         .max_headers(max_header_count)
         .max_buf_size(max_header_bytes);
-    builder
+    let connection = builder
         .serve_connection(TokioIo::new(stream), service)
-        .with_upgrades()
-        .await?;
+        .with_upgrades();
+    tokio::pin!(connection);
+    tokio::select! {
+        result = &mut connection => { result?; }
+        () = shutdown.cancelled() => { connection.as_mut().graceful_shutdown(); connection.await?; }
+    }
     Ok(())
 }
 
@@ -748,7 +815,11 @@ impl ProxyState {
         let authority = ConnectAuthority::from_str(authority_text)?;
         let upgraded = hyper::upgrade::on(&mut request);
         let state = Arc::clone(&self);
-        tokio::spawn(async move {
+        let tunnel_client = state.activity.acquire(ActivityKind::Client);
+        let mut tunnels = self.tunnels.lock().await;
+        while tunnels.try_join_next().is_some() {}
+        tunnels.spawn(async move {
+            let _client = tunnel_client;
             match upgraded.await {
                 Ok(upgraded) => {
                     if let Err(error) = state
@@ -776,12 +847,16 @@ impl ProxyState {
 
         let mut transport = TokioIo::new(upgraded);
         let mut first_byte = [0_u8; 1];
-        timeout(
-            self.config.limits.header_read_timeout,
-            transport.read_exact(&mut first_byte),
-        )
-        .await
-        .map_err(|_| ProxyRuntimeError::TunnelPrefaceTimeout)??;
+        {
+            let read = timeout(
+                self.config.limits.header_read_timeout,
+                transport.read_exact(&mut first_byte),
+            );
+            tokio::pin!(read);
+            tokio::select! { result = &mut read => { result
+            .map_err(|_| ProxyRuntimeError::TunnelPrefaceTimeout)??;
+            }, () = self.final_shutdown.cancelled() => { return Ok(()); } }
+        }
         let transport = PrefixedIo::new(first_byte[0], transport);
 
         if first_byte[0] == b'G' {
@@ -803,6 +878,10 @@ impl ProxyState {
             return Err(ProxyRuntimeError::UnsupportedTunnelPreface(first_byte[0]));
         }
 
+        let Some(handshake) = self.activity.acquire(ActivityKind::Transport) else {
+            return Ok(());
+        };
+
         let identity = EndpointIdentity::parse(authority.host())?;
         let leaf = self
             .certificates
@@ -818,6 +897,7 @@ impl ProxyState {
         .map_err(|error| ProxyRuntimeError::DownstreamTlsHandshake(error.to_string()))?;
         normalize_connect_identity(authority.host(), tls.ssl().servername(NameType::HOST_NAME))?;
         let negotiated_h2 = tls.ssl().selected_alpn_protocol() == Some(b"h2");
+        drop(handshake);
         self.serve_intercepted_http(
             tls,
             ConnectionContext {
@@ -841,6 +921,7 @@ impl ProxyState {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        let shutdown = self.final_shutdown.clone();
         let max_h2_streams = self.config.limits.max_h2_streams;
         let max_header_bytes = self.config.limits.max_header_bytes;
         let max_header_list_size =
@@ -852,13 +933,19 @@ impl ProxyState {
             let state = Arc::clone(&self);
             let context = context.clone();
             async move {
-                match Box::pin(state.handle_intercepted_request(request, context)).await {
-                    Ok(response) => Ok::<_, Infallible>(response),
-                    Err(error) => {
-                        warn!(%error, "intercepted request failed");
-                        Ok(failed_exchange_response(&error))
-                    }
-                }
+                let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
+                    return Ok::<_, Infallible>(draining_response());
+                };
+                let mut response =
+                    match Box::pin(state.handle_intercepted_request(request, context)).await {
+                        Ok(response) => response,
+                        Err(error) => {
+                            warn!(%error, "intercepted request failed");
+                            failed_exchange_response(&error)
+                        }
+                    };
+                response.body_mut().activity = Some(activity);
+                Ok::<_, Infallible>(response)
             }
         });
         if negotiated_h2 {
@@ -869,9 +956,9 @@ impl ProxyState {
                 .max_header_list_size(max_header_list_size)
                 .keep_alive_interval(Some(body_idle_timeout))
                 .keep_alive_timeout(body_idle_timeout);
-            builder
-                .serve_connection(TokioIo::new(stream), service)
-                .await?;
+            let connection = builder.serve_connection(TokioIo::new(stream), service);
+            tokio::pin!(connection);
+            tokio::select! { result = &mut connection => {result?;}, () = shutdown.cancelled() => {connection.as_mut().graceful_shutdown();connection.await?;} }
         } else {
             let mut builder = hyper::server::conn::http1::Builder::new();
             builder
@@ -879,10 +966,11 @@ impl ProxyState {
                 .header_read_timeout(header_read_timeout)
                 .max_headers(max_header_count)
                 .max_buf_size(max_header_bytes);
-            builder
+            let connection = builder
                 .serve_connection(TokioIo::new(stream), service)
-                .with_upgrades()
-                .await?;
+                .with_upgrades();
+            tokio::pin!(connection);
+            tokio::select! { result = &mut connection => {result?;}, () = shutdown.cancelled() => {connection.as_mut().graceful_shutdown();connection.await?;} }
         }
         Ok(())
     }
@@ -1571,9 +1659,13 @@ impl ProxyState {
         };
         let upgrade_timeout = self.config.limits.header_read_timeout;
         let relay_limits = self.config.websocket;
+        let relay_activity = self.activity.continue_transport();
         let websocket_evidence = self.websocket_evidence.clone();
         let websocket_session_id = session.session_id;
-        tokio::spawn(async move {
+        let mut tunnels = self.tunnels.lock().await;
+        while tunnels.try_join_next().is_some() {}
+        tunnels.spawn(async move {
+            let _relay_activity = relay_activity;
             let (downstream, upstream) = tokio::join!(
                 timeout(upgrade_timeout, downstream_upgrade),
                 timeout(upgrade_timeout, upstream_upgrade),
@@ -4152,6 +4244,14 @@ fn response_stream_to_hyper(
     Ok(outgoing)
 }
 
+fn draining_response() -> Response<DownstreamBody> {
+    Response::builder()
+        .status(StatusCode::SERVICE_UNAVAILABLE)
+        .header(http::header::CONTENT_LENGTH, "0")
+        .body(DownstreamBody::empty())
+        .expect("fixed drain response")
+}
+
 fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBody> {
     let status = match error {
         ProxyRuntimeError::HookAborted(HookAbort::Rejected) => StatusCode::FORBIDDEN,
@@ -4213,6 +4313,7 @@ fn protocol_version(version: Version) -> Result<HttpLegVersion, ProxyRuntimeErro
 }
 
 struct DownstreamBody {
+    activity: Option<ActivityLease>,
     inner: DownstreamBodyInner,
 }
 
@@ -4224,12 +4325,14 @@ enum DownstreamBodyInner {
 impl DownstreamBody {
     fn empty() -> Self {
         Self {
+            activity: None,
             inner: DownstreamBodyInner::Buffered(VecDeque::new()),
         }
     }
 
     fn from_bytes(bytes: Bytes) -> Self {
         Self {
+            activity: None,
             inner: DownstreamBodyInner::Buffered(VecDeque::from([Frame::data(bytes)])),
         }
     }
@@ -4243,12 +4346,14 @@ impl DownstreamBody {
             });
         }
         Ok(Self {
+            activity: None,
             inner: DownstreamBodyInner::Buffered(output),
         })
     }
 
     fn streaming(body: BodyStream) -> Self {
         Self {
+            activity: None,
             inner: DownstreamBodyInner::Streaming(body),
         }
     }
@@ -4262,7 +4367,7 @@ impl Body for DownstreamBody {
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match &mut self.inner {
+        let result = match &mut self.inner {
             DownstreamBodyInner::Buffered(frames) => Poll::Ready(frames.pop_front().map(Ok)),
             DownstreamBodyInner::Streaming(body) => match body.poll_recv(context) {
                 Poll::Ready(Some(Ok(BodyFrame::Data(data)))) => {
@@ -4277,7 +4382,11 @@ impl Body for DownstreamBody {
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             },
+        };
+        if matches!(result, Poll::Ready(None | Some(Err(_)))) {
+            self.activity.take();
         }
+        result
     }
 
     fn is_end_stream(&self) -> bool {

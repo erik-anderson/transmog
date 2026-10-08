@@ -106,7 +106,8 @@ await page.addInitScript((workspace) => {
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
-        case 'stop_application': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
+        case 'stop_application': await new Promise(resolve => setTimeout(resolve,80));if(state.testDrain){state.lifecycle='draining';return {lifecycle:'draining',listener:'127.0.0.1:8888',summary:'Finishing 1 active request/connection',hostRestorePending:false};}state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
+        case 'resume_application': state.lifecycle='running';return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy resumed',hostRestorePending:false};
         case 'search_traffic': {
           const request=args.request;state.lastContentSearch=structuredClone(request);state.searchCanceled=false;
           args.onProgress.onmessage({operationId:request.operationId,completed:0,total:state.sessions.length});
@@ -422,6 +423,16 @@ try {
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.stop_application),2,'Proxy action did not track refreshed lifecycle state');
 
+
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.testDrain=true;globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
+  await proxy.click();
+  await page.waitForFunction(()=>{const shell=document.querySelector('app-shell');return shell.lifecycleKind==='draining'&&!shell.proxyPending;});
+  assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).first().isEnabled(),true,'An in-flight drain prevented resume');
+  await page.getByRole('button',{name:'Start proxy',exact:true}).first().click();
+  await page.waitForFunction(()=>{const shell=document.querySelector('app-shell');return shell.lifecycleKind==='running'&&!shell.proxyPending;});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.resume_application),1);
+  await page.evaluate(()=>globalThis.__workspaceFixture.testDrain=false);
+  await proxy.click();await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor();
   await page.evaluate(async()=>{globalThis.__workspaceFixture.statusError=true;await document.querySelector('app-shell').refreshStatus();});
   await page.locator('.global-diagnostics').getByText('Status unavailable: Fixture status unavailable',{exact:true}).waitFor({state:'visible'});
   await page.evaluate(async()=>{globalThis.__workspaceFixture.statusError=false;await document.querySelector('app-shell').refreshStatus();});
