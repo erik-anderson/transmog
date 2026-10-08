@@ -9,6 +9,9 @@ import { describeError, parseHex } from '../utilities.js';
 
 export class PausedExchangeElement extends WorkspaceElement {
   @attr theme = 'system';
+  @observable busy=false;
+  @observable expired=false;
+  @observable phaseLabel='';
   @observable paused: PausedExchange | null = initialState.paused;
   @observable draftText = initialState.draftText;
   @observable editorLoaded = initialState.editorLoaded;
@@ -18,6 +21,8 @@ export class PausedExchangeElement extends WorkspaceElement {
   editorHost!: HTMLDivElement;
   draftInput!: HTMLTextAreaElement;
   private editor: Monaco.editor.IStandaloneCodeEditor | null = null;
+  private originalDraft='';
+  private drafts=new Map<number,string>();
   private loading: Promise<void> | null = null;
   private monaco: typeof Monaco | null = null;
   private model: Monaco.editor.ITextModel | null = null;
@@ -39,7 +44,14 @@ export class PausedExchangeElement extends WorkspaceElement {
 
   pausedChanged(previous: PausedExchange | undefined, paused: PausedExchange | null): void {
     if (paused && paused.decisionId !== previous?.decisionId) {
-      this.draftText = paused.bodyHex ?? JSON.stringify(paused.requestHead ?? paused.responseHead, null, 2);
+      const edited=this.editor?.getValue()??this.draftInput?.value??this.draftText;
+      if(previous && edited!==this.originalDraft)this.drafts.set(previous.decisionId,edited);
+      while(this.drafts.size>64)this.drafts.delete(this.drafts.keys().next().value!);
+      this.editorError='';
+      this.phaseLabel=paused.phase.replace('-head',' headers').replace('-body',' body');
+      this.draftText = paused.bodyHex ?? JSON.stringify(paused.phase.startsWith('response')?paused.responseHead:paused.requestHead, null, 2);
+      this.originalDraft=this.draftText;
+      this.draftText=this.drafts.get(paused.decisionId)??this.draftText;
       this.editor?.setValue(this.draftText);
     }
   }
@@ -95,12 +107,13 @@ export class PausedExchangeElement extends WorkspaceElement {
     } catch (error: unknown) { this.editorError = 'Invalid replacement draft: ' + describeError(error); }
   }
   private submit(action: object): void {
-    if (this.paused) this.$emit('breakpoint-decision', { paused: this.paused, action });
+    if (this.paused && !this.busy && !this.expired) this.$emit('breakpoint-decision', { paused: this.paused, action });
   }
   disconnectedCallback(): void {
     this.systemTheme.removeEventListener('change', this.systemThemeChanged);
     this.visibility?.disconnect();
     this.visibility = null;
+    this.drafts.clear();
     this.editor?.dispose();
     this.model?.dispose();
     this.model = null;

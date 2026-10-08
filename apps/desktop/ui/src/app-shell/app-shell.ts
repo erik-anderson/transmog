@@ -37,6 +37,8 @@ export class AppShell extends WebUIElement {
   @observable autoresponsePending=false;
   @observable workspace = defaultWorkspace();
   @observable proxyPending = '';
+  @observable pausedCount=0;
+  onBreakpointState(event:CustomEvent<{count:number}>):void {this.pausedCount=event.detail.count;}
   @observable navigationExpanded = 'true';
   traffic!: TrafficWorkspace;
   settings!: SettingsWorkspace;
@@ -170,7 +172,7 @@ export class AppShell extends WebUIElement {
   async onAutoResponseBatch(event:CustomEvent<string[]>):Promise<void> {if(await this.activateView('automation'))await this.automation.beginBatch(event.detail);}
   async onSourceTraffic(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('traffic')) {
-      if (!await this.traffic.revealSession(event.detail)) await this.automation.refreshSourceAvailability();
+      if (!await this.traffic.revealSession(event.detail)) await this.automation.refreshSourceAvailability?.();
     }
   }
   onTrafficRefreshed(): void {

@@ -118,6 +118,7 @@ export interface BodyInspection {
 export type BreakpointPhase = 'request-head' | 'request-body' | 'response-head' | 'response-body';
 export interface PausedExchange {
   decisionId: number;
+  expiresAtUnixMs?:number;
   exchangeId: string;
   phase: BreakpointPhase;
   requestHead: Record<string, unknown> | null;

@@ -589,5 +589,15 @@
   "bodySummary": "",
   "trafficCreateLabel": "Create auto-responses…",
   "automationSection": "responses",
-  "batchActionId": ""
+  "batchActionId": "",
+  "controllerEnabled": false,
+  "selectedPaused": null,
+  "selectedExpired": false,
+  "decisionBusy": false,
+  "detailsOpen": false,
+  "pausedSourceAvailable": false,
+  "breakpointError": "",
+  "pausedCount": 0,
+  "expired": false,
+  "phaseLabel": ""
 }

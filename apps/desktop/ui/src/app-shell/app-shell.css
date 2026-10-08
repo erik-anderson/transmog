@@ -373,3 +373,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .app-body[data-collapsed] .rail a, .app-body[data-collapsed] .rail-toggle, .app-body[data-collapsed] .rail-reset { justify-content:center; padding-inline:.25rem; }
 .listener-copy { min-height:0; max-width:16rem; padding:0; overflow:hidden; border:0; color:var(--muted); background:transparent; font: .75rem "Cascadia Mono",Consolas,monospace; white-space:nowrap; text-overflow:ellipsis; }
 @media (max-width:52rem) { .topbar { grid-template-columns:auto minmax(0,1fr) auto; } .top-spacer { display:none; } .app-body { grid-template-columns:3.4rem minmax(0,1fr); } }
+
+.nav-count { margin-left:auto; padding:.1rem .3rem; border-radius:.25rem; background:var(--accent-soft); color:var(--accent-strong); font-size:.75rem; font-variant-numeric:tabular-nums; }
+.app-body[data-collapsed] .nav-count { position:absolute; top:0; right:0; font-size:.65rem; }
+@media (max-width:52rem) { .nav-count { position:absolute; top:0; right:0; font-size:.65rem; } }

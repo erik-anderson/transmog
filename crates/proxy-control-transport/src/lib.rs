@@ -12,7 +12,10 @@ use std::{
 };
 
 use thiserror::Error;
-use tokio::{sync::mpsc, time::timeout};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, timeout_at},
+};
 use transmog_control_model::{
     BreakpointInput, BreakpointRequest, Capability, ControlEvent, DecisionAction, DecisionCommand,
     DecisionId, EXPERIMENTAL_CONTROL_REVISION, Handshake, ModelError,
@@ -80,6 +83,7 @@ struct DecisionEnvelope {
     request: BreakpointRequest,
     reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<DecisionAction>>>>,
     max_body_edit_bytes: usize,
+    deadline: Instant,
 }
 
 /// Immutable result of the v0 handshake.
@@ -169,16 +173,18 @@ impl ControlProducer {
             body: input.body,
         };
         let (reply_sender, reply_receiver) = tokio::sync::oneshot::channel();
+        let deadline = Instant::now() + self.decision_timeout;
         self.decisions
             .try_send(DecisionEnvelope {
                 request,
                 reply: Arc::new(Mutex::new(Some(reply_sender))),
                 max_body_edit_bytes: self.max_body_edit_bytes,
+                deadline,
             })
             .map_err(map_send_error)?;
 
         tokio::select! {
-            result = timeout(self.decision_timeout, reply_receiver) => match result {
+            result = timeout_at(deadline, reply_receiver) => match result {
                 Ok(Ok(action)) => Ok(action),
                 Ok(Err(_)) => Err(TransportError::Disconnected),
                 Err(_) => Err(TransportError::TimedOut),
@@ -229,6 +235,7 @@ impl ControlController {
             request: envelope.request,
             reply: envelope.reply,
             max_body_edit_bytes: envelope.max_body_edit_bytes,
+            deadline: envelope.deadline,
         })
     }
 
@@ -241,6 +248,7 @@ impl ControlController {
                     request: envelope.request,
                     reply: envelope.reply,
                     max_body_edit_bytes: envelope.max_body_edit_bytes,
+            deadline: envelope.deadline,
                 })
             }),
             event = self.events.recv() => event.map(ControllerMessage::Event),
@@ -253,6 +261,7 @@ pub struct PendingDecision {
     request: BreakpointRequest,
     reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<DecisionAction>>>>,
     max_body_edit_bytes: usize,
+    deadline: Instant,
 }
 
 impl std::fmt::Debug for PendingDecision {
@@ -272,6 +281,20 @@ impl PendingDecision {
         &self.request
     }
 
+    /// Remaining time before the producer's actual decision deadline.
+    pub fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    /// Whether the producer still accepts a decision before its deadline.
+    pub fn is_pending(&self) -> bool {
+        !self.remaining().is_zero()
+            && self
+                .reply
+                .lock()
+                .is_ok_and(|reply| reply.as_ref().is_some_and(|sender| !sender.is_closed()))
+    }
+
     /// Replies exactly once after validating correlation and negotiated bounds.
     ///
     /// # Errors
@@ -283,6 +306,9 @@ impl PendingDecision {
             || command.exchange_id != self.request.exchange_id
         {
             return Err(ReplyError::WrongCorrelation);
+        }
+        if self.remaining().is_zero() {
+            return Err(ReplyError::Stale);
         }
         command
             .validate(self.max_body_edit_bytes)
@@ -582,6 +608,8 @@ mod tests {
         });
         let pending = controller.recv_decision().await.unwrap();
         assert_eq!(waiting.await.unwrap(), Err(TransportError::TimedOut));
+        assert!(pending.remaining().is_zero());
+        assert!(!pending.is_pending());
         assert_eq!(
             pending.reply(command(&pending, DecisionAction::Continue)),
             Err(ReplyError::Stale)
@@ -622,8 +650,10 @@ mod tests {
                 .await
         });
         let pending = controller.recv_decision().await.unwrap();
+        assert!(pending.is_pending());
         trigger.cancel();
         assert_eq!(waiting.await.unwrap(), Err(TransportError::Cancelled));
+        assert!(!pending.is_pending());
         assert_eq!(
             pending.reply(command(&pending, DecisionAction::Continue)),
             Err(ReplyError::Stale)

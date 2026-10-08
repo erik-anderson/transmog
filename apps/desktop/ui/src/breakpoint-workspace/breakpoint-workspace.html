@@ -1,20 +1,13 @@
 <template>
 <section id="breakpoints" class="app-view tool-view" aria-labelledby="breakpoints-heading" ?hidden="{{view != 'breakpoints'}}" ?data-active="{{view == 'breakpoints'}}">
-  <div class="tool-page">
-    <p class="section-label">Interactive control</p>
-    <h1 id="breakpoints-heading">Break and modify</h1>
-    <p>Paused exchanges fail closed on timeout, controller loss, or window closure. Every edit is recorded in the session audit history.</p>
-    <form w-ref="{breakpointForm}" @submit="{enableBreakpoints(e)}" class="phase-form">
-      <label><input name="requestHead" type="checkbox" checked> Request head</label>
-      <label><input name="requestBody" type="checkbox"> Request body</label>
-      <label><input name="responseHead" type="checkbox" checked> Response head</label>
-      <label><input name="responseBody" type="checkbox"> Response body</label>
-      <button type="submit">Enable selected phases</button>
-      <button type="button" class="secondary" @click="{disableBreakpoints()}">Disable</button>
-      <button type="button" class="secondary" @click="{refreshBreakpoints()}">Refresh paused</button>
-    </form>
-    <div class="paused-list" aria-live="polite"><if condition="!pausedExchanges.length">{{breakpointText}}</if><for each="item in pausedExchanges"><paused-exchange key="{{item.decisionId}}" :paused="{{item}}" theme="{{theme}}" @breakpoint-decision="{onDecision(e)}"></paused-exchange></for></div>
+ <div class="breakpoint-page">
+  <header class="workspace-header"><h1 id="breakpoints-heading">Breakpoints</h1><div class="actions"><button type="button" @click="{toggleBreakpoints()}" ?disabled="{{decisionBusy}}"><if condition="controllerEnabled">Pause breakpoints</if><if condition="!controllerEnabled">Enable breakpoints</if></button><button type="button" class="secondary" popovertarget="breakpoint-phases">Phases</button><span role="status">{{breakpointText}}</span></div></header>
+  <p class="field-error" role="status" ?hidden="{{!breakpointError}}">{{breakpointError}}</p>
+  <div class="breakpoint-manager" ?data-detail="{{detailsOpen}}">
+   <div class="paused-queue" w-ref="{pausedQueue}"><table class="paused-table" role="grid" aria-label="Paused requests"><thead><tr><th>Request</th><th>Phase</th><th>Deadline</th></tr></thead><tbody><for each="item in pausedExchanges"><tr key="{{item.decisionId}}" data-decision-id="{{item.decisionId}}" ?data-selected="{{item.selected}}" aria-selected="{{item.selected}}" tabindex="{{item.tabIndex}}" @click="{choosePaused(item.decisionId)}" @keydown="{queueKeyboard(item.decisionId,e)}"><td title="{{item.exchangeId}}">{{item.name}}</td><td>{{item.phaseLabel}}</td><td>{{item.expirationText}}</td></tr></for><if condition="!pausedExchanges.length"><tr><td colspan="3">{{breakpointText}}</td></tr></if></tbody></table></div>
+   <div class="paused-detail"><header class="paused-detail-header" ?hidden="{{!selectedPaused}}"><button type="button" class="secondary compact-button queue-back" @click="{backToQueue()}">← Back to queue</button><button type="button" class="secondary compact-button" ?hidden="{{!pausedSourceAvailable}}" @click="{showSource()}">Show in Traffic</button></header><if condition="selectedPaused"><paused-exchange w-ref="{pausedEditor}" :paused="{{selectedPaused}}" :busy="{{decisionBusy}}" :expired="{{selectedExpired}}" theme="{{theme}}" @breakpoint-decision="{onDecision(e)}"></paused-exchange></if><if condition="!selectedPaused"><p class="inspector-empty">Select a paused request to inspect or modify it.</p></if></div>
   </div>
+  <div id="breakpoint-phases" class="table-popover phases-popover" popover="auto"><strong class="popover-title">Interception phases</strong><form w-ref="{breakpointForm}" @submit="{enableBreakpoints(e)}"><fieldset ?disabled="{{controllerEnabled || decisionBusy}}"><label><input name="requestHead" type="checkbox" checked> Request headers</label><label><input name="requestBody" type="checkbox"> Request body</label><label><input name="responseHead" type="checkbox" checked> Response headers</label><label><input name="responseBody" type="checkbox"> Response body</label><button type="submit" ?hidden="{{controllerEnabled}}">Enable selected phases</button></fieldset><p>Paused requests close on timeout or controller loss. Pause interception before changing phases; this closes pending requests.</p></form></div>
+ </div>
 </section>
-
 </template>

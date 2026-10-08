@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,8 @@ pub struct PausedExchange {
     pub body_hex: Option<String>,
     /// Stable Hooks v2 attribution recorded for any modification.
     pub hook_id: &'static str,
+    /// Producer deadline as a Unix timestamp in milliseconds for display.
+    pub expires_at_unix_ms: u64,
 }
 
 /// Current breakpoint-controller state.
@@ -222,7 +224,9 @@ impl BreakpointManager {
     }
 
     pub(crate) fn status(&self) -> BreakpointStatus {
-        status(&self.lock())
+        let mut state = self.lock();
+        state.pending.retain(|_, decision| decision.is_pending());
+        status(&state)
     }
 
     pub(crate) fn decide(
@@ -232,7 +236,7 @@ impl BreakpointManager {
         let exchange = parse_exchange_id(&decision.exchange_id)?;
         let pending = {
             let mut state = self.lock();
-            let pending = state.pending.remove(&decision.decision_id).ok_or_else(|| {
+            let pending = state.pending.get(&decision.decision_id).ok_or_else(|| {
                 AppError::new(
                     ErrorCategory::Conflict,
                     "breakpoint decision is stale or already answered",
@@ -240,7 +244,6 @@ impl BreakpointManager {
                 )
             })?;
             if pending.request().exchange_id.0 != exchange {
-                state.pending.insert(decision.decision_id, pending);
                 return Err(AppError::new(
                     ErrorCategory::InvalidInput,
                     "breakpoint correlation does not match",
@@ -248,6 +251,10 @@ impl BreakpointManager {
                 ));
             }
             validate_action(pending.request().phase, &decision.action)?;
+            let pending = state
+                .pending
+                .remove(&decision.decision_id)
+                .expect("validated pending decision");
             pending
         };
         pending
@@ -305,6 +312,14 @@ fn paused(pending: &PendingDecision) -> PausedExchange {
                 .join(" ")
         }),
         hook_id: transmog_session::INTERACTIVE_CONTROL_HOOK_ID,
+        expires_at_unix_ms: u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .saturating_add(pending.remaining())
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
     }
 }
 
@@ -427,6 +442,64 @@ mod tests {
         assert!(validate_settings(&settings).is_ok());
         settings.max_pending = MAX_PENDING_DECISIONS + 1;
         assert!(validate_settings(&settings).is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_edits_keep_pending_decisions_and_cancelled_requests_leave_the_queue() {
+        let application = crate::Application::new(crate::AppConfig::default()).unwrap();
+        let handshake = Handshake::v0("queue-test", 4);
+        let (producer, mut controller) =
+            transmog_control_transport::connect(&handshake, &handshake, TransportConfig::default())
+                .unwrap();
+        let cancellation = transmog_control_transport::RequestCancellation::new();
+        let trigger = cancellation.clone();
+        let waiting = tokio::spawn(async move {
+            producer
+                .request(
+                    transmog_control_model::BreakpointInput {
+                        exchange_id: transmog_control_model::ControlExchangeId(3),
+                        phase: BreakpointPhase::RequestHead,
+                        request_head: None,
+                        response_head: None,
+                        body: None,
+                    },
+                    &cancellation,
+                )
+                .await
+        });
+        let pending = controller.recv_decision().await.unwrap();
+        let id = pending.request().decision_id.0;
+        application.breakpoints.lock().pending.insert(id, pending);
+        let paused = application.breakpoints.status().paused;
+        assert_eq!(paused.len(), 1);
+        assert!(
+            paused[0].expires_at_unix_ms
+                > u64::try_from(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis()
+                )
+                .unwrap()
+        );
+        assert!(
+            application
+                .breakpoints
+                .decide(BreakpointDecision {
+                    decision_id: id,
+                    exchange_id: format!("{:032x}", 3),
+                    action: DecisionAction::ReplaceBody { body: vec![] }
+                })
+                .is_err()
+        );
+        assert_eq!(application.breakpoints.status().paused.len(), 1);
+        trigger.cancel();
+        assert_eq!(
+            waiting.await.unwrap(),
+            Err(transmog_control_transport::TransportError::Cancelled)
+        );
+        assert!(application.breakpoints.status().paused.is_empty());
+        application.shutdown().await.unwrap();
     }
 
     #[tokio::test]

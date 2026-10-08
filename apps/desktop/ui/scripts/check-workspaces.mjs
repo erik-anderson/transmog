@@ -831,17 +831,25 @@ try {
   assert.equal(await sourceSurface.locator('dialog').evaluate(dialog=>dialog.matches(':modal')),false);
   const editorsBefore = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
   await page.evaluate(() => {
-    globalThis.__workspaceFixture.paused = Array.from({ length: 20 }, (_, index) => ({ decisionId: index + 1, exchangeId: 'paused-' + index, phase: 'request-head', requestHead: { method: 'GET' }, responseHead: null, bodyHex: null, hookId: 'fixture' }));
+    globalThis.__workspaceFixture.paused = Array.from({ length: 20 }, (_, index) => ({ decisionId: index + 1, exchangeId: 'paused-' + index, phase: index%2?'response-head':'request-head', requestHead: { method: 'GET',target:'https://example.test/paused/'+index }, responseHead: index%2?{status:200,headers:[]}:null, bodyHex: null, hookId: 'fixture', expiresAtUnixMs:Date.now()+60000 }));
   });
   await view('breakpoints');
   await page.locator('paused-exchange').first().getByRole('button', { name: 'Continue', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange')?.editorReady);
   await page.setViewportSize({width:760,height:520});
+  await page.locator('tr[data-decision-id="1"]').click();
   const pausedBounds=await page.locator('paused-exchange').first().boundingBox();
   const expandBounds=await page.locator('paused-exchange').first().getByRole('button',{name:'Expand editor',exact:true}).boundingBox();
   assert.ok(pausedBounds.x+pausedBounds.width<=760,'Paused editor exceeds the narrow viewport');
   assert.ok(expandBounds.x+expandBounds.width<=760,'Expand editor control is clipped');
   await page.setViewportSize({width:1280,height:800});
+  assert.equal(await page.locator('paused-exchange').count(),1,'The queue allocated an editor for every request');
+  await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').editor.setValue('{\"method\":\"PATCH\"}'));
+  await page.locator('tr[data-decision-id="2"]').click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').draftText.includes('status'));
+  assert.equal(await page.locator('.nav-count').textContent(),'20');
+  await page.locator('tr[data-decision-id="1"]').click();
+  assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').editor.getValue()),/PATCH/,'Queue navigation lost a replacement draft');
   const editorsVisible = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
   assert.ok(editorsVisible > editorsBefore && editorsVisible <= editorsBefore + 2, 'Offscreen breakpoint editors were eagerly created');
   await page.evaluate(async () => {

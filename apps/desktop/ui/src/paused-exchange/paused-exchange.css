@@ -9,3 +9,5 @@ textarea { padding: .6rem; color: var(--text); background: var(--code); font-fam
 button { min-height: 2rem; padding: .35rem .65rem; border: 1px solid var(--line-strong); border-radius: .32rem; color: var(--text); background: var(--panel); font: inherit; font-size: .8125rem; line-height: 1.25; cursor: pointer; }
 button:first-child { color: #fff; background: var(--accent-strong); }
 button:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.paused-card > strong { display:block; margin-bottom:.4rem; font-size:.875rem; }

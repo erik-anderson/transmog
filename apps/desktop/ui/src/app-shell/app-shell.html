@@ -1,4 +1,4 @@
-<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
+<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
@@ -36,7 +36,7 @@
         </a>
         <a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8Z M9.5 8.5v7m5-7v7"></path></svg>
-          <span class="nav-label">Breakpoints</span>
+          <span class="nav-label">Breakpoints</span><span class="nav-count" aria-label="{{pausedCount}} paused requests" ?hidden="{{!pausedCount}}">{{pausedCount}}</span>
         </a>
         <a href="#automation" title="Automation" data-view="automation" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="9" width="6" height="6" rx="1.5"></rect><rect x="15" y="3" width="6" height="6" rx="1.5"></rect><rect x="15" y="15" width="6" height="6" rx="1.5"></rect><path d="M9 12h3m3-6h-1a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1"></path></svg>

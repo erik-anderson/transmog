@@ -1,12 +1,12 @@
 <template shadowrootmode="open" w-render="lazy" w-reserve-block-size="34rem">
   <if condition="editorLoaded"><link w-ref="{monacoStyles}" rel="stylesheet" href="/monaco.css"></if>
   <article class="paused-card">
-    <strong>{{paused.phase}} · {{paused.exchangeId}}</strong>
+    <strong>{{phaseLabel}}</strong><p class="field-error" ?hidden="{{!expired}}">This request has expired.</p>
     <editor-surface label="Replacement draft" @editor-expanded="{focusEditor()}" @editor-restored="{focusEditor()}">
       <div slot="actions" class="actions">
-        <button type="button" @click="{decide('continue')}">Continue</button>
-        <button type="button" @click="{decide('abort')}">Abort</button>
-        <button type="button" @click="{replaceDraft()}">Apply replacement</button>
+        <button type="button" ?disabled="{{busy || expired}}" @click="{decide('continue')}">Continue</button>
+        <button type="button" ?disabled="{{busy || expired}}" @click="{decide('abort')}">Abort</button>
+        <button type="button" ?disabled="{{busy || expired}}" @click="{replaceDraft()}">Apply replacement</button>
       </div>
       <textarea w-ref="{draftInput}" aria-label="Replacement draft" @input="{updateDraft(e)}" ?hidden="{{editorReady}}">{{draftText}}</textarea>
       <div w-ref="{editorHost}" class="monaco-editor-host" ?hidden="{{!editorReady}}"></div>
