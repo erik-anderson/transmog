@@ -1,20 +1,21 @@
 <template>
 <section id="composer" class="app-view tool-view" aria-labelledby="composer-heading" ?hidden="{{view != 'composer'}}" ?data-active="{{view == 'composer'}}">
-  <div class="tool-page narrow-page">
-    <p class="section-label">Canonical replay</p>
-    <h1 id="composer-heading">Composer</h1>
-    <form w-ref="{composerForm}" @submit="{executeComposer(e)}" class="composer-form">
-      <label>Method <input name="method" value="GET" maxlength="32" required></label>
-      <label>Absolute URL <input name="url" type="url" value="https://example.com/" required></label>
-      <label>Headers (one <code>Name: value</code> per line) <textarea name="headers"></textarea></label>
-      <label>Body <textarea name="body"></textarea></label>
-      <label><input name="bodyHex" type="checkbox"> Body is hexadecimal</label>
-      <label><input name="nonIdempotent" type="checkbox"> I acknowledge non-idempotent replay risk</label>
-      <label><input name="credentials" type="checkbox"> I explicitly supplied and authorize credential headers</label>
-      <button type="submit">Execute replay</button>
-    </form>
-    <pre tabindex="0">{{composerText}}</pre>
+ <div class="composer-page">
+  <header class="workspace-header"><h1 id="composer-heading">Composer</h1><span ?hidden="{{!composerDirty}}">Edited request</span><div class="actions"><button type="button" class="secondary compact-button" ?hidden="{{!composerSourceAvailable}}" @click="{showComposerSource()}">Show source in Traffic</button><button type="button" class="secondary compact-button" @click="{returnToTraffic()}">Back to Traffic</button></div></header>
+  <nav class="composer-pane-tabs" aria-label="Composer panes"><button type="button" ?data-selected="{{composerPane == 'request'}}" @click="{showComposerPane('request')}">Request</button><button type="button" ?data-selected="{{composerPane == 'response'}}" @click="{showComposerPane('response')}">Response</button></nav>
+  <div class="composer-layout" data-pane="{{composerPane}}">
+   <form w-ref="{composerForm}" @submit="{executeComposer(e)}" @input="{markComposerDirty(e)}" @change="{markComposerDirty(e)}" class="composer-request">
+    <div class="composer-address"><label>Method <input name="method" value="GET" maxlength="32" required></label><label>URL <input name="url" type="url" value="https://example.com/" maxlength="8192" required></label></div>
+    <label><span>Headers <small>one <code>Name: value</code> per line</small></span><textarea name="headers" rows="4" maxlength="65536"></textarea></label>
+    <label class="composer-body"><span>Body<if condition="bodyHexMode"> · Hex</if></span><textarea name="body" rows="12" maxlength="8388608"></textarea></label>
+    <details class="composer-body-options"><summary>Body options</summary><label><input name="bodyHex" type="checkbox"> Interpret body as hexadecimal bytes</label></details>
+    <div class="composer-acknowledgements"><label ?hidden="{{!needsNonIdempotent}}"><input name="nonIdempotent" type="checkbox" ?required="{{needsNonIdempotent}}" ?disabled="{{!needsNonIdempotent}}"> This method may change server state; send it anyway</label><label ?hidden="{{!needsCredentials}}"><input name="credentials" type="checkbox" ?required="{{needsCredentials}}" ?disabled="{{!needsCredentials}}"> Send the credential headers I supplied</label></div>
+    <footer class="composer-send"><button type="submit" ?disabled="{{composerBusy}}"><if condition="composerBusy">Sending…</if><if condition="!composerBusy">Send request</if></button><span class="field-help">{{composerSourceLabel}}</span></footer>
+   </form>
+   <section class="composer-response" aria-label="Composer response"><if condition="composerResult"><header class="composer-result-header"><span class="status-badge" data-tone="{{resultTone}}">{{composerResult.status}}</span><strong title="{{resultRequestLabel}}">{{resultRequestLabel}}</strong><span ?hidden="{{!composerResult.truncated}}">Preview truncated</span></header><nav class="composer-result-tabs" aria-label="Response views"><button type="button" ?data-selected="{{resultMode == 'body'}}" @click="{showResult('body')}">Body<if condition="composerResult.bodyIsHex"> · Hex</if></button><button type="button" ?data-selected="{{resultMode == 'headers'}}" @click="{showResult('headers')}">Headers</button><button type="button" ?data-selected="{{resultMode == 'details'}}" @click="{showResult('details')}">Details</button></nav><pre class="composer-result-body" tabindex="0" ?hidden="{{resultMode != 'body'}}">{{composerResult.body}}</pre><div class="composer-result-headers" ?hidden="{{resultMode != 'headers'}}"><table class="headers-table"><thead><tr><th>Name</th><th>Value</th></tr></thead><tbody><for each="header in resultHeaders"><tr key="{{header.id}}"><td>{{header.name}}</td><td>{{header.value}}</td></tr></for></tbody></table></div><pre class="composer-result-body" tabindex="0" ?hidden="{{resultMode != 'details'}}">{{resultDetails}}</pre></if><if condition="!composerResult"><p class="inspector-empty">Send a request to inspect its response here.</p></if></section>
   </div>
+  <output class="composer-feedback" aria-live="polite">{{composerText}}<span class="field-error" ?hidden="{{!composerError}}">{{composerError}}</span></output>
+  <dialog w-ref="{replaceComposerDialog}" class="unsaved-rule-dialog" @cancel="{replacementCancelled(e)}"><h3>Replace the current request draft?</h3><p>The request you are editing has unsaved changes.</p><div class="actions"><button type="button" @click="{resolveComposerReplacement(true)}">Replace draft</button><button type="button" class="secondary" autofocus @click="{resolveComposerReplacement(false)}">Keep editing</button></div></dialog>
+ </div>
 </section>
-
 </template>

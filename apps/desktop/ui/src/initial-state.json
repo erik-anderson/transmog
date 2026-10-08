@@ -610,5 +610,21 @@
     {
       "name": "onRequestHead"
     }
-  ]
+  ],
+  "composerError": "",
+  "composerBusy": false,
+  "composerDirty": false,
+  "composerPane": "request",
+  "composerResult": null,
+  "resultMode": "body",
+  "resultHeaders": [],
+  "resultRequestLabel": "",
+  "resultDetails": "",
+  "resultTone": "",
+  "needsNonIdempotent": false,
+  "needsCredentials": false,
+  "composerSourceId": "",
+  "composerSourceLabel": "",
+  "composerSourceAvailable": false,
+  "bodyHexMode": false
 }
