@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 
-//! Session Archive Zip export adapter over sealed or recovered native captures.
+//! Bounded Session Archive Zip import and export adapters.
 //!
 //! Strict mode emits only the conventional OPC content-types member, an explicit
 //! `raw/` directory, and three `raw/<id>_{c,s,m}` files per complete HTTP exchange.
@@ -19,6 +19,12 @@ use transmog_capture::{
 };
 use transmog_core::observe::ExchangeBoundary;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+
+mod import;
+pub use import::{
+    ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
+    SazIndex, SazIssue,
+};
 
 const CONTENT_TYPES: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
@@ -137,7 +143,7 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
         let mut sessions = collect_sessions(capture, self.limits)?;
         let mut writer = ZipWriter::new(output);
         let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Stored)
+            .compression_method(CompressionMethod::Deflated)
             .large_file(true);
         write_member(
             &mut writer,
@@ -469,6 +475,21 @@ fn write_member<W: Write + Seek>(
 /// SAZ conversion failure.
 #[derive(Debug, Error)]
 pub enum SazError {
+    /// Archive member names collide or escape the archive namespace.
+    #[error("SAZ contains an unsafe or duplicate member name")]
+    UnsafeMember,
+    /// Archive content uses an unsupported compression or encryption method.
+    #[error("SAZ member compression or encryption is unsupported")]
+    UnsupportedMember,
+    /// Malformed HTTP framing or session metadata.
+    #[error("SAZ contains malformed HTTP or metadata")]
+    InvalidArchive,
+    /// A finite import byte or metadata bound was exceeded.
+    #[error("SAZ import resource limit exceeded")]
+    ImportLimitExceeded,
+    /// Caller canceled the bounded import.
+    #[error("SAZ import canceled")]
+    Canceled,
     /// Limits were zero or inconsistent.
     #[error("SAZ limits are invalid")]
     InvalidLimits,

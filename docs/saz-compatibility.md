@@ -14,9 +14,27 @@ The strict exporter follows the documented Fiddler archive structure:
 
 This structure is described by Telerik's
 [Fiddler Archives documentation](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
-The ZIP implementation uses stored entries and ZIP64-capable file options. The
-selected `zip` crate is built without optional compression, encryption, time,
-or native-code features.
+The ZIP implementation writes Deflate-compressed entries with ZIP64-capable
+file options. The selected `zip` crate enables only its existing `flate2`
+backend; additional archive codecs and encryption remain disabled.
+
+The import adapter accepts stored and Deflate-compressed ZIP/ZIP64 archives.
+It bounds compressed input, central-directory size and counts before the ZIP
+index allocates, plus individual and aggregate declared uncompressed sizes,
+HTTP heads and XML metadata. It rejects unsafe member names, collisions,
+encryption and unsupported compression. It never extracts archive paths.
+Indexing reads headers and metadata; bodies stay in the source archive until
+requested, at which point chunk framing is removed and ZIP CRC is checked.
+Content-Encoding and original body bytes are preserved.
+
+Classic origin-form requests use the recorded HTTPS bit and Host header. Missing
+scheme evidence is reported rather than guessed. Original start lines, ordered
+duplicate headers, timing/metric attributes and session flags are preserved.
+Incomplete or malformed sessions are reported individually without discarding
+usable neighbors. Dropped-body flags and Content-Length mismatches prevent a
+partial body from being presented as complete. Progress and cancellation are
+available to the consuming application. Session flag meanings follow the
+[FiddlerCore enumeration](https://www.telerik.com/fiddler/fiddlercore/documentation/api/fiddler.sessionflags).
 
 The `raw/` directory must be a ZIP member of its own. The published
 [Fiddler DotNetZip importer sample](https://github.com/gocardless/gocardless-legacy-dotnet/blob/master/GoCardlessSdk.Tests/libs/FiddlerCoreAPI/SampleApp/SAZ-DOTNETZIP.cs)
