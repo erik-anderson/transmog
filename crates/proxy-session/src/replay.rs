@@ -138,6 +138,23 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
+    /// Executes a file body from its current position. The caller must validate
+    /// the byte length and repair framing before dispatch. The default fails
+    /// explicitly, so an older executor cannot accidentally send an empty body.
+    fn execute_file(
+        &self,
+        _request: ValidatedReplayRequest,
+        _file: std::fs::File,
+        _length: u64,
+        _cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_> {
+        Box::pin(async {
+            Err(ReplayExecutionError::new(
+                "this replay executor does not support file bodies",
+            ))
+        })
+    }
+
     /// Executes one fully owned and validated request.
     fn execute(
         &self,

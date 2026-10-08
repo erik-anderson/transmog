@@ -141,7 +141,10 @@ export interface PausedExchange {
   hookId: string;
 }
 export interface BreakpointStatus { enabled: boolean; paused: PausedExchange[]; }
+export interface ComposerSnapshot {id:number;method:string;target:string;status:number|null;source?:ComposerOrigin|null;}
+export interface ComposerOrigin {entryId:string;traceId:string|null;traceName?:string|null;originalId:string|null;}
 export interface ComposerResult {
+  source?:ComposerOrigin|null;
   id: number;
   status: number;
   headers: Array<{name: string; value: string}>;
@@ -287,5 +290,5 @@ export type ViewName = 'traffic' | 'breakpoints' | 'automation' | 'composer' | '
 export type NoticeAction = 'setup-ca' | 'reset-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null;
 export type RequestCommandFormat = 'curl' | 'powershell';
 export interface RequestCommand {text:string;notices:string[];bodyFileRequired:boolean;bodyFileAvailable:boolean;}
-export interface ComposerSource {method:string;url:string;headers:Array<{name:string;value:string}>;body:string;bodyAvailable:boolean;notices:string[];}
+export interface ComposerSource {method:string;url:string;headers:Array<{name:string;value:string}>;body:string;bodyAvailable:boolean;bodyStreamed?:boolean;bodyBytes?:number|null;notices:string[];}
 export interface Notice { title: string; message: string; actionLabel: string | null; action: NoticeAction; }

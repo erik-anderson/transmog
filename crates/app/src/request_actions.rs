@@ -60,6 +60,10 @@ pub struct ComposerSource {
     pub headers: Vec<ComposerHeader>,
     /// Complete encoded request bytes rendered as hex for lossless editing.
     pub body: String,
+    /// True when a retained body should stream instead of entering the text editor.
+    pub body_streamed: bool,
+    /// Encoded retained bytes, before any decoding.
+    pub body_bytes: Option<u64>,
     /// Whether the complete request body is available.
     pub body_available: bool,
     /// Redaction or missing-body information.
@@ -92,6 +96,31 @@ impl RequestFile {
             CommandBody::File(path),
             true,
         )
+    }
+
+    /// Stages a retained request in an anonymous, automatically removed file for
+    /// streamed replay, keeping an eviction lease until copying finishes.
+    ///
+    /// # Errors
+    /// Returns a body read, quota, incomplete-file, or worker failure.
+    pub async fn into_replay_file(mut self) -> Result<(std::fs::File, u64), AppError> {
+        tokio::task::spawn_blocking(move || {
+            let mut file = tempfile::tempfile()
+                .map_err(|_| unavailable("Replay body temporary file could not be created"))?;
+            let copied = std::io::copy(
+                &mut self.reader.by_ref().take(self.bytes.saturating_add(1)),
+                &mut file,
+            )
+            .map_err(|_| unavailable("Captured replay body could not be read"))?;
+            if copied > self.bytes || self.length_known && copied != self.bytes {
+                return Err(unavailable("Captured replay body is incomplete"));
+            }
+            std::io::Seek::rewind(&mut file)
+                .map_err(|_| unavailable("Replay body could not be rewound"))?;
+            Ok((file, copied))
+        })
+        .await
+        .map_err(|_| unavailable("Replay body preparation worker failed"))?
     }
 
     /// Saves exact original bytes, including any content coding, atomically.
@@ -250,23 +279,30 @@ pub(crate) fn composer_source(
         });
     }
     let mut available = false;
+    let mut streamed = false;
+    let mut body_bytes = None;
     let mut bytes = Vec::new();
     match original_body(&snapshot, store) {
-        Ok(body) if body.bytes <= COMPOSER_BYTES || !body.length_known => {
+        Ok(body) if body.bytes <= COMPOSER_BYTES && body.length_known => {
+            body_bytes = Some(body.bytes);
             body.reader
                 .take(COMPOSER_BYTES + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|_| unavailable("Request body could not be read"))?;
-            available = bytes.len() as u64 <= COMPOSER_BYTES
-                && (!body.length_known || bytes.len() as u64 == body.bytes);
+            available = bytes.len() as u64 == body.bytes;
             if !available {
-                notices.push("Request body exceeds the Composer's four-MiB input limit; supply a smaller body.".into());
+                notices.push(
+                    "The retained request body is incomplete. Supply a replacement before sending."
+                        .into(),
+                );
             }
         }
-        Ok(_) => notices.push(
-            "Request body exceeds the Composer's four-MiB input limit; supply a smaller body."
-                .into(),
-        ),
+        Ok(body) => {
+            available = true;
+            streamed = true;
+            body_bytes = body.length_known.then_some(body.bytes);
+            notices.push("The complete captured body will stream from a temporary file. Choose a replacement file or use the body editor to change it.".into());
+        }
         Err(_) => notices
             .push("The complete request body is unavailable. Supply it before sending.".into()),
     }
@@ -283,6 +319,8 @@ pub(crate) fn composer_source(
         headers,
         body,
         body_available: available,
+        body_streamed: streamed,
+        body_bytes,
         notices,
     })
 }
@@ -786,7 +824,7 @@ fn powershell(
     body: &CommandBody<'_>,
 ) -> String {
     let mut out = format!(
-        "Add-Type -AssemblyName System.Net.Http\r\n$handler = New-Object System.Net.Http.HttpClientHandler\r\n$handler.AllowAutoRedirect = $false\r\n$handler.UseCookies = $false\r\n$handler.UseDefaultCredentials = $false\r\n$handler.AutomaticDecompression = [Net.DecompressionMethods]::None\r\n$client = New-Object System.Net.Http.HttpClient($handler)\r\n$request = New-Object System.Net.Http.HttpRequestMessage\r\n$request.Method = New-Object System.Net.Http.HttpMethod({})\r\n$request.RequestUri = {}\r\n$request.Version = [Version]'{}'\r\ntry {{\r\n",
+        "Add-Type -AssemblyName System.Net.Http\r\n$handler = New-Object System.Net.Http.HttpClientHandler\r\n$handler.AllowAutoRedirect = $false\r\n$handler.UseCookies = $false\r\n$handler.UseDefaultCredentials = $false\r\n$handler.AutomaticDecompression = [Net.DecompressionMethods]::None\r\n$client = New-Object System.Net.Http.HttpClient($handler)\r\n$request = New-Object System.Net.Http.HttpRequestMessage\r\n$request.Method = New-Object System.Net.Http.HttpMethod({})\r\n$request.RequestUri = {}\r\n$request.Version = [Version]'{}'\r\n$response = $null\r\n$bodyStream = $null\r\ntry {{\r\n",
         ps_quote(&head.method),
         ps_quote(&url(head)),
         if version == "HTTP/1.0" { "1.0" } else { "1.1" }
@@ -800,10 +838,14 @@ fn powershell(
             "[Convert]::FromBase64String('{}')",
             STANDARD.encode(value.as_bytes())
         ),
-        CommandBody::File(path) => format!("[IO.File]::ReadAllBytes({})", ps_quote(path)),
+        CommandBody::File(_) => String::new(),
     };
     // A content object also accommodates Content-Type on an empty request.
-    writeln!(out, "  $bodyBytes = {expression}\r\n  $request.Content = New-Object System.Net.Http.ByteArrayContent(,$bodyBytes)").expect("string write");
+    if let CommandBody::File(path) = body {
+        writeln!(out,"  $bodyStream = [IO.File]::OpenRead({})\r\n  $request.Content = New-Object System.Net.Http.StreamContent($bodyStream)",ps_quote(path)).expect("string write");
+    } else {
+        writeln!(out, "  $bodyBytes = {expression}\r\n  $request.Content = New-Object System.Net.Http.ByteArrayContent(,$bodyBytes)").expect("string write");
+    }
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("proxy-authorization") {
             continue;
@@ -811,7 +853,7 @@ fn powershell(
         let (name, value) = (ps_quote(name), ps_quote(value));
         writeln!(out, "  if (!$request.Headers.TryAddWithoutValidation({name}, {value})) {{\r\n    if (!$request.Content.Headers.TryAddWithoutValidation({name}, {value})) {{ throw 'A captured header could not be added' }}\r\n  }}").expect("string write");
     }
-    out.push_str("  $response = $client.SendAsync($request).GetAwaiter().GetResult()\r\n  $response\r\n  $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()\r\n} finally {\r\n  if ($response) { $response.Dispose() }\r\n  $request.Dispose()\r\n  $client.Dispose()\r\n  $handler.Dispose()\r\n}");
+    out.push_str("  $response = $client.SendAsync($request).GetAwaiter().GetResult()\r\n  $response\r\n  $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()\r\n} finally {\r\n  if ($response) { $response.Dispose() }\r\n  $request.Dispose()\r\n  if ($bodyStream) { $bodyStream.Dispose() }\r\n  $client.Dispose()\r\n  $handler.Dispose()\r\n}");
     out
 }
 
@@ -903,7 +945,7 @@ mod tests {
         assert!(
             result
                 .text
-                .contains("[IO.File]::ReadAllBytes('C:\\captured body''s\\é.bin')")
+                .contains("[IO.File]::OpenRead('C:\\captured body''s\\é.bin')")
         );
         assert!(result.text.contains("$handler.UseCookies = $false"));
         assert!(result.text.contains("$handler.AllowAutoRedirect = $false"));
@@ -1091,6 +1133,7 @@ mod tests {
             "webrequest",
             "duplicate",
             "file",
+            "dotnet-file",
             "curl-text",
             "curl-file",
             "curl-unicode-file",

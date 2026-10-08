@@ -154,6 +154,7 @@ await page.addInitScript((workspace) => {
         }
         case 'composer_source': {
           if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
+          if(state.composerSourceOverride)return structuredClone(state.composerSourceOverride);
           const request=detail(args.id).requests[0];return {method:request.method,url:request.target,headers:request.headers.filter(header=>!header.sensitive),body:'',bodyAvailable:true,notices:[]};
         }
         case 'copy_message_headers': {const head=[...detail(args.id).requests,...detail(args.id).responses].find(head=>head.boundary===args.boundary);return (args.boundary==='client-request'&&state.fullHeaders?state.fullHeaders:head.headers).map(header=>header.name+': '+(header.sensitive?'[redacted]':header.value)).join('\r\n');}
@@ -273,7 +274,8 @@ await page.addInitScript((workspace) => {
         case 'pick_capture_path': state.lastCapturePick=structuredClone(args);return state.capturePick??null;
         case 'import_capture': state.lastCaptureImport=structuredClone(args.request);return {records:12,exchanges:3,lossMarkers:1,retainedBodyBytes:2048,sealed:false,truncatedTail:true,validBytes:4096};
         case 'export_capture': state.lastCaptureExport=structuredClone(args.request);return {destination:args.request.destination,records:12,bytes:4096,sourceSealed:false,sourceTruncatedTail:true,fidelity:'Valid prefix preserved'};
-        case 'execute_composer': state.composerInput=structuredClone(args.request);if(state.deferComposer){state.composerPending=true;await new Promise(resolve=>state.finishComposer=resolve);}else await new Promise(resolve=>setTimeout(resolve,80));if(state.composerError)throw new Error('Fixture send failed');return {id:1,status:201,headers:[{name:'X-Duplicate',value:'first'},{name:'X-Duplicate',value:'second'}],body:'<script>globalThis.unsafeComposer=true</script>',bodyIsHex:false,truncated:false,attribution:'composer'};
+        case 'composer_history': return state.composerHistory??[];
+        case 'execute_composer': state.composerInput=structuredClone(args.request);if(state.deferComposer){state.composerPending=true;await new Promise(resolve=>state.finishComposer=resolve);}else await new Promise(resolve=>setTimeout(resolve,80));if(state.composerError)throw new Error('Fixture send failed');return {id:1,status:201,headers:[{name:'X-Duplicate',value:'first'},{name:'X-Duplicate',value:'second'}],body:'<script>globalThis.unsafeComposer=true</script>',bodyIsHex:false,truncated:false,attribution:'composer',source:state.composerResultSource??null};
         case 'script_declarations': return '';
         case 'script_status': return {generation:0,active:state.activeScripts??[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
         case 'save_script': state.savedScript=structuredClone(args.draft);return {generation:1,active:state.activeScripts??[],saved:[state.savedScript],candidateCount:0,historyCount:0};
@@ -613,6 +615,43 @@ try {
   await page.locator('.composer-pane-tabs button[data-selected]').getByText('Response',{exact:true}).waitFor({state:'visible'});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-small.png')});
   await page.setViewportSize({width:1280,height:800});
+
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.deferComposer=false;state.composerSourceOverride={method:'POST',url:'http://example.test/large',headers:[{name:'Content-Encoding',value:'gzip'}],body:'',bodyAvailable:true,bodyStreamed:true,bodyBytes:8388609,notices:[]};const workspace=document.querySelector('app-shell').shadowRoot.querySelector('composer-workspace');workspace.composerDirty=false;await workspace.populateRequest({id:'first'});});
+  await view('composer');
+  await page.getByLabel('Body source',{exact:true}).selectOption('captured');
+  assert.equal(await page.locator('#composer textarea[name="body"]').isVisible(),false);
+  await page.getByText(/8,388,609 encoded bytes/).waitFor({state:'visible'});
+  await page.locator('#composer input[name="nonIdempotent"]').check();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.composerResultSource={entryId:'first',traceId:'trace-fixture',originalId:'17'};globalThis.__workspaceFixture.composerHistory=[{id:1,method:'POST',target:'http://example.test/edited',status:201,source:{entryId:'first',traceId:'trace-fixture',originalId:'17'}}];});
+  await page.getByRole('button',{name:'Send request',exact:true}).click();await page.locator('.composer-feedback').getByText('Response received: HTTP 201',{exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.bodySource),{kind:'captured',entryId:'first'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.body),'');
+  await page.locator('.composer-result-tabs').getByRole('button',{name:'Details',exact:true}).click();
+  assert.match(await page.locator('.composer-result-body').last().textContent(),/trace-fixture/);
+  await page.getByText('Replay history',{exact:true}).click();await page.locator('.composer-history').getByText('trace-fixture · 17',{exact:true}).waitFor();
+  await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-streamed-small.png')});
+  await page.locator('.composer-pane-tabs').getByRole('button',{name:'Request',exact:true}).click();
+  await page.getByLabel('Body source',{exact:true}).selectOption('inline');
+  assert.equal(await page.getByRole('button',{name:'Send request',exact:true}).isDisabled(),true,'An empty inline replacement silently replaced the captured body');
+  await page.locator('#composer textarea[name="body"]').fill('edited body');
+  await page.getByLabel('Body source',{exact:true}).selectOption('file');
+  assert.equal(await page.getByRole('button',{name:'Send request',exact:true}).isDisabled(),true);
+  await page.evaluate(()=>globalThis.__workspaceFixture.capturePick=null);
+  await page.getByRole('button',{name:'Choose body file…',exact:true}).click();
+  await page.locator('.composer-feedback').getByText('Body file selection canceled. Your draft is unchanged.',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Send request',exact:true}).isDisabled(),true);
+  await page.evaluate(()=>globalThis.__workspaceFixture.capturePick='C:/captures/request body.bin');
+  await page.getByRole('button',{name:'Choose body file…',exact:true}).click();await page.getByText('C:/captures/request body.bin',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Send request',exact:true}).isDisabled(),false);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-file-small.png')});
+  await page.getByRole('button',{name:'Send request',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('composer-workspace').composerBusy);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.bodySource),{kind:'file',path:'C:/captures/request body.bin'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.sourceEntryId),'first');
+  await page.locator('.composer-pane-tabs').getByRole('button',{name:'Request',exact:true}).click();
+  await page.getByLabel('Body source',{exact:true}).selectOption('inline');assert.equal(await page.locator('#composer textarea[name="body"]').inputValue(),'edited body');
+  await page.getByLabel('Body source',{exact:true}).selectOption('captured');await page.setViewportSize({width:1280,height:800});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-streamed-wide.png')});
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.composerSourceOverride;globalThis.__workspaceFixture.capturePick=null;});
 
   await view('traffic');
   await page.locator('tr[data-session-id="cached"]').click();

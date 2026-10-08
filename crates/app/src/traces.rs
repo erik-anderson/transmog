@@ -1497,6 +1497,7 @@ mod tests {
                 sequence: 6,
                 exchange_id: 7,
                 kind: CaptureRecordKind::Performance(PerformanceEvidence {
+                    work: Vec::new(),
                     points: vec![
                         TimingPoint {
                             milestone: Milestone::RequestHeaders,
@@ -1742,6 +1743,45 @@ mod tests {
                 .is_empty()
         );
         assert!(application.trace_metadata_list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn imported_large_body_loads_as_streamed_composer_source_and_spools_exact_bytes() {
+        use std::io::Read;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("large.tmcap");
+        let count = 5 * 1024 * 1024 + 123;
+        native(&path, Some(vec![0; count]), count);
+        let app = app(root.path());
+        app.import_trace(request(path, "large-replay"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        let source = app.composer_source(&rows[0].id).unwrap();
+        assert!(source.body_available && source.body_streamed);
+        assert!(source.body.is_empty());
+        assert_eq!(source.body_bytes, Some(count as u64));
+        let (mut file, length) = app
+            .prepare_request_file(&rows[0].id)
+            .unwrap()
+            .into_replay_file()
+            .await
+            .unwrap();
+        assert_eq!(length, count as u64);
+        let mut bytes = [1; 8192];
+        let mut read = 0;
+        loop {
+            let count = file.read(&mut bytes).unwrap();
+            if count == 0 {
+                break;
+            }
+            assert!(bytes[..count].iter().all(|byte| *byte == 0));
+            read += count;
+        }
+        assert_eq!(read, count);
     }
 
     #[tokio::test]

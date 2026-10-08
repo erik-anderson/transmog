@@ -732,5 +732,12 @@
   "timingRange": "",
   "timingReportText": "",
   "timingReportVisible": false,
-  "timingStatus": ""
+  "timingStatus": "",
+  "composerBodyMode": "inline",
+  "composerBodyFile": "",
+  "composerBodySizeLabel": "",
+  "capturedBodyAvailable": false,
+  "composerHistory": [],
+  "composerHistoryBusy": false,
+  "composerHistoryError": ""
 }

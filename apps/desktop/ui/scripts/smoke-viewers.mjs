@@ -108,6 +108,45 @@ try{
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.closeTimings();await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(timingId)}],restore:false});await workspace.refreshSessions(undefined,true);})()`);
 
   await viewer.evaluate(`${traffic}.closeTimings()`);
+  // Exercise a real viewer Composer upload. The only contacted endpoint is
+  // this owned loopback fixture; no captured URL or outside service is replayed.
+  const replayLength=5*1024*1024+7;let replayBytes=0,replayError='';
+  const replayServer=createServer(async(request,response)=>{
+    try {for await(const chunk of request){replayBytes+=chunk.length;if(!chunk.every(byte=>byte===7))throw new Error('Captured replay bytes changed');}if(replayBytes!==replayLength)throw new Error('Captured replay was incomplete');response.end('received '+replayBytes);}
+    catch(error){replayError=String(error);response.statusCode=500;response.end('fixture upload failed');}
+  });
+  await new Promise(resolve=>replayServer.listen(0,'127.0.0.1',resolve));
+  try {
+    const url='http://127.0.0.1:'+replayServer.address().port+'/native-replay';
+    const records=[{kind:'request-head',payload:{boundary:'client-request',method:'POST',target:url,headers:[{name:Array.from(Buffer.from('Content-Length')),value:Array.from(Buffer.from(String(replayLength)))}]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}}];
+    for(let remaining=replayLength;remaining>0;){const count=Math.min(remaining,512*1024);records.push({kind:'body-segment',payload:{boundary:'client-request',byte_count:count,bytes:Array(count).fill(7),truncated:false}});remaining-=count;}
+    records.push({kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'completed',payload:null});
+    const replayFrames=[Buffer.from('TMCAP01\0')];
+    for(const [index,record] of [...records,{kind:'seal',payload:{record_count:records.length}}].entries()){const payload=Buffer.from(JSON.stringify({revision:3,sequence:index+1,exchange_id:record.kind==='seal'?0:101,...record}));const header=Buffer.alloc(8);header.writeUInt32LE(payload.length);header.writeUInt32LE(crc(payload),4);replayFrames.push(header,payload);}
+    const replaySource=join(dirname(source),'replay-fixture.tmcap');await writeFile(replaySource,Buffer.concat(replayFrames));
+    await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(replaySource)})`);
+    const replayImportStatus=await viewer.evaluate(`${traffic}.importStatus`);assert.ok(!replayImportStatus.startsWith('Import failed'),replayImportStatus);
+    await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-replay')`),'Native replay fixture did not import');
+    const replayId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-replay');await workspace.selectTraffic(row,new MouseEvent('click'));await workspace.replaySelected();return row.id;})()`);
+    const composer=root+'.shadowRoot.querySelector("composer-workspace")';
+    await waitFor(()=>viewer.evaluate(`${composer}?.composerBodyMode==='captured' && !${composer}.composerBodyMissing`),'Native captured body did not load as a streamed Composer draft');
+    assert.equal(await viewer.evaluate(`${composer}.input('body').value.length`),0,'Large captured body entered the text editor');
+    await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.input('nonIdempotent').checked=true;await workspace.executeComposer(new Event('submit',{cancelable:true}));})()`);
+    assert.equal(replayBytes,replayLength);assert.equal(replayError,'');
+    const replayResult=await viewer.evaluate(`({status:${composer}.composerResult?.status,body:${composer}.composerResult?.body,source:${composer}.composerResult?.source,error:${composer}.composerError})`);
+    assert.equal(replayResult.error,'');assert.equal(replayResult.status,200);assert.equal(replayResult.body,'received '+replayLength);assert.equal(replayResult.source.entryId,replayId);assert.ok(replayResult.source.traceId);
+    await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.composerPane='request';const details=workspace.shadowRoot?.querySelector('.composer-history')??workspace.querySelector('.composer-history');details.open=true;await workspace.refreshHistory();})()`);
+    assert.equal(await viewer.evaluate(`${composer}.composerHistory[0].sourceId`),replayId);
+    assert.ok(await viewer.evaluate(`${composer}.composerHistory[0].sourceLabel.startsWith('replay-fixture.tmcap')`));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer.png'),Buffer.from(image.data,'base64'));}
+    await viewer.call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
+    assert.ok(await viewer.evaluate(`${composer}.composerForm.getBoundingClientRect().width<760`));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer-compact.png'),Buffer.from(image.data,'base64'));}
+    await viewer.call('Emulation.clearDeviceMetricsOverride');
+    await viewer.evaluate(`(async()=>{await ${root}.activateView('traffic');await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(replayId)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
+    process.stdout.write('Viewer streamed captured binary replay, original trace association and history verified.\n');
+  }finally{replayServer.closeAllConnections();await new Promise(resolve=>replayServer.close(resolve));}
+
   await viewer.evaluate(`${traffic}.showSaveTrace()`);
   const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked})`);
   assert.ok(saveChoices.open);assert.ok(saveChoices.compressed);assert.equal(saveChoices.network,false);

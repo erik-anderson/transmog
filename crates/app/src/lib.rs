@@ -51,7 +51,8 @@ pub use breakpoints::{
 };
 pub use captured_page::{CapturedPage, CapturedResource};
 pub use composer::{
-    ComposerHeader, ComposerRequest, ComposerResult, ComposerSnapshot, SystemReplayExecutor,
+    ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,
+    ComposerSnapshot, SystemReplayExecutor,
 };
 pub use diagnostics::{
     DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
@@ -1290,7 +1291,79 @@ impl Application {
         &self,
         request: ComposerRequest,
     ) -> Result<ComposerResult, AppError> {
-        self.composer.execute(&self.service, request).await
+        if request.body_source.is_some() {
+            composer::validate_stream_input(&request)?;
+        }
+        if let Some(id) = &request.source_entry_id {
+            inspector::parse_session_id(id)?;
+        }
+        let source = request.source_entry_id.as_ref().map(|id| {
+            let trace = self.traces.entry(id);
+            ComposerOrigin {
+                trace_name: trace
+                    .as_ref()
+                    .and_then(|entry| self.traces.metadata(&entry.trace_id))
+                    .map(|metadata| metadata.name),
+                entry_id: id.clone(),
+                trace_id: trace.as_ref().map(|entry| entry.trace_id.clone()),
+                original_id: trace.map(|entry| entry.original_id),
+            }
+        });
+        let file = match &request.body_source {
+            Some(ComposerBodySource::Captured { entry_id }) => Some(
+                self.prepare_request_file(entry_id)?
+                    .into_replay_file()
+                    .await?,
+            ),
+            Some(ComposerBodySource::File { path }) => {
+                let path = std::path::PathBuf::from(path);
+                Some(
+                    tokio::task::spawn_blocking(move || {
+                        if !path.is_absolute() {
+                            return Err(AppError::new(
+                                ErrorCategory::InvalidInput,
+                                "Choose an absolute body file path",
+                                false,
+                            ));
+                        }
+                        let file = std::fs::File::open(path).map_err(|_| {
+                            AppError::new(
+                                ErrorCategory::Unavailable,
+                                "Replay body file could not be opened",
+                                true,
+                            )
+                        })?;
+                        let metadata = file.metadata().map_err(|_| {
+                            AppError::new(
+                                ErrorCategory::Unavailable,
+                                "Replay body file metadata is unavailable",
+                                true,
+                            )
+                        })?;
+                        if !metadata.is_file() {
+                            return Err(AppError::new(
+                                ErrorCategory::InvalidInput,
+                                "Replay body must be a regular file",
+                                false,
+                            ));
+                        }
+                        Ok((file, metadata.len()))
+                    })
+                    .await
+                    .map_err(|_| {
+                        AppError::new(
+                            ErrorCategory::Unavailable,
+                            "Replay body file worker failed",
+                            true,
+                        )
+                    })??,
+                )
+            }
+            None => None,
+        };
+        self.composer
+            .execute(&self.service, request, file, source)
+            .await
     }
 
     /// Returns a bounded newest-first replay history without credential values.

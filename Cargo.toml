@@ -73,7 +73,7 @@ sourcemap = "=9.3.2"
 thiserror = "2.0.17"
 tempfile = "=3.27.0"
 time = { version = "=0.3.55", features = ["parsing"] }
-tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-boring = "=5.2.0"
 tower-service = "0.3.3"
 tracing = "0.1.41"

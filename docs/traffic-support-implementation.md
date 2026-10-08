@@ -192,10 +192,20 @@ qualified baseline, not completion of the complete plan.
     Rust transport/capture tests, strict Clippy and populated browser/native
     wide/compact timing views qualify this phase.
 
-Remaining isolated phases:
+21. Composer replays larger complete captured bodies and replacement files
+    through a bounded file stream. Loading a large or size-deferred body never
+    fills the editor; switching modes preserves its draft and requires explicit
+    replacement of missing bodies. Source trace/entry associations persist in
+    results and bounded replay history after edits. Stream-capable executors
+    opt in through execute_file; older adapters explicitly reject rather than
+    sending empty bytes. Risk validation precedes captured-file staging. Native
+    file selection belongs to its initiating window. PowerShell's .NET file
+    fallback also streams instead of loading a whole file. Tests cover exact
+    eight-MiB binary HTTP upload, native import/spooling, original associations,
+    unavailable adapters, clipboard commands under PowerShell 5.1/7, body mode
+    transitions and wide/compact and native viewer UX.
 
-- Composer replay: file-backed replay of larger bodies, with source trace and
-  entry associations retained in history and results.
+Remaining isolated phases:
 
 - Search: request/response scopes, match locations and highlighted occurrence
   navigation, normalized-character mapping, cancellation preserving selections.

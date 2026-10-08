@@ -215,3 +215,22 @@ acceptance show transport backpressure without asserting remote acknowledgment.
 Queries do not enable OS instrumentation or require elevation. See
 [Windows API](https://learn.microsoft.com/en-us/windows/win32/winsock/sio-tcp-info)
 and [Linux TCP_INFO](https://man7.org/linux/man-pages/man7/tcp.7.html).
+
+Composer keeps smaller original bodies in its lossless hex editor. Larger or
+size-deferred captured bodies default to Complete captured body and are copied
+under an eviction lease into an anonymous temporary file, then streamed in
+bounded chunks. Replacement file selects an explicitly supplied regular file.
+These modes keep large bytes outside the WebView editor; Body editor retains
+its own draft when switching modes. An unavailable or newly empty replacement
+must be edited or explicitly accepted with Use an empty body. Method and
+credential acknowledgments apply equally to streamed requests. Framing is
+recomputed while Content-Encoding is preserved. Files must therefore contain
+already encoded bytes when that header is retained.
+
+Replay results and the window's bounded replay history retain the originating
+traffic entry, trace and original entry identity after edits. History opens
+lazily and links back to retained source traffic. Removing a source never
+silently changes a captured replay into an empty request. Replay uses the
+canonical verifying HTTP adapters even when the proxy is stopped. Response
+previews disclose display truncation. PowerShell's .NET fallback uses a file
+stream, while Invoke-WebRequest uses InFile for file bodies.
