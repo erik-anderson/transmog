@@ -649,6 +649,10 @@ try {
   assert.equal(await autoEditor.getByLabel('URL matching',{exact:true}).inputValue(),'pattern');
   assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Numeric account pattern').matcher.examples.length),1);
+  await page.evaluate(id=>{const state=globalThis.__workspaceFixture;state.automation.usage=[{ruleId:id,matches:2,lastMatchedAt:1000}];document.querySelector('app-shell').onTrafficRefreshed();},patternRuleId);
+  await autoEditor.getByText(/2 retained matches/).waitFor({state:'visible'});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.automation.usage=[];document.querySelector('app-shell').onTrafficRefreshed();});
+  await autoEditor.getByText('No matches in retained Traffic.',{exact:true}).waitFor({state:'visible'});
   await cancelRule();
 
   // The dense list shares keyboard range selection, bulk state changes and Undo.
@@ -682,6 +686,7 @@ try {
   await copyRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
   await copyRule.press('Delete');
   await copyRule.waitFor({state:'detached'});
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').ruleSelectionCount),0);
   await page.getByRole('button',{name:'Undo',exact:true}).press('Control+z');
   await copyRule.waitFor({state:'visible'});
   assert.equal(await copyRule.locator('.rule-state').textContent(),'Disabled');

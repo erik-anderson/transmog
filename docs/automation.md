@@ -32,17 +32,25 @@ stale-update detection, and audit evidence.
 
 ## Ordered auto-responses
 
-Auto-response rules form a visible top-to-bottom list. The first enabled rule
-that matches wins and bypasses the origin. Drag-and-drop reorders the list;
-Move up and Move down provide the keyboard-accessible equivalent. New rules are
-inserted first.
+Auto-response rules form a compact top-to-bottom list beside a resizable
+properties pane. The first enabled rule that matches wins and bypasses the
+origin. Selecting one rule opens its properties; selecting several exposes
+bulk actions through More. Search and enabled/disabled/shadowed filters preserve
+the underlying priority order. Drag-and-drop or Move earlier/Move later reorders
+a selected group while preserving its internal order. New rules are inserted
+first. Disabled copies provide a convenient starting point for a variant.
 
 The primary creation flow starts from a completed traffic item. **Create
 auto-response** copies the exact client-visible status, ordered response headers,
 and encoded body into an immutable response asset, then pre-fills a method and
 exact normalized absolute-URL match. A row can also be dragged to the
-Auto-responses workspace. Creating a response from scratch remains available
-but is secondary because it is easier to omit protocol-relevant headers.
+Auto-responses workspace. Multiple selected rows open a review with eligibility,
+priority and duplicate explanations. The review can skip responses or retain
+only the earliest or most recent response per identical match. Creation leases
+every eligible source before copying and activates the whole batch atomically;
+a failed source never leaves a partially activated batch. Creating a response
+from scratch remains available but is secondary because it is easier to omit
+protocol-relevant headers.
 
 Captured sources require a complete retained client response. Disabled,
 truncated, evicted, missing, or lossy bodies cannot be represented as faithful
@@ -51,10 +59,13 @@ gzip, Brotli, deflate, or zstd stack, or the user can deliberately choose
 identity output. Binary and oversized sources retain exact replay behavior.
 
 Matching uses the original client request, before request mutations. Method and
-case-sensitive exact URL are the default conditions. The desktop adds
-exact request-header conditions only for POST and does not inspect request
-bodies. Native rules support exact URLs, address patterns and bounded regular
-expressions through the same matcher used by network-free editor tests.
+case-sensitive exact URL are the default conditions. Methods include Any and
+custom tokens. Request-header conditions are available for every method;
+request bodies are not inspected. Exact URLs, address patterns and bounded
+regular expressions use the same backend matcher in live requests and in the
+network-free editor tester. Saved expected match/nonmatch examples retain their
+own method and explicit headers. Generalizing a selected path segment and
+editing a placeholder show the same syntax inline.
 
 Address patterns keep the scheme and host literal. In the path, `{id}` or `{}`
 matches one nonempty segment; `{id:digits}` or `{:digits}` matches decimal
@@ -71,11 +82,32 @@ requests without changing any rule's enabled state, revision, response or
 priority. Pausing leaves other native automation active. Existing exchanges
 retain their original hook snapshot. Older workspaces default to the gate
 being on. Validation and activation reject stale generations.
+The same On/Paused control appears in Automation and Traffic.
 
 Guaranteed shadowing diagnostics compare equivalent matching behavior in
 first-match order, ignoring annotations and regression examples. They identify
 the earlier enabled rule; arbitrary regular-expression equivalence is not
 inferred from sample URLs.
+
+Saved response status, content type, ordered headers and text remain editable
+after the original Traffic entry disappears. Body replacement from a file also
+supports binary responses. Response edits create an immutable asset revision;
+earlier revisions and captured evidence remain intact. The response body editor
+starts at twelve lines. A friendly source link opens the original request when
+it is still retained; otherwise the label remains plain text. Match counts and
+last-match times describe only retained Traffic.
+
+Saved-rule enabled switches apply immediately. Property edits remain drafts
+until Save (Ctrl+S); Revert resets them. Changing rule selection with unsaved
+edits offers Save and continue, Discard changes or Keep editing. Traffic and
+rule lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A
+and Escape. Focus can move independently with Ctrl+arrow. Del removes selected
+list entries, while text fields retain their normal editing shortcuts. List
+actions can be undone with Undo or Ctrl+Z. Traffic selection survives page and
+refresh changes and reports selected entries on other pages; changing a filter
+or search clears it. Removing Traffic entries hides them from the live catalog
+without deleting capture files or saved responses. Undo succeeds while the
+underlying entries remain retained.
 
 When a rule wins, session summary and detail data retain its friendly name,
 stable ID, revision, evaluation position, response asset, status, and body

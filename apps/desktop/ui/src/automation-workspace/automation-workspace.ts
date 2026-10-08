@@ -42,6 +42,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private savedResponse:ResponseAssetInspection|null=null;
   private responseBodyPath:string|null=null;
   private matcherTimer:number|undefined;
+  private usageTimer:number|undefined;
   private matcherTestRevision=0;
   private savedHeaderText='';
   private protectedResponseHeaders:ResponseAsset['headers']=[];
@@ -127,11 +128,15 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   protected hydratedCallback(): void { void this.refreshAutomation(); }
   disconnectedCallback():void {
-    window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.editorRevision++;this.sessionLoadRevision++;
+    window.clearTimeout(this.matcherTimer);window.clearTimeout(this.usageTimer);this.matcherTestRevision++;this.editorRevision++;this.sessionLoadRevision++;
     this.resolveLeave?.(false);this.resolveLeave=null;this.leaveEditorPromise=null;
     super.disconnectedCallback();
   }
-  viewChanged(): void { if (this.view === 'automation') void this.refreshSourceAvailability(); }
+  viewChanged(): void { if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();} }
+  refreshUsageSoon():void {
+    if(this.usageTimer!==undefined)return;
+    this.usageTimer=window.setTimeout(()=>{this.usageTimer=undefined;if(this.view==='automation')void invoke<AutomationStatus>('automation_status').then(status=>{if(this.isConnected)this.renderAutomation(status);}).catch(()=>undefined);},500);
+  }
   private currentMatcher(data:FormData,existing?:AutomationRule):AutomationRule['matcher'] {
     const selectedMethod=String(data.get('method')??'GET');const method=(selectedMethod==='CUSTOM'?String(data.get('customMethod')??''):selectedMethod).toUpperCase();
     const exact=this.parseEditorHeaders('requestHeaders',data).map(header=>({name:header.name,condition:{kind:'exact',value:Array.from(new TextEncoder().encode(header.value))}}));
@@ -236,7 +241,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       } else {for(let index=ordered.length-2;index>=0;index--)if(selected.has(ordered[index]!.id) && !selected.has(ordered[index+1]!.id))[ordered[index],ordered[index+1]]=[ordered[index+1]!,ordered[index]!];}
       const label=mutation==='remove'?`Removed ${selected.size} rule${selected.size===1?'':'s'}.`:mutation==='duplicate'?'Created disabled copies.':mutation==='up'||mutation==='down'?'Changed rule priority.':'Changed selected rule enabled states.';
       const status=await this.activateAutoResponseOrder(current,ordered);this.rememberRuleChange(before,this.autoResponseRules(status),label);this.renderAutomation(status);
-      if(mutation==='remove'){this.ruleSelection.clear();this.editorHidden=true;this.draftDirty=false;this.editorRevision++;this.changingAutoResponse=false;this.$flushUpdates();this.undoRemoveButton.focus();}
+      if(mutation==='remove'){this.ruleSelection.clear();this.editingAutoResponseId=null;this.renderRuleSelection();this.editorHidden=true;this.draftDirty=false;this.editorRevision++;this.changingAutoResponse=false;this.$flushUpdates();this.undoRemoveButton.focus();}
       else {
         this.renderRuleSelection();const id=[...this.ruleSelection.ids][0];
         if(mutation==='duplicate'){this.changingAutoResponse=false;this.draftDirty=false;if(this.ruleSelection.ids.size===1 && id)await this.editAutoResponse(status.rules.find(rule=>rule.id===id)!,true);else {this.editorRevision++;this.editorHidden=true;}}
@@ -403,6 +408,10 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   private renderAutoResponseRules(status: AutomationStatus): void {
     const rules = this.autoResponseRules(status);
+    const retained=new Set(rules.map(rule=>rule.id));
+    this.ruleSelection.ids=new Set([...this.ruleSelection.ids].filter(id=>retained.has(id)));
+    if(this.ruleSelection.focused && !retained.has(this.ruleSelection.focused))this.ruleSelection.focused=null;
+    if(this.ruleSelection.anchor && !retained.has(this.ruleSelection.anchor))this.ruleSelection.anchor=null;
     this.rules = rules.map((rule,index) => {
       const headers = rule.matcher.requestHeaders.length;
       const enabled = rule.enabled ?? true;
@@ -414,6 +423,11 @@ export class AutomationWorkspace extends WorkspaceElement {
     });
     this.renderRuleSelection();const selected=this.rules.find(rule=>rule.id===this.editingAutoResponseId);
     this.ruleSupersededBy=selected?.shadowedBy??'';this.ruleDiagnosticText=selected?.shadowedBy?`${selected.enabled===false?'If enabled, this':'This'} rule is always superseded by “${selected.shadowedName}”, which has equivalent matching conditions${selected.diagnostic==='Duplicate'?' and the same response':''}.`:'';
+    if(this.existingResponse)this.renderRuleUsage(status);
+  }
+  private renderRuleUsage(status:AutomationStatus):void {
+    const usage=status.usage?.find(item=>item.ruleId===this.editingAutoResponseId);
+    this.ruleUsageText=usage?`${usage.matches} retained match${usage.matches===1?'':'es'} · Last matched ${new Date(usage.lastMatchedAt).toLocaleString()}`:'No matches in retained Traffic.';
   }
   allowSessionDrop(event: DragEvent): void { if (!this.savingAutoResponse && event.dataTransfer?.types.some(type=>type==='application/x-transmog-session' || type==='application/x-transmog-sessions')) event.preventDefault(); }
   dropSession(event: DragEvent): void {
@@ -890,8 +904,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
       this.encodingOptionsHidden=inspection.contentCodings.length===0;this.preserveEncodingDisabled=inspection.textEncoding===null;
       this.autoResponsePreserveEncoding.checked=true;
-      const usage=this.automationStatus?.usage?.find(item=>item.ruleId===rule.id);
-      this.ruleUsageText=usage?`${usage.matches} retained match${usage.matches===1?'':'es'} · Last matched ${new Date(usage.lastMatchedAt).toLocaleString()}`:'No matches in retained Traffic.';
+      if(this.automationStatus)this.renderRuleUsage(this.automationStatus);
       this.responseFieldsHidden = false;
       if (asset.provenance.kind === 'session') {
         this.sourceSessionId = asset.provenance.exchange_id;

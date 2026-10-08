@@ -55,6 +55,13 @@ The workspace suites cover these contracts:
 - session catalog admission/eviction, lossy subscription recovery, replay risk
   acknowledgement, transactional host restoration, product-state recovery,
   support-data redaction, and concurrent/idempotent shutdown;
+- autoresponse gate persistence and immutable hook snapshots, anonymous/named
+  patterns, repeated query constraints, saved matcher examples, atomic batch
+  creation, saved compressed-response editing after source loss, and replay;
+- desktop rule/Traffic multiselection across pages, keyboard deletion and Undo,
+  bulk states and duplicate warnings, unsaved-draft choices, shared pause
+  controls, matcher tooling, persisted pane splits and small-window editors
+  under enforced CSP and Trusted Types;
 - WebSocket handshake validation, masking, fragmentation, control frames,
   UTF-8, close behavior, permessage-deflate, hook ordering, and transparent
   byte-copy mode.

@@ -11,13 +11,12 @@ are checked in.
 ## Desktop and traffic workspace
 
 - Add measured list virtualization when retained traffic volume demonstrates
-  that the current bounded, non-paginated list needs it. Preserve live-tail,
+  that the current bounded, paginated list needs it. Preserve live-tail,
   pinned-selection, keyboard, and accessibility behavior.
 - Add a durable indexed capture library and project-level organization above
   the finite live-session catalog and existing persisted automation, scripts,
   response assets, and product preferences.
-- Add richer structured editing for cloned response headers, plus bounded
-  import/export and conflict handling for automation collections.
+- Add bounded import/export and conflict handling for automation collections.
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
 - Build a user-facing command-line application workflow over `transmog-app` for

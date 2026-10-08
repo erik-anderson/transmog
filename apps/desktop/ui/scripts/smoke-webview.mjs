@@ -192,6 +192,49 @@ try {
         .find((candidate) => candidate.textContent?.trim() === 'Cancel');
       cancelEditor?.click();
       await Promise.resolve();
+      const workspace=element.shadowRoot.querySelector('automation-workspace');
+      const waitFor=async(predicate,message)=>{
+        const end=performance.now()+10_000;
+        while(!predicate()){if(performance.now()>=end)throw new Error(message+': '+workspace.automationText);await new Promise(resolve=>setTimeout(resolve,25));}
+      };
+      const unsavedDialog=automation.querySelector('.unsaved-rule-dialog');
+      await waitFor(()=>unsavedDialog.matches(':modal'),'Unsaved rule dialog did not open');
+      const unsavedPromptWorked=workspace.draftDirty && !autoResponseEditor.hidden;
+      [...unsavedDialog.querySelectorAll('button')].find(button=>button.textContent.trim()==='Keep editing').click();
+      await waitFor(()=>!unsavedDialog.open,'Keep editing did not close the dialog');
+      const setField=(name,value)=>{const field=autoResponseEditor.elements.namedItem(name);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};
+      setField('name','Native numeric pattern');setField('body','native saved response');
+      const matcher=workspace.matchEditor;
+      const matchMode=matcher.querySelector('select[aria-label="URL matching"]');
+      matchMode.value='pattern';matchMode.dispatchEvent(new Event('change',{bubbles:true}));
+      setField('url','https://example.test/users/{:digits}');
+      workspace.matchTestUrl.value='https://example.test/users/42';workspace.matchTestMethod.value='POST';
+      await workspace.testMatcher();
+      const nativePatternMatched=workspace.matchTestResult?.test.matched && workspace.matchTestResult.test.captures[0]?.value==='42';
+      workspace.matchTestUrl.value='https://example.test/users/word';await workspace.testMatcher();
+      const nativePatternRejected=workspace.matchTestResult?.test.matched===false;
+      autoResponseEditor.requestSubmit();
+      await waitFor(()=>workspace.rules.length===1 && !workspace.savingAutoResponse && !workspace.loadingSavedResponse && workspace.existingResponse,'Native rule save failed');
+      const denseRuleList=automation.querySelector('.rule-table[aria-multiselectable="true"]')!==null && automation.querySelectorAll('.auto-response-rule').length===1;
+      const savedRules=JSON.stringify(element.autoresponseState.rules);
+      automation.querySelector('autoresponse-switch button').click();
+      await waitFor(()=>!element.autoresponsePending && element.autoresponseState.autoresponsesEnabled===false,'Pause did not reach the backend');
+      const pausePreservedRules=JSON.stringify(element.autoresponseState.rules)===savedRules;
+      trafficLink.click();await Promise.resolve();
+      trafficWorkspace.querySelector('autoresponse-switch button').click();
+      await waitFor(()=>!element.autoresponsePending && element.autoresponseState.autoresponsesEnabled===true,'Traffic resume did not reach the backend');
+      const sharedSwitchWorked=pausePreservedRules && JSON.stringify(element.autoresponseState.rules)===savedRules;
+      element.shadowRoot.querySelector('a[data-view="automation"]').click();await Promise.resolve();
+      const enabled=autoResponseEditor.elements.namedItem('enabled');enabled.checked=false;enabled.dispatchEvent(new Event('change',{bubbles:true}));
+      await waitFor(()=>!workspace.changingAutoResponse && workspace.rules[0]?.enabled===false,'Immediate disabled state was not saved');
+      const disabledPreserved=workspace.rules[0].matcher.url.value.address==='https://example.test/users/{:digits}';
+      let rule=automation.querySelector('.auto-response-rule');rule.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true,cancelable:true}));
+      await waitFor(()=>!workspace.changingAutoResponse && !workspace.rules.length,'Delete did not remove the selected rule');
+      automation.querySelector('.auto-response-undo button').dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+      await waitFor(()=>!workspace.changingAutoResponse && !workspace.loadingSavedResponse && workspace.rules.length===1,'Ctrl+Z did not restore the rule');
+      const deleteUndoWorked=workspace.ruleSelectionCount===1 && workspace.rules[0].enabled===false && automation.querySelector('.auto-response-rule input').checked;
+      rule=automation.querySelector('.auto-response-rule');rule.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true,cancelable:true}));
+      await waitFor(()=>!workspace.changingAutoResponse && !workspace.rules.length && workspace.ruleSelectionCount===0,'Probe rule cleanup failed');
       trafficLink.click();
       await Promise.resolve();
       return {
@@ -238,6 +281,13 @@ try {
           responseBodyRows,
           responseBodyResize,
           postHeaderFilterVisible,
+          unsavedPromptWorked,
+          nativePatternMatched,
+          nativePatternRejected,
+          denseRuleList,
+          sharedSwitchWorked,
+          disabledPreserved,
+          deleteUndoWorked,
           scratchEditorClosed: autoResponseEditor instanceof HTMLFormElement && autoResponseEditor.hidden,
           internalAutomationFields: automation?.querySelectorAll('input[name="ruleId"], input[name="revision"], input[name="assetId"], input[name="assetRevision"]').length ?? 0,
           decodeSelected: element.shadowRoot.querySelector('.body-toolbar input[type="checkbox"]')?.checked ?? false,
@@ -295,6 +345,9 @@ try {
   assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
     && result.ux.callerColumn && result.ux.brandIconLoaded && result.ux.resizableLayout && result.ux.proxyToggle,
     `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
+  assert(result.ux.unsavedPromptWorked && result.ux.nativePatternMatched && result.ux.nativePatternRejected
+    && result.ux.denseRuleList && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
+    `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
   if (screenshotPath !== undefined) {
@@ -307,7 +360,9 @@ try {
       const shell = document.querySelector('app-shell');
       shell.shadowRoot.querySelector('a[data-view="automation"]').click();
       const notice = shell.shadowRoot.querySelector('.notice');
+      const view=shell.shadowRoot.querySelector('#automation');const priorScrollTop=view.scrollTop;view.scrollTop=0;
       return {
+        priorScrollTop,
         documentScrollTop: document.scrollingElement.scrollTop,
         noticeHidden: notice.hidden,
         noticeText: notice.textContent.trim(),
@@ -318,6 +373,7 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 250));
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(automationScreenshotPath, Buffer.from(screenshot.data, 'base64'));
+    await evaluate("document.querySelector('app-shell').shadowRoot.querySelector('#automation').scrollTop="+JSON.stringify(automationLayout.priorScrollTop));
     result.automationScreenshot = automationScreenshotPath;
     result.automationLayout = automationLayout;
     await evaluate(`(() => document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`);

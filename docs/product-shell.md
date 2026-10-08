@@ -20,19 +20,23 @@ or WebUI.
 - Certificate trust installation/removal remains an explicit exact-SHA-256
   operation and can display an OS consent dialog. The setup action warns before
   triggering that dialog; unattended builds and tests never install trust.
-- The traffic list queries the newest bounded window (100 by default, at most
-  200), watches live automatically, and has no pagination. It follows the latest row until
-  the user scrolls away or selects a request; capture continues while that view
-  is pinned.
+- The traffic list queries bounded pages (100 by default, at most 200) over
+  filtered and sorted retained metadata, and watches live automatically. It
+  follows the latest row until the user scrolls away or selects a request;
+  capture continues while that view is pinned.
 - Traffic rows show the best-effort local caller process name and PID captured
   at connection accept time. Non-loopback peers show as remote and unresolved
   loopback callers remain explicitly unknown.
 - Completed retained client responses can seed auto-responses directly from
-  the Traffic inspector or by drag-and-drop. The Automation workspace exposes
-  a reorderable top-to-bottom list where the first enabled exact method/URL
-  match wins; internal asset IDs, revisions, and numeric priorities are not
-  authoring fields. Winning traffic is marked `AUTO` and names the rule and
-  immutable response asset that served it.
+  the Traffic inspector, multiselection review or drag-and-drop. The Automation
+  workspace exposes a dense priority list and editable properties, with bulk
+  actions, reversible deletion, duplicate warnings and a network-free matcher
+  tester. The first enabled match wins; exact addresses, guided URL patterns
+  and bounded regex are supported. A shared Traffic/Automation pause switch
+  controls rule hooks without modifying rule states. Saved responses remain
+  editable independently of the original Traffic entry. Winning traffic is
+  marked `AUTO` and names the rule and immutable asset that served it. See
+  [automation.md](automation.md) for matching and interaction details.
 - The primary desktop canvas is a fixed-viewport traffic workspace: an
   internally scrolling request list remains visible above a persistent split
   request/response inspector. Tool views use the left rail and scroll only

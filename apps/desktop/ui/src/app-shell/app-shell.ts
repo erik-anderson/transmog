@@ -174,7 +174,7 @@ export class AppShell extends WebUIElement {
     }
   }
   onTrafficRefreshed(): void {
-    if (this.activeView === 'automation') void this.automation.refreshSourceAvailability();
+    if (this.activeView === 'automation') {void this.automation.refreshSourceAvailability();this.automation.refreshUsageSoon();}
   }
   async onMatchedRule(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
