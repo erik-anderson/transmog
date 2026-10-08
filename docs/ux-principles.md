@@ -83,6 +83,11 @@ its actual effect on the user's task.
 - Keep captured markup inert and distinguish preview content from complete
   original data. Copy, save, edit, and export labels should describe the data
   the operation actually uses.
+- Copying a request command only copies text; it never executes traffic. File
+  placeholders must explain what bytes are needed and offer Save as when complete
+  bytes are available. Use complete backend data for copy/replay, preserve encoded
+  bodies, and require an explicit replacement or empty-body choice for missing
+  captured data before sending.
 
 ## Make input and layout predictable
 

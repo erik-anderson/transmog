@@ -375,6 +375,13 @@ fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), App
     } else {
         input.body.as_bytes().to_vec()
     };
+    // The draft owns complete bytes; never reuse captured chunk framing or a
+    // Content-Length that predates the user's edits. Preserve content coding.
+    headers.remove_all("content-length");
+    headers.remove_all("transfer-encoding");
+    headers.push(
+        HeaderField::try_new("Content-Length", body.len().to_string()).expect("decimal length"),
+    );
     Ok((
         ReplayRequest {
             method: input.method.clone(),
@@ -510,5 +517,42 @@ mod tests {
             acknowledge_credentials: false,
         };
         assert!(build_request(&input).is_err());
+    }
+
+    #[test]
+    fn edited_encoded_request_repairs_framing_and_preserves_content_coding() {
+        let input = ComposerRequest {
+            method: "POST".into(),
+            url: "https://example.invalid/".into(),
+            headers: vec![
+                ComposerHeader {
+                    name: "Content-Length".into(),
+                    value: "999".into(),
+                },
+                ComposerHeader {
+                    name: "Transfer-Encoding".into(),
+                    value: "chunked".into(),
+                },
+                ComposerHeader {
+                    name: "Content-Encoding".into(),
+                    value: "gzip".into(),
+                },
+            ],
+            body: "00 ff 3c".into(),
+            body_is_hex: true,
+            acknowledge_non_idempotent: true,
+            acknowledge_credentials: false,
+        };
+        let (request, _) = build_request(&input).unwrap();
+        assert_eq!(request.body.as_ref(), [0, 255, 60]);
+        assert_eq!(
+            request.headers.values("content-length").collect::<Vec<_>>(),
+            [b"3".as_slice()]
+        );
+        assert!(request.headers.values("transfer-encoding").next().is_none());
+        assert_eq!(
+            request.headers.values("content-encoding").next(),
+            Some(b"gzip".as_slice())
+        );
     }
 }

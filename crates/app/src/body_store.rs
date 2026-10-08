@@ -65,7 +65,7 @@ pub struct BodyStoreConfig {
 }
 
 impl BodyStoreConfig {
-    /// Creates the product default: a one-GiB circular response cache.
+    /// Creates the product default: a one-GiB circular request/response cache.
     pub fn product_default(root: PathBuf) -> Self {
         Self {
             root,
@@ -502,8 +502,8 @@ impl BodyStore {
 
     /// Returns one protected exact response head retained for asset creation.
     ///
-    /// Sensitive fields are intentionally available only at this application
-    /// boundary and are never included in inspector or session DTOs.
+    /// Values follow the persisted application redaction choice; display DTOs
+    /// are bounded separately from this complete head.
     pub(crate) fn response_head(
         &self,
         exchange_id: ExchangeId,
@@ -727,6 +727,15 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
         ObserverEventKind::ResponseHeadObserved { boundary, head } => {
             observe_head(inner, &mut state, event.exchange_id, boundary, &head);
         }
+        ObserverEventKind::RequestHeadObserved { boundary, head } => {
+            observe_headers(
+                inner,
+                &mut state,
+                event.exchange_id,
+                boundary,
+                &head.headers,
+            );
+        }
         ObserverEventKind::ResponseHeadFinalized(head) => observe_head(
             inner,
             &mut state,
@@ -786,6 +795,22 @@ fn observe_head(
     boundary: ExchangeBoundary,
     head: &ResponseHead,
 ) {
+    observe_headers(inner, state, exchange_id, boundary, &head.headers);
+    if let Some(record) = state.records.get_mut(&BodyKey {
+        exchange_id,
+        boundary: BoundaryKey::from_boundary(boundary),
+    }) {
+        record.response_head = Some(head.clone());
+    }
+}
+
+fn observe_headers(
+    inner: &BodyStoreInner,
+    state: &mut StoreState,
+    exchange_id: ExchangeId,
+    boundary: ExchangeBoundary,
+    headers: &HeaderBlock,
+) {
     let key = BodyKey {
         exchange_id,
         boundary: BoundaryKey::from_boundary(boundary),
@@ -798,8 +823,6 @@ fn observe_head(
             BodyAvailability::Capturing
         })
     });
-    record.response_head = Some(head.clone());
-    let headers = &head.headers;
     let content_type = header_text(headers, "content-type");
     if let Some(content_type) = content_type {
         let mut parts = content_type.split(';');

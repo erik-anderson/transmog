@@ -23,6 +23,7 @@ resources.set('/transmog-icon.svg', { file: resolve(root, '../icons/icon.svg'), 
 for (let index = 0; index < built.cssFiles.length; index += 2) resources.set('/' + built.cssFiles[index], { body: built.cssFiles[index + 1], contentType: 'text/css' });
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:'https://workspace.test'});
 const errors = [];
 const requests = [];
 page.on('pageerror', (error) => errors.push(error.message));
@@ -68,7 +69,7 @@ await page.addInitScript((workspace) => {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
-        case 'desktop_bootstrap': return { caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
+        case 'desktop_bootstrap': return { windows:true, caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
         case 'reset_ca': {
           state.caEvents??=[];state.caEvents.push('reset');state.resetCaArgs=structuredClone(args);
           if(state.deferCaReset){state.caResetPending=true;await new Promise(resolve=>state.releaseCaReset=resolve);state.deferCaReset=false;}
@@ -110,6 +111,13 @@ await page.addInitScript((workspace) => {
           }
           return {sessions:rows.slice(offset,offset+limit),focusOffset:args.query.focusId?offset:null,totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
         }
+        case 'composer_source': {
+          if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
+          const request=detail(args.id).requests[0];return {method:request.method,url:request.target,headers:request.headers.filter(header=>!header.sensitive),body:'',bodyAvailable:true,notices:[]};
+        }
+        case 'request_command': state.lastRequestCommand=args;return state.directCommand ? {text:'fixture direct '+args.format,notices:[],bodyFileRequired:false,bodyFileAvailable:true} : {text:'fixture generated '+args.format,notices:['The command needs a request body file.'],bodyFileRequired:true,bodyFileAvailable:true};
+        case 'save_request_body': state.savedRequestBody=args;return {text:'fixture saved body command',notices:[],bodyFileRequired:true,bodyFileAvailable:true};
+        case 'copy_all_headers': return 'GET http://example.test/second HTTP/1.1\r\nAccept: */*\r\n\r\n\r\nHTTP/1.1 200 OK';
         case 'session_detail':
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
           if (state.evictedIds?.includes(args.id) || state.dismissedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
@@ -454,6 +462,34 @@ try {
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).isVisible(),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-small.png')});
   await page.setViewportSize({width:1280,height:800});
+  await page.locator('tr[data-session-id="second"]').click({button:'right'});
+  await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
+  const commandDialog=page.locator('.request-command-dialog');
+  await commandDialog.getByText('Command copied. Supply the body file before running it.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture generated curl-windows');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.execute_composer??0),0,'Copying a command executed a request');
+  await commandDialog.getByRole('button',{name:'Save as…',exact:true}).click();
+  await commandDialog.getByText('Request body saved. Updated command copied.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture saved body command');
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedRequestBody),{id:'second',format:'curl-windows'});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/request-command-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  assert.equal(await commandDialog.getByRole('button',{name:'Close',exact:true}).isVisible(),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/request-command-small.png')});
+  await commandDialog.getByRole('button',{name:'Close',exact:true}).click();
+  await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(()=>globalThis.__workspaceFixture.directCommand=true);
+  await page.locator('tr[data-session-id="second"]').click({button:'right'});
+  await page.getByRole('button',{name:'Copy as PowerShell',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').commandBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastRequestCommand.format),'powershell');
+  assert.equal(await commandDialog.isVisible(),false,'A direct clipboard command unnecessarily opened the body-save dialog');
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct powershell');
+  await page.locator('tr[data-session-id="second"]').click({button:'right'});
+  await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').commandBusy);
+  assert.equal(await commandDialog.isVisible(),false);
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct curl-windows');
   await page.getByRole('button',{name:'Edit and replay',exact:true}).click();
   await page.locator('#composer').waitFor({state:'visible'});
   assert.equal(await page.locator('#composer input[name="url"]').inputValue(),'http://example.test/second');

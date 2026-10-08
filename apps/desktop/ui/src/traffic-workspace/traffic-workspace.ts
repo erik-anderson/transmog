@@ -1,7 +1,7 @@
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
+import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
@@ -28,6 +28,18 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable trafficUndoText='';
   @observable trafficMenuX='12px';
   @observable trafficMenuY='80px';
+  @observable windowsCommands=false;
+  @observable commandBusy=false;
+  @observable commandTitle='Copy request';
+  @observable commandText='';
+  @observable commandNotices:Array<{id:string;text:string}>=[];
+  @observable commandStatus='';
+  @observable commandFileRequired=false;
+  @observable commandFileAvailable=false;
+  commandDialog!:HTMLDialogElement;
+  commandPreview!:HTMLTextAreaElement;
+  private commandSourceId='';
+  private commandFormat:RequestCommandFormat='curl';
   trafficMenu!:HTMLElement;
   trafficUndoButton!:HTMLButtonElement;
   private trafficSelection=new ListSelection();
@@ -103,6 +115,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns(); });
     this.layoutObserver.observe(this.sessionScroller);
     void this.watchSessions();
+    void invoke<{windows:boolean}>('desktop_bootstrap').then(bootstrap=>{if(this.isConnected)this.windowsCommands=bootstrap.windows;}).catch(()=>{});
   }
   lifecycleChanged():void { this.renderSessionState(); this.renderFollowState(); }
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
@@ -446,7 +459,37 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
   async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
-  replaySelected():void { if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }
+  replaySelected():void { this.trafficMenu.hidePopover(); if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }
+
+  async copyRequest(format:RequestCommandFormat):Promise<void> {
+    if(this.commandBusy || !this.selectedSessionId)return;
+    this.trafficMenu.hidePopover();this.commandBusy=true;
+    const id=this.selectedSessionId;this.commandSourceId=id;this.commandFormat=format==='curl'&&this.windowsCommands?'curl-windows':format;
+    this.commandTitle=format==='powershell'?'Copy as PowerShell (5.1 and 7)':'Copy as cURL';this.commandText='';this.commandPreview.value='';this.commandNotices=[];this.commandFileRequired=false;this.commandStatus='Preparing command…';this.diagnostic=this.commandStatus;
+    try {const result=await invoke<RequestCommand>('request_command',{id,format:this.commandFormat});if(!this.isConnected)return;this.setCommand(result);const copied=await this.copyCommand();if(result.bodyFileRequired||!copied)this.commandDialog.showModal();else this.diagnostic=this.commandTitle.replace('Copy as','').trim()+' command copied.'+(result.notices.length?' '+result.notices.join(' '):'');}
+    catch(error:unknown){this.diagnostic='Could not generate command: '+describeError(error);}
+    finally{this.commandBusy=false;}
+  }
+  private setCommand(result:RequestCommand):void {
+    this.commandText=result.text;this.commandPreview.value=result.text;this.commandNotices=result.notices.map((text,index)=>({id:String(index),text}));this.commandFileRequired=result.bodyFileRequired;this.commandFileAvailable=result.bodyFileAvailable;
+  }
+  async copyCommand():Promise<boolean> {
+    try {await navigator.clipboard.writeText(this.commandText);this.commandStatus=this.commandFileRequired?'Command copied. Supply the body file before running it.':'Command copied. Run it yourself when ready.';return true;}
+    catch {this.commandStatus='Clipboard access failed. Select and copy the command below.';return false;}
+  }
+  async saveRequestBody():Promise<void> {
+    if(this.commandBusy)return;this.commandBusy=true;this.commandStatus='Choose where to save the complete request body…';
+    try {const result=await invoke<RequestCommand|null>('save_request_body',{id:this.commandSourceId,format:this.commandFormat});if(!this.isConnected)return;if(result){this.setCommand(result);const copied=await this.copyCommand();this.commandStatus=copied?'Request body saved. Updated command copied.':'Request body saved. Clipboard access failed; copy the command below.';}else this.commandStatus='Save canceled. The command still needs a body path.';}
+    catch(error:unknown){this.commandStatus='Request body could not be saved: '+describeError(error);}
+    finally{this.commandBusy=false;}
+  }
+  closeCommand():void {this.commandDialog.close();}
+  async copyAllHeaders():Promise<void> {
+    if(!this.selectedSessionId||this.commandBusy)return;this.trafficMenu.hidePopover();this.commandBusy=true;
+    try {const text=await invoke<string>('copy_all_headers',{id:this.selectedSessionId});await navigator.clipboard.writeText(text);this.diagnostic='Request and response headers copied.';}
+    catch(error:unknown){this.diagnostic='Headers could not be copied: '+describeError(error);}
+    finally{this.commandBusy=false;}
+  }
   async resumeLatest():Promise<void> { this.followLatest = true; this.pageIndex = 0; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
   showUpdates():void { if (this.pendingRows.length) this.rebuildRows(this.pendingRows); this.displayedMatched = this.totalMatched; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.renderSessionState(); }
   async navigatePage(delta:number):Promise<void> { this.pageIndex = Math.max(0,this.pageIndex+delta); this.followLatest = false; this.queryRevision++; await this.refreshSessions(undefined,true); }

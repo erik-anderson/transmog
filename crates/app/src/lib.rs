@@ -17,6 +17,7 @@ mod inspector;
 mod lifecycle;
 mod preview;
 mod product_state;
+mod request_actions;
 mod response_assets;
 mod response_file;
 mod response_filename;
@@ -59,6 +60,7 @@ pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
     ThemePreference, WindowState,
 };
+pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
     ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
@@ -875,6 +877,42 @@ impl Application {
     /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
         inspector::session_detail(&self.service, self.body_store.as_ref(), id)
+    }
+
+    /// Produces clipboard text without starting a process or sending traffic.
+    ///
+    /// # Errors
+    /// Returns invalid selection, non-text header or unavailable body errors.
+    pub fn request_command(
+        &self,
+        id: &str,
+        format: RequestCommandFormat,
+    ) -> Result<RequestCommand, AppError> {
+        request_actions::command(&self.service, self.body_store.as_ref(), id, format)
+    }
+
+    /// Copies full request and response heads separated by two blank lines.
+    ///
+    /// # Errors
+    /// Returns invalid selection or non-text header errors.
+    pub fn copy_all_headers(&self, id: &str) -> Result<String, AppError> {
+        request_actions::copy_all_headers(&self.service, id)
+    }
+
+    /// Protects complete encoded request bytes while a native save dialog opens.
+    ///
+    /// # Errors
+    /// Returns invalid selection or missing/incomplete body errors.
+    pub fn prepare_request_file(&self, id: &str) -> Result<RequestFile, AppError> {
+        request_actions::prepare_file(&self.service, self.body_store.as_ref(), id)
+    }
+
+    /// Loads original headers and complete encoded bytes into an editable draft.
+    ///
+    /// # Errors
+    /// Returns invalid selection or non-text header errors.
+    pub fn composer_source(&self, id: &str) -> Result<ComposerSource, AppError> {
+        request_actions::composer_source(&self.service, self.body_store.as_ref(), id)
     }
 
     /// Prepares a complete original response for an explicitly requested save.

@@ -23,13 +23,14 @@ use transmog_app::{
     AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
     BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
-    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
-    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
-    ResponseAssetEdit, ResponseAssetInspection, ResponseFileResult, RuntimeDiagnostics,
-    ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus, SessionDetail,
-    SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
-    SupportBundleResult, SystemReplayExecutor, WindowState, WorkspacePreferences,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, ComposerSource,
+    DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, RequestCommand,
+    RequestCommandFormat, ResponseAsset, ResponseAssetEdit, ResponseAssetInspection,
+    ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
+    ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
+    SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
+    WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -59,6 +60,7 @@ struct DesktopState {
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)] // Independent file, trust, and recovery observations for IPC.
 struct DesktopBootstrap {
+    windows: bool,
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     ca_files_present: bool,
@@ -109,6 +111,7 @@ fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap,
         .map_err(|error| error.to_string())?
         .unwrap_or(false);
     Ok(DesktopBootstrap {
+        windows: true,
         ca_certificate_path: state.ca_certificate_path.clone(),
         ca_private_key_path: state.ca_private_key_path.clone(),
         ca_files_present: state.ca_certificate_path.is_file()
@@ -700,6 +703,72 @@ fn session_detail(id: String, state: State<'_, DesktopState>) -> Result<SessionD
 }
 
 #[tauri::command]
+async fn request_command(
+    id: String,
+    format: RequestCommandFormat,
+    state: State<'_, DesktopState>,
+) -> Result<RequestCommand, AppError> {
+    let app = state.application.clone();
+    tokio::task::spawn_blocking(move || app.request_command(&id, format))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+fn copy_all_headers(id: String, state: State<'_, DesktopState>) -> Result<String, AppError> {
+    state.application.copy_all_headers(&id)
+}
+
+#[tauri::command]
+async fn composer_source(
+    id: String,
+    state: State<'_, DesktopState>,
+) -> Result<ComposerSource, AppError> {
+    let app = state.application.clone();
+    tokio::task::spawn_blocking(move || app.composer_source(&id))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+async fn save_request_body(
+    id: String,
+    format: RequestCommandFormat,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<RequestCommand>, AppError> {
+    let app = state.application.clone();
+    let file = tokio::task::spawn_blocking(move || app.prepare_request_file(&id))
+        .await
+        .map_err(|_| request_action_error())??;
+    let Some(destination) = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save complete request body as")
+        .set_file_name("request-body.bin")
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path_text = destination.path().to_str().ok_or_else(|| AppError {
+        category: transmog_app::ErrorCategory::InvalidInput,
+        message: "Choose a request body path that can be represented in a command".into(),
+        retryable: false,
+    })?;
+    let command = file.command(format, path_text)?;
+    file.save_to(destination.path().to_owned()).await?;
+    Ok(Some(command))
+}
+
+fn request_action_error() -> AppError {
+    AppError {
+        category: transmog_app::ErrorCategory::Unavailable,
+        message: "Request action worker failed".into(),
+        retryable: true,
+    }
+}
+
+#[tauri::command]
 async fn inspect_body(
     request: BodyInspectionRequest,
     state: State<'_, DesktopState>,
@@ -1045,6 +1114,10 @@ pub fn run() {
             reset_ca,
             query_sessions,
             session_detail,
+            request_command,
+            copy_all_headers,
+            composer_source,
+            save_request_body,
             inspect_body,
             save_response_body,
             watch_sessions,

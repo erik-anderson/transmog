@@ -77,6 +77,27 @@ request exposes its full URL and copy action in a popover. The inspector shows
 request and response together when space permits and switches between them in a
 narrow pane. Detailed body retention information stays in a disclosure.
 
+The traffic context menu and selection More menu offer **Copy as cURL**,
+**Copy as PowerShell** on Windows, and **Copy all headers** for one entry.
+These actions only put text on the clipboard; they never execute a request.
+Windows cURL text is a PowerShell-compatible script that passes an encoded
+configuration through standard input, avoiding native argument quoting differences
+between PowerShell 5.1 and 7. PowerShell commands use the .NET HTTP client and
+explain its normalization limits. Both preserve duplicate captured fields,
+retain credentials unless capture redacted them, and regenerate body framing.
+Commands that need a body file use a path placeholder; small PowerShell bodies
+can embed even binary bytes as base64. Commands that can represent the request
+directly go straight to the clipboard without opening a dialog. The file dialog's
+Save as action saves complete original bytes with an eviction lease, then copies
+a command referencing the selected path. Missing bytes and redacted values have
+explicit placeholders. Copy all headers uses complete backend heads and puts
+exactly two blank lines between the request and response blocks.
+
+**Edit and replay** loads complete original request bytes as hex, preserving
+Content-Encoding. It preserves an edited draft until the user chooses to replace
+it. Missing bodies require a replacement or an explicit empty-body choice before
+sending. The existing method and credential acknowledgements apply to replay.
+
 Automation separates auto-responses, header overrides, and scripts. Rule
 properties and batch review share the available space with the dense rule list;
 narrow windows switch between the list and selected properties. Batch review

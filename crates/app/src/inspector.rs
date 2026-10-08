@@ -1068,7 +1068,7 @@ fn bounded_debug(value: &impl std::fmt::Debug) -> String {
     display_text(format!("{value:?}").as_bytes())
 }
 
-fn boundary(value: ExchangeBoundary) -> String {
+pub(crate) fn boundary(value: ExchangeBoundary) -> String {
     match value {
         ExchangeBoundary::ClientRequest => "client-request",
         ExchangeBoundary::UpstreamRequest => "upstream-request",

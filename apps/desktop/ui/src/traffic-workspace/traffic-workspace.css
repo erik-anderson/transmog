@@ -102,3 +102,10 @@ traffic-workspace { display:contents; }
   .selection-actions { justify-content:flex-start; flex-wrap:wrap; }
   .list-footer { flex-wrap:wrap; gap:.3rem; }
 }
+
+.request-command-dialog { border:1px solid var(--line); border-radius:.45rem; padding:1rem; color:var(--text); background:var(--panel); width:min(46rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; }
+.request-command-dialog textarea { width:100%; min-height:10rem; max-height:40dvh; font:.75rem/1.5 "Cascadia Mono",Consolas,monospace; white-space:pre; }
+
+.request-command-dialog h2 { margin:0 0 .65rem; font-size:1rem; }
+.request-command-dialog p { font-size:.8rem; }
+.request-command-dialog::backdrop { background:rgb(0 0 0 / .25); }

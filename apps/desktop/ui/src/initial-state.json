@@ -668,5 +668,14 @@
   "largestFirst": false,
   "authorizationPresent": false,
   "proxyAuthorizationPresent": false,
-  "sourceIp": ""
+  "sourceIp": "",
+  "windowsCommands": false,
+  "commandBusy": false,
+  "commandTitle": "Copy request",
+  "commandText": "",
+  "commandNotices": [],
+  "commandStatus": "",
+  "commandFileRequired": false,
+  "commandFileAvailable": false,
+  "composerBodyMissing": false
 }

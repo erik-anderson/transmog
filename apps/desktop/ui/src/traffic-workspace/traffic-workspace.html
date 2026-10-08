@@ -72,7 +72,17 @@
     </div>
 
     <div id="selected-url-full" class="table-popover url-popover" popover="auto"><strong>Selected URL</strong><p class="full-value">{{selectedUrlText}}</p><button type="button" @click="{copyUrl()}">Copy URL</button></div>
-    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
+    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{copyRequest('curl')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as cURL</button><if condition="windowsCommands"><button type="button" @click="{copyRequest('powershell')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as PowerShell</button></if><button type="button" @click="{copyAllHeaders()}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy all headers</button><button type="button" @click="{replaySelected()}" ?disabled="{{selectedTrafficCount != 1}}">Edit and replay</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
+
+    <dialog w-ref="{commandDialog}" class="request-command-dialog" aria-labelledby="command-heading">
+      <h2 id="command-heading">{{commandTitle}}</h2>
+      <p class="field-help">This only copies text. Transmog never runs the generated command.</p>
+      <for each="notice in commandNotices"><p key="{{notice.id}}" class="field-help">{{notice.text}}</p></for>
+      <if condition="commandFileRequired"><p>This command uses a file containing the complete original request body.</p><button type="button" @click="{saveRequestBody()}" ?disabled="{{commandBusy || !commandFileAvailable}}">Save as…</button><if condition="!commandFileAvailable"><p class="field-help">Complete bytes are unavailable. You can supply your own body file.</p></if></if>
+      <textarea w-ref="{commandPreview}" aria-label="Generated command" readonly spellcheck="false"></textarea>
+      <p role="status">{{commandStatus}}</p>
+      <footer class="actions"><button type="button" @click="{copyCommand()}" ?disabled="{{commandBusy || !commandText}}">Copy command</button><button type="button" class="secondary" @click="{closeCommand()}">Close</button></footer>
+    </dialog>
 
     <div id="column-actions" class="table-popover column-menu" w-ref="{columnMenu}" popover="auto" data-x="{{menuX}}" data-y="{{menuY}}">
       <strong class="popover-title">{{menuColumn.label}}</strong>
