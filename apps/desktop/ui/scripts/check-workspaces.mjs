@@ -107,6 +107,26 @@ await page.addInitScript((workspace) => {
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
         case 'stop_application': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
+        case 'search_traffic': {
+          const request=args.request;state.lastContentSearch=structuredClone(request);state.searchCanceled=false;
+          args.onProgress.onmessage({operationId:request.operationId,completed:0,total:state.sessions.length});
+          if(state.deferSearch)await new Promise(resolve=>state.releaseSearch=resolve);
+          if(state.searchCanceled)throw new Error('Traffic search canceled');
+          const normalize=text=>{text=String(text);if(request.ignoreDiacritics)text=text.normalize('NFD').replace(/\p{M}/gu,'');return request.caseSensitive?text:text.toLowerCase();};
+          const regex=request.mode==='regex'?new RegExp(request.pattern,request.caseSensitive?'u':'iu'):null;
+          const match=text=>regex?regex.test(String(text)):normalize(text).includes(normalize(request.pattern));
+          const ids=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)).filter(row=>request.metadata&&match(row.url+' '+row.method+' '+row.caller.processName+' '+row.caller.processId+' '+row.status)||request.headers&&match('X-Support: HeaderNeedle '+row.id)||request.responseBodies&&row.contentType!=='image/webp'&&match(row.searchBody??('body for '+row.id))).map(row=>row.id);
+          const id='search-'+(state.searchResults?.length??0);(state.searchResults??=[]).push({id,ids});return {id,operationId:request.operationId,ids,examined:state.sessions.length,binaryBodies:1,unavailableBodies:0};
+        }
+        case 'cancel_traffic_search': state.searchCanceled=true;return;
+        case 'matching_traffic_ids': {
+          const result=state.searchResults?.find(result=>result.id===args.query.searchResultId);let rows=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)&&(!result||result.ids.includes(row.id)));
+          for(const filter of args.query.filters??[])rows=rows.filter(row=>filter.column==='status'?String(row.status)===filter.value:filter.column==='host'?row.host.includes(filter.value):true);
+          return rows.map(row=>row.id);
+        }
+        case 'remove_unselected_traffic_entries': {
+          state.dismissedIds??=[];const changed=state.sessions.map(row=>row.id).filter(id=>!args.ids.includes(id)&&!state.dismissedIds.includes(id));state.dismissedIds.push(...changed);return changed;
+        }
         case 'watch_sessions': state.channel = args.onEvent; return;
         case 'query_sessions': {
           if (state.queryError) throw new Error('Fixture query failure');
@@ -114,7 +134,7 @@ await page.addInitScript((workspace) => {
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
-          let rows = structuredClone(state.sessions).filter(row => !state.dismissedIds?.includes(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
+          let rows = structuredClone(state.sessions).filter(row => (!args.query.searchResultId||state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids.includes(row.id)) && !state.dismissedIds?.includes(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
           let offset=args.query.offset??0;
@@ -443,7 +463,7 @@ try {
   });
 
   await page.evaluate(() => { globalThis.__row = document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]'); });
-  await page.locator('form.filters button').click();
+  await page.locator('form.filters button[type=submit]').click();
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded '));
   assert.equal(await page.evaluate(() => globalThis.__row === document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]')), true, 'A refresh replaced a keyed row');
   const coalesced = await page.evaluate(async () => {
@@ -898,9 +918,10 @@ try {
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.some(row=>row.id==='new'));
   assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),2);
   await page.getByLabel('Search traffic',{exact:true}).fill('first');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched===1);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),0);
-  await page.getByRole('button',{name:'Clear filters',exact:true}).click();
+  await page.getByRole('button',{name:'Clear search',exact:true}).click();
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.pagingRows;delete state.pagingRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';await traffic.refreshSessions(undefined,true);});
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions.find(row=>row.id==='cached').terminal='active';await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
   await page.locator('tr[data-session-id="first"]').click();
@@ -1178,6 +1199,54 @@ try {
   assert.deepEqual(errors,[]);
 
   await view('traffic');
+
+  await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');await traffic.clearFilters();const state=globalThis.__workspaceFixture;state.sessions.find(row=>row.id==='first').searchBody='Café marker';state.sessions.find(row=>row.id==='second').searchBody='CAFE other';});
+  const searchOptions=page.locator('#traffic-search-options');
+  await page.getByRole('button',{name:'Search options',exact:true}).click();
+  await searchOptions.getByLabel('URL, method, process, PID and status',{exact:true}).uncheck();
+  await searchOptions.getByLabel('Request and response headers',{exact:true}).uncheck();
+  await searchOptions.getByLabel('Ignore accents (text mode)',{exact:true}).check();
+  await searchOptions.getByLabel('Select all matches after searching',{exact:true}).check();
+  await page.getByLabel('Search traffic',{exact:true}).fill('cafe');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByRole('button',{name:'Select all 2 matches',exact:true}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount===2);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastContentSearch.ignoreDiacritics),true);
+  assert.doesNotMatch(await page.locator('.content-search-status').textContent(),/binary|image/i);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/content-search-wide.png')});
+  await page.getByLabel('Search traffic',{exact:true}).fill('marker');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.waitForFunction(()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');return !traffic.searchingTraffic&&traffic.selectedTrafficCount===1&&traffic.trafficSelection.ids.has('first');});
+  await page.locator('.traffic-selection-bar').getByRole('button',{name:'More',exact:true}).click();
+  await page.locator('#traffic-entry-menu').getByRole('button',{name:'Remove unselected entries',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').removingTraffic);
+  await page.getByRole('button',{name:'Clear search',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched===1);
+  await page.locator('.traffic-undo').getByRole('button',{name:'Undo traffic removal',exact:true}).click();
+  await page.waitForFunction(()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');return !traffic.removingTraffic&&traffic.totalMatched>=4;});
+  await page.getByRole('button',{name:'Search options',exact:true}).click();
+  await searchOptions.getByLabel('Match mode',{exact:true}).selectOption('regex');
+  assert.equal(await searchOptions.getByLabel('Ignore accents (text mode)',{exact:true}).isDisabled(),true);
+  await page.getByLabel('Search traffic',{exact:true}).fill('caf[ée]');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByRole('button',{name:'Select all 2 matches',exact:true}).waitFor();
+  await page.getByLabel('Search traffic',{exact:true}).fill('(');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.locator('.content-search-status').getByText(/Search failed:/).waitFor();
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),0);
+  await page.evaluate(()=>globalThis.__workspaceFixture.deferSearch=true);
+  await page.getByLabel('Search traffic',{exact:true}).fill('body');
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByRole('button',{name:'Cancel search',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.releaseSearch();globalThis.__workspaceFixture.deferSearch=false;});
+  await page.locator('.content-search-status').getByText('Search canceled. Previous results are unchanged.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Clear search',exact:true}).click();
+  await page.getByRole('button',{name:'Search options',exact:true}).click();
+  await searchOptions.getByLabel('Match mode',{exact:true}).selectOption('text');
+  await searchOptions.getByLabel('URL, method, process, PID and status',{exact:true}).check();
+  await searchOptions.getByLabel('Request and response headers',{exact:true}).check();
+  await searchOptions.getByLabel('Select all matches after searching',{exact:true}).uncheck();
+  await page.getByRole('button',{name:'Search options',exact:true}).click();
   await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/support.saz');
   await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
   await page.locator('.trace-import-status').getByText(/Imported 1 entry from support.saz/).waitFor();

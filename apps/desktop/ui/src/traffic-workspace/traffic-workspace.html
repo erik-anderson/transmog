@@ -1,10 +1,10 @@
 <template>
   <section id="traffic" class="app-view traffic-view" aria-labelledby="traffic-heading" ?hidden="{{view != 'traffic'}}" ?data-active="{{view == 'traffic'}}">
-    <header class="view-toolbar">
+    <div class="traffic-toolbar-stack"><header class="view-toolbar">
       <div class="view-title"><h1 id="traffic-heading">Traffic</h1></div>
-      <form w-ref="{filterForm}" class="filters" @submit="{refreshSessions(e)}">
-        <label class="traffic-search"><span class="sr-only">Search traffic</span><input w-ref="{searchInput}" name="search" type="search" placeholder="Search URL, host, process or PID" maxlength="255" @input="{searchChanged(e)}"></label>
-        <button type="submit" class="secondary compact-button">Search</button>
+      <form w-ref="{filterForm}" class="filters" @submit="{runContentSearch(e)}">
+        <label class="traffic-search"><span class="sr-only">Search traffic</span><input w-ref="{searchInput}" name="search" type="search" placeholder="Search captured traffic" maxlength="4096" @input="{searchChanged(e)}"></label>
+        <button type="submit" class="secondary compact-button" ?disabled="{{searchingTraffic}}">Search</button><button type="button" class="secondary compact-button" popovertarget="traffic-search-options" aria-label="Search options" title="Search options">⋯</button>
       </form>
       <div class="traffic-tools">
         <if condition="!viewerMode"><autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch></if>
@@ -14,14 +14,16 @@
         <button type="button" class="secondary compact-button" popovertarget="table-settings">Table settings</button>
       </div>
     </header>
+    <if condition="contentSearchStatus"><div class="content-search-status"><span role="status">{{contentSearchStatus}}</span><if condition="searchingTraffic"><button type="button" class="secondary compact-button" @click="{cancelContentSearch()}">Cancel search</button></if></div></if>
+    <if condition="contentSearchActive"><div class="content-search-results"><span class="search-result-label" title="{{contentSearchLabel}}">Search results: {{contentSearchLabel}}</span><button type="button" class="secondary compact-button" @click="{selectAllSearchMatches()}" ?disabled="{{searchingTraffic}}">Select all {{contentMatchCount}} matches</button><button type="button" class="secondary compact-button" @click="{clearContentSearch()}">Clear search</button><span class="field-help"><if condition="viewerMode">Search again after importing more traffic.</if><if condition="!viewerMode">Search again to include newly captured traffic.</if></span></div></if>
     <if condition="importStatus"><div class="trace-import-status"><span role="status">{{importStatus}}</span><if condition="importingTrace"><progress aria-label="Indexing saved traffic" value="{{importPercent}}" max="100"></progress><button type="button" class="secondary compact-button" @click="{cancelImport()}">Cancel import</button></if></div></if>
     <div class="traffic-summary"><output class="session-status" data-kind="{{sessionKind}}">{{sessionText}}</output><span class="sort-summary">{{sortLabel}}</span></div>
-    <if condition="filters.length || searchText">
+    <if condition="filters.length">
       <div class="filter-chips"><for each="filter in filters"><button key="{{filter.label}}" type="button" class="filter-chip" aria-label="Remove {{filter.label}} filter" @click="{removeFilter(filter.column,filter.operator)}">{{filter.label}} ×</button></for><button type="button" class="clear-filters" @click="{clearFilters()}">Clear filters</button></div>
     </if>
-    <div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
+    </div><div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
       <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
-        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
+        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount && !contentSearchActive}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic || !selectedTrafficCount}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
@@ -75,7 +77,7 @@
     </div>
 
     <div id="selected-url-full" class="table-popover url-popover" popover="auto"><strong>Selected URL</strong><p class="full-value">{{selectedUrlText}}</p><button type="button" @click="{copyUrl()}">Copy URL</button></div>
-    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{copyRequest('curl')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as cURL</button><if condition="windowsCommands"><button type="button" @click="{copyRequest('powershell')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as PowerShell</button></if><button type="button" @click="{copyAllHeaders()}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy all headers</button><button type="button" @click="{replaySelected()}" ?disabled="{{selectedTrafficCount != 1}}">Edit and replay</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
+    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{copyRequest('curl')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as cURL</button><if condition="windowsCommands"><button type="button" @click="{copyRequest('powershell')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as PowerShell</button></if><button type="button" @click="{copyAllHeaders()}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy all headers</button><button type="button" @click="{replaySelected()}" ?disabled="{{selectedTrafficCount != 1}}">Edit and replay</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic || !selectedTrafficCount}}">Remove selected entries <kbd>Del</kbd></button><button type="button" @click="{removeUnselectedTraffic()}" ?disabled="{{removingTraffic}}">Remove unselected entries</button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
 
     <div id="trace-files-menu" class="table-popover" popover="auto"><strong>Saved traffic</strong><button type="button" @click="{openSavedTrace(true)}">Open in a separate viewer…</button><button type="button" @click="{showTraceMetadata()}">Trace metadata…</button><p class="field-help">Drop a SAZ or TMCap file onto the traffic list to import it into this session.</p></div>
     <dialog w-ref="{openTraceDialog}" class="trace-open-dialog" aria-labelledby="trace-open-heading" @cancel="{cancelOpenedTrace(e)}">
@@ -88,6 +90,12 @@
       <h3>{{metadataTraceName}}</h3><p class="full-value">{{metadataSummary}}</p><p role="status">{{metadataError}}</p><if condition="metadataNetworkContext"><h3>{{metadataNetworkTitle}}</h3><pre class="trace-context">{{metadataNetworkContext}}</pre></if><if condition="metadataContext"><pre class="trace-context">{{metadataContext}}</pre></if>
       <for each="note in metadataNotes"><p key="{{note.id}}" class="field-help">{{note.text}}</p></for><footer class="actions"><button type="button" class="secondary" @click="{closeMetadata()}">Close</button></footer>
     </dialog>
+    <div id="traffic-search-options" class="table-popover search-options" popover="auto"><strong>Search options</strong>
+      <label>Match mode<select aria-label="Match mode" @change="{setSearchMode(e)}"><option value="text" ?selected="{{searchMode == 'text'}}">Text</option><option value="regex" ?selected="{{searchMode == 'regex'}}">Regular expression</option></select></label>
+      <label><input type="checkbox" ?checked="{{searchCaseSensitive}}" @change="{setSearchOption('searchCaseSensitive',e)}"> Case sensitive</label><label><input type="checkbox" ?checked="{{searchIgnoreAccents}}" ?disabled="{{searchMode == 'regex'}}" @change="{setSearchOption('searchIgnoreAccents',e)}"> Ignore accents (text mode)</label>
+      <strong>Search in</strong><label><input type="checkbox" ?checked="{{searchMetadata}}" @change="{setSearchOption('searchMetadata',e)}"> URL, method, process, PID and status</label><label><input type="checkbox" ?checked="{{searchHeaders}}" @change="{setSearchOption('searchHeaders',e)}"> Request and response headers</label><label><input type="checkbox" ?checked="{{searchBodies}}" @change="{setSearchOption('searchBodies',e)}"> Decoded text response bodies</label>
+      <label><input type="checkbox" ?checked="{{selectSearchMatches}}" @change="{setSearchOption('selectSearchMatches',e)}"> Select all matches after searching</label><p class="field-help">Each search resets the selection. Binary bodies are skipped. Text bodies are searched within a 16 MiB limit.</p>
+    </div>
     <dialog w-ref="{commandDialog}" class="request-command-dialog" aria-labelledby="command-heading">
       <h2 id="command-heading">{{commandTitle}}</h2>
       <p class="field-help">This only copies text. Transmog never runs the generated command.</p>

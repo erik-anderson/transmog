@@ -540,6 +540,23 @@ impl SessionCatalog {
         changed
     }
 
+    /// Removes every currently visible entry outside a selected ID set. This
+    /// operates across the catalog, independent of filters and page size, and
+    /// retains evidence for Undo without stopping requests or deleting files.
+    pub fn dismiss_unselected(&self, selected: &HashSet<ExchangeId>) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let changed = state
+            .by_id
+            .keys()
+            .copied()
+            .filter(|id| !selected.contains(id) && !state.dismissed.contains(id))
+            .collect::<Vec<_>>();
+        state.dismissed.extend(changed.iter().copied());
+        drop(state);
+        self.notify_view_change(&changed);
+        changed
+    }
+
     /// Restores dismissed entries which have not since been evicted.
     pub fn restore_dismissed(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
         let mut state = self.lock_state();

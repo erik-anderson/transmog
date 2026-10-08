@@ -7,7 +7,7 @@ import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
-import type { TraceMetadata, TraceImportResult, TraceImportProgress } from '../models.js';
+import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
@@ -97,6 +97,22 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable sortLabel = 'Newest first';
   @observable filters:TrafficFilter[] = [];
   @observable searchText = '';
+  @observable searchingTraffic=false;
+  @observable searchMode='text';
+  @observable searchCaseSensitive=false;
+  @observable searchIgnoreAccents=false;
+  @observable searchMetadata=true;
+  @observable searchHeaders=true;
+  @observable searchBodies=true;
+  @observable selectSearchMatches=false;
+  @observable contentSearchStatus='';
+  @observable contentSearchLabel='';
+  @observable contentMatchCount=0;
+  @observable contentSearchActive=false;
+  private searchOperation='';
+  private searchResultId:string|null=null;
+  private searchMatchIds:string[]=[];
+  private matchRevision=-1;
   @observable tableWidth = '1000px';
   @observable listShare = '45%';
   @observable requestShare = '45%';
@@ -330,12 +346,46 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pageIndex = 0; this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
   }
   async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
-  async clearFilters():Promise<void> { this.clearTrafficSelection();this.filters = []; this.searchText = ''; this.searchInput.value = ''; this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);}
   searchChanged(event:Event):void {
-    this.clearTrafficSelection();
-    this.searchText = (event.currentTarget as HTMLInputElement).value;
-    window.clearTimeout(this.searchTimer);
-    this.searchTimer = window.setTimeout(() => { this.pageIndex = 0; this.queryRevision++; void this.refreshSessions(undefined,true); },250);
+    this.searchText=(event.currentTarget as HTMLInputElement).value;
+    // Content decoding starts on Search/Enter, rather than on each keystroke.
+  }
+  setSearchOption(option:'searchCaseSensitive'|'searchIgnoreAccents'|'searchMetadata'|'searchHeaders'|'searchBodies'|'selectSearchMatches',event:Event):void {this[option]=(event.currentTarget as HTMLInputElement).checked;}
+  setSearchMode(event:Event):void {this.searchMode=(event.currentTarget as HTMLSelectElement).value;}
+  async runContentSearch(event?:Event):Promise<void> {
+    event?.preventDefault();if(this.searchingTraffic)return;
+    const pattern=this.searchInput.value;this.searchText=pattern;this.clearTrafficSelection();
+    if(!pattern){await this.clearContentSearch();return;}
+    this.searchingTraffic=true;this.contentSearchStatus='Searching captured traffic…';
+    const operationId=crypto.randomUUID();this.searchOperation=operationId;
+    const onProgress=new Channel<TrafficSearchProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.searchOperation===progress.operationId)this.contentSearchStatus=`Searching captured traffic · ${progress.completed} of ${progress.total} entries checked…`;};
+    try{
+      const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,headers:this.searchHeaders,responseBodies:this.searchBodies},onProgress});
+      if(!this.isConnected||this.searchOperation!==operationId)return;
+      this.searchResultId=result.id;this.searchMatchIds=result.ids;this.contentMatchCount=result.ids.length;this.contentSearchActive=true;this.contentSearchLabel=pattern;
+      this.contentSearchStatus=`${result.ids.length} ${result.ids.length===1?'match':'matches'} in ${result.examined} entries.${result.unavailableBodies?` ${result.unavailableBodies} text bodies were unavailable or beyond the search limit.`:''}`;
+      this.pageIndex=0;this.followLatest=false;this.queryRevision++;await this.refreshSessions(undefined,true);
+      if(this.selectSearchMatches)this.applySearchSelection();
+    }catch(error:unknown){if(this.isConnected&&this.searchOperation===operationId)this.contentSearchStatus=describeError(error).includes('canceled')?'Search canceled. Previous results are unchanged.':'Search failed: '+describeError(error)+(this.contentSearchActive?' Previous results are still shown.':'');}
+    finally{onProgress.onmessage=()=>{};if(this.searchOperation===operationId){this.searchOperation='';this.searchingTraffic=false;}}
+  }
+  private applySearchSelection():void {
+    this.trafficSelection.ids=new Set(this.searchMatchIds);this.selectedTraffic.clear();this.trafficSelection.focused=this.sessions.find(row=>this.trafficSelection.ids.has(row.id))?.id??null;this.trafficSelection.anchor=this.trafficSelection.focused;this.updateTrafficSelection();
+    const first=this.sessions.find(row=>this.trafficSelection.ids.has(row.id));if(first)void this.inspectSession(first,true);
+  }
+  async selectAllSearchMatches():Promise<void> {this.selectSearchMatches=true;try{await this.refreshSearchMatchIds();this.applySearchSelection();}catch(error:unknown){this.contentSearchStatus='Matches could not be selected: '+describeError(error);}}
+  private async refreshSearchMatchIds():Promise<void> {
+    if(!this.searchResultId)return;
+    const resultId=this.searchResultId, revision=this.queryRevision;
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return;
+    this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
+  }
+  async cancelContentSearch():Promise<void> {if(this.searchOperation){this.contentSearchStatus='Canceling search…';try{await invoke('cancel_traffic_search',{operationId:this.searchOperation});}catch(error:unknown){this.contentSearchStatus='Cancel failed: '+describeError(error);}}}
+  async clearContentSearch():Promise<void> {
+    if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
+    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);
   }
   startColumnDrag(id:ColumnId,event:PointerEvent):void {
     if (event.button !== 0) return;
@@ -407,10 +457,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:this.searchText || null,sort:this.sort,offset:this.pageIndex*this.pageLimit,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:null,searchResultId:this.searchResultId,sort:this.sort,offset:this.pageIndex*this.pageLimit,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
       if (!this.isConnected || revision !== this.queryRevision) return;
       this.totalMatched = page.totalMatched ?? page.sessions.length;
       this.pageEnd = Math.min(this.totalMatched,this.pageIndex*this.pageLimit+page.sessions.length);
+      if(this.contentSearchActive&&(force||this.matchRevision!==revision||this.contentMatchCount!==this.totalMatched))await this.refreshSearchMatchIds();
+      if(!this.isConnected||revision!==this.queryRevision)return;
       if (force || this.followLatest || !this.sessions.length) { this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.displayedMatched = this.totalMatched; this.rebuildRows(page.sessions); }
       else {
         this.pendingRows = page.sessions;
@@ -452,6 +504,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   selectWithButton(session:SessionSummary,event:MouseEvent):void {event.stopPropagation();this.selectTraffic(session,event);}
   selectWithKeyboard(session:SessionSummary,event:KeyboardEvent):void {
     if(isTextEditing(event))return;
+    if(this.contentSearchActive&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){event.preventDefault();void this.selectAllSearchMatches();return;}
     if(event.key==='Delete') {event.preventDefault();void this.removeSelectedTraffic();return;}
     if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z') {event.preventDefault();void this.undoTrafficRemoval();return;}
     if(!this.trafficSelection.key(session.id,this.sessions.map(row=>row.id),event))return;
@@ -461,6 +514,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   listKeyboard(event:KeyboardEvent):void {
     if(event.defaultPrevented || isTextEditing(event))return;
+    if(this.contentSearchActive&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){event.preventDefault();void this.selectAllSearchMatches();return;}
     if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();void this.undoTrafficRemoval();}
     else if(event.key==='Delete'){event.preventDefault();void this.removeSelectedTraffic();}
   }
@@ -473,7 +527,19 @@ export class TrafficWorkspace extends WorkspaceElement {
     event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectSession(session,true);}
     this.positionTrafficMenu(event);this.trafficMenu.showPopover();
   }
-  selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.selectedTraffic.keys()));}
+  selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
+  async removeUnselectedTraffic():Promise<void> {
+    if(this.removingTraffic)return;this.removingTraffic=true;
+    try {
+      const removed=await invoke<string[]>('remove_unselected_traffic_entries',{ids:[...this.trafficSelection.ids]});
+      if(!removed.length){this.diagnostic='There are no unselected entries to remove.';return;}
+      const removedIds=new Set(removed);
+      this.trafficUndo.push({ids:removed,rows:this.sessions.filter(row=>removedIds.has(row.id))});if(this.trafficUndo.length>20)this.trafficUndo.shift();this.trafficUndoText=`Removed ${removed.length} unselected ${removed.length===1?'entry':'entries'} from Traffic.`;
+      if(this.selectedSessionId&&removedIds.has(this.selectedSessionId)){this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);}
+      this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);this.updateTrafficSelection();this.trafficMenu.hidePopover();
+    }catch(error:unknown){this.diagnostic='Traffic removal failed: '+describeError(error);}
+    finally{this.removingTraffic=false;}
+  }
   async removeSelectedTraffic():Promise<void> {
     if(this.removingTraffic || !this.trafficSelection.ids.size)return;this.removingTraffic=true;
     const ids=[...this.trafficSelection.ids],rows=[...this.selectedTraffic.values()];const index=this.sessions.findIndex(row=>row.id===this.trafficSelection.focused);
@@ -547,6 +613,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       // Discard live queries started with the old filters while the source page was loading.
       revision = ++this.queryRevision;
       const filtered = this.filters.length > 0 || this.searchText.length > 0;
+      if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
+      this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentSearchStatus='';this.contentSearchLabel='';this.contentMatchCount=0;
       this.filters = []; this.searchText = ''; this.searchInput.value = '';
       this.pageIndex = Math.floor((page.focusOffset ?? 0)/this.pageLimit);
       this.totalMatched = page.totalMatched; this.displayedMatched = page.totalMatched;
@@ -568,12 +636,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
   async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
-  replaySelected():void { this.trafficMenu.hidePopover(); if (this.selectedDetail) this.$emit('replay-request',this.selectedDetail); }
+  async replaySelected():Promise<void> {this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;try{const detail=this.selectedDetail?.id===id?this.selectedDetail:await loadSessionDetail(id,false);this.$emit('replay-request',detail);}catch(error:unknown){this.diagnostic='Replay source unavailable: '+describeError(error);}}
 
   async copyRequest(format:RequestCommandFormat):Promise<void> {
     if(this.commandBusy || !this.selectedSessionId)return;
     this.trafficMenu.hidePopover();this.commandBusy=true;
-    const id=this.selectedSessionId;this.commandSourceId=id;this.commandFormat=format==='curl'&&this.windowsCommands?'curl-windows':format;
+    const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]!:this.selectedSessionId;this.commandSourceId=id;this.commandFormat=format==='curl'&&this.windowsCommands?'curl-windows':format;
     this.commandTitle=format==='powershell'?'Copy as PowerShell (5.1 and 7)':'Copy as cURL';this.commandText='';this.commandPreview.value='';this.commandNotices=[];this.commandFileRequired=false;this.commandStatus='Preparing command…';this.diagnostic=this.commandStatus;
     try {const result=await invoke<RequestCommand>('request_command',{id,format:this.commandFormat});if(!this.isConnected)return;this.setCommand(result);const copied=await this.copyCommand();if(result.bodyFileRequired||!copied)this.commandDialog.showModal();else this.diagnostic=this.commandTitle.replace('Copy as','').trim()+' command copied.'+(result.notices.length?' '+result.notices.join(' '):'');}
     catch(error:unknown){this.diagnostic='Could not generate command: '+describeError(error);}
@@ -595,7 +663,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeCommand():void {this.commandDialog.close();}
   async copyAllHeaders():Promise<void> {
     if(!this.selectedSessionId||this.commandBusy)return;this.trafficMenu.hidePopover();this.commandBusy=true;
-    try {const text=await invoke<string>('copy_all_headers',{id:this.selectedSessionId});await navigator.clipboard.writeText(text);this.diagnostic='Request and response headers copied.';}
+    try {const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;const text=await invoke<string>('copy_all_headers',{id});await navigator.clipboard.writeText(text);this.diagnostic='Request and response headers copied.';}
     catch(error:unknown){this.diagnostic='Headers could not be copied: '+describeError(error);}
     finally{this.commandBusy=false;}
   }
@@ -605,7 +673,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
-    const empty = this.filters.length || this.searchText ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    const empty = this.filters.length || this.contentSearchActive ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
     const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges.' : empty);
     this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
     this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';
@@ -621,7 +689,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   disconnectedCallback():void {
     this.clearColumnDrag();
-    for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});this.metadataGeneration++;
+    for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
     this.inspectionGeneration++; super.disconnectedCallback();
   }

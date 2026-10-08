@@ -22,6 +22,7 @@ mod response_assets;
 mod response_file;
 mod response_filename;
 mod scripts;
+mod search;
 mod sessions;
 mod trace_body;
 mod traces;
@@ -69,6 +70,9 @@ pub use response_assets::{
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
+pub use search::{
+    TrafficSearchMode, TrafficSearchProgress, TrafficSearchRequest, TrafficSearchResult,
+};
 use serde::Serialize;
 pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
@@ -235,6 +239,7 @@ pub struct Application {
     scripts: scripts::ScriptRegistry,
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
+    searches: search::SearchRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -321,6 +326,7 @@ impl Application {
             scripts,
             previews,
             traces: traces::TraceRegistry::default(),
+            searches: search::SearchRegistry::default(),
         })
     }
 
@@ -836,7 +842,47 @@ impl Application {
     /// # Errors
     /// Returns invalid filters, page sizes, cursors, or token-generation failures.
     pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
-        sessions::query_sessions_with_traces(&self.service, &self.cursors, query, &self.traces)
+        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        sessions::query_sessions_with_traces(
+            &self.service,
+            &self.cursors,
+            query,
+            &self.traces,
+            matching.as_deref(),
+        )
+    }
+
+    /// Returns every entry matching the current filters and search snapshot.
+    ///
+    /// # Errors
+    /// Returns invalid filters or an expired search handle.
+    pub fn matching_traffic_ids(&self, query: &SessionQueryInput) -> Result<Vec<String>, AppError> {
+        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
+    }
+
+    /// Searches captured evidence without changing traffic or selections.
+    ///
+    /// # Errors
+    /// Returns invalid expressions, bounded search failures or cancellation.
+    pub async fn search_traffic(
+        &self,
+        request: TrafficSearchRequest,
+        progress: Arc<dyn Fn(TrafficSearchProgress) + Send + Sync>,
+    ) -> Result<TrafficSearchResult, AppError> {
+        self.searches
+            .search(
+                request,
+                self.service.clone(),
+                self.body_store.clone(),
+                progress,
+            )
+            .await
+    }
+
+    /// Cancels one window's current search without publishing partial results.
+    pub fn cancel_traffic_search(&self, operation_id: &str) {
+        self.searches.cancel(operation_id);
     }
 
     /// Removes selected rows from Traffic, retaining bounded Undo evidence.
@@ -848,10 +894,10 @@ impl Application {
         ids: &[String],
         restore: bool,
     ) -> Result<Vec<String>, AppError> {
-        if ids.len() > 10_000 {
+        if ids.len() > 200_000 {
             return Err(AppError::new(
                 ErrorCategory::Limit,
-                "Select at most 10000 traffic entries.",
+                "Select at most 200000 traffic entries.",
                 false,
             ));
         }
@@ -865,6 +911,34 @@ impl Application {
             self.service.catalog().dismiss(&ids)
         };
         Ok(changed.iter().map(|id| format!("{:032x}", id.0)).collect())
+    }
+
+    /// Removes all unselected entries across the whole workspace, with Undo.
+    ///
+    /// # Errors
+    /// Rejects oversized or malformed selections before changing the catalog.
+    pub fn remove_unselected_traffic_entries(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        if ids.len() > 200_000 {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "Selection exceeds the entry limit",
+                false,
+            ));
+        }
+        let selected = ids
+            .iter()
+            .map(|id| response_assets::parse_exchange_id(id))
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        Ok(self
+            .service
+            .catalog()
+            .dismiss_unselected(&selected)
+            .iter()
+            .map(|id| format!("{:032x}", id.0))
+            .collect())
     }
 
     /// Opens a bounded hint-only subscription for presentation refreshes.

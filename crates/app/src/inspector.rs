@@ -889,7 +889,7 @@ fn is_json_media_type(media_type: &str) -> bool {
         || media_type.to_ascii_lowercase().ends_with("+json")
 }
 
-fn is_text_media_type(media_type: &str) -> bool {
+pub(crate) fn is_text_media_type(media_type: &str) -> bool {
     let mime = media_type
         .split(';')
         .next()
@@ -916,7 +916,7 @@ fn format_json(text: Option<&str>) -> Option<String> {
     serde_json::to_string_pretty(&value).ok()
 }
 
-fn decode_unicode(bytes: &[u8], declared: Option<&str>) -> Option<String> {
+pub(crate) fn decode_unicode(bytes: &[u8], declared: Option<&str>) -> Option<String> {
     let normalized = declared.map(|value| value.trim().to_ascii_lowercase());
     let text = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         String::from_utf8(bytes[3..].to_vec()).ok()?

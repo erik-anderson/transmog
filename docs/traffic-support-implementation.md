@@ -20,7 +20,7 @@ checkout contains independent updater work and is preserved.
 5. `42d8387`: atomic saved-trace catalog imports, unique source namespaces,
    lazy native-frame and SAZ body sources, replay/inspection APIs, provenance,
    cancellation, and unavailable legacy timing/protocol/header-size fields.
-6. Current phase: Traffic import UI, file activation and drag/drop, independent
+6. `f6c5d50`: Traffic import UI, file activation and drag/drop, independent
    saved-capture viewers, backend window-role permissions, Composer replay,
    source trace metadata view and request navigation. Browser and real WebView2
    verification covers file launch, handoff, permission denial, independent
@@ -28,10 +28,12 @@ checkout contains independent updater work and is preserved.
 
 ## Remaining isolated phases
 
-- Content search across headers and decoded text response bodies: string,
-  case-sensitive, ignore-diacritics and regex modes; quiet binary skips;
-  select-current-matches replaces selections on every search; remove selected
-  and remove unselected across the whole workspace, with Undo.
+Current verified phase: full-header and decoded-body search, string/case/accent
+and bounded regex options, quiet binary skips, complete result handles before
+paging, all-match selection with reset on rerun, and whole-session selected or
+unselected removal with Undo. Browser and real WebView2 checks pass; toolbar
+grouping keeps dynamic status rows above the list and inspector.
+
 - Client/proxy/upstream timing and transport observations, including incoming
   proxy connection timing; shared physical connections versus HTTP streams;
   measured L4–6 information and explicit unavailable/reused states. Persist

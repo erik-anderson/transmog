@@ -24,6 +24,20 @@ If the main window is already open, file activation offers importing into that
 session or opening a separate viewer. A drop always imports into the list where
 it landed. Closing a viewer does not stop the main window's proxy.
 
+Traffic search runs on **Search** or Enter. **Search options** selects literal
+text or regular expressions, case sensitivity, accent handling for text,
+metadata, headers and decoded text response bodies. It searches full retained
+headers; compressed content and UTF text encodings are decoded for matching.
+Binary formats are skipped without per-entry messages. Unavailable text and
+text beyond the 16 MiB search limit are counted in the summary. Regular
+expressions use a bounded engine without backreferences or look-around.
+
+**Select all matches after searching**, **Select all matches**, and Ctrl+A in
+search results work across every matching page. Searching again replaces old
+selections. The selection menu offers **Remove selected entries** and **Remove
+unselected entries** across the entire session, including hidden rows, with
+Undo. Column filters remain applicable to search results and bulk selection.
+
 - **Set up HTTPS interception** creates a durable PEM CA and matching private
   key when needed, then explicitly asks the user to approve current-user trust.
   CA generation is create-new and never overwrites either file. Start verifies

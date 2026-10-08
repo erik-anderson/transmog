@@ -185,6 +185,62 @@ fn remove_traffic_entries(
 }
 
 #[tauri::command]
+fn remove_unselected_traffic_entries(
+    ids: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state
+        .window_application(&window)?
+        .remove_unselected_traffic_entries(&ids)
+}
+
+#[tauri::command]
+async fn search_traffic(
+    request: transmog_app::TrafficSearchRequest,
+    on_progress: Channel<transmog_app::TrafficSearchProgress>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficSearchResult, AppError> {
+    let application = state.window_application(&window)?;
+    let cancel = application.clone();
+    application
+        .search_traffic(
+            request,
+            Arc::new(move |progress| {
+                let operation = progress.operation_id.clone();
+                if on_progress.send(progress).is_err() {
+                    cancel.cancel_traffic_search(&operation);
+                }
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+fn matching_traffic_ids(
+    query: SessionQueryInput,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state
+        .window_application(&window)?
+        .matching_traffic_ids(&query)
+}
+
+#[tauri::command]
+fn cancel_traffic_search(
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .cancel_traffic_search(&operation_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn set_autoresponses_enabled(
     enabled: bool,
     generation: u64,
@@ -1228,6 +1284,10 @@ pub fn run() {
                 record_frontend_diagnostic,
                 automation_status,
                 remove_traffic_entries,
+                remove_unselected_traffic_entries,
+                search_traffic,
+                matching_traffic_ids,
+                cancel_traffic_search,
                 set_autoresponses_enabled,
                 test_autoresponse_match,
                 validate_automation,

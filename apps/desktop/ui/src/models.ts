@@ -151,6 +151,8 @@ export interface CaptureExportResult {destination:string;records:number;bytes:nu
 export interface TraceMetadata {id:string;name:string;format:string;path:string;sessions:number;importedAt:number;context:unknown;notes:string[];}
 export interface TraceImportResult {trace:TraceMetadata;issues:string[];}
 export interface TraceImportProgress {operationId:string;completed:number;total:number;}
+export interface TrafficSearchResult {id:string;operationId:string;ids:string[];examined:number;binaryBodies:number;unavailableBodies:number;}
+export interface TrafficSearchProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };

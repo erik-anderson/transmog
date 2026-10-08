@@ -96,6 +96,9 @@ impl CursorRegistry {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionQueryInput {
+    /// Opaque completed content-search snapshot handle.
+    #[serde(default)]
+    pub search_result_id: Option<String>,
     /// Opaque continuation token returned by the prior page.
     pub cursor: Option<String>,
     /// Return the newest matching bounded window without pagination.
@@ -276,6 +279,7 @@ pub(crate) fn query_sessions(
         registry,
         input,
         &crate::traces::TraceRegistry::default(),
+        None,
     )
 }
 
@@ -284,6 +288,7 @@ pub(crate) fn query_sessions_with_traces(
     registry: &Arc<Mutex<CursorRegistry>>,
     input: SessionQueryInput,
     traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<SessionPage, AppError> {
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
@@ -292,8 +297,9 @@ pub(crate) fn query_sessions_with_traces(
         || !input.filters.is_empty()
         || input.offset.is_some()
         || input.focus_id.is_some()
+        || matching.is_some()
     {
-        return query_sorted(service, &input, traces);
+        return query_sorted(service, &input, traces, matching);
     }
     if input.latest && input.cursor.is_some() {
         return Err(AppError::new(
@@ -545,6 +551,7 @@ fn query_sorted(
     service: &ApplicationSessionService,
     input: &SessionQueryInput,
     traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<SessionPage, AppError> {
     if input.cursor.is_some() || input.filters.len() > 14 {
         return Err(AppError::new(
@@ -582,23 +589,7 @@ fn query_sorted(
     let retained_count = rows.len();
     let mut rows: Vec<_> = rows
         .into_iter()
-        .filter(|row| {
-            input
-                .method
-                .as_ref()
-                .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
-                && input
-                    .host
-                    .as_ref()
-                    .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
-                && input
-                    .terminal
-                    .is_none_or(|terminal| (row.terminal != "active") == terminal)
-                && search
-                    .as_deref()
-                    .is_none_or(|search| matches_search(row, search))
-                && filters.iter().all(|filter| filter.matches(row))
-        })
+        .filter(|row| matches_query_row(row, input, matching, search.as_deref(), &filters))
         .collect();
     if let Some(sort) = &input.sort {
         sort_rows(&mut rows, sort);
@@ -635,6 +626,63 @@ fn query_sorted(
         retained_count,
         focus_offset,
     })
+}
+
+fn matches_query_row(
+    row: &SessionSummary,
+    input: &SessionQueryInput,
+    matching: Option<&std::collections::HashSet<String>>,
+    search: Option<&str>,
+    filters: &[PreparedFilter],
+) -> bool {
+    matching.is_none_or(|matching| matching.contains(&row.id))
+        && input
+            .method
+            .as_ref()
+            .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
+        && input
+            .host
+            .as_ref()
+            .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
+        && input
+            .terminal
+            .is_none_or(|terminal| (row.terminal != "active") == terminal)
+        && search.is_none_or(|search| matches_search(row, search))
+        && filters.iter().all(|filter| filter.matches(row))
+}
+
+pub(crate) fn matching_ids(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<String>, AppError> {
+    validate_filter(input.method.as_deref())?;
+    validate_filter(input.host.as_deref())?;
+    validate_filter(input.search.as_deref())?;
+    if input.filters.len() > 14 {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "At most 14 column filters are supported",
+            false,
+        ));
+    }
+    let filters = input
+        .filters
+        .iter()
+        .map(PreparedFilter::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    let search = input.search.as_ref().map(|value| value.to_lowercase());
+    let now = SystemTime::now();
+    Ok(service
+        .catalog()
+        .project_retained(|snapshot| {
+            let row = summarize_with_trace(snapshot, now, false, traces);
+            matches_query_row(&row, input, matching, search.as_deref(), &filters).then_some(row.id)
+        })
+        .into_iter()
+        .flatten()
+        .collect())
 }
 
 struct PreparedFilter {

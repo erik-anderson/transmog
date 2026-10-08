@@ -39,6 +39,9 @@ try{
   assert.match(result.denial,/only in the main proxy window/);
   assert.equal(result.sourceIp,'192.0.2.25');assert.match(result.headers,/\r\n\r\n\r\nHTTP\/1\.1 200 Fixture/);assert.equal(result.body,'');assert.ok(result.traceId);
   process.stdout.write('Viewer inspection and permissions verified.\n');
+  const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
+  assert.equal(search.matches,1);assert.equal(search.selected,1);assert.doesNotMatch(search.status,/binary/i);
+  await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMode='regex';workspace.searchInput.value='(';await workspace.runContentSearch();if(!workspace.contentSearchStatus.startsWith('Search failed:'))throw new Error('Invalid regex was not explained');await workspace.clearContentSearch();workspace.searchMode='text';})()`);
   await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
   const mainTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>target.id!==pages[0].id);},'Main window did not open');
   const main=await connect(mainTarget);

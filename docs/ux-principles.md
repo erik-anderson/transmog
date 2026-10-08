@@ -121,6 +121,14 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+Full traffic search starts with **Search** or Enter, so typing does not repeatedly
+read and decode captured bodies. Results describe a completed search snapshot;
+new traffic remains capturable and a new search refreshes that snapshot. Search
+can select every matching entry across pages, and rerunning it replaces the
+selection with current matches. Remove selected and remove unselected act on
+the whole workspace and support Undo. Skip inapplicable binary bodies quietly;
+report unavailable text evidence once in the search summary.
+
 
 For a UI change, walk through the affected task with representative populated
 data as well as the empty state. Inspect wide and narrow layouts, resized panes,

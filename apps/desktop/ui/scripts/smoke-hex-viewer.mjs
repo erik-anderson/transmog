@@ -46,6 +46,7 @@ export async function smokeHexViewer(evaluate, call) {
     const key = async (key, code, modifiers=0) => {
       await call('Input.dispatchKeyEvent',{type:'keyDown',key,windowsVirtualKeyCode:code,modifiers});
       await call('Input.dispatchKeyEvent',{type:'keyUp',key,windowsVirtualKeyCode:code,modifiers});
+      await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
     };
     await key('c',67,2);
     assert.equal(await evaluate('globalThis.__hexSmoke.copied'),'AUcBVwFbAWU=');

@@ -693,5 +693,17 @@
   "metadataBusy": false,
   "metadataTraceOptions": [],
   "metadataNetworkTitle": "",
-  "metadataNetworkContext": ""
+  "metadataNetworkContext": "",
+  "searchingTraffic": false,
+  "searchMode": "text",
+  "searchCaseSensitive": false,
+  "searchIgnoreAccents": false,
+  "searchMetadata": true,
+  "searchHeaders": true,
+  "searchBodies": true,
+  "selectSearchMatches": false,
+  "contentSearchStatus": "",
+  "contentSearchLabel": "",
+  "contentMatchCount": 0,
+  "contentSearchActive": false
 }
