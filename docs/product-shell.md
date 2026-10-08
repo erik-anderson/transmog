@@ -69,6 +69,47 @@ or WebUI.
   support bundle excludes traffic bodies, header values, credentials, keys,
   and paths by default, and reports the native WebView runtime version.
 
+## Working in the desktop
+
+Traffic keeps selection actions above the scrolling list. Table settings holds
+column visibility, the inspector layout choice, and workspace reset. A selected
+request exposes its full URL and copy action in a popover. The inspector shows
+request and response together when space permits and switches between them in a
+narrow pane. Detailed body retention information stays in a disclosure.
+
+Automation separates auto-responses, header overrides, and scripts. Rule
+properties and batch review share the available space with the dense rule list;
+narrow windows switch between the list and selected properties. Batch review
+keeps skipped responses visible and preserves inclusion choices when refreshed.
+Scripts distinguish draft, saved, validated, tested, and active revisions. Their
+sandbox tester accepts a URL, method, headers, and body without sending traffic.
+
+Breakpoints shows a live queue and one selected editor. The navigation badge
+reports waiting requests even in other workspaces. Each request displays its
+remaining decision time; expired requests cannot be continued. Replacement
+drafts survive switching between waiting requests, and rejected edits remain
+available for correction.
+
+Composer opens from **Edit and replay** in Traffic. Request and response sit
+beside each other in wide windows and use pane tabs in smaller ones. Loading
+another request asks before replacing an edited draft. Sending leaves edits
+available while the response arrives; failures keep the draft ready to retry.
+Response headers, body, and execution details have separate views. Risk and
+credential acknowledgements appear only when applicable.
+
+Captures groups recording, inspection/recovery, and export into separate tasks
+with native file pickers and readable result summaries. Recording controls
+reflect the live state. Interrupted-file inspection reports the valid prefix
+and can prepare a new recovered export; it leaves the source intact.
+
+Settings separates preferences, connection, and support. Preferences have
+explicit Save and Revert actions, with Ctrl+S to save. Connection presents the
+current readiness and applicable recovery action; certificate paths and exact
+certificate removal stay in Advanced. Support shows a readable diagnostic
+summary before technical details, and including recent paths requires the saved
+privacy preference. The header status menu links directly to Connection.
+Routine workspace output stays near the action that produced it.
+
 ## File safety
 
 Captures, generated CAs, JSONL, and SAZ use create-new semantics. Existing

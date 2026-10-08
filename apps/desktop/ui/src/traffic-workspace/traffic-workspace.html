@@ -92,7 +92,7 @@
       <strong class="popover-title">Table settings</strong><label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">List above inspector</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.wrapCells}}" @change="{setWrap(e)}"> Wrap cells</label><label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <strong class="popover-title">Columns</strong><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
-      <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset table to default</button>
+      <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset columns</button><button type="button" @click="{resetLayout()}">Restore default layout and columns</button>
     </div>
   </section>
 </template>

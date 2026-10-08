@@ -46,8 +46,10 @@ and encoded body into an immutable response asset, then pre-fills a method and
 exact normalized absolute-URL match. The primary Automation action opens
 Traffic to choose responses, or uses the current reusable response. Multiple
 selected rows open a review with eligibility,
-priority and duplicate explanations. The review can skip responses or retain
-only the earliest or most recent response per identical match. Creation leases
+priority and duplicate explanations in a compact table. Excluded responses stay
+visible, and refresh keeps their inclusion choices. The review can skip
+responses or retain only the earliest or most recent response per identical
+match. Creation leases
 every eligible source before copying and activates the whole batch atomically;
 a failed source never leaves a partially activated batch. Creating a response
 from scratch is available in the secondary More menu. Captured responses remain
@@ -119,6 +121,13 @@ stable ID, revision, evaluation position, response asset, status, and body
 size. The traffic row is marked `AUTO`, and the response inspector links to the
 matching rule. That immutable evidence remains meaningful after a rule is
 renamed, reordered, disabled, or deleted.
+
+Scripts have their own Automation tab. Validation and sandbox testing describe
+only the current source and capability settings; editing either invalidates the
+candidate until checked again. Saving a draft does not enable it. Active revision
+status remains visible while a newer draft is edited, and comparison or pausing
+is available in More. Sandbox input can be authored or copied from a selected
+Traffic request with sensitive headers omitted.
 
 ## Body and script safety
 

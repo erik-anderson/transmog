@@ -71,10 +71,11 @@ export class AppShell extends WebUIElement {
   }
 
   activeViewChanged(): void {
+    this.diagnosticText='';
     this.currentNavigation = Object.fromEntries(Object.keys(initialState.currentNavigation).map((view) => [view, view === this.activeView ? 'page' : 'false']));
   }
 
-  onDiagnostic(event: CustomEvent<string>): void { this.diagnosticText = event.detail; }
+  onDiagnostic(event:CustomEvent<string>):void {const views:Record<string,string>={'traffic-workspace':'traffic','automation-workspace':'automation','composer-workspace':'composer','capture-workspace':'captures','breakpoint-workspace':'breakpoints','settings-workspace':'settings'};const source=event.composedPath().map(node=>node instanceof HTMLElement?views[node.localName]:undefined).find(Boolean);if(source==='traffic'&&event.detail===this.traffic.sessionText)return;if(!source||source===this.activeView)this.diagnosticText=event.detail;}
   onNotice(event: CustomEvent<Notice>): void {
     this.noticeTitleText = event.detail.title;
     this.noticeMessageText = event.detail.message;
@@ -87,7 +88,8 @@ export class AppShell extends WebUIElement {
     this.lifecycleLabel = lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;
     this.listener = status.listener ?? 'Not listening';
-    this.diagnosticText = status.hostRestorePending ? 'Host restoration is pending and must be retried before restart.' : status.summary;
+    if(status.hostRestorePending)this.diagnosticText='Host restoration is pending and must be retried before restart.';
+    else if(this.diagnosticText==='Host restoration is pending and must be retried before restart.')this.diagnosticText='';
   }
   onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; pageSize: number; workspace?: WorkspacePreferences}>): void {
     this.theme = event.detail.theme;
@@ -130,7 +132,7 @@ export class AppShell extends WebUIElement {
   }
   onProxyReady(): void { this.proxyReady = true; }
   onSelection(event: CustomEvent<SelectedResponse | null>): void { this.selection = event.detail; }
-  onNavigate(event: CustomEvent<ViewName>): void { void this.activateView(event.detail); }
+  onNavigate(event:CustomEvent<ViewName>):void {if(event.detail==='settings')void this.openConnectionSettings();else void this.activateView(event.detail);}
   showView(event: Event): void {
     event.preventDefault();
     const view = (event.currentTarget as HTMLAnchorElement).dataset.view;
@@ -155,17 +157,20 @@ export class AppShell extends WebUIElement {
   async stopProxy(): Promise<void> { await this.settings.ready; await this.settings.stopProxy(); }
   async refreshStatus(): Promise<void> {
     await this.settings.ready;
-    await this.settings.refreshStatus();
+    const error=await this.settings.refreshStatus();
+    if(error)this.diagnosticText=error;
+    else if(this.diagnosticText!=='Host restoration is pending and must be retried before restart.')this.diagnosticText='Proxy '+this.lifecycleKind;
   }
   runNoticeAction(): void {
     const action = this.noticeAction;
     this.dismissNotice();
-    if (action === 'settings') void this.activateView('settings');
+    if (action === 'settings') void this.openConnectionSettings();
     else if (action === 'setup-ca') void this.settings.setupCa();
     else if (action === 'reset-ca') void this.settings.resetCa();
     else if (action === 'start-proxy') void this.startProxy();
     else if (action === 'recover-proxy') void this.settings.recoverProxy();
   }
+  async openConnectionSettings():Promise<void> {if(await this.activateView('settings'))this.settings.showSettingsSection('connection');}
   dismissNotice(): void { this.noticeAction = null; this.noticeVisible = false; }
   async onAutoResponse(event: CustomEvent<SelectedResponse>): Promise<void> {
     if (await this.activateView('automation')) await this.automation.populateCapturedAutoResponse(event.detail.sessionId, event.detail.detail);

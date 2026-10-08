@@ -311,7 +311,8 @@ mod tests {
         assert!(html.contains("No matching exchanges."));
         assert!(html.contains("Process / PID"));
         assert!(html.contains("popovertarget=\"table-settings\""));
-        assert!(html.contains("Application facade ready."));
+        assert!(html.contains("popovertarget=\"proxy-status-tools\""));
+        assert!(!html.contains("Application facade ready."));
         assert!(html.contains("aria-current=\"page\""));
         assert!(!html.contains("<link rel=\"stylesheet\" href=\"/monaco.css\""));
         assert!(!html.contains("<script type=\"module\" src=\"/monaco.js\""));

@@ -1,4 +1,4 @@
-<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
+<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
@@ -9,7 +9,7 @@
       <div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <strong>{{lifecycleLabel}}</strong>
-        <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button>
+        <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button><button type="button" class="secondary status-tools" aria-label="Proxy status and tools" title="Proxy status and tools" popovertarget="proxy-status-tools">⋯</button>
       </div>
       <div class="top-actions">
         <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
@@ -51,10 +51,6 @@
           <span class="nav-label">Captures</span>
         </a>
         <span class="nav-spacer"></span>
-        <button type="button" class="rail-reset" aria-label="Restore default layout and columns" title="Restore default layout and columns" @click="{resetWorkspace()}">
-          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 4v5h5M3.5 9a9 9 0 1 1 0 6"></path></svg>
-          <span class="nav-label">Reset layout</span>
-        </button>
         <a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.5 3h3l.5 2 1.5.6 1.8-1 2.1 2.1-1 1.8.6 1.5 2 .5v3l-2 .5-.6 1.5 1 1.8-2.1 2.1-1.8-1-1.5.6-.5 2h-3l-.5-2-1.5-.6-1.8 1-2.1-2.1 1-1.8-.6-1.5-2-.5v-3l2-.5.6-1.5-1-1.8 2.1-2.1 1.8 1 1.5-.6Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="nav-label">Settings</span>
@@ -71,9 +67,9 @@
       </main>
     </div>
 
-    <footer class="app-footer">
+    <footer class="app-footer" ?hidden="{{!diagnosticText}}">
       <output class="global-diagnostics" aria-live="polite">{{diagnosticText}}</output>
-      <button type="button" class="status-refresh" @click="{refreshStatus()}">Refresh status</button>
     </footer>
+    <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p class="full-value">{{listener}}</p><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
   </div>
 </template>

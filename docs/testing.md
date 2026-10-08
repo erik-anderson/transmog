@@ -62,6 +62,12 @@ The workspace suites cover these contracts:
   bulk states and duplicate warnings, unsaved-draft choices, shared pause
   controls, matcher tooling, persisted pane splits and small-window editors
   under enforced CSP and Trusted Types;
+- selected breakpoint editors and retained replacement drafts, real decision
+  deadlines, Composer draft replacement and late responses, conditional replay
+  acknowledgements, script candidate invalidation, capture task/picker behavior,
+  and Settings save/revert and certificate recovery;
+- populated desktop lists, visible bulk actions, control and text alignment,
+  and wide/narrow tool layouts under production templates;
 - WebSocket handshake validation, masking, fragmentation, control frames,
   UTF-8, close behavior, permessage-deflate, hook ordering, and transparent
   byte-copy mode.

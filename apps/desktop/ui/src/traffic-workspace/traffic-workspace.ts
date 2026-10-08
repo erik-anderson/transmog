@@ -161,6 +161,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!visible && this.preferences.columns.filter((column) => column.visible).length === 1) { (event.currentTarget as HTMLInputElement).checked = true; return; }
     this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,visible} : column)});
   }
+  resetLayout():void {this.$emit('reset-workspace');}
   resetColumns():void { this.patchPreferences({columns:defaultWorkspace().columns,wrapCells:false,compactRows:true}); }
   openColumnMenu(id:ColumnId,event:MouseEvent):void {
     if (performance.now() < this.suppressMenuUntil) { event.preventDefault(); return; }

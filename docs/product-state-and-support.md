@@ -48,8 +48,9 @@ as the application facade initializes. Command dispatch, proxy lifecycle,
 Windows host integration, certificate create/trust/remove outcomes,
 live-session subscription, and bounded frontend exceptions are recorded
 there. A prior `diagnostics.jsonl` rotates to
-`diagnostics.jsonl.1`; neither file contains captured traffic. Settings → Support → Technical details displays the exact active path so support reports do not depend on
-knowing the Tauri package identifier.
+`diagnostics.jsonl.1`; neither file contains captured traffic. Settings →
+Support → Technical details displays the exact active path so support reports
+do not depend on knowing the Tauri package identifier.
 
 The diagnostics report includes the Transmog version, selected dependency
 versions, OS/architecture, the native WebView runtime version, the state schema,

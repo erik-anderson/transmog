@@ -354,12 +354,15 @@ export class SettingsWorkspace extends WorkspaceElement {
   async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination:String(data.get('destination')??''),includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);}});}
   async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.renderAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
 
-  async refreshStatus(): Promise<void> {
+  async refreshStatus(): Promise<string | null> {
     try {
       const status = await invoke<AppStatus>('app_status');
       this.renderAppStatus(status);
+      return null;
     } catch (error: unknown) {
-      this.diagnostic = `Status unavailable: ${describeError(error)}`;
+      const message = `Status unavailable: ${describeError(error)}`;
+      this.diagnostic = message;
+      return message;
     }
   }
 

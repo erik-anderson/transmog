@@ -97,7 +97,7 @@ try {
     (async () => {
       await customElements.whenDefined('app-shell');
       const element = document.querySelector('app-shell');
-      const button = [...(element?.shadowRoot?.querySelectorAll('button') ?? [])]
+      const button = [...(element?.shadowRoot?.querySelectorAll('#proxy-status-tools button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Refresh status');
       const output = element?.shadowRoot?.querySelector('.global-diagnostics');
       if (!(button instanceof HTMLButtonElement) || !(output instanceof HTMLOutputElement)) {
@@ -115,6 +115,7 @@ try {
         }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
+      element.shadowRoot.querySelector('button[popovertarget="proxy-status-tools"]')?.click();
       element.diagnosticText = 'Checking status…';
       element.$flushUpdates();
       button.click();
@@ -257,7 +258,7 @@ try {
         startupResources,
         cspViolations: globalThis.__transmogCspViolations,
         landmarks: {
-          nav: element.shadowRoot.querySelectorAll('nav').length,
+          nav: element.shadowRoot.querySelectorAll('nav[aria-label="Primary"]').length,
           main: element.shadowRoot.querySelectorAll('main').length,
           headings: element.shadowRoot.querySelectorAll('h1, h2, h3').length
         },
@@ -278,7 +279,7 @@ try {
           watchControls: [...element.shadowRoot.querySelectorAll('button')]
             .filter((candidate) => /watch live/i.test(candidate.textContent ?? '')).length,
           hooksV2Branding: /hooks v2/i.test(surfaceText),
-          automationExpanders: automation?.querySelectorAll('details.automation-card').length ?? 0,
+          automationTools: automation?.querySelectorAll('.workspace-tabs button').length ?? 0,
           autoResponseWorkspace: automation?.querySelectorAll('.auto-response-workspace').length ?? 0,
           captureStartHint: automation?.querySelectorAll('.auto-response-start-hint').length ?? 0,
           capturedResponsePrimary,
@@ -345,7 +346,7 @@ try {
   assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.automationExpanders >= 1 && result.ux.autoResponseWorkspace === 1
+  assert(result.ux.automationTools === 3 && result.ux.autoResponseWorkspace === 1
     && result.ux.captureStartHint === 1 && result.ux.exactUrlFields === 1
     && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
@@ -443,16 +444,16 @@ try {
     const originalHeading = heading.textContent;
     try {
       heading.textContent = 'Inspect localized traffic safely — '.repeat(8);
+      const presentedControls=[...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
+        .filter(button=>!button.closest('[hidden]')
+          && !(button.closest('message-inspector') && getComputedStyle(button.closest('message-inspector')).display==='none')
+          && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')));
       return {
         viewport: document.documentElement.clientWidth,
         shellWidth: root.querySelector('.shell').getBoundingClientRect().width,
         headingHeight: heading.getBoundingClientRect().height,
-        controlsVisible: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
-          .filter((button) => !button.closest('[hidden]') && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')))
-          .every((button) => button.getBoundingClientRect().height > 0),
-        invisibleControls: [...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
-          .filter((button) => !button.closest('[hidden]') && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')) && button.getBoundingClientRect().height <= 0)
-          .map((button) => button.textContent?.trim()),
+        controlsVisible: presentedControls.every(button=>button.getBoundingClientRect().height>0),
+        invisibleControls: presentedControls.filter(button=>button.getBoundingClientRect().height<=0).map(button=>button.textContent?.trim()),
         rootScroll: document.documentElement.scrollHeight - document.documentElement.clientHeight
       };
     } finally {

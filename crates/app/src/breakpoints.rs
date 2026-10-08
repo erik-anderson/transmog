@@ -251,11 +251,10 @@ impl BreakpointManager {
                 ));
             }
             validate_action(pending.request().phase, &decision.action)?;
-            let pending = state
+            state
                 .pending
                 .remove(&decision.decision_id)
-                .expect("validated pending decision");
-            pending
+                .expect("validated pending decision")
         };
         pending
             .reply(DecisionCommand {
