@@ -1,27 +1,13 @@
 <template>
 <section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" ?hidden="{{view != 'automation'}}" ?data-active="{{view == 'automation'}}">
-  <div class="tool-page">
-    <p class="section-label">Traffic actions</p>
-    <h1 id="automation-heading">Automation</h1>
-    <p>Enable common actions with simple request filters. Transmog handles validation and records each change in the session audit history.</p>
-    <div class="automation-stack">
-      <details class="automation-card">
-        <summary><span><strong>Override User-Agent</strong><small>Replace the outgoing User-Agent on matching requests.</small></span></summary>
-        <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
-          <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
-          <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-          <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
-          <div class="actions">
-            <button type="submit">Enable override</button>
-            <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-user-agent')}">Disable</button>
-          </div>
-        </form>
-      </details>
+  <div class="automation-page">
+    <header class="workspace-header"><h1 id="automation-heading">Automation</h1><nav class="workspace-tabs" aria-label="Automation tools"><button type="button" ?data-selected="{{automationSection == 'responses'}}" @click="{showAutomationSection('responses')}">Auto-responses</button><button type="button" ?data-selected="{{automationSection == 'headers'}}" @click="{showAutomationSection('headers')}">Header overrides</button><button type="button" ?data-selected="{{automationSection == 'scripts'}}" @click="{showAutomationSection('scripts')}">Scripts</button></nav></header>
+    <div class="automation-panel" ?hidden="{{automationSection != 'responses'}}">
       <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
         <header class="auto-response-header">
           <div>
-            <h2 id="autoresponder-heading">Auto-responses</h2>
-            <p>Serve a saved response without contacting the origin. Rules are checked from top to bottom; the first enabled match wins.</p>
+            <h2 id="autoresponder-heading" class="sr-only">Auto-responses</h2>
+
           </div>
           <div class="actions">
             <autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch>
@@ -32,7 +18,7 @@
         <div class="auto-response-start-hint" ?hidden="{{rules.length}}">
           Select one or more captured responses in Traffic, then choose “Create autoresponses…”.
         </div>
-        <div class="auto-response-manager" data-list-share="{{ruleListShare}}">
+        <div class="auto-response-manager" ?data-detail="{{!editorHidden || !batchReviewHidden}}" data-list-share="{{ruleListShare}}">
           <div class="rule-list-pane" @keydown="{listKeyboard(e)}">
             <div class="rule-list-tools"><label><span class="sr-only">Search rules</span><input type="search" placeholder="Search rules" aria-label="Search rules" @input="{searchRules(e)}"></label><select aria-label="Filter rules" @change="{filterRules(e)}"><option value="all">All rules</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="shadowed">Shadowed</option></select></div>
             <div class="rule-selection-toolbar"><span role="status">{{ruleSelectionText}}</span><button type="button" class="secondary compact-button" w-ref="{ruleMoreButton}" popovertarget="rule-actions-menu" @click="{positionRuleMenu(e)}" ?disabled="{{!ruleSelectionCount}}">More</button></div>
@@ -46,9 +32,15 @@
             <details class="list-help"><summary>Selection and priority</summary><p>First enabled match wins. Search and filters preserve priority. Shift selects a range; Ctrl adds rules. Del removes selected rules; Ctrl+Z undoes a list action. Drag or use More to change priority.</p></details>
           </div>
           <pane-divider orientation="vertical" label="Resize rule list and properties" value="{{ruleListSplit}}" initial="45" @pane-resize="{resizeRuleList(e)}"></pane-divider>
-          <div class="rule-properties-pane">
+          <div class="rule-properties-pane"><button type="button" class="secondary compact-button rule-back" @click="{backToRules()}">← Back to rules</button>
             <div class="rule-properties-empty" ?hidden="{{!editorHidden || !batchReviewHidden}}"><strong>{{ruleSelectionText}}</strong><p>Select one rule to edit its properties. Select several to enable, disable, duplicate, reorder or remove them together.</p><div class="actions" ?hidden="{{!ruleSelectionCount}}"><button type="button" class="secondary compact-button" @click="{mutateSelectedRules('enable')}">Enable selected</button><button type="button" class="secondary compact-button" @click="{mutateSelectedRules('disable')}">Disable selected</button></div></div>
-            <section class="batch-review" ?hidden="{{batchReviewHidden}}"><h3>Create autoresponse rules</h3><p role="status">{{batchReviewText}}</p><p ?hidden="{{!batchLoading}}">Checking complete retained responses…</p><div class="batch-review-list"><for each="row in batchRows"><article key="{{row.id}}"><strong>{{row.name}}</strong><small>{{row.reason}}</small><small class="rule-warning" ?hidden="{{!row.duplicate}}">{{row.duplicate}}</small><div class="actions"><button type="button" class="secondary compact-button" @click="{moveBatchRow(row.id,-1)}">Earlier</button><button type="button" class="secondary compact-button" @click="{moveBatchRow(row.id,1)}">Later</button><button type="button" class="secondary compact-button" @click="{skipBatchRow(row.id)}">Skip</button></div></article></for></div><details><summary>Duplicate choices</summary><p>All eligible responses are kept by default. When several have the same match, only the earliest enabled rule can win.</p><button type="button" class="secondary compact-button" @click="{keepNewestBatchMatches()}">Keep the most recent response per identical match</button><button type="button" class="secondary compact-button" @click="{keepFirstBatchMatches()}">Keep only the earliest response per identical match</button></details><p class="field-error" role="status" ?hidden="{{!batchError}}">{{batchError}}</p><button type="button" class="secondary compact-button" ?disabled="{{batchLoading || savingAutoResponse}}" @click="{reviewBatchAgain()}">Refresh review</button><div class="auto-response-editor-actions"><div class="actions"><button type="button" @click="{createBatchRules()}" ?disabled="{{batchLoading || savingAutoResponse || !batchEligibleCount}}">Create {{batchEligibleCount}} rules</button><button type="button" class="secondary" @click="{cancelBatch()}" ?disabled="{{savingAutoResponse}}">Cancel batch</button></div></div></section>
+            <section class="batch-review" ?hidden="{{batchReviewHidden}}">
+              <header class="batch-header"><h3>Create auto-response rules</h3><p role="status">{{batchReviewText}}</p></header>
+              <div class="batch-review-list"><table class="batch-table"><thead><tr><th>Use</th><th>#</th><th>Response / match</th><th>State</th><th>Actions</th></tr></thead><tbody><for each="row in batchRows"><tr key="{{row.id}}" tabindex="0" ?data-excluded="{{!row.included}}" @keydown="{batchKeyboard(row.id,e)}"><td><input type="checkbox" aria-label="Include {{row.name}}" ?checked="{{row.included}}" ?disabled="{{!row.eligible || batchLoading || savingAutoResponse}}" @change="{includeBatchRow(row.id,e)}"></td><td>{{row.order}}</td><td><strong>{{row.name}}</strong><small>{{row.reason}}</small><small class="rule-warning" ?hidden="{{!row.duplicate}}">{{row.duplicate}}</small></td><td><if condition="row.included && row.eligible">Ready</if><if condition="!row.included && row.eligible">Excluded</if><if condition="!row.eligible">Unavailable</if></td><td><button type="button" class="secondary compact-button" aria-label="Actions for {{row.name}}" popovertarget="batch-row-menu" @click="{openBatchMenu(row.id,e)}">More</button></td></tr></for></tbody></table></div>
+              <details class="batch-duplicates"><summary>Duplicate choices</summary><p>First enabled match wins. Keep all responses, or include only one per identical match.</p><div class="actions"><button type="button" class="secondary compact-button" @click="{keepNewestBatchMatches()}">Keep most recent</button><button type="button" class="secondary compact-button" @click="{keepFirstBatchMatches()}">Keep earliest</button></div></details>
+              <p class="field-error" role="status" ?hidden="{{!batchError}}">{{batchError}}</p>
+              <div class="auto-response-editor-actions"><div class="actions"><button type="button" @click="{createBatchRules()}" ?disabled="{{batchLoading || savingAutoResponse || !batchEligibleCount}}">Create {{batchEligibleCount}} rules</button><button type="button" class="secondary" @click="{cancelBatch()}" ?disabled="{{savingAutoResponse}}">Cancel batch</button><button type="button" class="secondary compact-button" ?disabled="{{batchLoading || savingAutoResponse}}" @click="{reviewBatchAgain()}">Refresh review</button></div></div>
+            </section>
         <form w-ref="{autoResponseForm}" @submit="{saveAutoResponse(e)}" @input="{markDraftDirty(e)}" @change="{markDraftDirty(e)}" @keydown="{formKeyboard(e)}" class="auto-response-editor" ?hidden="{{editorHidden}}" aria-busy="{{savingAutoResponse}}">
           <fieldset class="auto-response-fields" aria-label="Auto-response rule" ?disabled="{{savingAutoResponse}}">
           <header>
@@ -71,7 +63,7 @@
           </section>
           <label ?hidden="{{responseFieldsHidden}}">Response status <input w-ref="{autoResponseStatus}" ?readonly="{{responseReadOnly}}" name="status" type="number" min="200" max="599" value="200" required></label>
           <label ?hidden="{{responseFieldsHidden}}">Content type <input w-ref="{autoResponseMediaType}" ?readonly="{{responseReadOnly}}" name="mediaType" value="text/plain; charset=utf-8" maxlength="256"></label>
-          <label ?hidden="{{responseHeadersHidden}}" class="wide-field"><span>Response headers <small>(one <code>Name: value</code> per line)</small></span><textarea name="responseHeaders" @input="{clearHeaderError('responseHeaders')}" aria-describedby="auto-response-headers-help auto-response-headers-error"></textarea><small id="auto-response-headers-help">Content-Length is computed from the returned bytes. Content-Encoding follows the body’s compression; pasted values for these headers are ignored. Set Content-Type in the field above.</small><span id="auto-response-headers-error" class="field-error" ?hidden="{{!responseHeadersError}}">{{responseHeadersError}}</span></label>
+          <details class="wide-field" ?hidden="{{responseHeadersHidden}}"><summary>Response headers</summary><label><span>Headers <small>(one <code>Name: value</code> per line)</small></span><textarea name="responseHeaders" @input="{clearHeaderError('responseHeaders')}" aria-describedby="auto-response-headers-help auto-response-headers-error"></textarea><small id="auto-response-headers-help">Content-Length is computed from the returned bytes. Content-Encoding follows the body’s compression; pasted values for these headers are ignored. Set Content-Type in the field above.</small><span id="auto-response-headers-error" class="field-error" ?hidden="{{!responseHeadersError}}">{{responseHeadersError}}</span></label></details>
           <label class="wide-field" ?hidden="{{bodyHidden}}"><span>Response body <if condition="bodyReadOnly"><small>(read-only)</small></if></span><textarea w-ref="{autoResponseBody}" ?readonly="{{bodyReadOnly}}" name="body" rows="12" maxlength="16777216" aria-describedby="auto-response-body-help"></textarea><small id="auto-response-body-help" aria-live="polite">{{bodyStatusText}}</small></label>
           <div  class="captured-response-options wide-field" ?hidden="{{capturedOptionsHidden}}">
             <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Edit response body</label>
@@ -89,13 +81,26 @@
         </form>
           </div>
         </div>
+        <div id="batch-row-menu" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><button type="button" @click="{moveBatchRow(batchActionId,-1)}">Move earlier</button><button type="button" @click="{moveBatchRow(batchActionId,1)}">Move later</button><button type="button" @click="{skipBatchRow(batchActionId)}">Exclude response <kbd>Del</kbd></button></div>
         <div id="new-response-menu" w-ref="{newRuleMenu}" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><button type="button" @click="{beginScratchAutoResponse()}">Create from scratch</button></div>
         <div id="rule-actions-menu" w-ref="{ruleMenu}" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><strong>{{ruleSelectionText}}</strong><button type="button" @click="{mutateSelectedRules('enable')}">Enable selected</button><button type="button" @click="{mutateSelectedRules('disable')}">Disable selected</button><button type="button" @click="{mutateSelectedRules('up')}">Move earlier</button><button type="button" @click="{mutateSelectedRules('down')}">Move later</button><button type="button" @click="{mutateSelectedRules('duplicate')}">Duplicate as disabled copies</button><button type="button" @click="{mutateSelectedRules('remove')}">Remove selected <kbd>Del</kbd></button></div>
         <dialog w-ref="{unsavedDialog}" class="unsaved-rule-dialog" @cancel="{unsavedCancelled(e)}"><h3>Save changes to this rule?</h3><p>Your current edits have not been saved.</p><div class="actions"><button type="button" @click="{resolveUnsaved('save')}">Save and continue</button><button type="button" class="secondary" @click="{resolveUnsaved('discard')}">Discard changes</button><button type="button" class="secondary" autofocus @click="{resolveUnsaved('stay')}">Keep editing</button></div></dialog>
       </section>
     </div>
-    <output class="operation-status" data-kind="{{automationKind}}" aria-live="polite">{{automationText}}</output>
-    <script-editor theme="{{theme}}" ?active="{{view == 'automation'}}"></script-editor>
+    <section class="automation-panel override-panel" ?hidden="{{automationSection != 'headers'}}">      <details class="automation-card" open>
+        <summary><span><strong>Override User-Agent</strong><small>Replace the outgoing User-Agent on matching requests.</small></span></summary>
+        <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
+          <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
+          <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
+          <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
+          <div class="actions">
+            <button type="submit">Enable override</button>
+            <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-user-agent')}">Disable</button>
+          </div>
+        </form>
+      </details>
+<output class="operation-status" data-kind="{{automationKind}}" aria-live="polite">{{automationText}}</output></section>
+    <section class="automation-panel script-panel" ?hidden="{{automationSection != 'scripts'}}"><script-editor theme="{{theme}}" ?active="{{view == 'automation' && automationSection == 'scripts'}}"></script-editor></section>
   </div>
 </section>
 

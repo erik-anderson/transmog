@@ -206,7 +206,7 @@ const view = async (name) => {
   await page.locator('#' + name).waitFor({ state: 'visible' });
 };
 const discardIfAsked=async()=>{const dialog=page.locator('.unsaved-rule-dialog');if(await dialog.isVisible())await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();};
-const newScratch=async()=>{await page.getByRole('button',{name:'More autoresponse options',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
+const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('button',{name:'Auto-responses',exact:true}).click();await page.getByRole('button',{name:'More autoresponse options',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
@@ -223,6 +223,7 @@ try {
   const startupRequests = requests.length;
   assert.equal(await page.locator('.traffic-table tr[data-session-id][draggable]').count(),0,'Traffic rows still advertise cross-tab dragging');
   await view('automation');
+  assert.equal(requests.some(path=>path==='/monaco.js'),false,'Response management eagerly loaded the script editor');
   await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false,'Scratch authoring is prominent');
   assert.match(await page.locator('.auto-response-start-hint').textContent(),/Select one or more captured responses in Traffic/);
@@ -607,9 +608,11 @@ try {
   assert.equal(await autoField('requestHeaders').evaluate(input=>input.validity.customError),true);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid,'Invalid matcher created an unused response asset');
   await autoField('requestHeaders').fill('Content-Type: application/json');
+  if(!await autoEditor.locator('details:has([name="responseHeaders"])').evaluate(details=>details.open))await autoEditor.locator('details:has([name="responseHeaders"])').locator('summary').first().click();
   await autoField('responseHeaders').fill('Also not a header');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await page.locator('#auto-response-headers-error').waitFor({state:'visible'});
+  if(!await autoEditor.locator('details:has([name="responseHeaders"])').evaluate(details=>details.open))await autoEditor.locator('details:has([name="responseHeaders"])').locator('summary').first().click();
   await autoField('responseHeaders').fill('X-Fixture: yes\nContent-Length: 999\nContent-Encoding: gzip\nContent-Type: incorrect/type');
   await autoField('body').fill('Authored response body');
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=true;});
@@ -762,6 +765,13 @@ try {
   await page.waitForFunction(()=>{const auto=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !auto.batchReviewHidden && !auto.batchLoading && auto.batchRows.length===3;});
   assert.match(await page.locator('.batch-review').textContent(),/3 selected · 2 ready · 1 unavailable/);
   assert.match(await page.locator('.batch-review').textContent(),/Wait for this request to complete/);
+  const includedResponse=page.locator('.batch-table tbody input[type="checkbox"]').nth(1);
+  await includedResponse.uncheck();
+  await page.getByRole('button',{name:'Create 1 rules',exact:true}).waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Refresh review',exact:true}).click();
+  await page.waitForFunction(()=>{const auto=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !auto.batchLoading && auto.batchEligibleCount===1;});
+  assert.equal(await includedResponse.isChecked(),false,'Refreshing the batch lost excluded choices');
+  await includedResponse.check();
   const rulesBeforeBatch=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation.rules));
   await page.evaluate(()=>globalThis.__workspaceFixture.batchError=true);
   await page.getByRole('button',{name:'Create 2 rules',exact:true}).click();
@@ -809,6 +819,7 @@ try {
   await page.locator('input[name="url"]').filter({ visible: true }).fill('http://example.test/replay');
   await view('automation');
   assert.equal(await page.locator('.auto-response-editor input[name="name"]').inputValue(), 'Preserved draft');
+  await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').sourceEditor !== null);
   const sourceSurface=page.locator('script-editor editor-surface').first();
   assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=320,'Source editor is too short');

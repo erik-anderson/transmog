@@ -587,5 +587,7 @@
   "tableWidth": "986px",
   "inspectorSide": "response",
   "bodySummary": "",
-  "trafficCreateLabel": "Create auto-responses…"
+  "trafficCreateLabel": "Create auto-responses…",
+  "automationSection": "responses",
+  "batchActionId": ""
 }
