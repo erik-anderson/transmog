@@ -18,7 +18,8 @@ use crate::{
     inspector::parse_session_id,
 };
 
-const CURL_COMMAND_BYTES: usize = 120 * 1024;
+// Windows native argv must fit its 32-KiB command line even when called from Bash.
+const CURL_COMMAND_BYTES: usize = if cfg!(windows) { 30 * 1024 } else { 120 * 1024 };
 const POWERSHELL_COMMAND_BYTES: usize = 32 * 1024 * 1024;
 const COMPOSER_BYTES: u64 = 4 * 1024 * 1024;
 
