@@ -1,29 +1,14 @@
 <template>
 <section id="captures" class="app-view tool-view" aria-labelledby="captures-heading" ?hidden="{{view != 'captures'}}" ?data-active="{{view == 'captures'}}">
-  <div class="tool-page narrow-page">
-    <p class="section-label">Durable evidence</p>
-    <h1 id="captures-heading">Capture, import, and export</h1>
-    <form w-ref="{captureForm}" @submit="{startCapture(e)}">
-      <label>Native capture path <input name="capturePath" value="session.tmcap" required></label>
-      <label>Quota bytes <input name="quota" type="number" min="1025" max="4294967296" value="1073741824" required></label>
-      <label><input name="bodies" type="checkbox"> Retain bounded redacted body samples</label>
-      <div class="actions">
-        <button type="submit">Start capture</button>
-        <button type="button" class="secondary" @click="{stopCapture()}">Seal capture</button>
-        <button type="button" class="secondary" @click="{refreshCapture()}">Status</button>
-      </div>
-    </form>
-    <form w-ref="{artifactForm}" @submit="{inspectCapture(e)}">
-      <label>Native source <input name="source" value="session.tmcap" required></label>
-      <label>Export destination <input name="destination" value="session.jsonl" required></label>
-      <label>Format <select name="format"><option value="native">TMCap snapshot</option><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ strict</option><option value="saz-extended">SAZ extended</option></select></label>
-      <div class="actions">
-        <button type="submit" class="secondary">Inspect/recover</button>
-        <button type="button" @click="{exportCapture()}">Export create-new</button>
-      </div>
-    </form>
-    <pre tabindex="0">{{captureText}}</pre>
+ <div class="capture-page">
+  <header class="workspace-header"><h1 id="captures-heading">Captures</h1><nav class="capture-tabs" aria-label="Capture tasks"><button type="button" ?data-selected="{{captureTask == 'record'}}" @click="{showCaptureTask('record')}">Record</button><button type="button" ?data-selected="{{captureTask == 'inspect'}}" @click="{showCaptureTask('inspect')}">Inspect / recover</button><button type="button" ?data-selected="{{captureTask == 'export'}}" @click="{showCaptureTask('export')}">Export</button></nav><span class="capture-state" role="status">{{captureStateText}}</span></header>
+  <div class="capture-content">
+   <section ?hidden="{{captureTask != 'record'}}"><p class="capture-path" ?hidden="{{!capturePathText}}">{{capturePathText}}</p><form w-ref="{captureForm}" @submit="{startCapture(e)}"><fieldset ?disabled="{{captureBusy || captureActive}}"><label>New capture file <span class="file-field"><input name="capturePath" aria-label="New capture file" value="session.tmcap" required><button type="button" class="secondary" @click="{chooseCapturePath('record')}">Choose…</button></span></label><div class="quota-fields"><label>Maximum file size <input name="quotaAmount" type="number" min="0.001" step="any" value="1" required></label><label>Unit <select name="quotaUnit" aria-label="Unit"><option value="1">B</option><option value="1024">KiB</option><option value="1048576">MiB</option><option value="1073741824" selected>GiB</option></select></label></div><label><input name="bodies" type="checkbox"> Include bounded redacted body samples</label><button type="submit">Start recording</button></fieldset><div class="actions"><button type="button" @click="{stopCapture()}" ?disabled="{{captureBusy || !captureActive}}">Stop recording</button><button type="button" class="secondary" @click="{refreshCapture()}" ?disabled="{{captureBusy}}">Refresh status</button></div></form></section>
+   <section ?hidden="{{captureTask != 'inspect'}}"><form w-ref="{inspectionForm}" @submit="{inspectCapture(e)}"><label>TMCap file <span class="file-field"><input name="source" aria-label="TMCap file" value="session.tmcap" required><button type="button" class="secondary" @click="{chooseCapturePath('source')}" ?disabled="{{captureBusy}}">Browse…</button></span></label><div class="actions"><button type="submit" ?disabled="{{captureBusy}}">Inspect file</button><button type="button" class="secondary" @click="{useInspectedForExport()}" ?hidden="{{!canExportInspected}}">Export a recovered copy…</button></div></form></section>
+   <section ?hidden="{{captureTask != 'export'}}"><form w-ref="{exportForm}" @submit="{exportCapture(e)}"><label>Source capture <span class="file-field"><input name="source" aria-label="Source capture" value="session.tmcap" required><button type="button" class="secondary" @click="{chooseExportSource()}" ?disabled="{{captureBusy}}">Browse…</button></span></label><label>Format <select name="format" aria-label="Format" @change="{exportFormatChanged()}"><option value="native">TMCap snapshot</option><option value="json-lines">JSON lines</option><option value="saz-strict">SAZ · compatibility</option><option value="saz-extended">SAZ · extended fidelity</option></select></label><label>New export file <span class="file-field"><input name="destination" aria-label="New export file" value="session-copy.tmcap" required><button type="button" class="secondary" @click="{chooseCapturePath('export')}" ?disabled="{{captureBusy}}">Choose…</button></span></label><button type="submit" ?disabled="{{captureBusy}}">Export file</button><p class="field-help">Exports create a new file. Choose an unused name to keep existing files intact.</p></form></section>
+   <section class="capture-receipt" ?hidden="{{!captureFacts.length}}" aria-label="Capture result"><dl><for each="fact in captureFacts"><div key="{{fact.label}}"><dt>{{fact.label}}</dt><dd>{{fact.value}}</dd></div></for></dl><details><summary>Technical details</summary><pre tabindex="0">{{captureDetails}}</pre></details></section>
   </div>
+  <output class="capture-feedback" aria-live="polite"><if condition="captureBusy">Working…</if><if condition="!captureBusy">{{captureText}}</if><span class="field-error" ?hidden="{{!captureError}}">{{captureError}}</span></output>
+ </div>
 </section>
-
 </template>

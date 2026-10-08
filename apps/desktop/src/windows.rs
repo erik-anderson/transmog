@@ -1025,6 +1025,7 @@ pub fn run() {
             edit_response_asset,
             create_autoresponse_batch,
             pick_response_body,
+            crate::file_dialogs::pick_capture_path,
             create_response_asset,
             import_response_asset,
             create_response_asset_from_session,

@@ -1,6 +1,9 @@
 //! Thin Tauri host for the Transmog application and `WebUI` renderer.
 
 #[cfg(windows)]
+mod file_dialogs;
+
+#[cfg(windows)]
 mod windows;
 
 /// Starts the Windows desktop shell.

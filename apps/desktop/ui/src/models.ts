@@ -137,7 +137,9 @@ export interface ComposerResult {
   truncated: boolean;
   attribution: string;
 }
-export type CaptureReadModel = Record<string, unknown>;
+export interface CaptureReadModel {state:'idle'|'active'|'sealed'|'failed'|'shutdown';path?:string|null;bytesWritten?:number;message?:string;}
+export interface CaptureSummaryView {records:number;exchanges:number;lossMarkers:number;retainedBodyBytes:number;sealed:boolean;truncatedTail:boolean;validBytes:number;}
+export interface CaptureExportResult {destination:string;records:number;bytes:number;sourceSealed:boolean;sourceTruncatedTail:boolean;fidelity:string;}
 export interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };

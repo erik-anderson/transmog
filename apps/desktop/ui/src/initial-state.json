@@ -626,5 +626,14 @@
   "composerSourceId": "",
   "composerSourceLabel": "",
   "composerSourceAvailable": false,
-  "bodyHexMode": false
+  "bodyHexMode": false,
+  "captureTask": "record",
+  "captureError": "",
+  "captureBusy": false,
+  "captureActive": false,
+  "captureStateText": "Not recording",
+  "capturePathText": "",
+  "captureDetails": "",
+  "captureFacts": [],
+  "canExportInspected": false
 }
