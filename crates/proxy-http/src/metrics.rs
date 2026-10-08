@@ -98,6 +98,9 @@ impl ConnectionObservation {
             .collect::<Vec<_>>();
             performance.project_connection_setup(&mut facts, &phases);
         }
+        if let Some(performance) = performance {
+            self.0.bytes.observe(&mut facts, performance);
+        }
         facts.leg = "upstream".into();
         facts.connection_id = format!("upstream-{}", self.0.id);
         facts.shared = shared;
@@ -184,7 +187,7 @@ impl Service<Uri> for MeasuredTcpConnector {
                 values.facts.local = socket.local_addr().ok().map(|address| address.to_string());
             }
             Ok(TokioIo::new(MeasuredTcp {
-                io: MeteredIo::new(socket, setup.bytes.clone()),
+                io: MeteredIo::new_tcp(socket, setup.bytes.clone()),
                 observation: ConnectionObservation(setup),
             }))
         })

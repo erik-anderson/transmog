@@ -6286,6 +6286,8 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "tokio",
+ "transmog-core",
+ "transmog-socket-info",
 ]
 
 [[package]]
@@ -6397,6 +6399,15 @@ dependencies = [
  "transmog-core",
  "transmog-runtime",
  "transmog-tls",
+]
+
+[[package]]
+name = "transmog-socket-info"
+version = "0.1.0+0"
+dependencies = [
+ "libc",
+ "transmog-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

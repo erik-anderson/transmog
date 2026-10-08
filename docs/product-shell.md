@@ -205,3 +205,13 @@ Product-state and support behavior is documented in
 deliberately deferred platform work are maintained only in the
 [roadmap](roadmap.md). Windows release qualification and eventual Linux/macOS
 qualification remain separate platform gates.
+
+TCP statistics use read-only Windows SIO_TCP_INFO and Linux TCP_INFO. Available
+kernel fields appear under Physical connections; unsupported fields are omitted.
+RTT and window sizes are snapshots, retransmissions are cumulative connection
+counters, and all multiplexed streams contribute. The kernel sample timestamp
+is distinct from the report timestamp. Socket write/flush waits and last local
+acceptance show transport backpressure without asserting remote acknowledgment.
+Queries do not enable OS instrumentation or require elevation. See
+[Windows API](https://learn.microsoft.com/en-us/windows/win32/winsock/sio-tcp-info)
+and [Linux TCP_INFO](https://man7.org/linux/man-pages/man7/tcp.7.html).

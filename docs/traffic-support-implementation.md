@@ -182,13 +182,21 @@ qualified baseline, not completion of the complete plan.
     import/persistence and populated SVG geometry in WebView2. Reviewed wide,
     compact and native snapshots, copy feedback and reachable dialog actions.
 
+20. Read-only Windows SIO_TCP_INFO and Linux TCP_INFO sampling records kernel
+    RTT, supported retransmission/window counters, and actual snapshot time.
+    Borrowed socket handles stay in a narrow native boundary; unsupported
+    platforms omit the metrics. Physical socket write/flush pending windows,
+    last successful local write/flush, and byte totals are explicitly shared
+    across HTTP streams and never assert remote delivery. Native captures and
+    timing reports preserve the evidence. Loopback native queries, pending I/O,
+    Rust transport/capture tests, strict Clippy and populated browser/native
+    wide/compact timing views qualify this phase.
+
 Remaining isolated phases:
 
 - Composer replay: file-backed replay of larger bodies, with source trace and
   entry associations retained in history and results.
 
-- Transport metrics: sample supported TCP RTT, retransmission and window
-  statistics and expose socket backpressure/completion evidence.
 - Search: request/response scopes, match locations and highlighted occurrence
   navigation, normalized-character mapping, cancellation preserving selections.
 - Captured-page preview: selectable source scope, resource/version decisions,

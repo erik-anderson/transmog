@@ -1344,7 +1344,7 @@ try {
   await page.evaluate(()=>globalThis.__workspaceFixture.cancelTraceSave=false);
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
   assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{includeNetworkContext:true},compressed:true});
-  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.performance={work:[{kind:'hook',label:'Request headers · support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'pause',label:'Breakpoint decision',beganOffsetMicros:500,endedOffsetMicros:1500,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · support script',beganOffsetMicros:1800,endedOffsetMicros:3300,busyNanos:250000,calls:3}],points:[{milestone:'client-connected',unixMillis:1800000000000,offsetMicros:-2500},{milestone:'request-headers',unixMillis:1800000000002,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000005,offsetMicros:3500}],protocols:[],transports:[{leg:'upstream',connectionId:'shared-h2-fixture',shared:true,outcome:'connected',sampledOffsetMicros:3000,peer:'192.0.2.1:443',local:'192.0.2.2:54321',dnsMicros:null,tcpMicros:0,tlsMicros:2000,setupTimings:[{phase:'tcp',beganOffsetMicros:-20000,endedOffsetMicros:-18800,requestWaitMicros:0},{phase:'tls',beganOffsetMicros:-8000,endedOffsetMicros:2000,requestWaitMicros:2000}],tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256',alpn:'h2',bytesRead:10240,bytesWritten:1024}]};state.savedTiming={ClientBeginRequest:'00:00:00.000'};});
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.performance={work:[{kind:'hook',label:'Request headers · support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'pause',label:'Breakpoint decision',beganOffsetMicros:500,endedOffsetMicros:1500,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · support script',beganOffsetMicros:1800,endedOffsetMicros:3300,busyNanos:250000,calls:3}],points:[{milestone:'client-connected',unixMillis:1800000000000,offsetMicros:-2500},{milestone:'request-headers',unixMillis:1800000000002,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000005,offsetMicros:3500}],protocols:[],transports:[{leg:'upstream',connectionId:'shared-h2-fixture',shared:true,outcome:'connected',sampledOffsetMicros:3000,peer:'192.0.2.1:443',local:'192.0.2.2:54321',dnsMicros:null,tcpMicros:0,tlsMicros:2000,setupTimings:[{phase:'tcp',beganOffsetMicros:-20000,endedOffsetMicros:-18800,requestWaitMicros:0},{phase:'tls',beganOffsetMicros:-8000,endedOffsetMicros:2000,requestWaitMicros:2000}],tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256',alpn:'h2',bytesRead:10240,bytesWritten:1024,tcpSampledOffsetMicros:2500,tcp:{rttMicros:2400,minRttMicros:1200,congestionWindow:65536,sendWindow:32768,receiveWindow:131072,unacknowledgedBytes:512,retransmittedBytes:2048,retransmittedSegments:null,fastRetransmissions:2,duplicateAcks:3,timeoutEpisodes:0,mss:1460,connectionAgeMillis:1300},socketIo:{writeWaitMicros:1750,writeWaits:2,lastWriteOffsetMicros:2800,lastFlushOffsetMicros:2900}}]};state.savedTiming={ClientBeginRequest:'00:00:00.000'};});
   await page.locator('.session-link').first().click();
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
   const timing=page.locator('.timing-dialog[open]');
@@ -1377,6 +1377,10 @@ try {
   assert.match(await tlsWait.textContent(),/2 ms.*10 ms.*8 ms before.*2 ms after/);
   assert.match(await timing.textContent(),/Connection setup started20 ms before/);
   assert.match(await timing.textContent(),/TLSv1.3/);
+  assert.match(await timing.textContent(),/TCP estimated round trip2.4 ms/);
+  assert.match(await timing.textContent(),/Retransmitted TCP data2,048 bytes/);
+  assert.match(await timing.textContent(),/Socket write \/ flush wait1.75 ms/);
+  assert.match(report,/Unacknowledged sent data: 512 bytes/);
   await timing.getByText('Original imported timing and session evidence',{exact:true}).click();
   await timing.getByText('00:00:00.000',{exact:true}).waitFor();
   await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-wide.png')});
@@ -1385,6 +1389,11 @@ try {
   await page.setViewportSize({width:800,height:600});
   await timing.getByText('Proxy ↔ upstream',{exact:true}).evaluate(node=>node.scrollIntoView({block:'start'}));
   await page.screenshot({path:resolve(root,'../../../target/ui-check/shared-setup-compact.png')});
+  await timing.getByText('TCP estimated round trip',{exact:true}).evaluate(node=>node.scrollIntoView({block:'start'}));
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/tcp-statistics-compact.png')});
+  await page.setViewportSize({width:1280,height:800});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/tcp-statistics-wide.png')});
+  await page.setViewportSize({width:800,height:600});
   const timingBounds=await timing.boundingBox();assert.ok(timingBounds.width<=800&&timingBounds.height<=600);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-compact.png')});
   await timing.getByRole('button',{name:'Close',exact:true}).click();

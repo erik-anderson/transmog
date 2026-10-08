@@ -801,7 +801,7 @@ async fn serve_explicit_connection(
     stream: TcpStream,
     context: ConnectionContext,
 ) -> Result<(), ProxyRuntimeError> {
-    let stream = MeteredIo::new(stream, context.socket_metrics.clone());
+    let stream = MeteredIo::new_tcp(stream, context.socket_metrics.clone());
     let shutdown = state.final_shutdown.clone();
     let header_read_timeout = state.config.limits.header_read_timeout;
     let max_header_count = state.config.limits.max_header_count;
@@ -3405,13 +3405,6 @@ impl ClientPerformanceSource {
     fn sample(&self, recorder: &PerformanceRecorder) {
         let read = self.context.socket_metrics.bytes_read();
         let written = self.context.socket_metrics.bytes_written();
-        if recorder.snapshot().transports.iter().any(|transport| {
-            transport.leg == "client"
-                && transport.bytes_read == Some(read)
-                && transport.bytes_written == Some(written)
-        }) {
-            return;
-        }
         let tls = self.context.tls.as_deref();
         let mut observation = TransportObservation {
             leg: "client".into(),
@@ -3432,6 +3425,9 @@ impl ClientPerformanceSource {
             bytes_written: Some(written),
             ..TransportObservation::default()
         };
+        self.context
+            .socket_metrics
+            .observe(&mut observation, recorder);
         if let Some(tls) = tls {
             recorder.project_connection_setup(
                 &mut observation,

@@ -150,9 +150,66 @@ pub struct TransportObservation {
     pub bytes_read: Option<u64>,
     /// Physical bytes written at the observation point; includes all shared streams.
     pub bytes_written: Option<u64>,
+    /// Latest kernel TCP snapshot; absent if unsupported or on UDP/QUIC.
+    #[serde(default)]
+    pub tcp: Option<TcpObservation>,
+    /// Actual kernel snapshot time on this request's clock (may precede the report).
+    #[serde(default)]
+    pub tcp_sampled_offset_micros: Option<i64>,
+    /// Physical socket write/flush evidence, independent of HTTP body queues.
+    #[serde(default)]
+    pub socket_io: Option<SocketIoObservation>,
     /// QUIC recovery/path statistics; absent on TCP adapters.
     #[serde(default)]
     pub quic: Option<QuicObservation>,
+}
+
+/// Read-only kernel TCP snapshot. Counters and windows belong to the whole
+/// physical connection, including every multiplexed request. None is unavailable.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TcpObservation {
+    /// Kernel estimated round trip in microseconds.
+    pub rtt_micros: Option<u64>,
+    /// Kernel minimum round trip in microseconds, when exposed.
+    pub min_rtt_micros: Option<u64>,
+    /// Congestion window in bytes.
+    pub congestion_window: Option<u64>,
+    /// Peer advertised send window in bytes.
+    pub send_window: Option<u64>,
+    /// Local advertised receive window in bytes.
+    pub receive_window: Option<u64>,
+    /// Sent bytes not acknowledged at this snapshot.
+    pub unacknowledged_bytes: Option<u64>,
+    /// Cumulative bytes retransmitted, when exposed.
+    pub retransmitted_bytes: Option<u64>,
+    /// Cumulative retransmitted segments, when exposed.
+    pub retransmitted_segments: Option<u64>,
+    /// Cumulative fast retransmission episodes.
+    pub fast_retransmissions: Option<u64>,
+    /// Cumulative duplicate acknowledgments received.
+    pub duplicate_acks: Option<u64>,
+    /// Cumulative timeout episodes.
+    pub timeout_episodes: Option<u64>,
+    /// Maximum segment size in bytes.
+    pub mss: Option<u64>,
+    /// Kernel connection age in milliseconds.
+    pub connection_age_millis: Option<u64>,
+}
+
+/// Local socket I/O evidence; successful writes mean kernel acceptance,
+/// never peer receipt or acknowledgment. All values are shared connection totals.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SocketIoObservation {
+    /// Sum of time pending on physical writes or flushes, including an ongoing wait.
+    pub write_wait_micros: u64,
+    /// Number of distinct pending write/flush episodes.
+    pub write_waits: u64,
+    /// Last nonempty write accepted by the socket, on this request's clock.
+    pub last_write_offset_micros: Option<i64>,
+    /// Last successful local flush, on this request's clock; not remote receipt.
+    pub last_flush_offset_micros: Option<i64>,
 }
 
 /// Physical QUIC counters, shared by all streams on this connection.
