@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -302,6 +302,7 @@ impl MutableSession {
 
 #[derive(Debug, Default)]
 struct CatalogState {
+    dismissed: HashSet<ExchangeId>,
     by_id: HashMap<ExchangeId, MutableSession>,
     order: BTreeMap<u64, ExchangeId>,
     next_admission: u64,
@@ -427,10 +428,52 @@ impl SessionCatalog {
 
     /// Gets one immutable snapshot by exchange ID.
     pub fn get(&self, exchange_id: ExchangeId) -> Option<SessionSnapshot> {
-        self.lock_state()
-            .by_id
-            .get(&exchange_id)
-            .map(MutableSession::snapshot)
+        let state = self.lock_state();
+        if state.dismissed.contains(&exchange_id) {
+            return None;
+        }
+        state.by_id.get(&exchange_id).map(MutableSession::snapshot)
+    }
+
+    /// Removes entries from the managed view without interrupting active exchanges.
+    /// The bounded catalog retains them for Undo until ordinary eviction.
+    pub fn dismiss(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let changed = ids
+            .iter()
+            .copied()
+            .filter(|id| state.by_id.contains_key(id))
+            .collect::<Vec<_>>();
+        let changed = changed
+            .into_iter()
+            .filter(|id| state.dismissed.insert(*id))
+            .collect::<Vec<_>>();
+        drop(state);
+        self.notify_view_change(&changed);
+        changed
+    }
+
+    /// Restores dismissed entries which have not since been evicted.
+    pub fn restore_dismissed(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let changed = ids
+            .iter()
+            .copied()
+            .filter(|id| state.dismissed.remove(id))
+            .collect::<Vec<_>>();
+        drop(state);
+        self.notify_view_change(&changed);
+        changed
+    }
+
+    fn notify_view_change(&self, ids: &[ExchangeId]) {
+        if let Some(id) = ids.first() {
+            let _ = self.inner.deltas.send(CatalogDelta {
+                exchange_id: *id,
+                sequence: 0,
+                terminal: false,
+            });
+        }
     }
 
     /// Pages authoritative state in stable admission order.
@@ -445,6 +488,9 @@ impl SessionCatalog {
             .order
             .range((std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded))
             .filter_map(|(admission, exchange_id)| {
+                if state.dismissed.contains(exchange_id) {
+                    return None;
+                }
                 let session = state.by_id.get(exchange_id)?;
                 matches_filter(session, &query.filter).then_some((*admission, session))
             });
@@ -480,6 +526,9 @@ impl SessionCatalog {
             .iter()
             .rev()
             .filter_map(|(_, exchange_id)| {
+                if state.dismissed.contains(exchange_id) {
+                    return None;
+                }
                 let session = state.by_id.get(exchange_id)?;
                 matches_filter(session, &query.filter).then_some(session)
             })
@@ -506,6 +555,7 @@ impl SessionCatalog {
         state
             .order
             .values()
+            .filter(|id| !state.dismissed.contains(id))
             .filter_map(|id| state.by_id.get(id))
             .map(|session| project(&session.snapshot()))
             .collect()
@@ -625,6 +675,7 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
     };
     state.order.remove(&admission);
     state.by_id.remove(&exchange_id);
+    state.dismissed.remove(&exchange_id);
     state.counters.evicted = state.counters.evicted.saturating_add(1);
     true
 }
@@ -819,6 +870,26 @@ mod tests {
     #[test]
     fn default_policy_retains_metadata_only() {
         assert_eq!(SessionLimits::default().body_bytes_per_session, 0);
+    }
+
+    #[test]
+    fn dismissed_active_entries_stay_hidden_until_undo_or_eviction() {
+        let catalog = SessionCatalog::new(limits(2));
+        start(&catalog, 1, "one.test");
+        start(&catalog, 2, "two.test");
+        assert_eq!(catalog.dismiss(&[ExchangeId(1)]), [ExchangeId(1)]);
+        fail(&catalog, 1, 2);
+        assert!(catalog.get(ExchangeId(1)).is_none());
+        assert_eq!(
+            catalog.project_retained(|session| session.metadata.exchange_id),
+            [ExchangeId(2)]
+        );
+        assert_eq!(catalog.restore_dismissed(&[ExchangeId(1)]), [ExchangeId(1)]);
+        assert!(catalog.get(ExchangeId(1)).unwrap().terminal.is_some());
+        catalog.dismiss(&[ExchangeId(1)]);
+        start(&catalog, 3, "three.test");
+        assert!(catalog.restore_dismissed(&[ExchangeId(1)]).is_empty());
+        assert!(catalog.lock_state().dismissed.is_empty());
     }
 
     fn limits(max_sessions: usize) -> SessionLimits {

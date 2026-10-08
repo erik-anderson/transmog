@@ -19,16 +19,17 @@ use tauri::{
 };
 use transmog_app::{
     AppConfig, AppError, AppStatus, Application, ArtifactKind, AuthoredResponseAsset,
-    AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
-    AutomationStatus, BodyInspection, BodyInspectionRequest, BodyStoreConfig, BreakpointDecision,
-    BreakpointSettings, BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel,
-    CaptureStartRequest, CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot,
-    DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    AutoResponseBatchInput, AutoResponseBatchResult, AutoResponseTestInput, AutoResponseTestResult,
+    AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
+    BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
+    BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
+    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
     ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
-    ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
-    ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
-    SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
-    WindowState, WorkspacePreferences,
+    ResponseAssetEdit, ResponseAssetInspection, ResponseFileResult, RuntimeDiagnostics,
+    ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus, SessionDetail,
+    SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
+    SupportBundleResult, SystemReplayExecutor, WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -139,6 +140,15 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 }
 
 #[tauri::command]
+fn remove_traffic_entries(
+    ids: Vec<String>,
+    restore: bool,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state.application.remove_traffic_entries(&ids, restore)
+}
+
+#[tauri::command]
 fn set_autoresponses_enabled(
     enabled: bool,
     generation: u64,
@@ -230,6 +240,39 @@ fn disable_script(
 #[tauri::command]
 fn response_assets(state: State<'_, DesktopState>) -> Vec<ResponseAsset> {
     state.application.response_assets()
+}
+
+#[tauri::command]
+async fn inspect_response_asset(
+    reference: String,
+    state: State<'_, DesktopState>,
+) -> Result<ResponseAssetInspection, AppError> {
+    state.application.inspect_response_asset(&reference).await
+}
+
+#[tauri::command]
+async fn edit_response_asset(
+    input: ResponseAssetEdit,
+    state: State<'_, DesktopState>,
+) -> Result<ResponseAsset, AppError> {
+    state.application.edit_response_asset(input).await
+}
+
+#[tauri::command]
+async fn create_autoresponse_batch(
+    input: AutoResponseBatchInput,
+    state: State<'_, DesktopState>,
+) -> Result<AutoResponseBatchResult, AppError> {
+    state.application.create_autoresponse_batch(input).await
+}
+
+#[tauri::command]
+async fn pick_response_body() -> Option<String> {
+    rfd::AsyncFileDialog::new()
+        .set_title("Choose replacement response body")
+        .pick_file()
+        .await
+        .map(|file| file.path().to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -866,6 +909,7 @@ pub fn run() {
             desktop_bootstrap,
             record_frontend_diagnostic,
             automation_status,
+            remove_traffic_entries,
             set_autoresponses_enabled,
             test_autoresponse_match,
             validate_automation,
@@ -878,6 +922,10 @@ pub fn run() {
             activate_script,
             disable_script,
             response_assets,
+            inspect_response_asset,
+            edit_response_asset,
+            create_autoresponse_batch,
+            pick_response_body,
             create_response_asset,
             import_response_asset,
             create_response_asset_from_session,

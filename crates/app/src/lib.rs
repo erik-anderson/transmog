@@ -8,6 +8,7 @@
 
 mod artifacts;
 mod automation;
+mod autoresponse_batch;
 mod body_store;
 mod breakpoints;
 mod composer;
@@ -31,8 +32,9 @@ pub use artifacts::{
 };
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
-    AutomationStatus, ExampleResult, RuleDiagnostic,
+    AutomationStatus, ExampleResult, RuleDiagnostic, RuleUsage,
 };
+pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
     BodyStoreError, DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
@@ -57,8 +59,8 @@ pub use product_state::{
     ThemePreference, WindowState,
 };
 pub use response_assets::{
-    AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetProvenance,
-    SessionResponseAsset,
+    AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
+    ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
@@ -402,7 +404,58 @@ impl Application {
 
     /// Returns active native automation and candidate/history counts.
     pub fn automation_status(&self) -> AutomationStatus {
-        self.automation.status()
+        let mut status = self.automation.status();
+        let assets = self
+            .response_assets
+            .list()
+            .into_iter()
+            .map(|asset| (asset.asset_ref(), asset))
+            .collect::<std::collections::HashMap<_, _>>();
+        for diagnostic in &mut status.diagnostics {
+            let response = |id: &str| {
+                status
+                    .rules
+                    .iter()
+                    .find(|rule| rule.id == id)
+                    .and_then(|rule| rule.request.response_asset.as_ref())
+                    .and_then(|reference| assets.get(reference))
+            };
+            if let (Some(left), Some(right)) = (
+                response(&diagnostic.rule_id),
+                response(&diagnostic.superseded_by),
+            ) {
+                diagnostic.duplicate_response = left.status == right.status
+                    && left.headers == right.headers
+                    && left.sha256 == right.sha256;
+            }
+        }
+        let mut usage = std::collections::BTreeMap::<String, RuleUsage>::new();
+        for (id, time) in self
+            .service
+            .catalog()
+            .project_retained(|snapshot| {
+                inspector::auto_response_match(snapshot)
+                    .map(|matched| (matched.rule_id, snapshot.metadata.started_at))
+            })
+            .into_iter()
+            .flatten()
+        {
+            let last = u64::try_from(
+                time.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis(),
+            )
+            .unwrap_or(u64::MAX);
+            let item = usage.entry(id.clone()).or_insert(RuleUsage {
+                rule_id: id,
+                matches: 0,
+                last_matched_at: 0,
+            });
+            item.matches += 1;
+            item.last_matched_at = item.last_matched_at.max(last);
+        }
+        status.usage = usage.into_values().collect();
+        status
     }
 
     /// Changes the global autoresponse hook gate, preserving all rule properties.
@@ -415,7 +468,8 @@ impl Application {
         generation: u64,
     ) -> Result<AutomationStatus, AppError> {
         self.automation
-            .set_autoresponses_enabled(enabled, generation)
+            .set_autoresponses_enabled(enabled, generation)?;
+        Ok(self.automation_status())
     }
 
     /// Tests a draft rule against a synthetic request without network traffic.
@@ -505,6 +559,28 @@ impl Application {
     /// Lists durable immutable response assets.
     pub fn response_assets(&self) -> Vec<ResponseAsset> {
         self.response_assets.list()
+    }
+
+    /// Inspects saved response text independently of its original traffic source.
+    ///
+    /// # Errors
+    /// Rejects unavailable revisions, bytes or content decoding failures.
+    pub async fn inspect_response_asset(
+        &self,
+        reference: &str,
+    ) -> Result<ResponseAssetInspection, AppError> {
+        self.response_assets.inspect(reference).await
+    }
+
+    /// Creates a new immutable saved response revision.
+    ///
+    /// # Errors
+    /// Rejects invalid headers, bodies, revisions or persistence failures.
+    pub async fn edit_response_asset(
+        &self,
+        input: ResponseAssetEdit,
+    ) -> Result<ResponseAsset, AppError> {
+        self.response_assets.edit(input).await
     }
 
     /// Creates a bounded authored response asset.
@@ -725,6 +801,34 @@ impl Application {
     /// Returns invalid filters, page sizes, cursors, or token-generation failures.
     pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
         sessions::query_sessions(&self.service, &self.cursors, query)
+    }
+
+    /// Removes selected rows from Traffic, retaining bounded Undo evidence.
+    ///
+    /// # Errors
+    /// Rejects oversized selections or malformed identifiers before changing the view.
+    pub fn remove_traffic_entries(
+        &self,
+        ids: &[String],
+        restore: bool,
+    ) -> Result<Vec<String>, AppError> {
+        if ids.len() > 10_000 {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "Select at most 10000 traffic entries.",
+                false,
+            ));
+        }
+        let ids = ids
+            .iter()
+            .map(|id| response_assets::parse_exchange_id(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let changed = if restore {
+            self.service.catalog().restore_dismissed(&ids)
+        } else {
+            self.service.catalog().dismiss(&ids)
+        };
+        Ok(changed.iter().map(|id| format!("{:032x}", id.0)).collect())
     }
 
     /// Opens a bounded hint-only subscription for presentation refreshes.

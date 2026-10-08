@@ -529,6 +529,26 @@ mod tests {
             decoded_body: None,
             preserve_content_encoding: true,
         };
+        let batch = application
+            .create_autoresponse_batch(crate::AutoResponseBatchInput {
+                ids: vec![source_id.clone()],
+                generation: 0,
+            })
+            .await
+            .unwrap();
+        assert_eq!(batch.created_ids.len(), 1);
+        let before = application.response_assets().len();
+        assert!(
+            application
+                .create_autoresponse_batch(crate::AutoResponseBatchInput {
+                    ids: vec![source_id.clone(), format!("{:032x}", u128::MAX)],
+                    generation: batch.status.generation
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(application.response_assets().len(), before);
+        assert_eq!(application.automation_status().rules, batch.status.rules);
         let asset = application
             .create_response_asset_from_session(input.clone())
             .await
@@ -552,6 +572,7 @@ mod tests {
         let candidate = application
             .validate_automation(crate::AutomationRuleSet {
                 rules: vec![rule.clone()],
+                generation: application.automation_status().generation,
                 ..Default::default()
             })
             .unwrap();
@@ -564,11 +585,24 @@ mod tests {
         assert!(head.starts_with("HTTP/1.1 200"));
         assert_eq!(replayed, encoded);
         application.shutdown().await.unwrap();
+        application
+            .remove_traffic_entries(std::slice::from_ref(&source_id), false)
+            .unwrap();
+        assert!(application.session_detail(&source_id).is_err());
+        let preview = application
+            .inspect_response_asset(&asset.asset_ref())
+            .await
+            .unwrap();
+        assert_eq!(preview.display, "original response");
         let edited = application
-            .create_response_asset_from_session(crate::SessionResponseAsset {
-                id: "edited".to_owned(),
+            .edit_response_asset(crate::ResponseAssetEdit {
+                asset_reference: asset.asset_ref(),
+                status: 200,
+                headers: asset.headers.clone(),
+                media_type: asset.media_type.clone(),
                 decoded_body: Some(b"edited response".to_vec()),
-                ..input
+                body_path: None,
+                preserve_content_encoding: true,
             })
             .await
             .unwrap();
@@ -588,7 +622,7 @@ mod tests {
 
         let restarted = crate::Application::new(config).unwrap();
         assert!(restarted.session_detail(&source_id).is_err());
-        assert_eq!(restarted.response_assets().len(), 2);
+        assert_eq!(restarted.response_assets().len(), 3);
         restarted.start_proxy(start, None).await.unwrap();
         let (head, _) = request(
             restarted.status().listener.unwrap(),

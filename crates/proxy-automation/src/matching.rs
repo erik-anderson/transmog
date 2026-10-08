@@ -475,33 +475,33 @@ impl CompiledUrl {
 /// # Errors
 /// Returns URL syntax errors. Arbitrary regex equivalence is not inferred.
 pub fn same_matching_behavior(left: &RuleMatcher, right: &RuleMatcher) -> Result<bool, String> {
-    let key = |matcher: &RuleMatcher| {
-        matcher
-            .url
-            .as_ref()
-            .map(UrlCondition::matching_key)
-            .transpose()
-    };
-    if key(left)? != key(right)? {
-        return Ok(false);
+    Ok(matcher_key(left)? == matcher_key(right)?)
+}
+
+/// Stable identity of provably equivalent conditions, excluding annotations and examples.
+///
+/// # Errors
+/// Returns syntax errors instead of guessing equivalence.
+pub fn matcher_key(matcher: &RuleMatcher) -> Result<String, String> {
+    let url = matcher
+        .url
+        .as_ref()
+        .map(UrlCondition::matching_key)
+        .transpose()?;
+    let mut matcher = matcher.clone();
+    matcher.url = None;
+    matcher.examples.clear();
+    matcher.method = matcher.method.map(|value| value.to_ascii_uppercase());
+    matcher.host = matcher.host.map(|value| value.to_ascii_lowercase());
+    matcher.scheme = matcher.scheme.map(|value| value.to_ascii_lowercase());
+    for header in &mut matcher.request_headers {
+        header.name.make_ascii_lowercase();
     }
-    let normalize = |matcher: &RuleMatcher| {
-        let mut matcher = matcher.clone();
-        matcher.url = None;
-        matcher.examples.clear();
-        matcher.method = matcher.method.map(|value| value.to_ascii_uppercase());
-        matcher.host = matcher.host.map(|value| value.to_ascii_lowercase());
-        matcher.scheme = matcher.scheme.map(|value| value.to_ascii_lowercase());
-        for header in &mut matcher.request_headers {
-            header.name.make_ascii_lowercase();
-        }
-        matcher
-            .request_headers
-            .sort_by_key(|header| format!("{}{:?}", header.name, header.condition));
-        matcher.request_headers.dedup();
-        matcher
-    };
-    Ok(normalize(left) == normalize(right))
+    matcher
+        .request_headers
+        .sort_by_key(|header| format!("{}{:?}", header.name, header.condition));
+    matcher.request_headers.dedup();
+    Ok(format!("{url:?}|{matcher:?}"))
 }
 
 fn decode_parameter(value: &str) -> String {

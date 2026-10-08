@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use bytes::Bytes;
@@ -129,6 +129,44 @@ pub struct SessionResponseAsset {
     pub preserve_content_encoding: bool,
 }
 
+/// Bounded, decoded saved-response preview for the properties editor.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseAssetInspection {
+    /// Immutable response metadata and ordered headers.
+    pub asset: ResponseAsset,
+    /// Complete decoded text, when it can be edited faithfully.
+    pub display: String,
+    /// Character encoding used when saving text edits.
+    pub text_encoding: Option<&'static str>,
+    /// Original compression stack.
+    pub content_codings: Vec<String>,
+    /// Why a preview is read-only or unavailable.
+    pub explanation: String,
+}
+
+/// A new immutable revision of a saved response.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResponseAssetEdit {
+    /// Exact source revision; its bytes and historical metadata remain intact.
+    pub asset_reference: String,
+    /// New response status.
+    pub status: u16,
+    /// Ordered editable response fields.
+    pub headers: HeaderBlock,
+    /// Optional declared media type.
+    pub media_type: Option<String>,
+    /// Replacement decoded bytes, or null to retain the original encoded body.
+    pub decoded_body: Option<Vec<u8>>,
+    /// Explicitly selected replacement body file, served with identity encoding.
+    #[serde(default)]
+    pub body_path: Option<PathBuf>,
+    /// Reapply the original compression stack to replacement bytes.
+    #[serde(default = "default_true")]
+    pub preserve_content_encoding: bool,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -144,6 +182,7 @@ struct AssetIndex {
 /// Durable content-addressed response asset store.
 #[derive(Clone, Debug)]
 pub struct ResponseAssetStore {
+    mutation: Arc<Mutex<()>>,
     root: Option<Arc<PathBuf>>,
     assets: Arc<RwLock<BTreeMap<String, ResponseAsset>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
@@ -159,6 +198,7 @@ impl ResponseAssetStore {
             (0, BTreeMap::new())
         };
         Ok(Self {
+            mutation: Arc::new(Mutex::new(())),
             root: root.map(Arc::new),
             assets: Arc::new(RwLock::new(assets)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(generation)),
@@ -173,6 +213,198 @@ impl ResponseAssetStore {
             .values()
             .cloned()
             .collect()
+    }
+
+    fn get(&self, reference: &str) -> Result<ResponseAsset, AppError> {
+        self.assets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| invalid("Saved response revision is unavailable."))
+    }
+
+    fn open_body(&self, asset: &ResponseAsset) -> Result<File, AppError> {
+        let root = self
+            .root
+            .as_deref()
+            .ok_or_else(|| unavailable("Saved response storage is unavailable."))?;
+        let file = File::open(body_path(root, &asset.sha256))
+            .map_err(|_| unavailable("Saved response body is unavailable."))?;
+        if file
+            .metadata()
+            .map_err(|_| unavailable("Saved response body is unreadable."))?
+            .len()
+            != asset.body_bytes
+        {
+            return Err(unavailable("Saved response body length changed."));
+        }
+        Ok(file)
+    }
+
+    pub(crate) async fn inspect(
+        &self,
+        reference: &str,
+    ) -> Result<ResponseAssetInspection, AppError> {
+        let asset = self.get(reference)?;
+        let content_codings = asset_codings(&asset.headers);
+        let mut result=ResponseAssetInspection {asset:asset.clone(),display:String::new(),text_encoding:None,content_codings:content_codings.clone(),explanation:"Binary or unsupported text. Headers and status remain editable; replace the body from a file if needed.".into()};
+        if asset.body_bytes > MAX_AUTHORED_BYTES as u64 {
+            result.explanation =
+                "Body exceeds the 16 MiB text editor limit. Status and headers remain editable."
+                    .into();
+            return Ok(result);
+        }
+        let mut bytes = Vec::new();
+        self.open_body(&asset)?
+            .take(MAX_AUTHORED_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| unavailable("Saved response body is unreadable."))?;
+        if bytes.len() as u64 != asset.body_bytes {
+            return Err(unavailable("Saved response body changed."));
+        }
+        let bytes = crate::inspector::decode_content(&content_codings, bytes).await?;
+        let charset = asset
+            .media_type
+            .as_deref()
+            .and_then(|mime| {
+                mime.split(';')
+                    .skip(1)
+                    .find_map(|part| part.trim().strip_prefix("charset="))
+            })
+            .map(|value| value.trim_matches('"'));
+        let (_, display, warning, encoding) = crate::inspector::render_body(
+            crate::BodyRepresentation::OriginalText,
+            &bytes,
+            charset,
+            asset.media_type.as_deref(),
+            0,
+        );
+        result.display = display;
+        result.text_encoding = encoding;
+        result.explanation=warning.unwrap_or_else(||"Edits create a new saved response revision. Historical traffic retains its original response.".into());
+        Ok(result)
+    }
+
+    pub(crate) async fn edit(&self, input: ResponseAssetEdit) -> Result<ResponseAsset, AppError> {
+        let source = self.get(&input.asset_reference)?;
+        let codings = asset_codings(&source.headers);
+        let mut headers = input.headers;
+        headers.remove_all("content-encoding");
+        if input.body_path.is_some() && input.decoded_body.is_some() {
+            return Err(invalid("Choose either a replacement file or edited text."));
+        }
+        let replacement_file = if let Some(path) = &input.body_path {
+            let file =
+                File::open(path).map_err(|_| invalid("Replacement body file is unavailable."))?;
+            if !file
+                .metadata()
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_ASSET_BYTES)
+            {
+                return Err(invalid("Replacement file exceeds one GiB."));
+            }
+            Some(file)
+        } else {
+            None
+        };
+        let encoded = if let Some(decoded) = input.decoded_body {
+            if decoded.len() > MAX_AUTHORED_BYTES {
+                return Err(invalid("Edited body exceeds 16 MiB."));
+            }
+            if input.preserve_content_encoding {
+                Some(crate::inspector::encode_content(&codings, decoded).await?)
+            } else {
+                Some(decoded)
+            }
+        } else {
+            None
+        };
+        if replacement_file.is_none() && (encoded.is_none() || input.preserve_content_encoding) {
+            for field in source
+                .headers
+                .iter()
+                .filter(|field| field.name().eq_ignore_ascii_case(b"content-encoding"))
+            {
+                headers.push(field.clone());
+            }
+        }
+        headers.remove_all("content-type");
+        let revision = self
+            .list()
+            .iter()
+            .filter(|asset| asset.id == source.id)
+            .map(|asset| asset.revision)
+            .max()
+            .unwrap_or(source.revision)
+            .checked_add(1)
+            .ok_or_else(|| invalid("Saved response revision is exhausted."))?;
+        if let Some(file) = replacement_file {
+            return self.create_from_reader(
+                source.id,
+                revision,
+                input.status,
+                &headers,
+                input.media_type,
+                source.provenance,
+                file,
+            );
+        }
+        if let Some(body) = encoded {
+            self.create_from_reader(
+                source.id,
+                revision,
+                input.status,
+                &headers,
+                input.media_type,
+                source.provenance,
+                std::io::Cursor::new(body),
+            )
+        } else {
+            let reader = self.open_body(&source)?;
+            self.create_from_reader(
+                source.id,
+                revision,
+                input.status,
+                &headers,
+                input.media_type,
+                source.provenance,
+                reader,
+            )
+        }
+    }
+
+    pub(crate) fn discard_created(&self, references: &[String]) -> Result<(), AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut next = self
+            .assets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for reference in references {
+            next.remove(reference);
+        }
+        let generation = self
+            .generation
+            .load(std::sync::atomic::Ordering::Acquire)
+            .checked_add(1)
+            .ok_or_else(|| invalid("Asset generation exhausted."))?;
+        persist_index(
+            self.root
+                .as_deref()
+                .ok_or_else(|| unavailable("Asset storage unavailable."))?,
+            generation,
+            &next,
+        )?;
+        *self
+            .assets
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+        self.generation
+            .store(generation, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
 
     /// Creates a small authored asset without overwriting an existing revision.
@@ -307,7 +539,20 @@ impl ResponseAssetStore {
         provenance: ResponseAssetProvenance,
         reader: impl Read,
     ) -> Result<ResponseAsset, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         validate_identity(&id, revision)?;
+        if headers.iter().count() > 256
+            || headers
+                .iter()
+                .map(|field| field.name().len() + field.value().len())
+                .sum::<usize>()
+                > 64 * 1024
+        {
+            return Err(invalid("Response headers exceed the editor limits."));
+        }
         if !(200..=599).contains(&status) {
             return Err(invalid("response asset status must be between 200 and 599"));
         }
@@ -362,6 +607,16 @@ impl ResponseAssetStore {
             .store(generation, std::sync::atomic::Ordering::Release);
         Ok(asset)
     }
+}
+
+fn asset_codings(headers: &HeaderBlock) -> Vec<String> {
+    headers
+        .values("content-encoding")
+        .filter_map(|value| std::str::from_utf8(value).ok())
+        .flat_map(|value| value.split(','))
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| value != "identity" && !value.is_empty())
+        .collect()
 }
 
 impl ResponseAssetResolver for ResponseAssetStore {
@@ -696,7 +951,7 @@ pub(crate) fn parse_response_boundary(value: &str) -> Result<ExchangeBoundary, A
     }
 }
 
-fn random_hex() -> Result<String, AppError> {
+pub(crate) fn random_hex() -> Result<String, AppError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
         .map_err(|_| unavailable("response asset temporary identity failed"))?;

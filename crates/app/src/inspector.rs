@@ -747,7 +747,7 @@ fn content_encode_error(error: transmog_content::ContentCodecError) -> AppError 
     )
 }
 
-fn render_body(
+pub(crate) fn render_body(
     requested: BodyRepresentation,
     bytes: &[u8],
     charset: Option<&str>,

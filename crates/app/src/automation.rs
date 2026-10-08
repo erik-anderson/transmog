@@ -123,6 +123,8 @@ pub struct AutomationStatus {
     pub autoresponses_enabled: bool,
     /// Guaranteed identical-match shadowing in priority order.
     pub diagnostics: Vec<RuleDiagnostic>,
+    /// Optional usage from the currently retained Traffic entries.
+    pub usage: Vec<RuleUsage>,
     /// Number of validated candidates awaiting explicit activation.
     pub candidate_count: usize,
     /// Number of retained prior in-memory revisions available for rollback.
@@ -139,6 +141,18 @@ pub struct RuleDiagnostic {
     pub superseded_by: String,
     /// Both rules refer to the same response asset.
     pub duplicate_response: bool,
+}
+
+/// Observed usage within retained Traffic, independent of rule revisions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleUsage {
+    /// Rule identity retained by winning exchanges.
+    pub rule_id: String,
+    /// Count of retained requests served by this rule.
+    pub matches: usize,
+    /// Latest retained matching request start time, Unix milliseconds.
+    pub last_matched_at: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -410,6 +424,7 @@ impl AutomationRegistry {
             rules: active.document.rules.clone(),
             autoresponses_enabled: active.document.autoresponses_enabled,
             diagnostics: rule_diagnostics(&active.document.rules),
+            usage: Vec::new(),
             candidate_count: self
                 .candidates
                 .lock()
@@ -483,28 +498,23 @@ fn rule_diagnostics(rules: &[Rule]) -> Vec<RuleDiagnostic> {
         .filter(|rule| rule.request.response_asset.is_some())
         .collect::<Vec<_>>();
     ordered.sort_by_key(|rule| (rule.priority, &rule.id));
-    ordered
-        .iter()
-        .enumerate()
-        .filter_map(|(index, rule)| {
-            ordered[..index]
-                .iter()
-                .find(|earlier| {
-                    earlier.enabled
-                        && transmog_automation::same_matching_behavior(
-                            &earlier.matcher,
-                            &rule.matcher,
-                        )
-                        .unwrap_or(false)
-                })
-                .map(|earlier| RuleDiagnostic {
-                    rule_id: rule.id.clone(),
-                    superseded_by: earlier.id.clone(),
-                    duplicate_response: rule.request.response_asset
-                        == earlier.request.response_asset,
-                })
-        })
-        .collect()
+    let mut earlier = std::collections::HashMap::<String, &Rule>::new();
+    let mut diagnostics = Vec::new();
+    for rule in ordered {
+        let Ok(key) = transmog_automation::matcher_key(&rule.matcher) else {
+            continue;
+        };
+        if let Some(winner) = earlier.get(&key) {
+            diagnostics.push(RuleDiagnostic {
+                rule_id: rule.id.clone(),
+                superseded_by: winner.id.clone(),
+                duplicate_response: rule.request.response_asset == winner.request.response_asset,
+            });
+        } else if rule.enabled {
+            earlier.insert(key, rule);
+        }
+    }
+    diagnostics
 }
 
 impl InterceptorRegistrationProvider for AutomationRegistry {

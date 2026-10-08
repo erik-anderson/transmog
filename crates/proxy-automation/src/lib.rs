@@ -26,7 +26,8 @@ mod matching;
 use matching::CompiledUrl;
 pub use matching::{
     MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition, QueryParameter, RegexScope,
-    UrlCondition, UrlPattern, UrlRegex, request_for_test, same_matching_behavior, test_matcher,
+    UrlCondition, UrlPattern, UrlRegex, matcher_key, request_for_test, same_matching_behavior,
+    test_matcher,
 };
 
 /// Finite compile-time automation bounds.
