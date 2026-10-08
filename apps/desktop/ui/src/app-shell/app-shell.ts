@@ -1,7 +1,8 @@
 import initialState from '../initial-state.json';
+import '../autoresponse-switch/autoresponse-switch.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
+import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -32,6 +33,8 @@ export class AppShell extends WebUIElement {
   @observable noticeMessageText = initialState.noticeMessageText;
   @observable noticeActionLabel = initialState.noticeActionLabel;
   @observable selection: SelectedResponse | null = initialState.selection;
+  @observable autoresponseState:AutomationStatus|null=null;
+  @observable autoresponsePending=false;
   @observable workspace = defaultWorkspace();
   @observable proxyPending = '';
   @observable navigationExpanded = 'true';
@@ -47,6 +50,23 @@ export class AppShell extends WebUIElement {
   private saving = false;
   private saveAgain = false;
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
+  protected hydratedCallback():void {void this.refreshAutoresponses();}
+  onAutomationState(event:CustomEvent<AutomationStatus>):void {
+    if(!this.autoresponseState || event.detail.generation>=this.autoresponseState.generation)this.autoresponseState=event.detail;
+  }
+  private async refreshAutoresponses():Promise<void> {
+    try {this.onAutomationState(new CustomEvent('automation-state-change',{detail:await invoke<AutomationStatus>('automation_status')}));}
+    catch(error:unknown){this.diagnosticText='Autoresponse state could not be loaded: '+describeError(error);}
+  }
+  async toggleAutoresponses():Promise<void> {
+    if(this.autoresponsePending)return;this.autoresponsePending=true;
+    try {
+      const current=this.autoresponseState??await invoke<AutomationStatus>('automation_status');
+      const status=await invoke<AutomationStatus>('set_autoresponses_enabled',{enabled:!(current.autoresponsesEnabled??true),generation:current.generation});
+      this.autoresponseState=status;this.diagnosticText=status.autoresponsesEnabled?'Autoresponses resumed for new requests.':'Autoresponses paused. Individual rule states are preserved.';
+    } catch(error:unknown){this.diagnosticText='Autoresponse switch failed: '+describeError(error);await this.refreshAutoresponses();}
+    finally{this.autoresponsePending=false;}
+  }
 
   activeViewChanged(): void {
     this.currentNavigation = Object.fromEntries(Object.keys(initialState.currentNavigation).map((view) => [view, view === this.activeView ? 'page' : 'false']));

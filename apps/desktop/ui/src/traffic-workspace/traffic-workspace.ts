@@ -1,7 +1,7 @@
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
+import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 
@@ -14,6 +14,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   @attr lifecycle:Lifecycle = 'stopped';
   @attr pending = '';
   @observable preferences = defaultWorkspace();
+  @observable autoresponseState:AutomationStatus|null=null;
+  @observable autoresponsePending=false;
   @observable sessions:Row[] = [];
   @observable columns:Column[] = [];
   @observable settingsColumns:Array<{id:ColumnId;label:string;visible:boolean}> = [];

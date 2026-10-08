@@ -263,7 +263,16 @@ impl ResponseAssetStore {
         if bytes.len() as u64 != asset.body_bytes {
             return Err(unavailable("Saved response body changed."));
         }
-        let bytes = crate::inspector::decode_content(&content_codings, bytes).await?;
+        let bytes = match crate::inspector::decode_content(&content_codings, bytes).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                result.explanation = format!(
+                    "Text preview unavailable: {}. Status, headers and file replacement remain available.",
+                    error.message
+                );
+                return Ok(result);
+            }
+        };
         let charset = asset
             .media_type
             .as_deref()

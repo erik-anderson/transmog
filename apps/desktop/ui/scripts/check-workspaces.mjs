@@ -101,14 +101,57 @@ await page.addInitScript((workspace) => {
           const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':'original-text'):args.request.representation;
           return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
-        case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], candidateCount: 0, historyCount: 0 });
+        case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
+        case 'set_autoresponses_enabled': {
+          state.automation??={generation:0,rules:[],diagnostics:[],usage:[],candidateCount:0,historyCount:0};
+          if(state.automation.generation!==args.generation)throw new Error('Stale generation');
+          state.automation={...state.automation,generation:state.automation.generation+1,autoresponsesEnabled:args.enabled};return structuredClone(state.automation);
+        }
+        case 'test_autoresponse_match': {
+          state.lastMatcherTest=structuredClone(args.input);
+          const {matcher,url}=args.input;const request=new URL(url);const condition=matcher.url;
+          let matched=true;const checks=[];const captures=[];
+          if(condition?.kind==='exact')matched=new URL(condition.value).href===request.href;
+          else if(condition?.kind==='pattern') {
+            let previous=0;let expression='';const labels=[];
+            for(const token of condition.value.address.matchAll(/\{([^{}]*)\}/g)) {
+              expression+=condition.value.address.slice(previous,token.index).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+              expression+=token[1].endsWith(':digits')?'([0-9]+)':token[1].endsWith('...')?'([^/?#]+(?:/[^/?#]+)*)':'([^/?#]+)';
+              labels.push(token[1].replace(/:digits$|\.\.\.$/g,'')||'Part '+(labels.length+1));previous=token.index+token[0].length;
+            }
+            expression+=condition.value.address.slice(previous).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+            const result=new RegExp('^'+expression+'$',condition.value.caseSensitive?'':'i').exec(request.origin+request.pathname);
+            matched=Boolean(result);if(result)labels.forEach((label,index)=>captures.push({label,value:result[index+1]}));
+            const query=condition.value.query;
+            if(query.kind==='exact')matched&&=(query.value===null?!request.search:query.value===request.search.slice(1));
+            if(query.kind==='parameters')matched&&=query.value.every(item=>request.searchParams.getAll(item.name).includes(item.value));
+          } else if(condition?.kind==='regex') {
+            const {pattern,whole,caseSensitive,scope}=condition.value;
+            matched=new RegExp(whole?'^(?:'+pattern+')$':pattern,caseSensitive?'':'i').test(scope==='path'?request.pathname:request.href);
+          }
+          checks.push({label:'Address',matched,detail:'Fixture runtime condition'});
+          if(matcher.method){const method=matcher.method===args.input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
+          return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({url:item.url,passed:true}))??[]};
+        }
         case 'response_assets': return structuredClone(state.assets??[]);
+        case 'inspect_response_asset': {
+          const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
+          if(!asset)throw new Error('Saved response missing');
+          return {asset:structuredClone(asset),display:asset.display??'saved body',textEncoding:'utf-8',contentCodings:[],explanation:'Edits create a new saved response revision.'};
+        }
+        case 'edit_response_asset': {
+          const source=state.assets.find(asset=>asset.id+'@'+asset.revision===args.input.assetReference);
+          const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
+          const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder().decode(new Uint8Array(args.input.decodedBody)):source.display};
+          state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
+        }
+        case 'pick_response_body': return state.bodyFile??null;
         case 'create_response_asset':
         case 'create_response_asset_from_session': {
           if (state.assetDelay) await new Promise(resolve=>setTimeout(resolve,state.assetDelay));
           if (state.assetError) throw new Error('Fixture asset write failed');
           const input=args.input;
-          const asset={id:input.id,revision:input.revision,status:input.status??200,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
+          const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??[],display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
@@ -404,10 +447,20 @@ try {
   await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
   await sourceLink.waitFor({state:'visible'});
   assert.equal(await autoField('status').inputValue(),'200','Saved response metadata was hidden or lost');
-  assert.equal(await autoField('body').isVisible(),false,'Criteria editor implies saved response bytes can be changed');
+  assert.equal(await autoField('body').isVisible(),true,'Saved response body cannot be edited independently of Traffic');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await autoEditor.waitFor({state:'hidden'});
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
+  // Both views share one gate, preserving each rule's own enabled state.
+  await page.locator('#automation autoresponse-switch button').click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled===false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules[0].enabled),false);
+  await view('traffic');
+  await page.locator('#traffic autoresponse-switch button').getByText(/Paused/).waitFor({state:'visible'});
+  await page.locator('#traffic autoresponse-switch button').click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled===true);
+  await view('automation');
+  await page.locator('#automation autoresponse-switch button').getByText(/On/).waitFor({state:'visible'});
   await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
   await sourceLink.waitFor({state:'visible'});
 
@@ -451,6 +504,16 @@ try {
   await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
   await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await sourceLink.count(),0,'Reopening an evicted source restored a broken link');
+  await autoField('body').fill('Edited after source removal');
+  await autoField('status').fill('201');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.decodedBody.length),'Edited after source removal'.length);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets[0].display),'body for second','Editing rewrote historical saved bytes');
+  await capturedRule.getByRole('button',{name:'Edit criteria',exact:true}).click();
+  await page.locator('.auto-response-source').getByText('Source no longer in Traffic.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await autoField('status').inputValue(),'201');
+  assert.equal(await autoField('body').inputValue(),'Edited after source removal');
   await page.evaluate(async rows=>{
     const state=globalThis.__workspaceFixture;state.sessions=rows;state.evictedIds=[];
     const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';
@@ -527,6 +590,30 @@ try {
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Undo changed the rule enabled state');
   await capturedRule.locator('.rule-criteria summary').click();
   assert.equal(await capturedRule.locator('.rule-criteria p').isVisible(),true);
+
+  await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
+  await autoField('name').fill('Numeric account pattern');
+  await autoEditor.getByLabel('URL matching',{exact:true}).selectOption('pattern');
+  await autoField('url').fill('https://api.example.test/users/{:digits}');
+  await autoEditor.locator('.matcher-test > summary').click();
+  await autoEditor.getByLabel('Test URL',{exact:true}).fill('https://api.example.test/users/42');
+  await autoEditor.getByRole('button',{name:'Check match',exact:true}).click();
+  await autoEditor.getByText('This rule would serve the saved response.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastMatcherTest.matcher.url.value.address),'https://api.example.test/users/{:digits}');
+  await autoEditor.locator('match-editor').evaluate(editor=>{const position=editor.addressInput.value.indexOf('{')+1;editor.addressInput.setSelectionRange(position,position);editor.inspectSelection();});
+  await autoEditor.getByRole('button',{name:'Edit placeholder',exact:true}).click();
+  await autoEditor.getByLabel('Optional annotation',{exact:true}).fill('account');
+  await autoEditor.getByRole('button',{name:'Apply placeholder',exact:true}).click();
+  assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
+  await autoEditor.getByRole('button',{name:'Remember as a match',exact:true}).click();
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.waitFor({state:'hidden'});
+  const patternRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
+  await page.locator('#rule-'+patternRuleId).getByRole('button',{name:'Edit criteria',exact:true}).click();
+  assert.equal(await autoEditor.getByLabel('URL matching',{exact:true}).inputValue(),'pattern');
+  assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Numeric account pattern').matcher.examples.length),1);
+  await autoEditor.getByRole('button',{name:'Cancel',exact:true}).first().click();
 
   await page.getByRole('button',{name:'Create from scratch',exact:true}).click();
   await autoField('body').fill(Array.from({length:30},(_,index)=>'line '+(index+1)).join('\n'));

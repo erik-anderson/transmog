@@ -7,6 +7,7 @@
         <button type="submit" class="secondary compact-button">Search</button>
       </form>
       <div class="traffic-tools">
+        <autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch>
         <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filter <if condition="filters.length">({{filters.length}})</if></button>
         <button type="button" class="secondary compact-button" popovertarget="table-settings">Table settings</button>
         <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">List above inspector</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select>

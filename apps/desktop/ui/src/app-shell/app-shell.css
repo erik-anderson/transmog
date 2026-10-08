@@ -237,6 +237,21 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .auto-response-editor-actions { position: sticky; bottom: -.1rem; z-index: 1; display: grid; gap: .5rem; padding: .65rem 0; border-top: 1px solid var(--line); background: var(--panel); }
 .field-error { color: var(--danger); font-size: .78rem; overflow-wrap: anywhere; }
 .auto-response-undo { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .65rem 0 0; font-size: .78rem; }
+.autoresponse-switch { white-space: nowrap; }
+.autoresponse-switch[data-on] { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.match-editor { display: grid; gap: .55rem; min-width: 0; }
+.match-mode-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
+.match-editor input[name="url"] { font-family: "Cascadia Mono", Consolas, monospace; }
+.field-help { margin: .25rem 0; color: var(--muted); font-size: .74rem; font-weight: 400; line-height: 1.5; }
+.pattern-preview { overflow-wrap: anywhere; font: .75rem/1.5 "Cascadia Mono", Consolas, monospace; color: var(--muted); }
+.pattern-preview [data-token] { color: var(--accent-strong); background: var(--accent-soft); border-radius: .2rem; }
+.compact-actions { align-items: center; font-size: .75rem; }
+.annotation-popover { inset: auto; top: 25%; left: 35%; width: min(25rem, 90vw); padding: 1rem; }
+.match-checks { padding-left: 1rem; font-size: .78rem; }
+.match-checks li { margin: .25rem 0; overflow-wrap: anywhere; }
+.match-checks [data-passed] { color: var(--accent-strong); }
+.matcher-test { padding: .65rem; border: 1px solid var(--line); border-radius: .4rem; }
+.matcher-test summary { cursor: pointer; font-weight: 650; }
 .captured-response-options { display: flex; flex-wrap: wrap; gap: 1rem; }
 .paused-card .monaco-editor-host { min-height: 12rem; margin: .6rem 0; }
 .phase-form { display: flex; flex-wrap: wrap; align-items: end; max-width: none; }

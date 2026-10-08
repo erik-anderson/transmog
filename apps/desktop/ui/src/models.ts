@@ -160,6 +160,13 @@ export interface WorkspacePreferences {
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
 export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
+export type QueryCondition = {kind:'exact';value:string|null} | {kind:'parameters';value:Array<{name:string;value:string}>} | {kind:'ignore'};
+export type UrlCondition = {kind:'exact';value:string} | {kind:'pattern';value:{address:string;query:QueryCondition;caseSensitive:boolean}} | {kind:'regex';value:{pattern:string;scope:'url'|'path';whole:boolean;caseSensitive:boolean;query:QueryCondition|null}};
+export interface MatchExample {method:string;url:string;expected:boolean;}
+export interface MatchTestResult {
+  test:{matched:boolean;normalizedUrl:string;checks:Array<{label:string;matched:boolean;detail:string}>;captures:Array<{label:string;value:string}>};
+  wouldServe:boolean;explanation:string;winningRule:string|null;examples:Array<{url:string;passed:boolean}>;
+}
 export interface AutomationRule {
   id: string;
   displayName?: string | null;
@@ -168,13 +175,14 @@ export interface AutomationRule {
   priority: number;
   matcher: {
     method: string | null;
-    url?: {kind: 'exact'; value: string} | null;
+    url?: UrlCondition | null;
+    examples?: MatchExample[];
     scheme: string | null;
     host: string | null;
     port: number | null;
     pathPrefix: string | null;
     query: string | null;
-    requestHeaders: Array<{name: string; condition: {kind: string; value?: number[]}}>;
+    requestHeaders: Array<{name: string; condition: {kind: string; value?: number[] | string}}>;
     responseHeaders: Array<unknown>;
     responseStatus: number | null;
     responseStatusClass: number | null;
@@ -193,6 +201,7 @@ export interface AutomationStatus {
   generation: number;
   autoresponsesEnabled: boolean;
   diagnostics: Array<{ruleId:string; supersededBy:string; duplicateResponse:boolean}>;
+  usage?:Array<{ruleId:string;matches:number;lastMatchedAt:number}>;
   rules: AutomationRule[];
   candidateCount: number;
   historyCount: number;
@@ -200,7 +209,9 @@ export interface AutomationStatus {
 export interface ResponseAsset {
   id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null;
   provenance: {kind: 'authored' | 'imported'} | {kind: 'session'; exchange_id: string; boundary: string};
+  headers:Array<{name:number[];value:number[]}>;
 }
+export interface ResponseAssetInspection {asset:ResponseAsset;display:string;textEncoding:string|null;contentCodings:string[];explanation:string;}
 export interface CapturedAutoResponseSource {
   kind: 'captured';
   sessionId: string;
