@@ -14,7 +14,7 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 .inspector-actions { padding:.35rem .5rem; text-align:right; }
 .headers-table { min-width:0; table-layout:fixed; font-size:.73rem; }
 .headers-table th:first-child, .headers-table td:first-child { width:32%; }
-.headers-table th:last-child, .headers-table td:last-child { width:68%; }
+.headers-table th:nth-child(2), .headers-table td:nth-child(2) { width:auto; }
 .headers-table td { white-space:pre-wrap; overflow-wrap:anywhere; height:auto; vertical-align:top; }
 .headers-table tr { cursor:text; }
 .inspector-empty { padding:.7rem; color:var(--muted); font-size:.75rem; }
@@ -35,3 +35,6 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 .body-scroll pre, .exchange-details { height:100%; margin:0; padding:.65rem; font:.75rem/1.55 "Cascadia Mono",Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code); }
 .body-scroll img { width:auto; max-width:100%; max-height:100%; }
 .exchange-details { overflow:auto; }
+
+.headers-table .header-size { width:6rem; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.headers-view .inspector-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; text-align:left; }

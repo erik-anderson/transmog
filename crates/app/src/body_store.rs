@@ -5,7 +5,11 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -70,7 +74,7 @@ impl BodyStoreConfig {
             max_body_bytes: DEFAULT_BODY_STORE_BYTES,
             queue_capacity: NonZeroUsize::new(2_048).unwrap_or(NonZeroUsize::MIN),
             max_read_bytes: MAX_BODY_READ_BYTES,
-            retain_requests: false,
+            retain_requests: true,
         }
     }
 }
@@ -321,12 +325,33 @@ impl StoredBody {
 #[derive(Debug)]
 struct StoreState {
     mode: RetentionMode,
-    exchange_modes: HashMap<ExchangeId, RetentionMode>,
+    exchange_modes: HashMap<ExchangeId, ExchangeRetention>,
     records: HashMap<BodyKey, StoredBody>,
     terminal_order: VecDeque<BodyKey>,
     lossy_exchanges: HashSet<ExchangeId>,
     last_sequences: HashMap<ExchangeId, u64>,
     counters: BodyStoreCounters,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExchangeRetention {
+    mode: RetentionMode,
+    requests: bool,
+    responses: bool,
+}
+
+impl ExchangeRetention {
+    fn for_direction(self, direction: BodyDirection) -> RetentionMode {
+        let enabled = match direction {
+            BodyDirection::Request => self.requests,
+            BodyDirection::Response => self.responses,
+        };
+        if enabled {
+            self.mode
+        } else {
+            RetentionMode::Off
+        }
+    }
 }
 
 enum WorkerCommand {
@@ -336,6 +361,9 @@ enum WorkerCommand {
 }
 
 struct BodyStoreInner {
+    redact_sensitive: AtomicBool,
+    retain_requests: AtomicBool,
+    retain_responses: AtomicBool,
     config: BodyStoreConfig,
     state: Mutex<StoreState>,
     sender: mpsc::SyncSender<WorkerCommand>,
@@ -384,6 +412,9 @@ impl BodyStore {
         cleanup_owned_files(&config.root)?;
         let (sender, receiver) = mpsc::sync_channel(config.queue_capacity.get());
         let inner = Arc::new(BodyStoreInner {
+            redact_sensitive: AtomicBool::new(false),
+            retain_requests: AtomicBool::new(config.retain_requests),
+            retain_responses: AtomicBool::new(true),
             state: Mutex::new(StoreState {
                 mode: config.mode,
                 exchange_modes: HashMap::new(),
@@ -411,11 +442,7 @@ impl BodyStore {
             interest: ObservationInterest {
                 lifecycle: true,
                 sensitive_headers: true,
-                request_body: if self.inner.config.retain_requests {
-                    BodyObservation::Full
-                } else {
-                    BodyObservation::MetadataOnly
-                },
+                request_body: BodyObservation::Full,
                 response_body: BodyObservation::Full,
             },
             queue_capacity: self.inner.config.queue_capacity,
@@ -435,6 +462,17 @@ impl BodyStore {
     /// Changes retention behavior without deleting existing terminal blobs.
     pub fn set_mode(&self, mode: RetentionMode) {
         self.lock_state().mode = mode;
+    }
+
+    /// Applies saved privacy choices to subsequently observed traffic.
+    pub fn set_privacy(&self, requests: bool, responses: bool, redact: bool) {
+        self.inner
+            .retain_requests
+            .store(requests, Ordering::Release);
+        self.inner
+            .retain_responses
+            .store(responses, Ordering::Release);
+        self.inner.redact_sensitive.store(redact, Ordering::Release);
     }
 
     /// Returns aggregate retained-byte and loss counters.
@@ -614,6 +652,11 @@ impl BodyStore {
     }
 
     fn enqueue(&self, event: ObserverEvent) {
+        let event = if self.inner.redact_sensitive.load(Ordering::Acquire) {
+            event.redacted()
+        } else {
+            event
+        };
         if let Err(
             mpsc::TrySendError::Full(WorkerCommand::Event(event))
             | mpsc::TrySendError::Disconnected(WorkerCommand::Event(event)),
@@ -674,8 +717,12 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
     }
     match event.kind {
         ObserverEventKind::ExchangeStarted { .. } => {
-            let mode = state.mode;
-            state.exchange_modes.insert(event.exchange_id, mode);
+            let retention = ExchangeRetention {
+                mode: state.mode,
+                requests: inner.retain_requests.load(Ordering::Acquire),
+                responses: inner.retain_responses.load(Ordering::Acquire),
+            };
+            state.exchange_modes.insert(event.exchange_id, retention);
         }
         ObserverEventKind::ResponseHeadObserved { boundary, head } => {
             observe_head(inner, &mut state, event.exchange_id, boundary, &head);
@@ -714,6 +761,24 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
     }
 }
 
+fn exchange_mode(
+    inner: &BodyStoreInner,
+    state: &StoreState,
+    id: ExchangeId,
+    direction: BodyDirection,
+) -> RetentionMode {
+    state
+        .exchange_modes
+        .get(&id)
+        .copied()
+        .unwrap_or(ExchangeRetention {
+            mode: state.mode,
+            requests: inner.retain_requests.load(Ordering::Acquire),
+            responses: inner.retain_responses.load(Ordering::Acquire),
+        })
+        .for_direction(direction)
+}
+
 fn observe_head(
     inner: &BodyStoreInner,
     state: &mut StoreState,
@@ -725,14 +790,7 @@ fn observe_head(
         exchange_id,
         boundary: BoundaryKey::from_boundary(boundary),
     };
-    if key.boundary.direction() == BodyDirection::Request && !inner.config.retain_requests {
-        return;
-    }
-    let mode = state
-        .exchange_modes
-        .get(&exchange_id)
-        .copied()
-        .unwrap_or(state.mode);
+    let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
     let record = state.records.entry(key).or_insert_with(|| {
         StoredBody::new(if mode == RetentionMode::Off {
             BodyAvailability::Disabled
@@ -766,14 +824,7 @@ fn observe_chunk(
         exchange_id,
         boundary: BoundaryKey::from_boundary(chunk.boundary),
     };
-    if key.boundary.direction() == BodyDirection::Request && !inner.config.retain_requests {
-        return;
-    }
-    let mode = state
-        .exchange_modes
-        .get(&exchange_id)
-        .copied()
-        .unwrap_or(state.mode);
+    let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
     let lossy = state.lossy_exchanges.contains(&exchange_id);
     let record = state.records.entry(key).or_insert_with(|| {
         StoredBody::new(if mode == RetentionMode::Off {
@@ -1626,6 +1677,34 @@ mod tests {
         assert_eq!(
             store.metadata(ExchangeId(2))[0].availability,
             BodyAvailability::Disabled
+        );
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn request_privacy_toggle_never_revives_a_partially_omitted_body() {
+        let root = root("request-privacy");
+        let store = BodyStore::new(config(root.clone(), 1024)).unwrap();
+        push(&store, [started(1)]);
+        store.set_privacy(true, true, false);
+        let mut omitted = chunk(1, 2, b"omitted");
+        if let ObserverEventKind::BodyChunk(ref mut chunk) = omitted.kind {
+            chunk.boundary = ExchangeBoundary::ClientRequest;
+        }
+        push(&store, [omitted, completed(1, 3)]);
+        assert_eq!(
+            store.metadata(ExchangeId(1))[0].availability,
+            BodyAvailability::Disabled
+        );
+        let mut kept = chunk(2, 2, b"kept");
+        if let ObserverEventKind::BodyChunk(ref mut chunk) = kept.kind {
+            chunk.boundary = ExchangeBoundary::ClientRequest;
+        }
+        push(&store, [started(2), kept, completed(2, 3)]);
+        assert_eq!(
+            store.metadata(ExchangeId(2))[0].availability,
+            BodyAvailability::Complete
         );
         drop(store);
         let _ = fs::remove_dir_all(root);

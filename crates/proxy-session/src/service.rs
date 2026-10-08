@@ -3,7 +3,10 @@ use std::{
     net::SocketAddr,
     num::NonZeroUsize,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use thiserror::Error;
@@ -118,6 +121,7 @@ struct Lifecycle {
 }
 
 struct ServiceInner {
+    redact_sensitive: Arc<AtomicBool>,
     catalog: SessionCatalog,
     capture: CaptureManager,
     controller: ControlConnector,
@@ -180,6 +184,7 @@ impl ApplicationSessionService {
                     pending_restore: None,
                 }),
                 operation: AsyncMutex::new(()),
+                redact_sensitive: Arc::new(AtomicBool::new(true)),
             }),
         })
     }
@@ -193,7 +198,8 @@ impl ApplicationSessionService {
     #[must_use]
     pub fn prepare_components(&self, components: ProxyComponents) -> ProxyComponents {
         let observer = SessionObserver::new(self.inner.catalog.clone(), self.inner.capture.clone())
-            .with_control(self.inner.controller.clone());
+            .with_control(self.inner.controller.clone())
+            .with_redaction_policy(Arc::clone(&self.inner.redact_sensitive));
         components
             .with_interceptor(InterceptorRegistration::named(
                 INTERACTIVE_CONTROL_HOOK_ID,
@@ -210,6 +216,11 @@ impl ApplicationSessionService {
     /// Returns the authoritative bounded live catalog.
     pub fn catalog(&self) -> &SessionCatalog {
         &self.inner.catalog
+    }
+
+    /// Sets credential-value redaction for subsequently observed events.
+    pub fn set_redact_sensitive_headers(&self, redact: bool) {
+        self.inner.redact_sensitive.store(redact, Ordering::Release);
     }
 
     /// Returns the dynamic native-capture controller.

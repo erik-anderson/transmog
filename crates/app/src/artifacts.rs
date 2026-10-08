@@ -148,7 +148,8 @@ pub(crate) async fn start_capture(
             false,
         ));
     }
-    let mut policy = CapturePolicy::default();
+    // The session observer has already applied the application's privacy choice.
+    let mut policy = CapturePolicy::default().retain_sensitive_headers();
     policy.retain_body_samples = request.retain_body_samples;
     service
         .start_capture(CaptureStart {

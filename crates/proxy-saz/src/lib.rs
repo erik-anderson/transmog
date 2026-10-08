@@ -514,10 +514,12 @@ mod tests {
             CapturedHeader {
                 name: b"host".to_vec(),
                 value: Some(b"example.test".to_vec()),
+                original_value_bytes: None,
             },
             CapturedHeader {
                 name: b"authorization".to_vec(),
                 value: None,
+                original_value_bytes: None,
             },
         ];
         let mut records = vec![CaptureRecord {
@@ -564,6 +566,7 @@ mod tests {
                         headers: vec![CapturedHeader {
                             name: b"content-type".to_vec(),
                             value: Some(b"text/plain".to_vec()),
+                            original_value_bytes: None,
                         }],
                     },
                 },

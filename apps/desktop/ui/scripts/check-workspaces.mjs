@@ -44,7 +44,7 @@ await page.addInitScript((workspace) => {
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
-    return { id, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const ruleDiagnostics=()=>{
@@ -442,6 +442,18 @@ try {
   assert.match(await page.locator('.list-footer').textContent(),/Inspection pinned · showing captured traffic/);
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.match(await page.locator('message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
+  const requestHeaders=page.locator('message-inspector[side="request"]');
+  assert.equal(await requestHeaders.getByText('AUTH',{exact:true}).isVisible(),true);
+  assert.match(await requestHeaders.locator('.field-help').first().textContent(),/2 fields.*HTTP\/1 equivalent/);
+  await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).click();
+  assert.match(await requestHeaders.locator('.headers-table tbody tr').first().textContent(),/Authorization.*5.0 KB/);
+  assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).getAttribute('aria-pressed'),'true');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  await page.getByRole('button',{name:'Request',exact:true}).click();
+  assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).isVisible(),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-small.png')});
+  await page.setViewportSize({width:1280,height:800});
   await page.getByRole('button',{name:'Edit and replay',exact:true}).click();
   await page.locator('#composer').waitFor({state:'visible'});
   assert.equal(await page.locator('#composer input[name="url"]').inputValue(),'http://example.test/second');
@@ -1037,9 +1049,12 @@ try {
   await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   assert.equal(await preferences.getByLabel('Theme',{exact:true}).inputValue(),'system');
+  await preferences.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
   await preferences.getByLabel('Entries per page',{exact:true}).fill('75');
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await preferences.getByText('Settings saved.',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.redactSensitiveHeaders),true);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.retainRequestBodies),true);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences.sessionPageSize),75,'Disabled form controls were omitted from the saved preferences');
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').pageSize),'75','Saving failed to apply the page size to Traffic');
   assert.equal(await preferences.getByRole('button',{name:'Save settings',exact:true}).isDisabled(),true);

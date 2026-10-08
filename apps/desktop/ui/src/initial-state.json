@@ -663,5 +663,10 @@
   "supportBusy": false,
   "supportPathsAllowed": false,
   "supportDetails": "",
-  "supportFacts": []
+  "supportFacts": [],
+  "headersSummary": "",
+  "largestFirst": false,
+  "authorizationPresent": false,
+  "proxyAuthorizationPresent": false,
+  "sourceIp": ""
 }

@@ -14,7 +14,12 @@ export class MessageInspector extends WebUIElement {
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
   @observable boundary = '';
-  @observable headerRows: Array<{id:string;name:string;value:string}> = [];
+  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string}> = [];
+  @observable headersSummary = '';
+  @observable largestFirst = false;
+  @observable authorizationPresent = false;
+  @observable proxyAuthorizationPresent = false;
+  @observable sourceIp = '';
   @observable headSummary = 'Select an exchange';
   @observable bodyText = 'Select an exchange to preview its body.';
   @observable bodyFacts = '';
@@ -48,13 +53,21 @@ export class MessageInspector extends WebUIElement {
     const head = heads.find((head) => head.boundary === this.boundary);
     this.bodyMetadata = this.detail?.storedBodies.find((body) => body.boundary === this.boundary) ?? null;
     this.headSummary = head ? this.side === 'request' ? (head.method ?? '')+' '+(head.target ?? '') : 'HTTP '+head.status+' · '+(stages[head.boundary] ?? head.boundary) : this.detail ? 'Waiting for '+this.side+' headers' : 'Select an exchange';
-    this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value}));
+    this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value,bytes:header.fieldBytes??0,size:header.fieldBytes===undefined?'Unavailable':formatBytes(header.fieldBytes)}));
+    const measured = head?.headers.every(header=>header.fieldBytes!==undefined)??false;
+    this.headersSummary=head?`${head.headers.length} fields · ${measured?formatBytes(this.headerRows.reduce((sum,row)=>sum+row.bytes,2))+' including final CRLF':'size unavailable'} · HTTP/1 equivalent`:'';
+    this.authorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='authorization')??false;
+    this.proxyAuthorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='proxy-authorization')??false;
+    this.sourceIp=this.side==='request'?this.detail?.sourceIp??'':'';
+    this.sortHeaders();
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss},null,2) : 'No exchange selected.';
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody();
     else { this.generation++; this.hexPreview = null; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
   }
   showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(); }
   changeBoundary(event:Event): void { this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
+  toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.sortHeaders();}
+  private sortHeaders():void {this.headerRows=[...this.headerRows].sort(this.largestFirst?(a,b)=>b.bytes-a.bytes:(a,b)=>Number(a.id)-Number(b.id));}
   changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value; void this.inspectBody(); }
   changeDecoding(event:Event): void { this.decodeContent = (event.currentTarget as HTMLInputElement).checked; void this.inspectBody(); }
   resizeHeaders(event:CustomEvent<{value:number;committed:boolean}>): void {
@@ -77,7 +90,7 @@ export class MessageInspector extends WebUIElement {
       this.bodyText = '304 Not Modified — no response body is expected. The client uses its cached representation.';
       this.viewerLabel = 'Auto · no body'; return;
     }
-    if (!body) { this.hexPreview = null; this.bodyText = this.side === 'request' ? 'No request body is available in the body cache. Request bodies are not retained by default.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
+    if (!body) { this.hexPreview = null; this.bodyText = this.side === 'request' ? 'No request body is available. Check retention settings or the source capture.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
     if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.hexPreview = null; this.bodyText = this.retentionReason(body); return; }
     if (!body.retainedBytes) { this.hexPreview = null; this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
     this.loading = true; this.bodyText = this.hexPreview ? '' : 'Loading preview…';
@@ -116,7 +129,7 @@ export class MessageInspector extends WebUIElement {
     };
     return (reasons[body.availability] ?? 'Body capture status: '+body.availability+'.')+(body.reason ? ' Reason: '+body.reason+'.' : '');
   }
-  async copyHeaders(): Promise<void> { await this.copy(this.headerRows.map((row) => row.name+': '+row.value).join('\r\n'),'Headers copied.'); }
+  async copyHeaders(): Promise<void> { await this.copy([...this.headerRows].sort((a,b)=>Number(a.id)-Number(b.id)).map((row) => row.name+': '+row.value).join('\r\n'),'Headers copied.'); }
   async saveBody():Promise<void> {
     if (this.saving || !this.detail || this.bodyMetadata?.availability !== 'complete' || !this.bodyMetadata.retainedBytes) return;
     this.saving = true;

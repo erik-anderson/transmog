@@ -24,6 +24,10 @@ const MAX_DIAGNOSTICS: usize = 64;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeaderView {
+    /// Original field-value size, including a redacted value.
+    pub value_bytes: usize,
+    /// HTTP/1 serialized field size: name, colon-space, value and CRLF.
+    pub field_bytes: usize,
     /// Escaped field name.
     pub name: String,
     /// Escaped text or hexadecimal bytes.
@@ -74,6 +78,9 @@ pub struct HeadView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Remote client IP, omitted for loopback clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_ip: Option<String>,
     /// Opaque session identifier.
     pub id: String,
     /// Start timestamp in Unix milliseconds, also used by batch review.
@@ -323,6 +330,16 @@ pub(crate) fn session_detail(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        source_ip: {
+            let ip = snapshot.metadata.client_addr.ip();
+            let ip = match ip {
+                std::net::IpAddr::V6(ip) => ip
+                    .to_ipv4_mapped()
+                    .map_or(std::net::IpAddr::V6(ip), std::net::IpAddr::V4),
+                other @ std::net::IpAddr::V4(_) => other,
+            };
+            (!ip.is_loopback()).then(|| ip.to_string())
+        },
         id: id.to_ascii_lowercase(),
         started_at: u64::try_from(
             snapshot
@@ -979,12 +996,15 @@ fn headers(block: &HeaderBlock) -> Vec<HeaderView> {
         .iter()
         .take(512)
         .map(|field| {
-            let sensitive = field.name_eq("authorization")
-                || field.name_eq("proxy-authorization")
-                || field.name_eq("cookie")
-                || field.name_eq("set-cookie");
+            let sensitive = field.is_redacted();
             let (value, binary) = display_bytes(field.value());
             HeaderView {
+                value_bytes: field.value_bytes(),
+                field_bytes: field
+                    .name()
+                    .len()
+                    .saturating_add(field.value_bytes())
+                    .saturating_add(4),
                 name: display_text(field.name()),
                 value,
                 binary,
@@ -1076,13 +1096,28 @@ mod tests {
 
     #[test]
     fn duplicate_sensitive_headers_are_preserved_and_marked() {
-        let block = HeaderBlock::from_fields(vec![
+        let mut block = HeaderBlock::from_fields(vec![
             HeaderField::try_new("cookie", "redacted").unwrap(),
             HeaderField::try_new("Cookie", "redacted-again").unwrap(),
         ]);
+        block.redact_sensitive();
         let view = headers(&block);
         assert_eq!(view.len(), 2);
         assert!(view.iter().all(|field| field.sensitive));
+        assert_eq!(view[0].value_bytes, 8);
+        assert_eq!(view[1].value_bytes, 14);
+        assert!(view.iter().all(|field| field.value.is_empty()));
+    }
+
+    #[test]
+    fn retained_credentials_and_original_header_sizes_are_inspectable() {
+        let block = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("Authorization", "Bearer secret").unwrap(),
+        ]);
+        let view = headers(&block);
+        assert_eq!(view[0].value, "Bearer secret");
+        assert!(!view[0].sensitive);
+        assert_eq!(view[0].field_bytes, 13 + 13 + 4);
     }
 
     #[test]

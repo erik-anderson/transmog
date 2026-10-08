@@ -57,6 +57,7 @@ export interface SessionPage {
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {
+  sourceIp?: string;
   id: string;
   startedAt?:number;
   caller: ClientIdentity;
@@ -73,7 +74,7 @@ export interface SessionDetail {
   sequenceLoss: number;
   autoResponse: AutoResponseMatch | null;
 }
-export interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; }
+export interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; valueBytes?:number; fieldBytes?:number; }
 export interface HeadView {
   boundary: string;
   method: string | null;
@@ -145,7 +146,7 @@ export interface CaptureExportResult {destination:string;records:number;bytes:nu
 export interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };
-  privacy: { retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
+  privacy: { retainRequestBodies: boolean; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
   workspace: WorkspacePreferences;

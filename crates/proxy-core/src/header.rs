@@ -7,6 +7,8 @@ use thiserror::Error;
 pub struct HeaderField {
     name: Vec<u8>,
     value: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    redacted_value_bytes: Option<usize>,
 }
 
 impl HeaderField {
@@ -24,7 +26,11 @@ impl HeaderField {
         let value = value.into();
         HeaderName::from_bytes(&name).map_err(|_| HeaderError::InvalidName)?;
         HeaderValue::from_bytes(&value).map_err(|_| HeaderError::InvalidValue)?;
-        Ok(Self { name, value })
+        Ok(Self {
+            name,
+            value,
+            redacted_value_bytes: None,
+        })
     }
 
     /// Returns the original field-name bytes.
@@ -35,6 +41,22 @@ impl HeaderField {
     /// Returns the original field-value bytes.
     pub fn value(&self) -> &[u8] {
         &self.value
+    }
+
+    /// Whether observation policy removed this field's value.
+    pub const fn is_redacted(&self) -> bool {
+        self.redacted_value_bytes.is_some()
+    }
+
+    /// Original value length, including values removed by observation policy.
+    pub fn value_bytes(&self) -> usize {
+        self.redacted_value_bytes.unwrap_or(self.value.len())
+    }
+
+    /// Removes a value while retaining its name, position, and byte length.
+    pub fn redact_value(&mut self) {
+        self.redacted_value_bytes = Some(self.value_bytes());
+        self.value.clear();
     }
 
     /// Tests a field name using ASCII case-insensitive comparison.
@@ -77,13 +99,30 @@ impl HeaderBlock {
     pub fn values<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a [u8]> + 'a {
         self.0
             .iter()
-            .filter(move |field| field.name_eq(name))
+            .filter(move |field| field.name_eq(name) && !field.is_redacted())
             .map(HeaderField::value)
     }
 
     /// Removes all fields with the supplied name and preserves other ordering.
     pub fn remove_all(&mut self, name: &str) {
         self.0.retain(|field| !field.name_eq(name));
+    }
+
+    /// Removes sensitive values without losing presence or size evidence.
+    pub fn redact_sensitive(&mut self) {
+        for field in &mut self.0 {
+            if [
+                "authorization",
+                "proxy-authorization",
+                "cookie",
+                "set-cookie",
+            ]
+            .iter()
+            .any(|name| field.name_eq(name))
+            {
+                field.redact_value();
+            }
+        }
     }
 
     /// Replaces all instances of a field at the position of its first occurrence.

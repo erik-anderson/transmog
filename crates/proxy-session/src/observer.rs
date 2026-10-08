@@ -1,4 +1,11 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use transmog_core::observe::{
     BodyObservation, BoxObserverFuture, ObservationInterest, Observer, ObserverConfig,
@@ -13,6 +20,7 @@ pub struct SessionObserver {
     catalog: SessionCatalog,
     capture: CaptureManager,
     control: Option<ControlConnector>,
+    redact_sensitive: Arc<AtomicBool>,
 }
 
 impl SessionObserver {
@@ -22,6 +30,7 @@ impl SessionObserver {
             catalog,
             capture,
             control: None,
+            redact_sensitive: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -29,6 +38,13 @@ impl SessionObserver {
     #[must_use]
     pub fn with_control(mut self, control: ControlConnector) -> Self {
         self.control = Some(control);
+        self
+    }
+
+    /// Shares the application's dynamically saved privacy choice.
+    #[must_use]
+    pub fn with_redaction_policy(mut self, policy: Arc<AtomicBool>) -> Self {
+        self.redact_sensitive = policy;
         self
     }
 
@@ -45,6 +61,11 @@ impl SessionObserver {
 
 impl Observer for SessionObserver {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+        let event = if self.redact_sensitive.load(Ordering::Acquire) {
+            event.redacted()
+        } else {
+            event
+        };
         if let Some(control) = &self.control {
             control.publish(&event);
         }
@@ -64,7 +85,7 @@ pub fn session_observer_config(queue_capacity: NonZeroUsize) -> ObserverConfig {
     ObserverConfig {
         interest: ObservationInterest {
             lifecycle: true,
-            sensitive_headers: false,
+            sensitive_headers: true,
             request_body: BodyObservation::Full,
             response_body: BodyObservation::Full,
         },

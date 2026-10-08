@@ -255,6 +255,15 @@ pub struct ObserverEvent {
     pub kind: ObserverEventKind,
 }
 
+impl ObserverEvent {
+    /// Applies credential redaction before an application stores an event.
+    #[must_use]
+    pub fn redacted(mut self) -> Self {
+        self.kind = redact(self.kind);
+        self
+    }
+}
+
 /// Outcome of one attempted observer delivery.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObserverDelivery {
@@ -680,15 +689,8 @@ fn redact(kind: ObserverEventKind) -> ObserverEventKind {
     }
 }
 
-fn redact_headers(headers: &mut HeaderBlock, request: bool) {
-    let sensitive = if request {
-        &["authorization", "proxy-authorization", "cookie"] as &[&str]
-    } else {
-        &["set-cookie"] as &[&str]
-    };
-    for name in sensitive {
-        headers.remove_all(name);
-    }
+fn redact_headers(headers: &mut HeaderBlock, _request: bool) {
+    headers.redact_sensitive();
 }
 
 #[cfg(test)]
@@ -881,8 +883,20 @@ mod tests {
             let ObserverEventKind::Completed(completed) = &redacted[1].kind else {
                 panic!("expected completed event");
             };
-            assert!(completed.request_head.headers.iter().next().is_none());
-            assert!(completed.response_head.headers.iter().next().is_none());
+            assert!(
+                completed
+                    .request_head
+                    .headers
+                    .iter()
+                    .all(|field| field.is_redacted() && field.value().is_empty())
+            );
+            assert!(
+                completed
+                    .response_head
+                    .headers
+                    .iter()
+                    .all(|field| field.is_redacted() && field.value().is_empty())
+            );
         }
         {
             let protected = protected_events.lock().unwrap();

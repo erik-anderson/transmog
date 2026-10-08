@@ -1185,7 +1185,13 @@ mod tests {
         hub.shutdown().await;
         let snapshot = catalog.get(ExchangeId(1)).unwrap();
         let headers = &snapshot.request_heads[0].head.headers;
-        assert!(headers.iter().all(|field| field.name() != b"authorization"));
+        let credential = headers
+            .iter()
+            .find(|field| field.name() == b"authorization")
+            .unwrap();
+        assert!(credential.is_redacted());
+        assert_eq!(credential.value_bytes(), b"Bearer secret".len());
+        assert!(credential.value().is_empty());
         assert!(headers.iter().any(|field| field.name() == b"x-safe"));
     }
 

@@ -89,6 +89,13 @@ impl Default for CapturePolicy {
 }
 
 impl CapturePolicy {
+    /// Retains sensitive fields for an explicitly configured local capture.
+    #[must_use]
+    pub fn retain_sensitive_headers(mut self) -> Self {
+        self.request_header_names.clear();
+        self.response_header_names.clear();
+        self
+    }
     /// Adds a case-insensitive request header name to redact.
     pub fn redact_request_header(&mut self, name: impl Into<String>) {
         self.request_header_names
@@ -109,6 +116,9 @@ pub struct CapturedHeader {
     pub name: Vec<u8>,
     /// Header value, or `None` when policy redacted it.
     pub value: Option<Vec<u8>>,
+    /// Original value size; absent in older captures whose values were redacted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_value_bytes: Option<usize>,
 }
 
 /// Durable record payload. New readers preserve unknown kinds.
@@ -767,8 +777,9 @@ fn captured_headers(headers: &HeaderBlock, redacted: &BTreeSet<String>) -> Vec<C
         .iter()
         .map(|field| CapturedHeader {
             name: field.name().to_vec(),
-            value: (!redacted
-                .contains(&String::from_utf8_lossy(field.name()).to_ascii_lowercase()))
+            original_value_bytes: Some(field.value_bytes()),
+            value: (!field.is_redacted()
+                && !redacted.contains(&String::from_utf8_lossy(field.name()).to_ascii_lowercase()))
             .then(|| field.value().to_vec()),
         })
         .collect()

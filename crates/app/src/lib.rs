@@ -275,12 +275,23 @@ impl Application {
         );
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
+        service.set_redact_sensitive_headers(
+            product_state.snapshot().privacy.redact_sensitive_headers,
+        );
         if let Some(store) = &body_store {
-            store.set_mode(if product_state.snapshot().privacy.retain_response_bodies {
-                RetentionMode::Circular
-            } else {
-                RetentionMode::Off
-            });
+            let privacy = product_state.snapshot().privacy;
+            store.set_privacy(
+                privacy.retain_request_bodies,
+                privacy.retain_response_bodies,
+                privacy.redact_sensitive_headers,
+            );
+            store.set_mode(
+                if privacy.retain_response_bodies || privacy.retain_request_bodies {
+                    RetentionMode::Circular
+                } else {
+                    RetentionMode::Off
+                },
+            );
         }
         if let Some(warning) = warning {
             diagnostics.record(
@@ -329,12 +340,23 @@ impl Application {
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
         let result = self.product_state.save(state);
+        if let Ok(state) = &result {
+            self.service
+                .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
+        }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
-            store.set_mode(if state.privacy.retain_response_bodies {
-                RetentionMode::Circular
-            } else {
-                RetentionMode::Off
-            });
+            store.set_privacy(
+                state.privacy.retain_request_bodies,
+                state.privacy.retain_response_bodies,
+                state.privacy.redact_sensitive_headers,
+            );
+            store.set_mode(
+                if state.privacy.retain_response_bodies || state.privacy.retain_request_bodies {
+                    RetentionMode::Circular
+                } else {
+                    RetentionMode::Off
+                },
+            );
         }
         match &result {
             Ok(_) => self.diagnostics.record(

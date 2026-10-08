@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 4;
+const CURRENT_SCHEMA: u32 = 5;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -84,11 +84,17 @@ impl Default for ProductPreferences {
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct PrivacySettings {
+    /// Retain request bodies for command generation and replay.
+    #[serde(default = "default_true")]
+    pub retain_request_bodies: bool,
+    /// Remove credential and cookie values from subsequently captured traffic.
+    #[serde(default)]
+    pub redact_sensitive_headers: bool,
     /// Retain response bodies in the product cache for inspection.
     #[serde(default = "default_true")]
     pub retain_response_bodies: bool,
     /// Default to retaining bounded body samples in new captures.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub retain_body_samples: bool,
     /// Permit recent artifact paths to be retained locally.
     #[serde(default)]
@@ -101,8 +107,10 @@ pub struct PrivacySettings {
 impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
+            retain_request_bodies: true,
+            redact_sensitive_headers: false,
             retain_response_bodies: true,
-            retain_body_samples: false,
+            retain_body_samples: true,
             remember_recent_artifacts: false,
             include_paths_in_support_bundles: false,
         }
@@ -371,12 +379,12 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
                 ..ProductState::default()
             }
         }
-        2 | 3 => {
+        2..=4 => {
             let mut state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
             state.schema_version = CURRENT_SCHEMA;
             state
         }
-        4 => serde_json::from_value(value).map_err(|_| ())?,
+        5 => serde_json::from_value(value).map_err(|_| ())?,
         _ => return Err(()),
     };
     validate(state).map_err(|_| ())
@@ -522,6 +530,9 @@ mod tests {
     fn validates_bounds_and_privacy() {
         let store = ProductStateManager::memory(ProductState::default());
         assert!(store.snapshot().privacy.retain_response_bodies);
+        assert!(store.snapshot().privacy.retain_request_bodies);
+        assert!(store.snapshot().privacy.retain_body_samples);
+        assert!(!store.snapshot().privacy.redact_sensitive_headers);
         let mut invalid = store.snapshot();
         invalid.window.width = 1;
         assert!(store.save(invalid).is_err());
@@ -537,11 +548,22 @@ mod tests {
         let mut old = serde_json::to_value(ProductState::default()).unwrap();
         old["schemaVersion"] = 3.into();
         old.as_object_mut().unwrap().remove("workspace");
+        old["privacy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("retainRequestBodies");
+        old["privacy"]
+            .as_object_mut()
+            .unwrap()
+            .remove("redactSensitiveHeaders");
         fs::write(generation_path(&path, 1), serde_json::to_vec(&old).unwrap()).unwrap();
         let (store, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_none());
         let mut stale = store.snapshot();
         assert_eq!(stale.workspace, WorkspacePreferences::default());
+        assert!(stale.privacy.retain_request_bodies);
+        assert!(!stale.privacy.redact_sensitive_headers);
+        stale.privacy.redact_sensitive_headers = true;
         let mut layout = stale.workspace.clone();
         layout.sidebar_collapsed = true;
         layout.list_split = 67;
@@ -556,6 +578,7 @@ mod tests {
         assert_eq!(reloaded.snapshot().workspace, layout);
         assert_eq!(reloaded.snapshot().preferences.theme, ThemePreference::Dark);
         assert_eq!(reloaded.snapshot().window.width, 1100);
+        assert!(reloaded.snapshot().privacy.redact_sensitive_headers);
         cleanup(&path);
     }
 
