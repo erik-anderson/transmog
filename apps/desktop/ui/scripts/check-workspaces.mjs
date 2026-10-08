@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, Protocol } from '@microsoft/webui';
+import { checkHexViewer } from './check-hex-viewer.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -127,7 +128,10 @@ await page.addInitScript((workspace) => {
           state.lastBodyRequest=structuredClone(args.request);
           if (metadata.contentCodings.length && metadata.availability!=='complete' && args.request.decodeContent) throw new Error('Content decoding needs a complete body');
           const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':'original-text'):args.request.representation;
-          return { metadata, representation, decoded:true, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:4,truncated:false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
+          const bytes=state.hexBytes??[0,0x41,0xff,0x20];
+          const chunks=[];
+          if(representation==='bytes')for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
+          return { metadata, representation, decoded:args.request.decodeContent, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:representation==='bytes'?bytes.length:4,bytesBase64:representation==='bytes'?btoa(chunks.join('')):null,byteOffset:0,truncated:state.hexTruncated??false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
         case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
         case 'set_autoresponses_enabled': {
@@ -521,10 +525,11 @@ try {
   assert.match(await responseInspector.locator('.body-preview').textContent(),/Raw Hex shows the 4 B retained bytes/);
   assert.equal(await saveBody.isEnabled(),false,'Save as accepts an incomplete response');
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');
-  await responseInspector.getByText('Hex',{exact:true}).last().waitFor({state:'visible'});
+  await responseInspector.locator('.body-facts strong').getByText('Hex',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastBodyRequest.decodeContent),false,'Hex tried to decode an incomplete compressed body');
   assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isChecked(),false);
   assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isEnabled(),false);
+  await checkHexViewer(page,responseInspector,resolve(root,'../../../target/ui-check/hex-selection.png'));
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('metadata');
   assert.match(await responseInspector.locator('.body-preview').textContent(),/"reason": "exchange failed at ResponseBody/);
   await page.evaluate(()=>{

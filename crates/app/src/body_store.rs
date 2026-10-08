@@ -1434,6 +1434,8 @@ mod tests {
         assert_eq!(hex.display_bytes, 4);
         assert_eq!(hex.representation, "bytes");
         assert!(!hex.decoded);
+        assert_eq!(hex.bytes_base64.as_deref(), Some("MTIzNA=="));
+        assert_eq!(hex.byte_offset, 0);
         request.representation = crate::BodyRepresentation::Metadata;
         let metadata = crate::inspector::inspect_body(Some(&store), request)
             .await
@@ -1441,6 +1443,63 @@ mod tests {
             .metadata;
         assert_eq!(metadata.availability, BodyAvailability::Truncated);
         assert_eq!(metadata.retained_bytes, 4);
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn byte_preview_returns_exact_bounded_bytes_and_offsets() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let root = root("byte-preview");
+        let store = BodyStore::new(config(root.clone(), 32)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b"\0A\xffBCD"),
+                completed(1, 4),
+            ],
+        );
+        let mut request = crate::BodyInspectionRequest {
+            session_id: format!("{:032x}", 1),
+            boundary: "upstream-response".to_owned(),
+            representation: crate::BodyRepresentation::Auto,
+            decode_content: false,
+            offset: 0,
+            max_bytes: Some(4),
+        };
+        let automatic = crate::inspector::inspect_body(Some(&store), request.clone())
+            .await
+            .unwrap();
+        assert_eq!(automatic.representation, "bytes");
+        assert_eq!(
+            STANDARD.decode(automatic.bytes_base64.unwrap()).unwrap(),
+            b"\0A\xffB"
+        );
+        assert_eq!(automatic.byte_offset, 0);
+        assert_eq!(automatic.display_bytes, 4);
+        assert_eq!(automatic.next_offset, Some(4));
+        assert!(automatic.truncated);
+        request.representation = crate::BodyRepresentation::Bytes;
+        request.offset = 2;
+        request.max_bytes = Some(3);
+        let range = crate::inspector::inspect_body(Some(&store), request.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            STANDARD.decode(range.bytes_base64.unwrap()).unwrap(),
+            b"\xffBC"
+        );
+        assert_eq!(range.byte_offset, 2);
+        assert_eq!(range.display_bytes, 3);
+        assert_eq!(range.next_offset, Some(5));
+        request.representation = crate::BodyRepresentation::Metadata;
+        let metadata = crate::inspector::inspect_body(Some(&store), request)
+            .await
+            .unwrap();
+        assert!(metadata.bytes_base64.is_none());
         drop(store);
         let _ = fs::remove_dir_all(root);
     }

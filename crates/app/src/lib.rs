@@ -912,6 +912,8 @@ impl Application {
                 decoded,
                 text_encoding: None,
                 display: String::new(),
+                bytes_base64: None,
+                byte_offset: 0,
                 display_bytes,
                 truncated: false,
                 next_offset: None,

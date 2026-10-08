@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
+import { smokeHexViewer } from './smoke-hex-viewer.mjs';
 
 const portArgument = process.argv.findIndex((value) => value === '--port');
 const port = portArgument >= 0 ? process.argv[portArgument + 1] : '9333';
@@ -368,6 +369,8 @@ try {
     && result.ux.denseRuleList && result.ux.computedEntityHeaders && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
     `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
+
+  result.hexViewer = await smokeHexViewer(evaluate, call);
 
   result.stoppedProxyBreakpoints = await evaluate(`(async () => {
     const shell = document.querySelector('app-shell');

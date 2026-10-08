@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { BodyInspection, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
+import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
@@ -20,6 +21,7 @@ export class MessageInspector extends WebUIElement {
   @observable bodySummary = '';
   @observable viewerLabel = 'Auto';
   @observable imageUrl = '';
+  @observable hexPreview: HexPreview | null = null;
   @observable detailsText = '';
   @observable loading = false;
   @observable viewer = 'auto';
@@ -49,7 +51,7 @@ export class MessageInspector extends WebUIElement {
     this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value}));
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss},null,2) : 'No exchange selected.';
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody();
-    else { this.generation++; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
+    else { this.generation++; this.hexPreview = null; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
   }
   showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(); }
   changeBoundary(event:Event): void { this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
@@ -62,8 +64,10 @@ export class MessageInspector extends WebUIElement {
   async inspectBody(): Promise<void> {
     const generation = ++this.generation;
     const body = this.detail?.storedBodies.find((body) => body.boundary === this.boundary);
+    const previewKey = [this.detail?.id, this.boundary, this.viewer, this.decodeContent].join(':');
+    if (this.hexPreview?.key !== previewKey) this.hexPreview = null;
     this.imageUrl = ''; this.loading = false;
-    if (!this.detail) return;
+    if (!this.detail) { this.hexPreview = null; return; }
     const head = this.heads().find((head) => head.boundary === this.boundary);
     this.bodyFacts = body ? this.retentionFacts(body) : '';
     this.bodySummary=body?formatBytes(body.retainedBytes)+' · '+body.availability:'';
@@ -73,10 +77,10 @@ export class MessageInspector extends WebUIElement {
       this.bodyText = '304 Not Modified — no response body is expected. The client uses its cached representation.';
       this.viewerLabel = 'Auto · no body'; return;
     }
-    if (!body) { this.bodyText = this.side === 'request' ? 'No request body is available in the body cache. Request bodies are not retained by default.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
-    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.bodyText = this.retentionReason(body); return; }
-    if (!body.retainedBytes) { this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
-    this.loading = true; this.bodyText = 'Loading preview…';
+    if (!body) { this.hexPreview = null; this.bodyText = this.side === 'request' ? 'No request body is available in the body cache. Request bodies are not retained by default.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
+    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.hexPreview = null; this.bodyText = this.retentionReason(body); return; }
+    if (!body.retainedBytes) { this.hexPreview = null; this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
+    this.loading = true; this.bodyText = this.hexPreview ? '' : 'Loading preview…';
     try {
       const inspection = await invoke<BodyInspection>('inspect_body',{request:{sessionId:this.detail.id,boundary:this.boundary,representation:this.viewer,decodeContent:this.viewer !== 'bytes' && this.decodeContent,offset:0,maxBytes:Number(this.bodyLimit?.value ?? 262144)}});
       if (generation !== this.generation || !this.isConnected) return;
@@ -84,12 +88,19 @@ export class MessageInspector extends WebUIElement {
       const labels:Record<string,string> = {'formatted-json':'JSON','original-text':'Text','bytes':'Hex','image':'Image','metadata':'Metadata','unavailable':'Unavailable'};
       this.viewerLabel = (this.viewer === 'auto' ? 'Auto · ' : '')+(labels[inspection.representation] ?? inspection.representation);
       this.bodyFacts = this.retentionFacts(inspection.metadata)+' · '+formatBytes(inspection.displayBytes)+' shown'+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
-      this.bodyText = inspection.display || inspection.warning || (inspection.representation === 'image' ? '' : 'No body content.');
-      if (inspection.warning && inspection.display) this.bodyText = inspection.warning+'\n\n'+inspection.display;
+      if (inspection.representation === 'bytes' && inspection.bytesBase64 !== null) {
+        this.hexPreview = { key: previewKey, bytesBase64: inspection.bytesBase64, offset: inspection.byteOffset,
+          truncated: inspection.truncated };
+        this.bodyText = inspection.warning ?? '';
+      } else {
+        this.hexPreview = null;
+        this.bodyText = inspection.display || inspection.warning || (inspection.representation === 'image' ? '' : 'No body content.');
+        if (inspection.warning && inspection.display) this.bodyText = inspection.warning+'\n\n'+inspection.display;
+      }
       if (inspection.metadata.availability !== 'complete') this.bodyText = this.retentionReason(inspection.metadata)+'\n\n'+this.bodyText;
       if (inspection.previewHandle) this.imageUrl = convertFileSrc('preview/'+inspection.previewHandle,'transmog-preview');
     } catch (error:unknown) {
-      if (generation === this.generation) this.bodyText = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.';
+      if (generation === this.generation) { this.hexPreview = null; this.bodyText = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.'; }
     } finally { if (generation === this.generation) this.loading = false; }
   }
   private retentionFacts(body:StoredBodyMetadata):string {

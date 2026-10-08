@@ -1,0 +1,43 @@
+<template>
+  <div class="hex-viewer">
+    <div class="hex-scroll" w-ref="{viewport}" tabindex="0" role="grid" aria-label="Hex byte viewer" aria-readonly="true" aria-multiselectable="true" aria-activedescendant="{{activeCellId}}" data-column="{{activeColumn}}" @scroll="{renderRows()}" @pointerdown="{startSelection(e)}" @pointermove="{moveSelection(e)}" @pointerup="{finishSelection(e)}" @pointercancel="{cancelSelection()}" @lostpointercapture="{lostCapture(e)}" @keydown="{keyboard(e)}" @copy="{copyEvent(e)}" @contextmenu="{context(e)}">
+      <div class="hex-row hex-heading" w-ref="{columnHeader}" role="row">
+        <span class="hex-address" role="columnheader">Offset</span>
+        <div class="hex-bytes" w-ref="{hexHeader}" role="columnheader" aria-label="Hexadecimal bytes"><span>00</span><span>01</span><span>02</span><span>03</span><span>04</span><span>05</span><span>06</span><span>07</span><span>08</span><span>09</span><span>0A</span><span>0B</span><span>0C</span><span>0D</span><span>0E</span><span>0F</span></div>
+        <span aria-hidden="true"></span><div class="hex-text" w-ref="{textHeader}" role="columnheader">Decoded Text</div>
+      </div>
+      <div class="hex-canvas" data-height="{{canvasHeight}}">
+        <for each="row in hexRows">
+          <div key="{{row.index}}" class="hex-row hex-data-row" data-top="{{row.top}}" role="row">
+            <span class="hex-address" role="rowheader">{{row.address}}</span>
+            <div class="hex-bytes"><for each="cell in row.cells"><span key="{{cell.index}}" id="{{cell.hexId}}" class="hex-cell" role="gridcell" data-byte="{{cell.index}}" data-column="hex" aria-selected="{{cell.selection}}" ?data-selected="{{cell.index >= rangeStart && cell.index <= rangeEnd}}" ?data-caret="{{cell.index == caret && activeColumn == 'hex'}}">{{cell.hex}}</span></for></div>
+            <span aria-hidden="true"></span>
+            <div class="hex-text"><for each="cell in row.cells"><span key="{{cell.index}}" id="{{cell.textId}}" class="hex-cell" role="gridcell" data-byte="{{cell.index}}" data-column="text" aria-selected="{{cell.selection}}" ?data-selected="{{cell.index >= rangeStart && cell.index <= rangeEnd}}" ?data-caret="{{cell.index == caret && activeColumn == 'text'}}">{{cell.text}}</span></for></div>
+          </div>
+        </for>
+      </div>
+    </div>
+    <div class="hex-status" role="status">{{selectionSummary}}</div>
+    <div class="hex-menu" w-ref="{contextMenu}" popover="auto" role="menu" aria-label="Byte selection actions" data-x="{{hexMenuX}}" data-y="{{hexMenuY}}" data-side="{{menuSide}}" @keydown="{menuKeyboard(e)}" @toggle="{menuToggle(e)}">
+      <button type="button" role="menuitem" @mouseenter="{hideCopyMenu()}" @click="{copySelection('base64')}" ?disabled="{{rangeStart < 0}}">Copy <kbd>Ctrl+C</kbd></button>
+      <div class="hex-copy-branch" @mouseleave="{hideCopyMenu()}">
+        <button type="button" w-ref="{copyAsButton}" role="menuitem" aria-haspopup="menu" aria-expanded="{{copyMenuOpen}}" @mouseenter="{showCopyMenu()}" @click="{showCopyMenu(true)}" ?disabled="{{rangeStart < 0}}">Copy As <span aria-hidden="true">&gt;</span></button>
+        <div class="hex-copy-submenu" w-ref="{copyMenu}" role="menu" aria-label="Copy bytes as" ?hidden="{{!copyMenuOpen}}">
+          <button type="button" role="menuitem" @click="{copySelection('hex')}">Hex</button>
+          <button type="button" role="menuitem" @click="{copySelection('literal')}">Literal</button>
+          <button type="button" role="menuitem" title="Copy valid UTF-8 text up to the first NUL" @click="{copySelection('utf8')}" ?disabled="{{!utf8Available}}">UTF-8</button>
+          <button type="button" role="menuitem" @click="{copySelection('c')}">C</button>
+          <button type="button" role="menuitem" @click="{copySelection('go')}">Go</button>
+          <button type="button" role="menuitem" @click="{copySelection('java')}">Java</button>
+          <button type="button" role="menuitem" @click="{copySelection('json')}">JSON</button>
+          <button type="button" role="menuitem" @click="{copySelection('base64')}">Base64</button>
+        </div>
+      </div>
+      <hr>
+      <button type="button" role="menuitem" @mouseenter="{hideCopyMenu()}" @click="{copyOffset('decimal')}" ?disabled="{{caret < 0}}">Copy Offset as Decimal</button>
+      <button type="button" role="menuitem" @mouseenter="{hideCopyMenu()}" @click="{copyOffset('hex')}" ?disabled="{{caret < 0}}">Copy Offset as Hex</button>
+      <hr>
+      <button type="button" role="menuitem" @mouseenter="{hideCopyMenu()}" @click="{selectAll()}">{{selectAllLabel}} <kbd>Ctrl+A</kbd></button>
+    </div>
+  </div>
+</template>

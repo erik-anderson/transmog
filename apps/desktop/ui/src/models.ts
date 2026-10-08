@@ -110,6 +110,8 @@ export interface BodyInspection {
   textEncoding: string | null;
   display: string;
   displayBytes: number;
+  bytesBase64: string | null;
+  byteOffset: number;
   truncated: boolean;
   nextOffset: number | null;
   warning: string | null;

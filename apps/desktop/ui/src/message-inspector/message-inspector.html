@@ -26,7 +26,11 @@
           <if condition="side == 'response'"><button type="button" class="secondary compact-button" title="Save the full original response body with content decoding" @click="{saveBody()}" ?disabled="{{saving || !bodyMetadata || bodyMetadata.availability != 'complete' || bodyMetadata.retainedBytes == 0}}"><if condition="saving">Saving…</if><if condition="!saving">Save as…</if></button></if>
         </div>
         <details class="body-facts"><summary><strong>{{viewerLabel}}</strong><span>{{bodySummary}}</span></summary><p>{{bodyFacts}}</p></details>
-        <div class="body-scroll"><if condition="!imageUrl"><pre class="body-preview" tabindex="0">{{bodyText}}</pre></if><if condition="imageUrl"><img class="body-image-preview" src="{{imageUrl}}" alt="Response image preview" decoding="async"></if></div>
+        <div class="body-scroll" ?data-hex="{{hexPreview != null}}">
+          <if condition="hexPreview != null"><if condition="bodyText"><p class="body-preview body-warning" role="status">{{bodyText}}</p></if><hex-viewer :preview="{{hexPreview}}"></hex-viewer></if>
+          <if condition="hexPreview == null && !imageUrl"><pre class="body-preview" tabindex="0">{{bodyText}}</pre></if>
+          <if condition="imageUrl"><img class="body-image-preview" src="{{imageUrl}}" alt="Response image preview" decoding="async"></if>
+        </div>
       </section>
       <pre class="exchange-details" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>
     </div>

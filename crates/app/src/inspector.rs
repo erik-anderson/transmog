@@ -1,5 +1,6 @@
 use std::{fmt::Write as _, num::NonZeroUsize};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use transmog_content::{ContentCodingStack, ContentDecoder, ContentEncoder, ContentLimits};
@@ -181,6 +182,11 @@ pub struct BodyInspection {
     /// Safe text or byte-dump content. Presentation layers must assign this to
     /// `textContent`, never HTML.
     pub display: String,
+    /// Exact displayed bytes for byte-aware selection and lossless copying.
+    /// Present only for the `bytes` representation, including automatic fallback.
+    pub bytes_base64: Option<String>,
+    /// Offset of the first displayed byte in the inspected representation.
+    pub byte_offset: u64,
     /// Source bytes consumed to produce this view.
     pub display_bytes: usize,
     /// Whether additional bytes or representation detail were omitted.
@@ -399,6 +405,8 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            bytes_base64: None,
+            byte_offset: request.offset,
             display_bytes: 0,
             truncated: false,
             next_offset: None,
@@ -414,6 +422,8 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            bytes_base64: None,
+            byte_offset: request.offset,
             display_bytes: 0,
             truncated: false,
             next_offset: None,
@@ -433,6 +443,8 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            bytes_base64: None,
+            byte_offset: request.offset,
             display_bytes: 0,
             truncated: false,
             next_offset: None,
@@ -507,6 +519,8 @@ pub(crate) async fn inspect_body(
         decoded,
         text_encoding,
         display,
+        bytes_base64: (representation == "bytes").then(|| STANDARD.encode(&bytes)),
+        byte_offset: request.offset,
         display_bytes: consumed,
         truncated: next_offset.is_some() || decoded_truncated,
         next_offset,
