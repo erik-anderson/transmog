@@ -677,5 +677,21 @@
   "commandStatus": "",
   "commandFileRequired": false,
   "commandFileAvailable": false,
-  "composerBodyMissing": false
+  "composerBodyMissing": false,
+  "viewerMode": false,
+  "importingTrace": false,
+  "importStatus": "",
+  "importPercent": 0,
+  "openedTraceName": "",
+  "traceMetadataRows": [],
+  "metadataTraceId": "",
+  "metadataTraceName": "",
+  "metadataSummary": "",
+  "metadataContext": "",
+  "metadataNotes": [],
+  "metadataError": "",
+  "metadataBusy": false,
+  "metadataTraceOptions": [],
+  "metadataNetworkTitle": "",
+  "metadataNetworkContext": ""
 }

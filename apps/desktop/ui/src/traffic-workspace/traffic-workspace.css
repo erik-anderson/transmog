@@ -16,6 +16,15 @@ traffic-workspace { display:contents; }
 .traffic-tools { display:flex; align-items:baseline; gap:.35rem; margin-left:auto; }
 .traffic-tools select { min-height:1.85rem; max-width:11rem; padding:.25rem; font-size:.7rem; }
 .traffic-summary { display:flex; justify-content:space-between; gap:1rem; border-bottom:1px solid var(--line); background:var(--panel-subtle); }
+.trace-import-status { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.45rem .7rem; border-bottom:1px solid var(--line); font-size:.8rem; }
+.trace-import-status span { flex:1; min-width:14rem; }
+.trace-import-status progress { width:8rem; }
+.trace-open-dialog, .trace-metadata-dialog { margin:auto; padding:1rem; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); }
+.trace-open-dialog::backdrop, .trace-metadata-dialog::backdrop { background:rgb(0 0 0 / .25); }
+.trace-open-dialog { max-width:36rem; }
+.trace-metadata-dialog { width:min(64rem,calc(100vw - 3rem)); max-height:calc(100vh - 3rem); overflow:auto; }
+.trace-metadata-dialog select { width:100%; }
+.trace-context { max-height:45vh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--panel-subtle); border:1px solid var(--line); padding:.75rem; font: .8rem/1.5 var(--font-mono,monospace); }
 .traffic-summary .session-status { border:0; }
 .sort-summary { padding:.3rem .7rem; color:var(--muted); font-size:.7rem; white-space:nowrap; }
 .filter-chips { display:flex; flex-wrap:wrap; gap:.4rem; padding:.4rem .7rem; background:var(--panel); border-bottom:1px solid var(--line); }

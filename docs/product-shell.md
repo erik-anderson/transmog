@@ -8,6 +8,22 @@ or WebUI.
 
 ## Operating model
 
+Saved SAZ and TMCap files can be imported through **Traffic → Import…** or by
+dropping them onto the traffic list. Each import keeps its source identity and
+metadata; use **Trace metadata** on a selected imported request, or **Files →
+Trace metadata…** to browse all sources. Network configuration is shown as
+readable original console output, rather than being replaced with the viewer
+machine's settings. Imported bodies are read on demand from the original file.
+
+**Files → Open in a separate viewer…** creates an independent saved-capture
+window with Traffic and Composer. It is labeled **Capture viewer** and has an
+**Open main window** action. Proxy, certificate, recording, breakpoint and
+automation controls belong to the main window, with backend permission checks.
+Launching the app with a capture path opens a viewer if no main window exists.
+If the main window is already open, file activation offers importing into that
+session or opening a separate viewer. A drop always imports into the list where
+it landed. Closing a viewer does not stop the main window's proxy.
+
 - **Set up HTTPS interception** creates a durable PEM CA and matching private
   key when needed, then explicitly asks the user to approve current-user trust.
   CA generation is create-new and never overwrites either file. Start verifies

@@ -7,6 +7,7 @@ param(
     [switch]$SkipReleaseBuild,
     [string]$ExecutablePath,
     [switch]$StartupOnly,
+    [switch]$ViewerChecks,
     [switch]$HostedRunnerDevToolsPolicy
 )
 
@@ -20,6 +21,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
 if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
 if (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($executable)) -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
 
@@ -76,7 +78,28 @@ try {
         New-ItemProperty -LiteralPath $policyPath -Name $policyName -Value $debugArguments -PropertyType String -Force | Out-Null
         $policySet = $true
     }
-    $process = Start-Process -FilePath $executable -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $probeRoot 'stdout.txt') -RedirectStandardError (Join-Path $probeRoot 'stderr.txt')
+    $viewerSource = $null
+    if ($ViewerChecks) {
+        $viewerSource = Join-Path $probeRoot 'viewer-fixture.saz'
+        $responseBody = 'saved viewer response'
+        $members = [ordered]@{
+            'raw/1_c.txt' = "GET https://example.invalid/path HTTP/1.1`r`nUser-Agent: Transmog fixture`r`n`r`n"
+            'raw/1_s.txt' = "HTTP/1.1 200 Fixture`r`nContent-Type: text/plain`r`nContent-Length: $($responseBody.Length)`r`n`r`n$responseBody"
+            'raw/1_m.xml' = '<Session BitFlags="1"><SessionTimers ClientBeginRequest="2026-10-08T19:00:00Z" ClientDoneResponse="2026-10-08T19:00:00.025Z"/><SessionFlags><SessionFlag N="x-clientIP" V="192.0.2.25"/></SessionFlags></Session>'
+            'transmog/trace-metadata.json' = '{"networkContext":{"command":"ipconfig /all","output":"Fixture IP configuration"}}'
+        }
+        $zip = [IO.Compression.ZipFile]::Open($viewerSource, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($member in $members.GetEnumerator()) {
+                $entry = $zip.CreateEntry($member.Key)
+                $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
+                try { $writer.Write($member.Value) } finally { $writer.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+    }
+    $launchArguments = @{ FilePath = $executable; PassThru = $true; WindowStyle = 'Hidden'; RedirectStandardOutput = (Join-Path $probeRoot 'stdout.txt'); RedirectStandardError = (Join-Path $probeRoot 'stderr.txt') }
+    if ($viewerSource) { $launchArguments.ArgumentList = ('"' + $viewerSource + '"') }
+    $process = Start-Process @launchArguments
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         try {
@@ -112,7 +135,11 @@ try {
         if ($AutomationScreenshotPath) {
             $smokeArguments += @('--automation-screenshot', $AutomationScreenshotPath)
         }
-        & npm @smokeArguments
+        if ($ViewerChecks) {
+            $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
+            if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
+            & node @viewerArguments
+        } else { & npm @smokeArguments }
     } finally {
         Pop-Location
     }
@@ -132,10 +159,11 @@ try {
 
     [pscustomobject]@{
         StartupVerified = $true
-        AccessibilityVerified = $true
-        HighContrastVerified = $true
-        HighDpiVerified = $true
-        LocalizationLengthVerified = $true
+        AccessibilityVerified = -not $ViewerChecks
+        HighContrastVerified = -not $ViewerChecks
+        HighDpiVerified = -not $ViewerChecks
+        LocalizationLengthVerified = -not $ViewerChecks
+        ViewerFlowVerified = [bool]$ViewerChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet
         SingleInstanceVerified = $true

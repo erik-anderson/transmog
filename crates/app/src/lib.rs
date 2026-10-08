@@ -909,7 +909,19 @@ impl Application {
         id: &str,
         format: RequestCommandFormat,
     ) -> Result<RequestCommand, AppError> {
-        request_actions::command(&self.service, self.body_store.as_ref(), id, format)
+        let mut command =
+            request_actions::command(&self.service, self.body_store.as_ref(), id, format)?;
+        if self
+            .traces
+            .entry(id)
+            .is_some_and(|entry| !entry.protocol_known)
+        {
+            command.notices.push(
+                "The HTTP version was not recorded in this trace; the command uses HTTP/1.1."
+                    .into(),
+            );
+        }
+        Ok(command)
     }
 
     /// Copies full request and response heads separated by two blank lines.

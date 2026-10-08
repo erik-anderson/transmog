@@ -8,6 +8,7 @@ export interface AppStatus {
 }
 export interface CaIdentity { sha256: string; certificatePath: string; }
 export interface DesktopBootstrap {
+  viewerMode?: boolean;
   caCertificatePath: string;
   caPrivateKeyPath: string;
   caFilesPresent: boolean;
@@ -147,6 +148,9 @@ export interface ComposerResult {
 export interface CaptureReadModel {state:'idle'|'active'|'sealed'|'failed'|'shutdown';path?:string|null;bytesWritten?:number;message?:string;}
 export interface CaptureSummaryView {records:number;exchanges:number;lossMarkers:number;retainedBodyBytes:number;sealed:boolean;truncatedTail:boolean;validBytes:number;}
 export interface CaptureExportResult {destination:string;records:number;bytes:number;sourceSealed:boolean;sourceTruncatedTail:boolean;fidelity:string;}
+export interface TraceMetadata {id:string;name:string;format:string;path:string;sessions:number;importedAt:number;context:unknown;notes:string[];}
+export interface TraceImportResult {trace:TraceMetadata;issues:string[];}
+export interface TraceImportProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {
   schemaVersion: number;
   preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean };

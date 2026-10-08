@@ -19,6 +19,7 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable viewerMode = false;
   @attr({ attribute: 'data-theme' }) theme: ProductState['preferences']['theme'] = 'system';
   @observable activeView: ViewName = initialState.activeView as ViewName;
   @observable currentNavigation: Record<string, string> = initialState.currentNavigation;
@@ -52,7 +53,11 @@ export class AppShell extends WebUIElement {
   private saving = false;
   private saveAgain = false;
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
-  protected hydratedCallback():void {void this.refreshAutoresponses();}
+  protected hydratedCallback():void {
+    if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,pageSize:state.preferences.sessionPageSize,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
+    else void this.refreshAutoresponses();
+  }
+  async openMainWindow():Promise<void> {try{await invoke('open_main_window');}catch(error:unknown){this.diagnosticText='Main window could not be opened: '+describeError(error);}}
   onAutomationState(event:CustomEvent<AutomationStatus>):void {
     if(!this.autoresponseState || event.detail.generation>=this.autoresponseState.generation)this.autoresponseState=event.detail;
   }
@@ -140,6 +145,7 @@ export class AppShell extends WebUIElement {
   }
 
   private async activateView(view: ViewName): Promise<boolean> {
+    if(this.viewerMode&&view!=='traffic'&&view!=='composer')return false;
     const generation = ++this.navigationGeneration;
     try {
       if (view in loaders) await loaders[view as keyof typeof loaders]();

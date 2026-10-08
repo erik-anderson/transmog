@@ -39,7 +39,10 @@ impl Read for SourceReader {
             .lock()
             .map_err(|_| io::Error::other("Trace source reader failed"))?;
         file.seek(SeekFrom::Start(self.position))?;
-        let count = file.read(buffer)?;
+        let remaining =
+            usize::try_from(self.length.saturating_sub(self.position)).unwrap_or(usize::MAX);
+        let length = remaining.min(buffer.len());
+        let count = file.read(&mut buffer[..length])?;
         self.position = self.position.saturating_add(count as u64);
         Ok(count)
     }
@@ -230,5 +233,35 @@ impl fmt::Debug for ChunkReader {
             .debug_struct("SavedBodyReader")
             .field("finished", &self.finished)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_cursors_keep_the_indexed_file_boundary_when_a_source_grows() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("source");
+        std::fs::write(&path, b"abcdef").unwrap();
+        let mut first = SourceReader::new(File::open(&path).unwrap()).unwrap();
+        let mut second = first.clone();
+        second.seek(SeekFrom::Start(3)).unwrap();
+        let mut bytes = [0; 2];
+        first.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"ab");
+        second.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"de");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"new")
+            .unwrap();
+        let mut tail = Vec::new();
+        first.read_to_end(&mut tail).unwrap();
+        assert_eq!(tail, b"cdef");
+        assert!(second.seek(SeekFrom::Current(-100)).is_err());
     }
 }

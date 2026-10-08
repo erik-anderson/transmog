@@ -232,7 +232,11 @@ impl TraceRegistry {
             sessions: imported.sessions.len(),
             imported_at: millis(SystemTime::now()),
             context: imported.context,
-            notes: imported.notes,
+            notes: imported
+                .notes
+                .into_iter()
+                .chain(imported.issues.iter().cloned())
+                .collect(),
         };
         // Catalog publication is atomic. All fallible source/index work precedes
         // it, so canceling or a bad file never leaves half an import in Traffic.
@@ -469,6 +473,7 @@ struct NativeBody {
     observed: u64,
     retained: u64,
     incomplete: bool,
+    framing_complete: bool,
 }
 
 fn import_native(
@@ -745,12 +750,17 @@ fn append_native(
             .bodies
             .entry(crate::inspector::boundary(boundary))
             .or_default();
-        if !bodyless
-            && headers.values("content-length").any(|value| value != b"0")
-            && body.observed == 0
-        {
-            body.incomplete = true;
-        }
+        let lengths = headers
+            .values("content-length")
+            .map(|value| {
+                std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u64>().ok())
+            })
+            .collect::<Vec<_>>();
+        body.framing_complete = bodyless
+            || !lengths.is_empty() && lengths.iter().all(|length| *length == Some(body.observed));
+        body.incomplete |= !bodyless && !lengths.is_empty() && !body.framing_complete;
     }
     for (name, body) in row.bodies {
         let boundary = parse_boundary(&name)?;
@@ -770,7 +780,9 @@ fn append_native(
                     .map(|head| head.head.headers.clone())
             })
             .unwrap_or_default();
-        let complete = row.completed && !body.incomplete && row.loss == 0;
+        let complete = (row.completed && !row.failed || body.framing_complete)
+            && !body.incomplete
+            && row.loss == 0;
         snapshot.bodies.push(BodySnapshot {
             boundary,
             observed_bytes: body.observed,

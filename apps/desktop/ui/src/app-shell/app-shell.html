@@ -6,7 +6,7 @@
         <span>Transmog</span>
       </div>
       <span class="top-spacer"></span>
-      <div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
+      <if condition="!viewerMode"><div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <strong>{{lifecycleLabel}}</strong>
         <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button><button type="button" class="secondary status-tools" aria-label="Proxy status and tools" title="Proxy status and tools" popovertarget="proxy-status-tools">⋯</button>
@@ -14,6 +14,7 @@
       <div class="top-actions">
         <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
       </div>
+      </if><if condition="viewerMode"><strong class="viewer-mode-label">Capture viewer</strong><button type="button" class="secondary" @click="{openMainWindow()}">Open main window</button></if>
     </header>
 
     <section class="notice" role="alert" aria-live="assertive" ?hidden="{{!noticeVisible}}">
@@ -34,36 +35,36 @@
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7h17m-4-4 4 4-4 4M21 17H4m4-4-4 4 4 4"></path></svg>
           <span class="nav-label">Traffic</span>
         </a>
-        <a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}">
+        <if condition="!viewerMode"><a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8Z M9.5 8.5v7m5-7v7"></path></svg>
           <span class="nav-label">Breakpoints</span><span class="nav-count" aria-label="{{pausedCount}} paused requests" ?hidden="{{!pausedCount}}">{{pausedCount}}</span>
-        </a>
-        <a href="#automation" title="Automation" data-view="automation" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}">
+        </a></if>
+        <if condition="!viewerMode"><a href="#automation" title="Automation" data-view="automation" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="9" width="6" height="6" rx="1.5"></rect><rect x="15" y="3" width="6" height="6" rx="1.5"></rect><rect x="15" y="15" width="6" height="6" rx="1.5"></rect><path d="M9 12h3m3-6h-1a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1"></path></svg>
           <span class="nav-label">Automation</span>
-        </a>
+        </a></if>
         <a href="#composer" title="Composer" data-view="composer" ?data-active="{{activeView == 'composer'}}" aria-current="{{currentNavigation.composer}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M16 7l3 3M9 14l-1 4 4-1 8-8a2.12 2.12 0 0 0-3-3Z"></path></svg>
           <span class="nav-label">Composer</span>
         </a>
-        <a href="#captures" title="Captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}">
+        <if condition="!viewerMode"><a href="#captures" title="Captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="5" rx="1.5"></rect><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8m-10 5h6"></path></svg>
           <span class="nav-label">Captures</span>
-        </a>
+        </a></if>
         <span class="nav-spacer"></span>
-        <a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
+        <if condition="!viewerMode"><a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.5 3h3l.5 2 1.5.6 1.8-1 2.1 2.1-1 1.8.6 1.5 2 .5v3l-2 .5-.6 1.5 1 1.8-2.1 2.1-1.8-1-1.5.6-.5 2h-3l-.5-2-1.5-.6-1.8 1-2.1-2.1 1-1.8-.6-1.5-2-.5v-3l2-.5.6-1.5-1-1.8 2.1-2.1 1.8 1 1.5-.6Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="nav-label">Settings</span>
-        </a>
+        </a></if>
       </nav>
 
       <main>
-        <traffic-workspace w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
-        <breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace>
-        <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace>
+        <traffic-workspace ?viewer-mode="{{viewerMode}}" w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
+        <if condition="!viewerMode"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
+        <if condition="!viewerMode"><automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace></if>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>
-        <capture-workspace view="{{activeView}}"></capture-workspace>
-        <settings-workspace w-ref="{settings}" view="{{activeView}}"></settings-workspace>
+        <if condition="!viewerMode"><capture-workspace view="{{activeView}}"></capture-workspace></if>
+        <if condition="!viewerMode"><settings-workspace w-ref="{settings}" view="{{activeView}}"></settings-workspace></if>
       </main>
     </div>
 

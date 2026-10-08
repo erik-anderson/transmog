@@ -7,18 +7,21 @@
         <button type="submit" class="secondary compact-button">Search</button>
       </form>
       <div class="traffic-tools">
-        <autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch>
+        <if condition="!viewerMode"><autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch></if>
+        <button type="button" class="secondary compact-button" @click="{openSavedTrace(false)}" ?disabled="{{importingTrace}}">Import…</button>
+        <button type="button" class="secondary compact-button" popovertarget="trace-files-menu">Files</button>
         <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filter <if condition="filters.length">({{filters.length}})</if></button>
         <button type="button" class="secondary compact-button" popovertarget="table-settings">Table settings</button>
       </div>
     </header>
+    <if condition="importStatus"><div class="trace-import-status"><span role="status">{{importStatus}}</span><if condition="importingTrace"><progress aria-label="Indexing saved traffic" value="{{importPercent}}" max="100"></progress><button type="button" class="secondary compact-button" @click="{cancelImport()}">Cancel import</button></if></div></if>
     <div class="traffic-summary"><output class="session-status" data-kind="{{sessionKind}}">{{sessionText}}</output><span class="sort-summary">{{sortLabel}}</span></div>
     <if condition="filters.length || searchText">
       <div class="filter-chips"><for each="filter in filters"><button key="{{filter.label}}" type="button" class="filter-chip" aria-label="Remove {{filter.label}} filter" @click="{removeFilter(filter.column,filter.operator)}">{{filter.label}} ×</button></for><button type="button" class="clear-filters" @click="{clearFilters()}">Clear filters</button></div>
     </if>
     <div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
       <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
-        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
+        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
@@ -50,9 +53,9 @@
           <span>{{followText}}</span>
           <div class="list-footer-actions">
             <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
-            <button type="button" class="secondary compact-button" @click="{resumeLatest()}" ?disabled="{{followLatest}}">Follow live</button>
+            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}">Follow live</button>
             <span class="page-controls" ?hidden="{{totalMatched <= pageLimit}}"><button type="button" class="secondary compact-button" @click="{navigatePage(-1)}" ?disabled="{{pageIndex == 0}}">Previous</button><button type="button" class="secondary compact-button" @click="{navigatePage(1)}" ?disabled="{{pageEnd >= totalMatched}}">Next</button></span>
-            <button type="button" class="secondary compact-button" @click="{exportLiveCapture()}">Export TMCap</button>
+            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{exportLiveCapture()}">Export TMCap</button>
           </div>
         </div>
       </section>
@@ -60,7 +63,7 @@
       <section class="details-pane" aria-labelledby="inspector-heading">
         <header class="selection-bar">
           <span class="method-badge">{{selectedMethodText}}</span><button id="inspector-heading" class="selected-url" type="button" title="Show full URL" popovertarget="selected-url-full" ?disabled="{{!selectedSessionId}}">{{selectedUrlText}}</button><span class="status-badge" data-tone="{{selectedTone}}">{{selectedStatusText}}</span>
-          <div class="selection-actions"><button type="button" class="secondary compact-button" @click="{replaySelected()}" ?disabled="{{!selectedDetail}}">Edit and replay</button><button type="button" class="secondary compact-button" title="{{reuseTitle}}" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}">Create auto-response</button><button type="button" class="secondary compact-button" @click="{showMatchedAutoResponse()}" ?hidden="{{!matchedRuleId}}">{{matchedRuleLabel}}</button></div>
+          <div class="selection-actions"><button type="button" class="secondary compact-button" ?hidden="{{!selectedDetail || !selectedDetail.traceId}}" @click="{showTraceMetadata(selectedDetail.traceId)}">Trace metadata</button><button type="button" class="secondary compact-button" @click="{replaySelected()}" ?disabled="{{!selectedDetail}}">Edit and replay</button><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" title="{{reuseTitle}}" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}">Create auto-response</button><button type="button" class="secondary compact-button" @click="{showMatchedAutoResponse()}" ?hidden="{{!matchedRuleId}}">{{matchedRuleLabel}}</button></div>
         </header>
         <div class="inspector-side-tabs" role="group" aria-label="Message to inspect"><button type="button" ?data-selected="{{inspectorSide == 'request'}}" @click="{showInspectorSide('request')}">Request</button><button type="button" ?data-selected="{{inspectorSide == 'response'}}" @click="{showInspectorSide('response')}">Response</button></div>
         <div class="exchange-inspector" data-side="{{inspectorSide}}" data-request-share="{{requestShare}}" @inspector-resize="{resizeMessage(e)}">
@@ -74,6 +77,17 @@
     <div id="selected-url-full" class="table-popover url-popover" popover="auto"><strong>Selected URL</strong><p class="full-value">{{selectedUrlText}}</p><button type="button" @click="{copyUrl()}">Copy URL</button></div>
     <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{copyRequest('curl')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as cURL</button><if condition="windowsCommands"><button type="button" @click="{copyRequest('powershell')}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy as PowerShell</button></if><button type="button" @click="{copyAllHeaders()}" ?disabled="{{selectedTrafficCount != 1 || commandBusy}}">Copy all headers</button><button type="button" @click="{replaySelected()}" ?disabled="{{selectedTrafficCount != 1}}">Edit and replay</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
 
+    <div id="trace-files-menu" class="table-popover" popover="auto"><strong>Saved traffic</strong><button type="button" @click="{openSavedTrace(true)}">Open in a separate viewer…</button><button type="button" @click="{showTraceMetadata()}">Trace metadata…</button><p class="field-help">Drop a SAZ or TMCap file onto the traffic list to import it into this session.</p></div>
+    <dialog w-ref="{openTraceDialog}" class="trace-open-dialog" aria-labelledby="trace-open-heading" @cancel="{cancelOpenedTrace(e)}">
+      <h2 id="trace-open-heading">Open saved traffic</h2><p class="full-value">{{openedTraceName}}</p><p>Import this capture into the current session, or open it in a separate capture viewer?</p>
+      <footer class="actions"><button type="button" @click="{chooseOpenedTrace(false)}">Import into this session</button><button type="button" class="secondary" @click="{chooseOpenedTrace(true)}">Open separate viewer</button><button type="button" class="secondary" @click="{cancelOpenedTrace()}">Cancel</button></footer>
+    </dialog>
+    <dialog w-ref="{metadataDialog}" class="trace-metadata-dialog" aria-labelledby="trace-metadata-heading">
+      <h2 id="trace-metadata-heading">Trace metadata</h2><p class="field-help">Original context belongs to its source capture. Requests imported from different files keep their own trace association.</p>
+      <label>Source trace<select w-ref="{metadataSelector}" @change="{changeMetadataTrace(e)}" ?disabled="{{metadataBusy || !traceMetadataRows.length}}"><for each="trace in metadataTraceOptions"><option key="{{trace.id}}" value="{{trace.id}}">{{trace.label}}</option></for></select></label>
+      <h3>{{metadataTraceName}}</h3><p class="full-value">{{metadataSummary}}</p><p role="status">{{metadataError}}</p><if condition="metadataNetworkContext"><h3>{{metadataNetworkTitle}}</h3><pre class="trace-context">{{metadataNetworkContext}}</pre></if><if condition="metadataContext"><pre class="trace-context">{{metadataContext}}</pre></if>
+      <for each="note in metadataNotes"><p key="{{note.id}}" class="field-help">{{note.text}}</p></for><footer class="actions"><button type="button" class="secondary" @click="{closeMetadata()}">Close</button></footer>
+    </dialog>
     <dialog w-ref="{commandDialog}" class="request-command-dialog" aria-labelledby="command-heading">
       <h2 id="command-heading">{{commandTitle}}</h2>
       <p class="field-help">This only copies text. Transmog never runs the generated command.</p>

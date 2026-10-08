@@ -23,6 +23,7 @@ transmog-session = { version = "=0.1.0", path = "../../crates/proxy-session" }
 tokio.workspace = true
 serde.workspace = true
 percent-encoding.workspace = true
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
@@ -36,5 +37,3 @@ tauri-build = { version = "=2.7.1", features = [] }
 [lints]
 workspace = true
 
-[dev-dependencies]
-tempfile.workspace = true

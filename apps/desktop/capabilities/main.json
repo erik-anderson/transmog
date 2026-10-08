@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window has only the explicitly registered application command.",
-  "windows": ["main"],
-  "permissions": []
+  "description": "Trusted application windows may subscribe to native file-open and drag/drop events. Application commands enforce window roles in Rust.",
+  "windows": ["main", "viewer-*"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

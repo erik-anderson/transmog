@@ -1,15 +1,42 @@
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
+import type { TraceMetadata, TraceImportResult, TraceImportProgress } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  @attr({attribute:'viewer-mode',mode:'boolean'}) viewerMode = false;
+  @observable importingTrace=false;
+  @observable importStatus='';
+  @observable importPercent=0;
+  @observable openedTraceName='';
+  @observable traceMetadataRows:TraceMetadata[]=[];
+  @observable metadataTraceOptions:Array<{id:string;label:string}>=[];
+  @observable metadataTraceId='';
+  @observable metadataTraceName='';
+  @observable metadataSummary='';
+  @observable metadataContext='';
+  @observable metadataNetworkTitle='';
+  @observable metadataNetworkContext='';
+  @observable metadataNotes:Array<{id:string;text:string}>=[];
+  @observable metadataError='';
+  @observable metadataBusy=false;
+  openTraceDialog!:HTMLDialogElement;
+  metadataDialog!:HTMLDialogElement;
+  metadataSelector!:HTMLSelectElement;
+  private metadataGeneration=0;
+  private openedTracePath='';
+  private importOperation='';
+  private openedFileQueue:Array<{path:string;ask:boolean}>=[];
+  private nativeUnlisteners:UnlistenFn[]=[];
   @attr view = 'traffic';
   @attr({attribute:'page-size'}) pageSize = '100';
   @attr lifecycle:Lifecycle = 'stopped';
@@ -115,9 +142,91 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns(); });
     this.layoutObserver.observe(this.sessionScroller);
     void this.watchSessions();
+    void this.watchOpenedTraces();
     void invoke<{windows:boolean}>('desktop_bootstrap').then(bootstrap=>{if(this.isConnected)this.windowsCommands=bootstrap.windows;}).catch(()=>{});
   }
   lifecycleChanged():void { this.renderSessionState(); this.renderFollowState(); }
+  viewerModeChanged():void {this.renderSessionState();this.renderFollowState();}
+  traceMetadataRowsChanged():void {this.metadataTraceOptions=this.traceMetadataRows.map((trace,index)=>({id:trace.id,label:`${index+1}. ${trace.name} · ${trace.sessions} ${trace.sessions===1?'entry':'entries'}`}));}
+
+  private async watchOpenedTraces():Promise<void> {
+    try {
+      const opened=await listen('trace-open-request',()=>{void this.takeOpenedTraces();});
+      if(!this.isConnected){opened();return;}this.nativeUnlisteners.push(opened);
+      const dropped=await getCurrentWebview().onDragDropEvent(event=>{
+        if(event.payload.type!=='drop'||this.view!=='traffic')return;
+        const point=event.payload.position, bounds=this.sessionScroller.getBoundingClientRect(), scale=window.devicePixelRatio;
+        if(point.x/scale<bounds.left||point.x/scale>bounds.right||point.y/scale<bounds.top||point.y/scale>bounds.bottom)return;
+        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap)$/i.test(path));
+        this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));
+        void this.processOpenedTraces();
+      });
+      if(!this.isConnected){dropped();return;}this.nativeUnlisteners.push(dropped);
+    } catch { /* Browser-hosted verification has no native file events. */ }
+    await this.takeOpenedTraces();
+  }
+  private async takeOpenedTraces():Promise<void> {
+    try {const paths=await invoke<string[]>('take_opened_traces');if(!this.isConnected)return;this.openedFileQueue.push(...paths.map(path=>({path,ask:!this.viewerMode})));await this.processOpenedTraces();}
+    catch(error:unknown){this.importStatus='Opened capture could not be read: '+describeError(error);}
+  }
+  private async processOpenedTraces():Promise<void> {
+    while(this.isConnected&&!this.importingTrace&&!this.openTraceDialog.open&&this.openedFileQueue.length){
+      const file=this.openedFileQueue.shift()!;
+      if(file.ask){this.openedTracePath=file.path;this.openedTraceName=file.path.split(/[\\/]/).pop()??file.path;this.openTraceDialog.showModal();return;}
+      await this.importTrace(file.path);
+    }
+  }
+  async chooseOpenedTrace(separate:boolean):Promise<void> {
+    const path=this.openedTracePath;this.openedTracePath='';this.openTraceDialog.close();
+    if(separate){try{await invoke('open_trace_viewer',{paths:[path]});}catch(error:unknown){this.importStatus='Capture viewer could not be opened: '+describeError(error);}}
+    else await this.importTrace(path);
+    await this.processOpenedTraces();
+  }
+  cancelOpenedTrace(event?:Event):void {event?.preventDefault();this.openedTracePath='';this.openTraceDialog.close();void this.processOpenedTraces();}
+  async openSavedTrace(separate:boolean):Promise<void> {
+    if(this.importingTrace)return;
+    try {const path=await invoke<string|null>('pick_trace_path');if(!path||!this.isConnected)return;if(separate)await invoke('open_trace_viewer',{paths:[path]});else{this.openedFileQueue.push({path,ask:false});await this.processOpenedTraces();}}
+    catch(error:unknown){this.importStatus='Capture could not be opened: '+describeError(error);}
+  }
+  private async importTrace(path:string):Promise<void> {
+    this.importingTrace=true;this.importPercent=0;this.importStatus='Indexing '+(path.split(/[\\/]/).pop()??'capture')+'…';
+    const operationId=crypto.randomUUID();this.importOperation=operationId;
+    const onProgress=new Channel<TraceImportProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.importOperation===progress.operationId)this.importPercent=progress.total?Math.min(99,Math.floor(progress.completed/progress.total*100)):0;};
+    try {
+      const result=await invoke<TraceImportResult>('import_trace',{request:{path,operationId,maxFileBytes:4*1024*1024*1024},onProgress});
+      if(!this.isConnected||this.importOperation!==operationId)return;
+      this.importPercent=100;this.importStatus=`Imported ${result.trace.sessions} ${result.trace.sessions===1?'entry':'entries'} from ${result.trace.name}.${result.issues.length?' Some saved evidence is incomplete; see Trace metadata.':''}`;
+      this.traceMetadataRows=[...this.traceMetadataRows,result.trace];this.queryRevision++;await this.refreshSessions(undefined,true);
+    }catch(error:unknown){if(this.isConnected&&this.importOperation===operationId)this.importStatus=describeError(error).includes('canceled')?'Import canceled. Traffic is unchanged.':'Import failed: '+describeError(error);}
+    finally{onProgress.onmessage=()=>{};if(this.importOperation===operationId){this.importOperation='';this.importingTrace=false;}}
+  }
+  async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
+  async showTraceMetadata(id?:string):Promise<void> {
+    this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
+    try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows.sort((a,b)=>b.importedAt-a.importedAt);this.loadTraceMetadata(id??rows[0]?.id??'');}
+    catch(error:unknown){this.metadataError='Trace metadata could not be loaded: '+describeError(error);}
+    finally{if(generation===this.metadataGeneration)this.metadataBusy=false;}
+  }
+  loadTraceMetadata(id:string):void {
+    this.metadataTraceId=id;const generation=this.metadataGeneration;
+    const trace=this.traceMetadataRows.find(trace=>trace.id===id);this.metadataTraceName=trace?.name??'No imported traces';this.metadataSummary=trace?`${trace.sessions} ${trace.sessions===1?'entry':'entries'} · ${trace.format.toUpperCase()} · ${trace.path}`:'Import a saved capture to see its original trace metadata here.';
+    this.metadataContext=trace?.context==null?'No additional trace metadata was saved.':JSON.stringify(trace.context,null,2);
+    this.metadataNetworkTitle='';this.metadataNetworkContext='';
+    if(trace?.context&&typeof trace.context==='object'&&!Array.isArray(trace.context)){
+      const context=trace.context as Record<string,unknown>, network=context.networkContext;
+      if(typeof network==='string')this.metadataNetworkContext=network;
+      else if(network&&typeof network==='object'){
+        const fields=network as Record<string,unknown>;
+        if(typeof fields.output==='string')this.metadataNetworkContext=fields.output;
+        if(typeof fields.command==='string')this.metadataNetworkTitle=fields.command;
+      }
+      if(this.metadataNetworkContext){this.metadataNetworkTitle||='Network context';const additional={...context};delete additional.networkContext;this.metadataContext=Object.keys(additional).length?JSON.stringify(additional,null,2):'';}
+    }
+    this.metadataNotes=trace?.notes.map((text,index)=>({id:String(index),text}))??[];
+    this.$flushUpdates();if(generation===this.metadataGeneration)this.metadataSelector.value=id;
+  }
+  changeMetadataTrace(event:Event):void {void this.loadTraceMetadata((event.currentTarget as HTMLSelectElement).value);}
+  closeMetadata():void {this.metadataGeneration++;this.metadataDialog.close();}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
   pageSizeChanged():void {
     this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
@@ -498,13 +607,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
     const empty = this.filters.length || this.searchText ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
     const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges.' : empty);
-    this.sessionText = (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
+    this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
     this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';
   }
   private renderFollowState():void {
     const capturing = this.lifecycle === 'running' && !this.pending;
     const held = this.selectedSessionId ? 'Inspection pinned' : 'Row positions held';
-    this.followText = this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
+    this.followText = this.viewerMode ? 'Showing saved traffic' : this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
   }
   async exportLiveCapture():Promise<void> {
     try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }
@@ -512,6 +621,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   disconnectedCallback():void {
     this.clearColumnDrag();
+    for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
     this.inspectionGeneration++; super.disconnectedCallback();
   }

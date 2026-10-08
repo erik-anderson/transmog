@@ -15,7 +15,7 @@ const assets = JSON.parse(await readFile(resolve(root, 'dist/client-assets.json'
 const built = build({ appDir: resolve(root, 'src'), plugin: 'webui', css: 'link', cssPublicBase: '/', cssFileNameTemplate: '[name]-[hash].[ext]', projectionManifests: [resolve(root, 'dist/webui-projection.json')] });
 assert.deepEqual(built.warnings, []);
 const protocol = new Protocol(built.protocol, { plugin: 'webui' });
-const html = protocol.render({ ...initial, language: 'en', pageTitle: 'Transmog', heading: 'Inspect traffic without losing the thread', lifecycleLabel: 'Stopped', lifecycleKind: 'stopped', listener: 'Not listening' }).toString().replace(/<script(?=[\s>])/g, '<script nonce="workspace-check"');
+const renderHtml = (viewerMode=false) => protocol.render({ ...initial, viewerMode, language: 'en', pageTitle: 'Transmog', heading: 'Inspect traffic without losing the thread', lifecycleLabel: 'Stopped', lifecycleKind: 'stopped', listener: 'Not listening' }).toString().replace(/<script(?=[\s>])/g, '<script nonce="workspace-check"');
 // Keep one build's bytes for the whole run, even if another workspace rebuilds dist.
 const resources = new Map(await Promise.all(assets.map(async (asset) => [asset.path, { body: await readFile(resolve(root, 'dist', asset.file)), contentType: asset.contentType }])));
 resources.set('/document.css', { file: resolve(root, 'src/document.css'), contentType: 'text/css' });
@@ -32,7 +32,7 @@ page.on('request', (request) => requests.push(new URL(request.url()).pathname));
 await page.route('https://workspace.test/**', async (route) => {
   const path = new URL(route.request().url()).pathname;
   if (path === '/') {
-    await route.fulfill({ contentType: 'text/html', body: html, headers: { 'Content-Security-Policy': "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco" } });
+    await route.fulfill({ contentType: 'text/html', body: renderHtml(new URL(route.request().url()).searchParams.has('viewer')), headers: { 'Content-Security-Policy': "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco" } });
   } else {
     if (path === '/preview/pixel.png') { await route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64')}); return; }
     const asset = resources.get(path);
@@ -45,7 +45,7 @@ await page.addInitScript((workspace) => {
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
-    return { id, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const ruleDiagnostics=()=>{
@@ -69,7 +69,22 @@ await page.addInitScript((workspace) => {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
-        case 'desktop_bootstrap': return { windows:true, caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
+        case 'take_opened_traces': {const paths=state.openedTraces??[];state.openedTraces=[];return paths;}
+        case 'pick_trace_path': return state.pickedTrace??null;
+        case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
+        case 'open_main_window': return;
+        case 'trace_metadata_list': return structuredClone(state.traces??[]);
+        case 'cancel_trace_import': state.importCanceled=true;return;
+        case 'import_trace': {
+          state.lastImport=structuredClone(args.request);state.importCanceled=false;
+          args.onProgress.onmessage({operationId:args.request.operationId,completed:1,total:2});
+          if(state.deferImport)await new Promise(resolve=>state.releaseImport=resolve);
+          if(state.importCanceled)throw new Error('Trace import canceled');
+          const trace={id:'trace-'+(state.traces?.length??0),name:args.request.path.split(/[\\/]/).pop(),format:'saz',path:args.request.path,sessions:1,importedAt:Date.now(),context:{networkContext:'Captured machine IP configuration'},notes:['Original trace note']};
+          const row={...summary('imported-'+trace.id),traceId:trace.id,durationMs:null,startedAt:Date.now()};
+          state.sessions.push(row);(state.traces??=[]).push(trace);return {trace,issues:[]};
+        }
+        case 'desktop_bootstrap': return { viewerMode:location.search.includes('viewer'), windows:true, caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
         case 'reset_ca': {
           state.caEvents??=[];state.caEvents.push('reset');state.resetCaArgs=structuredClone(args);
           if(state.deferCaReset){state.caResetPending=true;await new Promise(resolve=>state.releaseCaReset=resolve);state.deferCaReset=false;}
@@ -1160,6 +1175,40 @@ try {
   await page.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
   assert.equal(await resetCertificate.isDisabled(),false);
   assert.deepEqual(await page.evaluate(()=>globalThis.__cspViolations),[]);
+  assert.deepEqual(errors,[]);
+
+  await view('traffic');
+  await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/support.saz');
+  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
+  await page.locator('.trace-import-status').getByText(/Imported 1 entry from support.saz/).waitFor();
+  await page.getByRole('button',{name:'Files',exact:true}).click();
+  await page.locator('#trace-files-menu').getByRole('button',{name:'Trace metadata…',exact:true}).click();
+  await page.locator('.trace-metadata-dialog[open] h3').getByText('support.saz',{exact:true}).waitFor();
+  assert.match(await page.locator('.trace-context').textContent(),/Captured machine IP configuration/);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/trace-metadata-wide.png')});
+  await page.locator('.trace-metadata-dialog').getByRole('button',{name:'Close',exact:true}).click();
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.openedTraces=['C:/captures/second.saz'];await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').takeOpenedTraces();});
+  await page.locator('.trace-open-dialog[open]').waitFor();
+  await page.locator('.trace-open-dialog').getByRole('button',{name:'Open separate viewer',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.openedViewer),['C:/captures/second.saz']);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferImport=true;});
+  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
+  await page.getByRole('button',{name:'Cancel import',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.releaseImport();globalThis.__workspaceFixture.deferImport=false;});
+  await page.locator('.trace-import-status').getByText('Import canceled. Traffic is unchanged.',{exact:true}).waitFor();
+  await page.goto('https://workspace.test/?viewer');
+  await page.getByText('Capture viewer',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);
+  assert.equal(await page.locator('settings-workspace').count(),0);
+  assert.equal(await page.getByRole('button',{name:'Export TMCap',exact:true}).count(),0);
+  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).waitFor();
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.openedTraces=['C:/captures/viewer.saz'];await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').takeOpenedTraces();});
+  await page.locator('.trace-import-status').getByText(/Imported 1 entry from viewer.saz/).waitFor();
+  assert.equal(await page.locator('.trace-open-dialog[open]').count(),0);
+  await page.getByRole('button',{name:'Open main window',exact:true}).click();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.open_main_window),1);
+  await page.setViewportSize({width:800,height:600});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/capture-viewer-compact.png')});
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

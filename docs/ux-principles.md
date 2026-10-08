@@ -113,6 +113,15 @@ its actual effect on the user's task.
 
 ## Review the whole flow
 
+Saved-capture windows are explicitly labeled **Capture viewer** and contain
+Traffic and Composer. Keep proxy, certificate, capture-recording, breakpoint,
+and automation controls in the main window; enforce these roles in the host as
+well as in the UI. Opening a capture while the main window exists asks whether
+to merge it into that session or open a separate viewer. Dropping a capture on
+the traffic list always imports it there. Imported entries retain their source
+trace association, with a direct action to view that trace's original metadata.
+
+
 For a UI change, walk through the affected task with representative populated
 data as well as the empty state. Inspect wide and narrow layouts, resized panes,
 long labels and values, selection and multiselection, and relevant loading,
