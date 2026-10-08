@@ -494,6 +494,7 @@ try {
       heading.textContent = 'Inspect localized traffic safely — '.repeat(8);
       const presentedControls=[...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
         .filter(button=>!button.closest('[hidden]')
+          && !(button.closest('dialog') && !button.closest('dialog').open)
           && !(button.closest('message-inspector') && getComputedStyle(button.closest('message-inspector')).display==='none')
           && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')));
       return {
