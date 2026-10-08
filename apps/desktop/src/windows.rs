@@ -1,5 +1,7 @@
 #![allow(clippy::needless_pass_by_value)] // Tauri commands deserialize owned IPC arguments.
 
+#[path = "captured_preview.rs"]
+mod captured_preview;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -1302,6 +1304,8 @@ pub fn run() {
             let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 workspaces::open_trace_viewer,
                 workspaces::open_main_window,
+                captured_preview::open_captured_page,
+                captured_preview::cancel_captured_page,
                 workspaces::take_opened_traces,
                 workspaces::pick_trace_path,
                 import_trace,

@@ -26,6 +26,7 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+transmog-webview-preview-windows = { version = "=0.1.0", path = "../../crates/webview-preview-windows" }
 rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.4.5"

@@ -6106,6 +6106,7 @@ dependencies = [
  "transmog-session",
  "transmog-tls",
  "unicode-normalization",
+ "url",
  "zip",
 ]
 
@@ -6215,6 +6216,7 @@ dependencies = [
  "transmog-app-webui",
  "transmog-host-windows",
  "transmog-session",
+ "transmog-webview-preview-windows",
 ]
 
 [[package]]
@@ -6419,6 +6421,14 @@ dependencies = [
  "sha1",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "transmog-webview-preview-windows"
+version = "0.1.0+0"
+dependencies = [
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

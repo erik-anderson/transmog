@@ -57,11 +57,21 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 
 $priorArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $priorLocalAppData = $env:LOCALAPPDATA
-$debugArguments = "--remote-debugging-port=$DevToolsPort --remote-debugging-address=127.0.0.1"
+$priorTemp = $env:TEMP
+$priorTmp = $env:TMP
+# Separate captured-page profiles need separate browser debugging endpoints.
+$debugPort = if ($ViewerChecks) { 0 } else { $DevToolsPort }
+$debugArguments = "--remote-debugging-port=$debugPort --remote-debugging-address=127.0.0.1"
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
+if ($ViewerChecks) {
+    $probeTemp = Join-Path $probeRoot 'temp'
+    New-Item -ItemType Directory -Force -Path $probeTemp | Out-Null
+    $env:TEMP = $probeTemp
+    $env:TMP = $probeTemp
+}
 $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
 $policyName = [IO.Path]::GetFileName($executable)
 $priorPolicy = $null
@@ -82,6 +92,7 @@ try {
         $policySet = $true
     }
     $viewerSource = $null
+    $pageSource = $null
     if ($ViewerChecks) {
         $viewerSource = Join-Path $probeRoot 'viewer-fixture.saz'
         $responseBody = 'saved viewer response'
@@ -99,12 +110,39 @@ try {
                 try { $writer.Write($member.Value) } finally { $writer.Dispose() }
             }
         } finally { $zip.Dispose() }
+        $pageSource = Join-Path $probeRoot 'captured-page-fixture.saz'
+        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
+        $pageMembers = [ordered]@{}
+        $pageResources = @(
+            @{ Id=1; Url='https://example.invalid/captured-page'; Type='text/html'; Body=$pageHtml },
+            @{ Id=2; Url='https://example.invalid/page.css'; Type='text/css'; Body='h1 { color: rgb(0, 128, 0); }' },
+            @{ Id=3; Url='https://example.invalid/pixel.svg'; Type='image/svg+xml'; Body='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="green"/></svg>' }
+        )
+        foreach ($resource in $pageResources) {
+            $number = $resource.Id
+            $pageMembers["raw/${number}_c.txt"] = "GET $($resource.Url) HTTP/1.1`r`nHost: example.invalid`r`n`r`n"
+            $length = [Text.Encoding]::UTF8.GetByteCount($resource.Body)
+            $pageMembers["raw/${number}_s.txt"] = "HTTP/1.1 200 OK`r`nContent-Type: $($resource.Type)`r`nContent-Length: $length`r`n`r`n$($resource.Body)"
+            $pageMembers["raw/${number}_m.xml"] = '<Session><SessionTimers ClientBeginRequest="2026-10-08T19:00:00Z" ClientDoneResponse="2026-10-08T19:00:00.025Z"/></Session>'
+        }
+        $zip = [IO.Compression.ZipFile]::Open($pageSource, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($member in $pageMembers.GetEnumerator()) {
+                $entry = $zip.CreateEntry($member.Key)
+                $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
+                try { $writer.Write($member.Value) } finally { $writer.Dispose() }
+            }
+        } finally { $zip.Dispose() }
     }
     $launchArguments = @{ FilePath = $executable; PassThru = $true; WindowStyle = 'Hidden'; RedirectStandardOutput = (Join-Path $probeRoot 'stdout.txt'); RedirectStandardError = (Join-Path $probeRoot 'stderr.txt') }
     if ($viewerSource) { $launchArguments.ArgumentList = ('"' + $viewerSource + '"') }
     $process = Start-Process @launchArguments
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
+        if ($ViewerChecks) {
+            $endpoint = Get-ChildItem -LiteralPath $probeRoot -Filter DevToolsActivePort -Recurse -File | Select-Object -First 1
+            if ($endpoint) { $DevToolsPort = [int](Get-Content -LiteralPath $endpoint.FullName -First 1) }
+        }
         try {
             $targets = Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/list" -TimeoutSec 1
         } catch {
@@ -140,6 +178,8 @@ try {
         }
         if ($ViewerChecks) {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
+            $viewerArguments += @('--page-source', $pageSource)
+            $viewerArguments += @('--profile-root', $probeRoot)
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
             if ($CompressedTracePath) { $viewerArguments += @('--compressed-source', $CompressedTracePath) }
             & node @viewerArguments
@@ -178,6 +218,8 @@ try {
     }
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $priorArguments
     $env:LOCALAPPDATA = $priorLocalAppData
+    $env:TEMP = $priorTemp
+    $env:TMP = $priorTmp
     if ($policySet) {
         if ($null -ne $priorPolicyKind) { (Get-Item -LiteralPath $policyPath).SetValue($policyName, $priorPolicy, $priorPolicyKind) }
         else { Remove-ItemProperty -LiteralPath $policyPath -Name $policyName -ErrorAction Stop }

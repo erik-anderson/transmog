@@ -80,9 +80,12 @@ its actual effect on the user's task.
 - Make empty, unavailable, incomplete, truncated, redacted, and expired states
   distinguishable. Explain the next useful step. Disable an unavailable action
   with an accessible explanation rather than presenting a broken interaction.
-- Keep captured markup inert and distinguish preview content from complete
-  original data. Copy, save, edit, and export labels should describe the data
-  the operation actually uses.
+- Keep captured markup inert in the workbench. A captured-page preview is an
+  explicit exception: open a separate isolated browser window after a warning,
+  with scripts disabled by default and an Enable scripts choice for that window.
+  Serve only captured responses; misses return an empty 404, and captured content
+  cannot access application commands. Distinguish preview content from complete
+  original data. Copy, save, edit, and export labels describe the data used.
 - Copying a request command only copies text; it never executes traffic. File
   placeholders must explain what bytes are needed and offer Save as when complete
   bytes are available. Use complete backend data for copy/replay, preserve encoded

@@ -69,6 +69,8 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "inspect_body"
             | "save_response_body"
             | "save_traffic_trace"
+            | "open_captured_page"
+            | "cancel_captured_page"
             | "watch_sessions"
             | "execute_composer"
             | "composer_history"

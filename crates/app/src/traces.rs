@@ -120,6 +120,12 @@ pub(crate) struct TraceRegistry {
     state: Arc<Mutex<State>>,
 }
 impl TraceRegistry {
+    pub(crate) fn source_id(&self, id: &str) -> Option<String> {
+        self.lock()
+            .entries
+            .get(id)
+            .map(|entry| entry.trace_id.clone())
+    }
     pub(crate) fn entry(&self, id: &str) -> Option<TraceEntry> {
         self.lock().entries.get(id).cloned()
     }

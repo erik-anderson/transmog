@@ -716,5 +716,9 @@
   "timingSaved": [],
   "metadataNetworkSummary": "",
   "savingTrace": false,
-  "saveTraceStatus": ""
+  "saveTraceStatus": "",
+  "previewPageAvailable": false,
+  "previewPageBusy": false,
+  "previewPageUrl": "",
+  "previewPageStatus": ""
 }

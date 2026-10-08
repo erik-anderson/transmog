@@ -133,3 +133,5 @@ traffic-workspace { display:contents; }
 @media(max-width:36rem) {.timing-facts > div {grid-template-columns:minmax(0,1fr);gap:.2rem;}}
 
 .trace-save-dialog {box-sizing:border-box;width:min(34rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto;padding:1rem;border:1px solid var(--line);border-radius:.45rem;color:var(--text);background:var(--panel);}.trace-save-dialog h2 {font-size:1rem;margin:0 0 .6rem;}.trace-save-dialog fieldset {border:0;padding:0;display:grid;gap:.6rem;}.trace-save-dialog::backdrop {background:rgb(0 0 0 / .25);}
+
+.captured-page-warning {box-sizing:border-box;width:min(36rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto;padding:1rem;border:1px solid var(--line);border-radius:.45rem;color:var(--text);background:var(--panel);}.captured-page-warning h2 {font-size:1rem;margin:0 0 .6rem;}.captured-page-warning p,.captured-page-warning label {font-size:.8rem;}.captured-page-warning::backdrop {background:rgb(0 0 0 / .25);}.captured-page-warning details {margin:.7rem 0;}.captured-page-warning summary {cursor:pointer;font-size:.8rem;}

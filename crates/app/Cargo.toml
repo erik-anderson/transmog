@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+url = "=2.5.8"
 transmog-network = { version = "=0.1.0", path = "../network" }
 bytes.workspace = true
 base64.workspace = true

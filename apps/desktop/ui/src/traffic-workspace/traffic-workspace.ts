@@ -26,6 +26,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   timingDialog!:HTMLDialogElement;
   private timingId="";
   private timingGeneration=0;
+  @observable previewPageAvailable=false;
+  @observable previewPageBusy=false;
+  @observable previewPageUrl='';
+  @observable previewPageStatus='';
+  previewPageDialog!:HTMLDialogElement;
+  previewPageScripts!:HTMLInputElement;
+  private previewPageId='';
+  private previewPageOperation='';
   @observable savingTrace=false;
   @observable saveTraceStatus='';
   saveTraceDialog!:HTMLDialogElement;
@@ -611,7 +619,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector unavailable: '+describeError(error); }
   }
   private applyDetail(detail:SessionDetail):void {
-    this.selectedDetail = detail; const reusable = clientResponseSource(detail) !== null;
+    this.selectedDetail = detail;
+    this.previewPageAvailable=detail.storedBodies.some(body=>body.boundary==='client-response'&&body.availability==='complete'&&(body.mediaType==='text/html'||body.mediaType==='application/xhtml+xml')); const reusable = clientResponseSource(detail) !== null;
     const status = detail.responses.find((head) => head.boundary === 'client-response')?.status ?? null;
     this.selectedStatusText = status === 304 ? '304 Not Modified' : status === null ? 'Pending' : String(status);
     this.selectedTone = statusTone({status,terminal:detail.terminal} as SessionSummary);
@@ -715,6 +724,18 @@ export class TrafficWorkspace extends WorkspaceElement {
     const held = this.selectedSessionId ? 'Inspection pinned' : 'Row positions held';
     this.followText = this.viewerMode ? 'Showing saved traffic' : this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
   }
+  showCapturedPage():void {
+    this.trafficMenu.hidePopover();const detail=this.selectedDetail;if(!detail||!this.previewPageAvailable||this.previewPageBusy)return;
+    this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageStatus='';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
+  }
+  closeCapturedPageWarning():void {if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});this.previewPageDialog.close();}
+  async openCapturedPage():Promise<void> {
+    if(this.previewPageBusy)return;this.previewPageBusy=true;this.previewPageStatus='Preparing captured responses…';
+    const id=this.previewPageId,enableScripts=this.previewPageScripts.checked,operationId=crypto.randomUUID();this.previewPageOperation=operationId;
+    try{await invoke('open_captured_page',{id,enableScripts,operationId});if(this.isConnected){this.previewPageDialog.close();this.diagnostic='Captured page preview opened in a separate window.';}}
+    catch(error:unknown){if(this.isConnected){this.previewPageStatus='Preview could not be opened: '+describeError(error);if(!this.previewPageDialog.open&&!describeError(error).includes('canceled'))this.showNotice('Captured page preview failed',describeError(error),null,null);}}
+    finally {this.previewPageBusy=false;this.previewPageOperation='';}
+  }
   showSaveTrace():void {if(this.savingTrace)return;this.saveTraceStatus='';this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
   async saveTrafficTrace(event:Event):Promise<void> {
@@ -731,6 +752,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.clearColumnDrag();
     for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
+    if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});
     this.inspectionGeneration++; super.disconnectedCallback();
   }
 }

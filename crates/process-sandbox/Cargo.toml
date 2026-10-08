@@ -11,7 +11,7 @@ repository.workspace = true
 windows-sys.workspace = true
 
 [lints.rust]
-# This is the single audited Win32 FFI boundary. Every unsafe block documents
+# This is the audited process-sandbox Win32 FFI boundary. Every unsafe block documents
 # the exact handle, pointer, lifetime, and structure invariant it relies on.
 unsafe_code = "allow"
 missing_docs = "warn"

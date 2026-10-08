@@ -11,6 +11,7 @@ mod automation;
 mod autoresponse_batch;
 mod body_store;
 mod breakpoints;
+mod captured_page;
 mod composer;
 mod diagnostics;
 mod inspector;
@@ -48,6 +49,7 @@ pub use body_store::{
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
 };
+pub use captured_page::{CapturedPage, CapturedResource};
 pub use composer::{
     ComposerHeader, ComposerRequest, ComposerResult, ComposerSnapshot, SystemReplayExecutor,
 };
@@ -1083,6 +1085,18 @@ impl Application {
     /// Cancels an in-progress saved-file import before catalog publication.
     pub fn cancel_trace_import(&self, operation_id: &str) {
         self.traces.cancel(operation_id);
+    }
+
+    /// Freezes retained responses for an isolated captured HTML preview.
+    ///
+    /// # Errors
+    /// Returns unavailable HTML, bounded decoding or storage failures.
+    pub async fn prepare_captured_page(
+        &self,
+        id: String,
+        canceled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<CapturedPage, AppError> {
+        captured_page::prepare(self.clone(), id, canceled).await
     }
 
     /// Saves every retained Traffic entry with its original trace association.

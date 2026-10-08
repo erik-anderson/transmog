@@ -73,6 +73,8 @@ await page.addInitScript((workspace) => {
         case 'pick_trace_path': return state.pickedTrace??null;
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
+        case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled)throw new Error('Captured page preview canceled');return 'captured-fixture';
+        case 'cancel_captured_page': state.pagePreviewCanceled=true;state.releasePagePreview?.();return;
         case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap.gz',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
         case 'trace_metadata_list': return structuredClone(state.traces??[]);
         case 'cancel_trace_import': state.importCanceled=true;return;
@@ -1324,6 +1326,21 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.performance=undefined;});
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
   await timing.getByText(/no measured proxy timeline/).waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.timing-dialog[open]').count(),0);
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');const detail=structuredClone(workspace.selectedDetail);detail.storedBodies[0].mediaType='text/html';workspace.applyDetail(detail);});
+  await page.getByRole('button',{name:'Preview page…',exact:true}).click();
+  const pageWarning=page.locator('.captured-page-warning[open]');
+  assert.equal(await pageWarning.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
+  assert.match(await pageWarning.textContent(),/may be malicious/);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/captured-page-warning-compact.png')});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferPagePreview=true;globalThis.__workspaceFixture.pagePreviewCanceled=false;});
+  await pageWarning.getByRole('button',{name:'Open preview',exact:true}).click();await pageWarning.getByText('Preparing captured responses…',{exact:true}).waitFor();
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').previewPageBusy);
+  assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferPagePreview=false;globalThis.__workspaceFixture.pagePreviewCanceled=false;});
+  await page.getByRole('button',{name:'Preview page…',exact:true}).click();
+  await pageWarning.getByLabel('Enable scripts for this preview',{exact:true}).check();await pageWarning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').previewPageBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),true);
+  assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

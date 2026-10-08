@@ -44,8 +44,10 @@ ones. The principles apply to new features and small edits alike.
 - Keep editor actions available in the expanded surface and preserve drafts,
   focus, and editor layout when restoring. Provide scrolling within panes when
   the window cannot accommodate their content.
-- Captured markup must remain inert text. Use the isolated preview origin for
-  images and preserve the embedded origin's CSP and Trusted Types enforcement.
+- Captured markup remains inert text in the workbench. The explicit captured-page
+  preview uses a separate native browser profile and warning/script-choice flow;
+  never render it in a trusted workspace. Use the isolated preview origin for
+  workbench images and preserve its CSP and Trusted Types enforcement.
 - Save response files from the complete original body through the backend.
   Preview data may be shortened, formatted, or normalized to another image
   format. Keep an eviction lease while the native file dialog is open, and
