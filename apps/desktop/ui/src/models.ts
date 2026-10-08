@@ -32,7 +32,8 @@ export interface SessionSummary {
   path: string;
   protocol: string;
   status: number | null;
-  durationMs: number;
+  durationMs: number | null;
+  traceId?: string | null;
   requestBytes: number;
   responseBytes: number;
   terminal: 'active' | 'completed' | 'failed';
@@ -57,6 +58,8 @@ export interface SessionPage {
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {
+  traceId?:string|null; originalId?:string|null;
+  savedEvidence?: Record<string, string>;
   sourceIp?: string;
   id: string;
   startedAt?:number;
@@ -74,7 +77,7 @@ export interface SessionDetail {
   sequenceLoss: number;
   autoResponse: AutoResponseMatch | null;
 }
-export interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; valueBytes?:number; fieldBytes?:number; }
+export interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; valueBytes?:number|null; fieldBytes?:number|null; }
 export interface HeadView {
   boundary: string;
   method: string | null;
@@ -93,6 +96,7 @@ export interface AutoResponseMatch {
   bodyBytes: number;
 }
 export interface StoredBodyMetadata {
+  lengthKnown?:boolean;
   exchangeId: string;
   boundary: string;
   observedBytes: number;

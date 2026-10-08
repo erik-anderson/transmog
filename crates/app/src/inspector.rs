@@ -25,9 +25,9 @@ const MAX_DIAGNOSTICS: usize = 64;
 #[serde(rename_all = "camelCase")]
 pub struct HeaderView {
     /// Original field-value size, including a redacted value.
-    pub value_bytes: usize,
+    pub value_bytes: Option<usize>,
     /// HTTP/1 serialized field size: name, colon-space, value and CRLF.
-    pub field_bytes: usize,
+    pub field_bytes: Option<usize>,
     /// Escaped field name.
     pub name: String,
     /// Escaped text or hexadecimal bytes.
@@ -78,6 +78,12 @@ pub struct HeadView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Direct association with the saved source's trace metadata.
+    pub trace_id: Option<String>,
+    /// Original source identifier, before viewer namespace assignment.
+    pub original_id: Option<String>,
+    /// Original saved timing and transport fields, without invented values.
+    pub saved_evidence: std::collections::BTreeMap<String, String>,
     /// Remote client IP, omitted for loopback clients.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_ip: Option<String>,
@@ -330,6 +336,9 @@ pub(crate) fn session_detail(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        trace_id: None,
+        original_id: None,
+        saved_evidence: std::collections::BTreeMap::new(),
         source_ip: {
             let ip = snapshot.metadata.client_addr.ip();
             let ip = match ip {
@@ -404,7 +413,7 @@ pub(crate) async fn inspect_body(
     })?;
     let exchange_id = transmog_core::intercept::ExchangeId(parse_session_id(&request.session_id)?);
     let boundary = parse_boundary(&request.boundary)?;
-    let metadata = store
+    let mut metadata = store
         .metadata(exchange_id)
         .into_iter()
         .find(|candidate| candidate.boundary == boundary_name(boundary))
@@ -503,6 +512,15 @@ pub(crate) async fn inspect_body(
         .read_range(exchange_id, boundary, request.offset, read_length)
         .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
     let mut bytes = range.bytes;
+    metadata.retained_bytes = range.retained_bytes;
+    if let Some(latest) = store
+        .metadata(exchange_id)
+        .into_iter()
+        .find(|body| body.boundary == request.boundary)
+    {
+        metadata.length_known = latest.length_known;
+        metadata.observed_bytes = latest.observed_bytes;
+    }
     let mut decoded = false;
     if request.decode_content && !metadata.content_codings.is_empty() {
         if metadata.availability != BodyAvailability::Complete {
@@ -999,12 +1017,10 @@ fn headers(block: &HeaderBlock) -> Vec<HeaderView> {
             let sensitive = field.is_redacted();
             let (value, binary) = display_bytes(field.value());
             HeaderView {
-                value_bytes: field.value_bytes(),
+                value_bytes: field.original_value_bytes(),
                 field_bytes: field
-                    .name()
-                    .len()
-                    .saturating_add(field.value_bytes())
-                    .saturating_add(4),
+                    .original_value_bytes()
+                    .map(|bytes| field.name().len().saturating_add(bytes).saturating_add(4)),
                 name: display_text(field.name()),
                 value,
                 binary,
@@ -1104,8 +1120,8 @@ mod tests {
         let view = headers(&block);
         assert_eq!(view.len(), 2);
         assert!(view.iter().all(|field| field.sensitive));
-        assert_eq!(view[0].value_bytes, 8);
-        assert_eq!(view[1].value_bytes, 14);
+        assert_eq!(view[0].value_bytes, Some(8));
+        assert_eq!(view[1].value_bytes, Some(14));
         assert!(view.iter().all(|field| field.value.is_empty()));
     }
 
@@ -1117,7 +1133,7 @@ mod tests {
         let view = headers(&block);
         assert_eq!(view[0].value, "Bearer secret");
         assert!(!view[0].sensitive);
-        assert_eq!(view[0].field_bytes, 13 + 13 + 4);
+        assert_eq!(view[0].field_bytes, Some(13 + 13 + 4));
     }
 
     #[test]

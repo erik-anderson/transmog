@@ -70,6 +70,7 @@ pub struct RequestFile {
     head: RequestHead,
     reader: Box<dyn Read + Send>,
     bytes: u64,
+    length_known: bool,
 }
 
 impl RequestFile {
@@ -105,7 +106,7 @@ impl RequestFile {
                 &mut file,
             )
             .map_err(|_| unavailable("Request body bytes could not be saved"))?;
-            if copied != self.bytes {
+            if self.length_known && copied != self.bytes || copied > self.bytes {
                 return Err(unavailable("Retained request body is incomplete"));
             }
             file.flush()
@@ -132,6 +133,7 @@ pub(crate) fn prepare_file(
         head,
         reader: body.reader,
         bytes: body.bytes,
+        length_known: body.length_known,
     })
 }
 
@@ -151,14 +153,19 @@ pub(crate) fn command(
     if body.bytes == 0 {
         return generate(head, format, CommandBody::Empty, true);
     }
-    if body.bytes <= INLINE_BYTES {
+    if body.bytes <= INLINE_BYTES || !body.length_known {
         let mut bytes = Vec::new();
         body.reader
             .take(INLINE_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| unavailable("Request body could not be read"))?;
-        if bytes.len() as u64 != body.bytes {
+        if body.length_known && bytes.len() as u64 != body.bytes {
             return Err(unavailable("Retained request body is incomplete"));
+        }
+        if bytes.len() as u64 > INLINE_BYTES {
+            let mut command = generate(head, format, CommandBody::File("request-body.bin"), true)?;
+            command.notices.push("This body is too large for an inline command. Save its complete bytes and supply the file path.".into());
+            return Ok(command);
         }
         if matches!(format, RequestCommandFormat::Powershell) {
             return generate(head, format, CommandBody::Bytes(&bytes), true);
@@ -202,12 +209,16 @@ pub(crate) fn composer_source(
     let mut available = false;
     let mut bytes = Vec::new();
     match original_body(&snapshot, store) {
-        Ok(body) if body.bytes <= COMPOSER_BYTES => {
+        Ok(body) if body.bytes <= COMPOSER_BYTES || !body.length_known => {
             body.reader
                 .take(COMPOSER_BYTES + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|_| unavailable("Request body could not be read"))?;
-            available = bytes.len() as u64 == body.bytes;
+            available = bytes.len() as u64 <= COMPOSER_BYTES
+                && (!body.length_known || bytes.len() as u64 == body.bytes);
+            if !available {
+                notices.push("Request body exceeds the Composer's four-MiB input limit; supply a smaller body.".into());
+            }
         }
         Ok(_) => notices.push(
             "Request body exceeds the Composer's four-MiB input limit; supply a smaller body."
@@ -292,6 +303,7 @@ fn request_head(snapshot: &SessionSnapshot) -> Result<&RequestHead, AppError> {
 struct OriginalBody {
     reader: Box<dyn Read + Send>,
     bytes: u64,
+    length_known: bool,
 }
 
 fn original_body(
@@ -308,20 +320,14 @@ fn original_body(
         .bodies
         .iter()
         .find(|body| body.boundary == boundary);
-    if snapshot.sequence_loss == 0
+    let known_empty = snapshot.sequence_loss == 0
         && matches!(snapshot.terminal, Some(SessionTerminal::Completed(_)))
-        && observed.is_none_or(|body| body.observed_bytes == 0)
+        && observed.is_none_or(|body| body.observed_bytes == 0 && !body.truncated)
         && head
             .headers
             .values("content-length")
             .all(|value| value == b"0")
-        && head.headers.values("transfer-encoding").next().is_none()
-    {
-        return Ok(OriginalBody {
-            reader: Box::new(std::io::Cursor::new(Vec::<u8>::new())),
-            bytes: 0,
-        });
-    }
+        && head.headers.values("transfer-encoding").next().is_none();
     if let Some(store) = store {
         store
             .flush()
@@ -332,6 +338,9 @@ fn original_body(
             .find(|body| body.boundary == crate::inspector::boundary(boundary))
         {
             if metadata.availability != BodyAvailability::Complete {
+                if known_empty && !snapshot.imported {
+                    return Ok(empty_body());
+                }
                 return Err(unavailable("Complete request bytes are unavailable"));
             }
             let reader: Box<dyn Read + Send> = if metadata.retained_bytes == 0 {
@@ -346,10 +355,22 @@ fn original_body(
             return Ok(OriginalBody {
                 reader,
                 bytes: metadata.retained_bytes,
+                length_known: metadata.length_known,
             });
         }
     }
+    if known_empty {
+        return Ok(empty_body());
+    }
     Err(unavailable("Complete request bytes are unavailable"))
+}
+
+fn empty_body() -> OriginalBody {
+    OriginalBody {
+        reader: Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        bytes: 0,
+        length_known: true,
+    }
 }
 
 #[derive(Clone, Copy)]

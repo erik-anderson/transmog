@@ -23,6 +23,8 @@ mod response_file;
 mod response_filename;
 mod scripts;
 mod sessions;
+mod trace_body;
+mod traces;
 mod version;
 mod workspace;
 
@@ -73,6 +75,7 @@ pub use sessions::{
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
 };
 use thiserror::Error;
+pub use traces::{TraceImportProgress, TraceImportRequest, TraceImportResult, TraceMetadataView};
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
@@ -231,6 +234,7 @@ pub struct Application {
     response_assets: response_assets::ResponseAssetStore,
     scripts: scripts::ScriptRegistry,
     previews: preview::PreviewService,
+    traces: traces::TraceRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -316,6 +320,7 @@ impl Application {
             response_assets,
             scripts,
             previews,
+            traces: traces::TraceRegistry::default(),
         })
     }
 
@@ -831,7 +836,7 @@ impl Application {
     /// # Errors
     /// Returns invalid filters, page sizes, cursors, or token-generation failures.
     pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
-        sessions::query_sessions(&self.service, &self.cursors, query)
+        sessions::query_sessions_with_traces(&self.service, &self.cursors, query, &self.traces)
     }
 
     /// Removes selected rows from Traffic, retaining bounded Undo evidence.
@@ -876,7 +881,23 @@ impl Application {
     /// Returns an invalid identifier, unavailable/evicted session, or body
     /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
-        inspector::session_detail(&self.service, self.body_store.as_ref(), id)
+        let mut detail = inspector::session_detail(&self.service, self.body_store.as_ref(), id)?;
+        if let Some(entry) = self.traces.entry(id) {
+            detail.trace_id = Some(entry.trace_id);
+            detail.original_id = Some(entry.original_id);
+            detail.saved_evidence = entry.timings;
+            detail.diagnostics.extend(entry.diagnostics);
+            if !entry.protocol_known {
+                for head in detail
+                    .requests
+                    .iter_mut()
+                    .chain(detail.responses.iter_mut())
+                {
+                    head.protocol = "Unavailable".into();
+                }
+            }
+        }
+        Ok(detail)
     }
 
     /// Produces clipboard text without starting a process or sending traffic.
@@ -896,7 +917,57 @@ impl Application {
     /// # Errors
     /// Returns invalid selection or non-text header errors.
     pub fn copy_all_headers(&self, id: &str) -> Result<String, AppError> {
+        if let Some(entry) = self.traces.entry(id)
+            && let Some(headers) = entry.raw_headers
+        {
+            return Ok(headers);
+        }
         request_actions::copy_all_headers(&self.service, id)
+    }
+
+    /// Imports saved evidence into this window's Traffic catalog atomically.
+    ///
+    /// # Errors
+    /// Returns invalid files, bounded import failures, collisions or cancellation.
+    pub async fn import_trace(
+        &self,
+        request: TraceImportRequest,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
+        let store = self.body_store.clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Saved trace body storage is not configured",
+                false,
+            )
+        })?;
+        self.traces
+            .import(request, self.service.clone(), store, progress)
+            .await
+    }
+
+    /// Cancels an in-progress saved-file import before catalog publication.
+    pub fn cancel_trace_import(&self, operation_id: &str) {
+        self.traces.cancel(operation_id);
+    }
+
+    /// Lists source metadata for every trace in this window's saved workspace.
+    pub fn trace_metadata_list(&self) -> Vec<TraceMetadataView> {
+        self.traces.list()
+    }
+
+    /// Resolves one saved source's context, including its original network data.
+    ///
+    /// # Errors
+    /// Returns an unavailable error for a stale or unknown trace identity.
+    pub fn trace_metadata(&self, id: &str) -> Result<TraceMetadataView, AppError> {
+        self.traces.metadata(id).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Trace metadata is unavailable",
+                false,
+            )
+        })
     }
 
     /// Protects complete encoded request bytes while a native save dialog opens.

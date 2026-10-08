@@ -105,6 +105,8 @@ pub enum SessionTerminal {
 /// Immutable point-in-time representation of one exchange.
 #[derive(Clone, Debug)]
 pub struct SessionSnapshot {
+    /// Whether this is immutable saved evidence, independent of live retention.
+    pub imported: bool,
     /// Stable exchange identifier.
     pub exchange_id: ExchangeId,
     /// Original immutable exchange metadata.
@@ -234,6 +236,9 @@ pub struct CatalogPage {
 /// Failure to create or consume a bounded subscription.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum CatalogError {
+    /// Saved evidence reached its independent finite entry bound or collided.
+    #[error("imported session limit or identifier collision")]
+    ImportLimit,
     /// Configured simultaneous subscriber limit was reached.
     #[error("catalog subscriber limit reached")]
     SubscriberLimit,
@@ -253,6 +258,7 @@ struct MutableBody {
 
 #[derive(Debug)]
 struct MutableSession {
+    imported: bool,
     metadata: Arc<ExchangeMetadata>,
     last_sequence: u64,
     sequence_loss: u64,
@@ -272,6 +278,7 @@ struct MutableSession {
 impl MutableSession {
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
+            imported: self.imported,
             exchange_id: self.metadata.exchange_id,
             metadata: Arc::clone(&self.metadata),
             last_sequence: self.last_sequence,
@@ -302,6 +309,7 @@ impl MutableSession {
 
 #[derive(Debug, Default)]
 struct CatalogState {
+    imported_count: usize,
     dismissed: HashSet<ExchangeId>,
     by_id: HashMap<ExchangeId, MutableSession>,
     order: BTreeMap<u64, ExchangeId>,
@@ -346,7 +354,8 @@ impl SessionCatalog {
                     state.counters.unknown_exchange_events.saturating_add(1);
                 return CatalogApply::UnknownExchange;
             }
-            if state.by_id.len() == self.inner.limits.max_sessions.get()
+            if state.by_id.len().saturating_sub(state.imported_count)
+                == self.inner.limits.max_sessions.get()
                 && !evict_oldest_terminal(&mut state)
             {
                 state.counters.admission_rejected =
@@ -362,6 +371,7 @@ impl SessionCatalog {
             state.by_id.insert(
                 exchange_id,
                 MutableSession {
+                    imported: false,
                     metadata: Arc::clone(metadata),
                     last_sequence: 0,
                     sequence_loss: 0,
@@ -385,6 +395,9 @@ impl SessionCatalog {
                 state.counters.unknown_exchange_events.saturating_add(1);
             return CatalogApply::UnknownExchange;
         };
+        if session.imported {
+            return CatalogApply::PostTerminal;
+        }
         let (last_sequence, terminal) = { (session.last_sequence, session.terminal.is_some()) };
         if event.sequence <= last_sequence {
             state.counters.stale_events = state.counters.stale_events.saturating_add(1);
@@ -433,6 +446,80 @@ impl SessionCatalog {
             return None;
         }
         state.by_id.get(&exchange_id).map(MutableSession::snapshot)
+    }
+
+    /// Atomically adds immutable saved sessions without evicting live evidence.
+    /// Saved entries have a separate 100,000-entry bound and support ordinary
+    /// queries, selection, dismissal and Undo. Observer events cannot change them.
+    ///
+    /// # Errors
+    /// Returns an import bound or ID collision error before publishing any entry.
+    pub fn import_sessions(&self, sessions: Vec<SessionSnapshot>) -> Result<(), CatalogError> {
+        self.import_sessions_with(sessions, || {})
+    }
+
+    /// Publishes a saved batch after preparing its body sources and provenance.
+    /// The callback runs after validation, while readers are excluded, and must
+    /// not re-enter this catalog. Notifications follow the complete publication.
+    ///
+    /// # Errors
+    /// Returns an import bound or collision error without invoking the callback.
+    pub fn import_sessions_with(
+        &self,
+        sessions: Vec<SessionSnapshot>,
+        prepare: impl FnOnce(),
+    ) -> Result<(), CatalogError> {
+        let mut state = self.lock_state();
+        let mut ids = HashSet::new();
+        if state.imported_count.saturating_add(sessions.len()) > 100_000
+            || sessions.iter().any(|session| {
+                state.by_id.contains_key(&session.exchange_id) || !ids.insert(session.exchange_id)
+            })
+        {
+            return Err(CatalogError::ImportLimit);
+        }
+        prepare();
+        for snapshot in sessions {
+            state.next_admission = state.next_admission.saturating_add(1);
+            let admission = state.next_admission;
+            let id = snapshot.exchange_id;
+            state.order.insert(admission, id);
+            state.imported_count += 1;
+            let bodies = snapshot
+                .bodies
+                .into_iter()
+                .map(|body| MutableBody {
+                    boundary: body.boundary,
+                    observed_bytes: body.observed_bytes,
+                    retained_prefix: BytesMut::new(),
+                    truncated: body.truncated,
+                    trailers: body.trailers,
+                })
+                .collect();
+            state.by_id.insert(
+                id,
+                MutableSession {
+                    imported: true,
+                    metadata: snapshot.metadata,
+                    last_sequence: snapshot.last_sequence,
+                    sequence_loss: snapshot.sequence_loss,
+                    request_heads: snapshot.request_heads,
+                    response_heads: snapshot.response_heads,
+                    bodies,
+                    retained_body_bytes: 0,
+                    initialization_diagnostics: snapshot.initialization_diagnostics,
+                    hook_effects: snapshot.hook_effects,
+                    route_selection: snapshot.route_selection,
+                    route_attempts: snapshot.route_attempts,
+                    terminal: snapshot.terminal,
+                    terminal_at: snapshot.terminal_at,
+                    websocket: snapshot.websocket,
+                },
+            );
+        }
+        drop(state);
+        self.notify_view_change(&ids.into_iter().collect::<Vec<_>>());
+        Ok(())
     }
 
     /// Removes entries from the managed view without interrupting active exchanges.
@@ -667,6 +754,7 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
         state
             .by_id
             .get(exchange_id)
+            .filter(|session| !session.imported)
             .and_then(|session| session.terminal.as_ref())
             .map(|_| (*admission, *exchange_id))
     });
@@ -965,6 +1053,45 @@ mod tests {
                 })
             )),
             CatalogApply::Applied
+        );
+    }
+
+    #[test]
+    fn imports_are_atomic_immutable_and_survive_live_eviction() {
+        let source = SessionCatalog::new(limits(1));
+        start(&source, 77, "saved.test");
+        fail(&source, 77, 2);
+        let saved = source.get(ExchangeId(77)).unwrap();
+        let catalog = SessionCatalog::new(limits(1));
+        catalog.import_sessions(vec![saved.clone()]).unwrap();
+        assert!(catalog.get(ExchangeId(77)).unwrap().imported);
+        let mut prepared = false;
+        assert_eq!(
+            catalog.import_sessions_with(vec![saved], || prepared = true),
+            Err(CatalogError::ImportLimit)
+        );
+        assert!(!prepared);
+        assert_eq!(
+            catalog.apply(event(
+                77,
+                3,
+                ObserverEventKind::RequestHeadFinalized(head("POST"))
+            )),
+            CatalogApply::PostTerminal
+        );
+        start(&catalog, 1, "live.test");
+        fail(&catalog, 1, 2);
+        start(&catalog, 2, "new.test");
+        assert!(catalog.get(ExchangeId(1)).is_none());
+        assert!(catalog.get(ExchangeId(77)).is_some());
+        assert_eq!(catalog.dismiss(&[ExchangeId(77)]), vec![ExchangeId(77)]);
+        assert_eq!(catalog.query(&CatalogQuery::default()).sessions.len(), 1);
+        catalog.restore_dismissed(&[ExchangeId(77)]);
+        assert_eq!(
+            catalog
+                .project_retained(|session| session.exchange_id)
+                .len(),
+            2
         );
     }
 

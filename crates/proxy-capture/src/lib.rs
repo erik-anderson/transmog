@@ -588,78 +588,162 @@ impl<W: Write> CaptureExporter for JsonLinesExporter<W> {
 /// # Errors
 ///
 /// Returns a typed format, checksum, serialization, bound, or I/O error.
-pub fn recover<R: Read>(
-    mut input: R,
-    limits: CaptureLimits,
-) -> Result<RecoveredCapture, CaptureError> {
-    let limits = limits.validate()?;
-    let mut magic = [0_u8; MAGIC.len()];
-    input.read_exact(&mut magic).map_err(|error| {
-        if error.kind() == io::ErrorKind::UnexpectedEof {
-            CaptureError::TruncatedPreamble
-        } else {
-            CaptureError::Io(error)
-        }
-    })?;
-    if magic != MAGIC {
-        return Err(CaptureError::InvalidMagic);
-    }
+pub fn recover<R: Read>(input: R, limits: CaptureLimits) -> Result<RecoveredCapture, CaptureError> {
+    let mut reader = CaptureReader::new(input, limits)?;
     let mut records = Vec::new();
-    let mut valid_bytes = MAGIC.len() as u64;
-    let mut truncated_tail = false;
-    loop {
-        let mut header = [0_u8; FRAME_HEADER_BYTES];
-        let read = read_until_eof(&mut input, &mut header)?;
-        if read == 0 {
-            break;
-        }
-        if read != header.len() {
-            truncated_tail = true;
-            break;
-        }
-        let length = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-        let expected_crc = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        if length > limits.max_record_bytes {
-            return Err(CaptureError::RecordTooLarge {
-                actual: length,
-                limit: limits.max_record_bytes,
-            });
-        }
-        if records.len() >= limits.max_records {
-            return Err(CaptureError::RecordCountExceeded);
-        }
-        let mut payload = vec![0_u8; length];
-        let read = read_until_eof(&mut input, &mut payload)?;
-        if read != length {
-            truncated_tail = true;
-            break;
-        }
-        let actual_crc = crc32fast::hash(&payload);
-        if actual_crc != expected_crc {
-            return Err(CaptureError::ChecksumMismatch {
-                record_index: records.len(),
-            });
-        }
-        let stored: StoredRecord = serde_json::from_slice(&payload)?;
-        records.push(load(stored)?);
-        valid_bytes = valid_bytes
-            .saturating_add(FRAME_HEADER_BYTES as u64)
-            .saturating_add(length as u64);
-        if valid_bytes > limits.max_file_bytes {
-            return Err(CaptureError::QuotaExceeded);
-        }
+    while let Some(frame) = reader.read_next()? {
+        records.push(frame.record);
     }
-    let sealed = matches!(
-        records.last().map(|record| &record.kind),
-        Some(CaptureRecordKind::Seal { record_count })
-            if *record_count == records.len().saturating_sub(1) as u64
-    );
     Ok(RecoveredCapture {
         records,
-        valid_bytes,
-        truncated_tail,
-        sealed,
+        valid_bytes: reader.valid_bytes(),
+        truncated_tail: reader.truncated_tail(),
+        sealed: reader.sealed(),
     })
+}
+
+/// One checked native frame with its stable on-disk location.
+#[derive(Clone, Debug)]
+pub struct CaptureFrame {
+    /// Offset of its frame header, suitable for a later bounded re-read.
+    pub offset: u64,
+    /// Total header and payload bytes.
+    pub frame_bytes: u64,
+    /// Validated durable record.
+    pub record: CaptureRecord,
+}
+
+/// Streaming native reader retaining at most one bounded frame payload.
+pub struct CaptureReader<R> {
+    input: R,
+    limits: CaptureLimits,
+    records: usize,
+    valid_bytes: u64,
+    truncated_tail: bool,
+    sealed: bool,
+    done: bool,
+}
+
+impl<R: Read> CaptureReader<R> {
+    /// Validates a native preamble and finite limits.
+    ///
+    /// # Errors
+    /// Returns a format, truncated-preamble or I/O error.
+    pub fn new(mut input: R, limits: CaptureLimits) -> Result<Self, CaptureError> {
+        let limits = limits.validate()?;
+        let mut magic = [0_u8; MAGIC.len()];
+        input.read_exact(&mut magic).map_err(|error| {
+            if error.kind() == io::ErrorKind::UnexpectedEof {
+                CaptureError::TruncatedPreamble
+            } else {
+                CaptureError::Io(error)
+            }
+        })?;
+        if magic != MAGIC {
+            return Err(CaptureError::InvalidMagic);
+        }
+        Ok(Self {
+            input,
+            limits,
+            records: 0,
+            valid_bytes: MAGIC.len() as u64,
+            truncated_tail: false,
+            sealed: false,
+            done: false,
+        })
+    }
+
+    /// Reads one complete checksummed record or the recoverable end of input.
+    ///
+    /// # Errors
+    /// Returns complete-frame corruption, serialization, resource or I/O errors.
+    pub fn read_next(&mut self) -> Result<Option<CaptureFrame>, CaptureError> {
+        if self.done {
+            return Ok(None);
+        }
+        let mut header = [0_u8; FRAME_HEADER_BYTES];
+        let read = read_until_eof(&mut self.input, &mut header)?;
+        if read != header.len() {
+            self.done = true;
+            self.truncated_tail = read != 0;
+            return Ok(None);
+        }
+        let length = u32::from_le_bytes(
+            header[..4]
+                .try_into()
+                .map_err(|_| CaptureError::InvalidMagic)?,
+        ) as usize;
+        let expected_crc = u32::from_le_bytes(
+            header[4..]
+                .try_into()
+                .map_err(|_| CaptureError::InvalidMagic)?,
+        );
+        if length > self.limits.max_record_bytes {
+            return Err(CaptureError::RecordTooLarge {
+                actual: length,
+                limit: self.limits.max_record_bytes,
+            });
+        }
+        if self.records >= self.limits.max_records {
+            return Err(CaptureError::RecordCountExceeded);
+        }
+        let frame_bytes = FRAME_HEADER_BYTES as u64 + length as u64;
+        if self.valid_bytes.saturating_add(frame_bytes) > self.limits.max_file_bytes {
+            return Err(CaptureError::QuotaExceeded);
+        }
+        let mut payload = vec![0_u8; length];
+        if read_until_eof(&mut self.input, &mut payload)? != length {
+            self.done = true;
+            self.truncated_tail = true;
+            return Ok(None);
+        }
+        if crc32fast::hash(&payload) != expected_crc {
+            return Err(CaptureError::ChecksumMismatch {
+                record_index: self.records,
+            });
+        }
+        let record = load(serde_json::from_slice::<StoredRecord>(&payload)?)?;
+        self.sealed = matches!(&record.kind, CaptureRecordKind::Seal { record_count } if *record_count == self.records as u64);
+        self.records += 1;
+        let offset = self.valid_bytes;
+        self.valid_bytes += frame_bytes;
+        Ok(Some(CaptureFrame {
+            offset,
+            frame_bytes,
+            record,
+        }))
+    }
+
+    /// Length of the fully validated native prefix.
+    pub fn valid_bytes(&self) -> u64 {
+        self.valid_bytes
+    }
+    /// Whether input ended inside a frame.
+    pub fn truncated_tail(&self) -> bool {
+        self.truncated_tail
+    }
+    /// Whether the last valid frame is a consistent seal.
+    pub fn sealed(&self) -> bool {
+        self.sealed && !self.truncated_tail
+    }
+}
+
+/// Re-reads one indexed frame without allocating more than its declared bound.
+///
+/// # Errors
+/// Returns malformed/truncated frames, checksum changes, or resource errors.
+pub fn read_indexed_frame(
+    mut input: impl Read,
+    frame_bytes: u64,
+    limits: CaptureLimits,
+) -> Result<CaptureRecord, CaptureError> {
+    let prefix = std::io::Cursor::new(MAGIC).chain((&mut input).take(frame_bytes));
+    let mut reader = CaptureReader::new(prefix, limits)?;
+    let frame = reader.read_next()?.ok_or(CaptureError::TruncatedPreamble)?;
+    if frame.frame_bytes != frame_bytes {
+        return Err(CaptureError::InvalidMagic);
+    }
+    Ok(frame.record)
 }
 
 /// Converts one already-redacted core observer event into the durable schema.
@@ -777,7 +861,7 @@ fn captured_headers(headers: &HeaderBlock, redacted: &BTreeSet<String>) -> Vec<C
         .iter()
         .map(|field| CapturedHeader {
             name: field.name().to_vec(),
-            original_value_bytes: Some(field.value_bytes()),
+            original_value_bytes: field.original_value_bytes(),
             value: (!field.is_redacted()
                 && !redacted.contains(&String::from_utf8_lossy(field.name()).to_ascii_lowercase()))
             .then(|| field.value().to_vec()),
@@ -1193,6 +1277,35 @@ mod tests {
             writer.seal().unwrap();
         }
         writer.into_inner()
+    }
+
+    #[test]
+    fn streaming_offsets_can_reread_exact_frames_and_reject_changes() {
+        let bytes = artifact(&[completed(1), completed(2)], true);
+        let mut reader = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+        let first = reader.read_next().unwrap().unwrap();
+        let second = reader.read_next().unwrap().unwrap();
+        assert_eq!(second.offset, first.offset + first.frame_bytes);
+        let mut cursor = Cursor::new(&bytes);
+        cursor.set_position(second.offset);
+        assert_eq!(
+            read_indexed_frame(cursor, second.frame_bytes, CaptureLimits::default()).unwrap(),
+            completed(2)
+        );
+        let mut changed = bytes.clone();
+        let last = usize::try_from(second.offset + second.frame_bytes - 1).unwrap();
+        changed[last] ^= 255;
+        let mut cursor = Cursor::new(changed);
+        cursor.set_position(second.offset);
+        assert!(read_indexed_frame(cursor, second.frame_bytes, CaptureLimits::default()).is_err());
+        reader.read_next().unwrap().unwrap();
+        assert!(reader.sealed());
+        assert!(reader.read_next().unwrap().is_none());
+        let mut partial = bytes;
+        partial.extend_from_slice(&[1, 2, 3]);
+        let recovered = recover(Cursor::new(partial), CaptureLimits::default()).unwrap();
+        assert!(recovered.truncated_tail);
+        assert!(!recovered.sealed);
     }
 
     struct ShortWriter {

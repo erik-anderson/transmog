@@ -1,0 +1,1208 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, SystemTime},
+};
+use transmog_capture::{CaptureLimits, CaptureReader, CaptureRecordKind, CapturedHeader};
+use transmog_core::{
+    ClientIdentity, ConnectionId, HeaderBlock, HeaderField, HttpLegVersion, RequestHead,
+    ResponseHead, SessionId, SessionMetadata, StreamId, Target,
+    intercept::{
+        CompletedExchange, ExchangeFailure, ExchangeFailureKind, ExchangeId, ExchangeMetadata,
+        ExchangeStage,
+    },
+    observe::ExchangeBoundary,
+};
+use transmog_saz::{SazArchive, SazImportLimits};
+use transmog_session::{
+    ApplicationSessionService, BodySnapshot, ObservedRequestHead, ObservedResponseHead,
+    SessionSnapshot, SessionTerminal,
+};
+
+use crate::{
+    AppError, BodyStore, ErrorCategory,
+    body_store::SavedBodySource,
+    trace_body::{NativeBodyPiece, NativeBodySource, SazBodySource, SourceReader},
+};
+
+const MAX_SESSIONS: usize = 100_000;
+const MAX_HEAD_BYTES: usize = 256 * 1024 * 1024;
+
+/// Saved trace import, independent of live proxy capture and settings.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TraceImportRequest {
+    /// User-selected original source file.
+    pub path: PathBuf,
+    /// Caller-generated operation key used for cancellation and stale results.
+    pub operation_id: String,
+    /// Finite source byte limit, at most four GiB.
+    pub max_file_bytes: u64,
+}
+
+/// Import progress for one explicitly named operation.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceImportProgress {
+    /// Operation key, independent of request selection.
+    pub operation_id: String,
+    /// Completed bytes or indexing units.
+    pub completed: u64,
+    /// Total indexing units or input bytes.
+    pub total: u64,
+}
+
+/// Per-source trace context, never replaced with the importing machine's state.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceMetadataView {
+    /// Namespace shared by every entry imported from this source.
+    pub id: String,
+    /// Human-readable source filename.
+    pub name: String,
+    /// `saz` or `native`.
+    pub format: &'static str,
+    /// Source path explicitly selected by the user.
+    pub path: PathBuf,
+    /// Saved-session count.
+    pub sessions: usize,
+    /// Import completion time in Unix milliseconds.
+    pub imported_at: u64,
+    /// Original capture-level metadata, including optional network context.
+    pub context: Value,
+    /// Bounded source-fidelity and recovery notes.
+    pub notes: Vec<String>,
+}
+
+/// Completed import report. Source files are unchanged.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceImportResult {
+    /// Direct navigation to this source's metadata.
+    pub trace: TraceMetadataView,
+    /// Bounded missing/malformed evidence descriptions.
+    pub issues: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TraceEntry {
+    pub trace_id: String,
+    pub original_id: String,
+    pub raw_headers: Option<String>,
+    pub timings: BTreeMap<String, String>,
+    pub protocol_known: bool,
+    pub target_known: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Default)]
+struct State {
+    metadata: BTreeMap<String, TraceMetadataView>,
+    entries: HashMap<String, TraceEntry>,
+    operations: HashMap<String, Arc<AtomicBool>>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct TraceRegistry {
+    state: Arc<Mutex<State>>,
+}
+impl TraceRegistry {
+    pub(crate) fn entry(&self, id: &str) -> Option<TraceEntry> {
+        self.lock().entries.get(id).cloned()
+    }
+    pub(crate) fn metadata(&self, id: &str) -> Option<TraceMetadataView> {
+        self.lock().metadata.get(id).cloned()
+    }
+    pub(crate) fn list(&self) -> Vec<TraceMetadataView> {
+        self.lock().metadata.values().cloned().collect()
+    }
+    pub(crate) fn cancel(&self, operation_id: &str) {
+        if let Some(canceled) = self.lock().operations.get(operation_id) {
+            canceled.store(true, Ordering::Release);
+        }
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) async fn import(
+        &self,
+        request: TraceImportRequest,
+        service: ApplicationSessionService,
+        store: BodyStore,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
+        if request.operation_id.is_empty()
+            || request.operation_id.len() > 128
+            || request.max_file_bytes == 0
+            || request.max_file_bytes > 4 * 1024 * 1024 * 1024
+        {
+            return Err(invalid("Choose a bounded trace file and import operation"));
+        }
+        let canceled = Arc::new(AtomicBool::new(false));
+        {
+            let mut state = self.lock();
+            if state.operations.len() >= 4 || state.operations.contains_key(&request.operation_id) {
+                return Err(invalid("Another import already uses this operation"));
+            }
+            state
+                .operations
+                .insert(request.operation_id.clone(), canceled.clone());
+        }
+        let registry = self.clone();
+        let operation_id = request.operation_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            registry.import_blocking(&request, &service, &store, &canceled, progress.as_ref())
+        })
+        .await;
+        self.lock().operations.remove(&operation_id);
+        result.map_err(|_| unavailable("Trace import worker failed"))?
+    }
+
+    fn import_blocking(
+        &self,
+        request: &TraceImportRequest,
+        service: &ApplicationSessionService,
+        store: &BodyStore,
+        canceled: &AtomicBool,
+        progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
+    ) -> Result<TraceImportResult, AppError> {
+        let file = File::open(&request.path)
+            .map_err(|_| invalid("The selected trace file is unreadable"))?;
+        let bytes = file
+            .metadata()
+            .map_err(|_| invalid("The selected trace file is unavailable"))?
+            .len();
+        if bytes > request.max_file_bytes {
+            return Err(invalid("The trace exceeds the selected input byte limit"));
+        }
+        let reader =
+            SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
+        let mut random = [0_u8; 8];
+        getrandom::fill(&mut random)
+            .map_err(|_| unavailable("Trace namespace could not be generated"))?;
+        let prefix = u64::from_le_bytes(random).max(1);
+        let trace_id = format!("trace-{prefix:016x}");
+        let name = request.path.file_name().map_or_else(
+            || "Capture".into(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let report = |completed, total| {
+            progress(TraceImportProgress {
+                operation_id: request.operation_id.clone(),
+                completed,
+                total,
+            });
+        };
+        let imported = if request
+            .path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("saz"))
+        {
+            import_saz(
+                reader,
+                prefix,
+                &trace_id,
+                request.max_file_bytes,
+                canceled,
+                &report,
+            )?
+        } else {
+            import_native(&reader, prefix, &trace_id, bytes, canceled, &report)?
+        };
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Trace import canceled"));
+        }
+        let trace = TraceMetadataView {
+            id: trace_id.clone(),
+            name,
+            format: imported.format,
+            path: request.path.clone(),
+            sessions: imported.sessions.len(),
+            imported_at: millis(SystemTime::now()),
+            context: imported.context,
+            notes: imported.notes,
+        };
+        // Catalog publication is atomic. All fallible source/index work precedes
+        // it, so canceling or a bad file never leaves half an import in Traffic.
+        service
+            .catalog()
+            .import_sessions_with(imported.sessions, || {
+                for body in imported.bodies {
+                    store.register_saved(
+                        body.id,
+                        body.boundary,
+                        &body.headers,
+                        body.response,
+                        body.source,
+                        body.observed,
+                        body.complete,
+                    );
+                }
+                let mut state = self.lock();
+                state.metadata.insert(trace_id, trace.clone());
+                state.entries.extend(imported.entries);
+            })
+            .map_err(|_| invalid("The viewer's imported-entry limit was reached"))?;
+        Ok(TraceImportResult {
+            trace,
+            issues: imported.issues,
+        })
+    }
+}
+
+struct ImportedBody {
+    id: ExchangeId,
+    boundary: ExchangeBoundary,
+    headers: HeaderBlock,
+    response: Option<ResponseHead>,
+    source: Arc<dyn SavedBodySource>,
+    observed: u64,
+    complete: bool,
+}
+struct ImportData {
+    format: &'static str,
+    sessions: Vec<SessionSnapshot>,
+    entries: HashMap<String, TraceEntry>,
+    bodies: Vec<ImportedBody>,
+    context: Value,
+    notes: Vec<String>,
+    issues: Vec<String>,
+}
+
+#[allow(clippy::too_many_lines)]
+fn import_saz(
+    reader: SourceReader,
+    prefix: u64,
+    trace_id: &str,
+    max_bytes: u64,
+    canceled: &AtomicBool,
+    progress: &dyn Fn(u64, u64),
+) -> Result<ImportData, AppError> {
+    let mut archive = SazArchive::open(
+        reader,
+        SazImportLimits {
+            max_archive_bytes: max_bytes,
+            ..SazImportLimits::default()
+        },
+    )
+    .map_err(|error| invalid(&format!("SAZ could not be opened: {error}")))?;
+    let index = archive
+        .index(
+            |done, total| progress(done as u64, total as u64),
+            || canceled.load(Ordering::Acquire),
+        )
+        .map_err(|error| invalid(&format!("SAZ could not be indexed: {error}")))?;
+    let mut result = ImportData {
+        format: "saz",
+        sessions: Vec::new(),
+        entries: HashMap::new(),
+        bodies: Vec::new(),
+        context: index.trace_metadata.unwrap_or(Value::Null),
+        notes: Vec::new(),
+        issues: index
+            .issues
+            .into_iter()
+            .map(|issue| format!("Session {}: {}", issue.source_id, issue.message))
+            .collect(),
+    };
+    if index.additional_issues > 0 {
+        result
+            .issues
+            .push(format!("{} additional issues", index.additional_issues));
+    }
+    let mut head_bytes = 0_usize;
+    for (position, session) in index.sessions.into_iter().enumerate() {
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Trace import canceled"));
+        }
+        let id = ExchangeId(u128::from(prefix) << 64 | (position as u128 + 1));
+        let request = session
+            .request
+            .as_ref()
+            .map(|request| request.request_head(&session.metadata))
+            .transpose()
+            .map_err(|_| invalid("Saved request target is unavailable"))?;
+        let response = session
+            .response
+            .as_ref()
+            .map(transmog_saz::ArchiveMessage::response_head)
+            .transpose()
+            .map_err(|_| invalid("Saved response head is unavailable"))?;
+        let target = request
+            .as_ref()
+            .map_or_else(unknown_target, |request| request.target.clone());
+        let client_ip = session
+            .metadata
+            .flags
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("x-clientIP"))
+            .and_then(|(_, value)| value.parse::<IpAddr>().ok());
+        let client = client_ip.map_or_else(
+            || "127.0.0.1:0".parse().expect("constant peer"),
+            |ip| SocketAddr::new(ip, 0),
+        );
+        let started = session
+            .metadata
+            .timers
+            .get("ClientBeginRequest")
+            .and_then(|value| timestamp(value))
+            .or_else(|| {
+                session
+                    .metadata
+                    .metrics
+                    .get("RequestStartedOn")
+                    .and_then(|value| timestamp(value))
+            })
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let ended = session
+            .metadata
+            .timers
+            .get("ClientDoneResponse")
+            .and_then(|value| timestamp(value))
+            .or_else(|| {
+                session
+                    .metadata
+                    .metrics
+                    .get("SessionFinishedOn")
+                    .and_then(|value| timestamp(value))
+            });
+        let version = request
+            .as_ref()
+            .map_or(HttpLegVersion::Http1, |request| request.source_version);
+        let metadata = metadata(
+            id,
+            target,
+            client,
+            if client_ip.is_some_and(|ip| !ip.is_loopback()) {
+                ClientIdentity::Remote
+            } else {
+                ClientIdentity::default()
+            },
+            version,
+            started,
+        );
+        let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), ended);
+        let mut raw_blocks = Vec::new();
+        for (message, boundary, response_head) in [
+            (session.request, ExchangeBoundary::ClientRequest, None),
+            (
+                session.response,
+                ExchangeBoundary::ClientResponse,
+                response.clone(),
+            ),
+        ] {
+            let Some(message) = message else {
+                continue;
+            };
+            head_bytes = head_bytes.saturating_add(message.raw_head.len());
+            if head_bytes > MAX_HEAD_BYTES {
+                return Err(invalid("Saved trace headers exceed the viewer index limit"));
+            }
+            if let Ok(raw) = std::str::from_utf8(&message.raw_head) {
+                raw_blocks.push(raw.trim_end_matches(['\r', '\n']).to_owned());
+            }
+            snapshot.bodies.push(BodySnapshot {
+                boundary,
+                observed_bytes: message.body.wire_bytes,
+                retained_prefix: bytes::Bytes::new(),
+                truncated: message.body.dropped,
+                trailers: None,
+            });
+            result.bodies.push(ImportedBody {
+                id,
+                boundary,
+                headers: message.headers,
+                response: response_head,
+                observed: message.body.wire_bytes,
+                complete: !message.body.dropped,
+                source: Arc::new(SazBodySource::new(archive.clone(), message.body)),
+            });
+        }
+        let mut timings = session.metadata.timers;
+        timings.extend(session.metadata.metrics);
+        result.entries.insert(
+            format!("{:032x}", id.0),
+            TraceEntry {
+                trace_id: trace_id.into(),
+                original_id: session.source_id,
+                raw_headers: (!raw_blocks.is_empty()).then(|| raw_blocks.join("\r\n\r\n\r\n")),
+                timings,
+                protocol_known: true,
+                target_known: request.is_some(),
+                diagnostics: Vec::new(),
+            },
+        );
+        result.sessions.push(snapshot);
+    }
+    Ok(result)
+}
+
+#[derive(Default)]
+struct NativeSession {
+    client: Option<SocketAddr>,
+    caller: ClientIdentity,
+    started: Option<SystemTime>,
+    requests: Vec<ObservedRequestHead>,
+    responses: Vec<ObservedResponseHead>,
+    bodies: BTreeMap<String, NativeBody>,
+    completed: bool,
+    failed: bool,
+    loss: u64,
+    sequence: u64,
+    diagnostics: Vec<String>,
+}
+#[derive(Default)]
+struct NativeBody {
+    pieces: Vec<NativeBodyPiece>,
+    observed: u64,
+    retained: u64,
+    incomplete: bool,
+}
+
+fn import_native(
+    reader: &SourceReader,
+    prefix: u64,
+    trace_id: &str,
+    max_bytes: u64,
+    canceled: &AtomicBool,
+    progress: &dyn Fn(u64, u64),
+) -> Result<ImportData, AppError> {
+    let mut capture = CaptureReader::new(
+        reader.clone(),
+        CaptureLimits {
+            max_file_bytes: max_bytes,
+            max_record_bytes: 8 * 1024 * 1024,
+            max_records: 10_000_000,
+        },
+    )
+    .map_err(|_| invalid("The selected file is not a valid native capture"))?;
+    let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
+    let mut context = Value::Null;
+    let mut budget = 0_usize;
+    while let Some(frame) = capture
+        .read_next()
+        .map_err(|_| invalid("The native capture contains a corrupt or oversized frame"))?
+    {
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Trace import canceled"));
+        }
+        if frame.record.exchange_id == 0 {
+            if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind
+                && kind == "trace-metadata"
+            {
+                context = payload;
+            }
+            progress(capture.valid_bytes(), max_bytes);
+            continue;
+        }
+        let row = rows.entry(frame.record.exchange_id).or_default();
+        row.sequence = row.sequence.max(frame.record.sequence);
+        apply_native_frame(row, frame, &mut budget)?;
+        if rows.len() > MAX_SESSIONS || budget > MAX_HEAD_BYTES {
+            return Err(invalid(
+                "Native trace metadata exceeds the viewer index limit",
+            ));
+        }
+        progress(capture.valid_bytes(), max_bytes);
+    }
+    let mut result = ImportData { format: "native", sessions: Vec::new(), bodies: Vec::new(), entries: HashMap::new(), context, notes: vec!["This native format does not record HTTP versions or precise terminal timestamps; those fields remain unavailable.".into()], issues: Vec::new() };
+    if capture.truncated_tail() {
+        result.notes.push(
+            "Recovered the valid prefix of an interrupted file. The original file is unchanged."
+                .into(),
+        );
+    }
+    if !capture.sealed() {
+        result
+            .notes
+            .push("The source did not have a complete, consistent seal.".into());
+    }
+    for (position, (original, row)) in rows.into_iter().enumerate() {
+        let id = ExchangeId(u128::from(prefix) << 64 | (position as u128 + 1));
+        append_native(&mut result, reader, trace_id, id, original, row)?;
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_lines)]
+fn apply_native_frame(
+    row: &mut NativeSession,
+    frame: transmog_capture::CaptureFrame,
+    budget: &mut usize,
+) -> Result<(), AppError> {
+    let old_diagnostics = row.diagnostics.len();
+    match frame.record.kind {
+        CaptureRecordKind::ExchangeStarted {
+            client_addr,
+            client_identity,
+            started_unix_nanos,
+            ..
+        } => {
+            row.client = client_addr.parse().ok();
+            row.caller = client_identity;
+            row.started = u64::try_from(started_unix_nanos)
+                .ok()
+                .and_then(|nanos| SystemTime::UNIX_EPOCH.checked_add(Duration::from_nanos(nanos)));
+        }
+        CaptureRecordKind::RequestHead {
+            boundary,
+            method,
+            target,
+            headers,
+        } => {
+            *budget = budget.saturating_add(
+                headers
+                    .iter()
+                    .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
+                    .sum::<usize>(),
+            );
+            let head = native_request(&method, &target, headers)?;
+            row.requests.retain(|request| request.boundary != boundary);
+            row.requests.push(ObservedRequestHead { boundary, head });
+        }
+        CaptureRecordKind::ResponseHead {
+            boundary,
+            status,
+            headers,
+        } => {
+            *budget = budget.saturating_add(
+                headers
+                    .iter()
+                    .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
+                    .sum::<usize>(),
+            );
+            let head = ResponseHead {
+                status,
+                headers: native_headers(headers)?,
+                source_version: HttpLegVersion::Http1,
+            };
+            row.responses
+                .retain(|response| response.boundary != boundary);
+            row.responses.push(ObservedResponseHead { boundary, head });
+        }
+        CaptureRecordKind::BodySegment {
+            boundary,
+            byte_count,
+            bytes,
+            truncated,
+        } => {
+            let body = row
+                .bodies
+                .entry(crate::inspector::boundary(boundary))
+                .or_default();
+            body.observed = body.observed.saturating_add(byte_count as u64);
+            body.incomplete |= truncated
+                || bytes.as_ref().is_none_or(|bytes| bytes.len() != byte_count) && byte_count > 0;
+            if let Some(bytes) = bytes
+                && !bytes.is_empty()
+            {
+                body.retained += bytes.len() as u64;
+                body.pieces.push(NativeBodyPiece {
+                    offset: frame.offset,
+                    frame_bytes: frame.frame_bytes,
+                    digest: Sha256::digest(bytes).into(),
+                });
+                *budget = budget.saturating_add(std::mem::size_of::<NativeBodyPiece>());
+            }
+        }
+        CaptureRecordKind::Completed => row.completed = true,
+        CaptureRecordKind::Failed { category, message } => {
+            row.failed = true;
+            if row.diagnostics.len() < 64 {
+                row.diagnostics
+                    .push(format!("Saved failure ({category}): {message}"));
+            }
+        }
+        CaptureRecordKind::Trailers { boundary, headers } => {
+            let _ = row
+                .bodies
+                .entry(crate::inspector::boundary(boundary))
+                .or_default();
+            if row.diagnostics.len() < 64 {
+                for field in native_headers(headers)?.iter().take(16) {
+                    row.diagnostics.push(format!(
+                        "Saved {} trailer: {}: {}",
+                        crate::inspector::boundary(boundary),
+                        String::from_utf8_lossy(field.name()),
+                        if field.is_redacted() {
+                            "[redacted]".into()
+                        } else {
+                            String::from_utf8_lossy(field.value()).into_owned()
+                        }
+                    ));
+                }
+            }
+        }
+        CaptureRecordKind::HookEffect {
+            hook_name,
+            phase,
+            action,
+            changed,
+            ..
+        } => {
+            if row.diagnostics.len() < 64 {
+                row.diagnostics.push(format!(
+                    "Saved hook {hook_name} / {phase}: {action} (changed: {changed})"
+                ));
+            }
+        }
+        CaptureRecordKind::RouteSelected { policy_id, reason } => {
+            if row.diagnostics.len() < 64 {
+                row.diagnostics
+                    .push(format!("Saved route {policy_id}: {reason}"));
+            }
+        }
+        CaptureRecordKind::RouteAttempt { protocol, outcome } => {
+            if row.diagnostics.len() < 64 {
+                row.diagnostics
+                    .push(format!("Saved upstream attempt {protocol}: {outcome}"));
+            }
+        }
+        CaptureRecordKind::Loss { count, .. } => row.loss = row.loss.saturating_add(count),
+        _ => {}
+    }
+    row.diagnostics.truncate(64);
+    for value in row.diagnostics.iter_mut().skip(old_diagnostics) {
+        *value = value.chars().take(2048).collect();
+        *budget = budget.saturating_add(value.len());
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+fn append_native(
+    result: &mut ImportData,
+    reader: &SourceReader,
+    trace_id: &str,
+    id: ExchangeId,
+    original: u128,
+    mut row: NativeSession,
+) -> Result<(), AppError> {
+    let request = row
+        .requests
+        .iter()
+        .find(|head| head.boundary == ExchangeBoundary::ClientRequest)
+        .or_else(|| row.requests.first())
+        .map(|head| head.head.clone());
+    let response = row
+        .responses
+        .iter()
+        .find(|head| head.boundary == ExchangeBoundary::ClientResponse)
+        .or_else(|| row.responses.last())
+        .map(|head| head.head.clone());
+    let target = request
+        .as_ref()
+        .map_or_else(unknown_target, |head| head.target.clone());
+    let metadata = metadata(
+        id,
+        target,
+        row.client
+            .unwrap_or_else(|| "127.0.0.1:0".parse().expect("constant peer")),
+        row.caller,
+        HttpLegVersion::Http1,
+        row.started.unwrap_or(SystemTime::UNIX_EPOCH),
+    );
+    let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), None);
+    snapshot.request_heads = row.requests;
+    snapshot.response_heads = row.responses;
+    snapshot.sequence_loss = row.loss;
+    snapshot.last_sequence = row.sequence;
+    if !row.completed || row.failed {
+        snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
+    }
+    // A completed empty body often has no segment record. Preserve that
+    // case, but do not manufacture a complete empty body when a declared
+    // entity was omitted from the saved file.
+    for (boundary, headers, bodyless) in snapshot
+        .request_heads
+        .iter()
+        .map(|head| (head.boundary, &head.head.headers, false))
+        .chain(snapshot.response_heads.iter().map(|head| {
+            (
+                head.boundary,
+                &head.head.headers,
+                request
+                    .as_ref()
+                    .is_some_and(|request| request.method == "HEAD")
+                    || (100..200).contains(&head.head.status)
+                    || [204, 304].contains(&head.head.status),
+            )
+        }))
+    {
+        let body = row
+            .bodies
+            .entry(crate::inspector::boundary(boundary))
+            .or_default();
+        if !bodyless
+            && headers.values("content-length").any(|value| value != b"0")
+            && body.observed == 0
+        {
+            body.incomplete = true;
+        }
+    }
+    for (name, body) in row.bodies {
+        let boundary = parse_boundary(&name)?;
+        let response_head = snapshot
+            .response_heads
+            .iter()
+            .find(|head| head.boundary == boundary)
+            .map(|head| head.head.clone());
+        let headers = response_head
+            .as_ref()
+            .map(|head| head.headers.clone())
+            .or_else(|| {
+                snapshot
+                    .request_heads
+                    .iter()
+                    .find(|head| head.boundary == boundary)
+                    .map(|head| head.head.headers.clone())
+            })
+            .unwrap_or_default();
+        let complete = row.completed && !body.incomplete && row.loss == 0;
+        snapshot.bodies.push(BodySnapshot {
+            boundary,
+            observed_bytes: body.observed,
+            retained_prefix: bytes::Bytes::new(),
+            truncated: !complete,
+            trailers: None,
+        });
+        result.bodies.push(ImportedBody {
+            id,
+            boundary,
+            headers,
+            response: response_head,
+            source: Arc::new(NativeBodySource {
+                reader: reader.clone(),
+                pieces: Arc::from(body.pieces),
+                bytes: body.retained,
+            }),
+            observed: body.observed,
+            complete,
+        });
+    }
+    result.entries.insert(
+        format!("{:032x}", id.0),
+        TraceEntry {
+            trace_id: trace_id.into(),
+            original_id: format!("{original:032x}"),
+            raw_headers: None,
+            timings: BTreeMap::new(),
+            protocol_known: false,
+            target_known: request.is_some(),
+            diagnostics: row.diagnostics,
+        },
+    );
+    result.sessions.push(snapshot);
+    Ok(())
+}
+
+fn native_headers(headers: Vec<CapturedHeader>) -> Result<HeaderBlock, AppError> {
+    Ok(HeaderBlock::from_fields(
+        headers
+            .into_iter()
+            .map(|header| match header.value {
+                Some(value) => HeaderField::try_new(header.name, value),
+                None => HeaderField::from_redacted(header.name, header.original_value_bytes),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| invalid("Saved trace contains an invalid header"))?,
+    ))
+}
+
+fn native_request(
+    method: &str,
+    target: &str,
+    headers: Vec<CapturedHeader>,
+) -> Result<RequestHead, AppError> {
+    let message = transmog_saz::ArchiveMessage {
+        start_line: format!("{method} {target} HTTP/1.1"),
+        headers: native_headers(headers)?,
+        raw_head: Vec::new(),
+        body: transmog_saz::ArchiveBody {
+            member: 0,
+            offset: 0,
+            wire_bytes: 0,
+            chunked: false,
+            dropped: false,
+        },
+    };
+    message
+        .request_head(&transmog_saz::ArchiveMetadata::default())
+        .map_err(|_| invalid("Saved trace contains an invalid request target"))
+}
+
+fn metadata(
+    id: ExchangeId,
+    target: Target,
+    client: SocketAddr,
+    caller: ClientIdentity,
+    version: HttpLegVersion,
+    started: SystemTime,
+) -> Arc<ExchangeMetadata> {
+    Arc::new(ExchangeMetadata::from_session_at(
+        &SessionMetadata {
+            session_id: SessionId(id.0),
+            downstream_connection_id: ConnectionId(id.0),
+            stream_id: StreamId(id.0),
+            client_addr: client,
+            client_identity: caller,
+            proxy_addr: "127.0.0.1:0".parse().expect("constant listener"),
+            ingress_version: version,
+            egress_version: None,
+        },
+        target,
+        started,
+    ))
+}
+fn empty_snapshot(
+    metadata: Arc<ExchangeMetadata>,
+    request: Option<RequestHead>,
+    response: Option<ResponseHead>,
+    ended: Option<SystemTime>,
+) -> SessionSnapshot {
+    let terminal = if let (Some(request), Some(response)) = (&request, &response) {
+        SessionTerminal::Completed(CompletedExchange {
+            metadata: metadata.clone(),
+            request_head: request.clone(),
+            response_head: response.clone(),
+        })
+    } else {
+        import_failure(metadata.clone())
+    };
+    SessionSnapshot {
+        imported: true,
+        exchange_id: metadata.exchange_id,
+        metadata,
+        last_sequence: 0,
+        sequence_loss: 0,
+        request_heads: request
+            .into_iter()
+            .map(|head| ObservedRequestHead {
+                boundary: ExchangeBoundary::ClientRequest,
+                head,
+            })
+            .collect(),
+        response_heads: response
+            .into_iter()
+            .map(|head| ObservedResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                head,
+            })
+            .collect(),
+        bodies: Vec::new(),
+        initialization_diagnostics: Vec::new(),
+        hook_effects: Vec::new(),
+        route_selection: None,
+        route_attempts: Vec::new(),
+        terminal: Some(terminal),
+        terminal_at: ended,
+        websocket: None,
+    }
+}
+fn import_failure(metadata: Arc<ExchangeMetadata>) -> SessionTerminal {
+    SessionTerminal::Failed(ExchangeFailure {
+        metadata,
+        stage: ExchangeStage::Terminal,
+        kind: ExchangeFailureKind::Body,
+        request_committed: false,
+        response_committed: false,
+        message: "Imported session is incomplete".into(),
+    })
+}
+fn unknown_target() -> Target {
+    Target {
+        scheme: String::new(),
+        authority: String::new(),
+        host: "Unknown target".into(),
+        port: 0,
+        path: String::new(),
+        query: None,
+    }
+}
+fn parse_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
+    match value {
+        "client-request" => Ok(ExchangeBoundary::ClientRequest),
+        "upstream-request" => Ok(ExchangeBoundary::UpstreamRequest),
+        "client-response" => Ok(ExchangeBoundary::ClientResponse),
+        "upstream-response" => Ok(ExchangeBoundary::UpstreamResponse),
+        _ => Err(invalid("Unknown saved body boundary")),
+    }
+}
+fn timestamp(value: &str) -> Option<SystemTime> {
+    let time =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
+    let nanos = u64::try_from(time.unix_timestamp_nanos()).ok()?;
+    SystemTime::UNIX_EPOCH.checked_add(Duration::from_nanos(nanos))
+}
+fn millis(time: SystemTime) -> u64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+fn invalid(message: &str) -> AppError {
+    AppError::new(ErrorCategory::InvalidInput, message, false)
+}
+fn unavailable(message: &str) -> AppError {
+    AppError::new(ErrorCategory::Unavailable, message, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AppConfig, Application, BodyStoreConfig, RequestCommandFormat, SessionQueryInput};
+    use std::io::{Cursor, Write};
+    use transmog_capture::{CaptureRecord, CaptureWriter};
+
+    fn app(root: &std::path::Path) -> Application {
+        Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(root.join("cache"))),
+            ..AppConfig::default()
+        })
+        .unwrap()
+    }
+    fn request(path: PathBuf, operation_id: &str) -> TraceImportRequest {
+        TraceImportRequest {
+            path,
+            operation_id: operation_id.into(),
+            max_file_bytes: 64 * 1024 * 1024,
+        }
+    }
+    fn native(path: &std::path::Path, bytes: Option<Vec<u8>>, count: usize) {
+        let mut writer =
+            CaptureWriter::new(File::create(path).unwrap(), CaptureLimits::default()).unwrap();
+        let kinds = [
+            CaptureRecordKind::ExchangeStarted {
+                client_addr: "192.0.2.5:1234".into(),
+                client_identity: ClientIdentity::Remote,
+                listener_addr: "0.0.0.0:8888".into(),
+                authority: "example.invalid".into(),
+                started_unix_nanos: 1_800_000_000_000_000_000,
+            },
+            CaptureRecordKind::RequestHead {
+                boundary: ExchangeBoundary::ClientRequest,
+                method: "POST".into(),
+                target: "https://example.invalid/path".into(),
+                headers: vec![
+                    CapturedHeader {
+                        name: "Content-Length".into(),
+                        value: Some(count.to_string().into_bytes()),
+                        original_value_bytes: None,
+                    },
+                    CapturedHeader {
+                        name: "Authorization".into(),
+                        value: None,
+                        original_value_bytes: None,
+                    },
+                ],
+            },
+            CaptureRecordKind::ResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                status: 204,
+                headers: Vec::new(),
+            },
+            CaptureRecordKind::BodySegment {
+                boundary: ExchangeBoundary::ClientRequest,
+                byte_count: count,
+                bytes,
+                truncated: false,
+            },
+            CaptureRecordKind::Completed,
+        ];
+        writer
+            .append(&CaptureRecord {
+                sequence: 0,
+                exchange_id: 0,
+                kind: CaptureRecordKind::Unknown {
+                    kind: "trace-metadata".into(),
+                    payload: serde_json::json!({"networkContext":"original machine"}),
+                },
+            })
+            .unwrap();
+        for (index, kind) in kinds.into_iter().enumerate() {
+            writer
+                .append(&CaptureRecord {
+                    sequence: index as u64 + 1,
+                    exchange_id: 7,
+                    kind,
+                })
+                .unwrap();
+        }
+        writer.seal().unwrap();
+    }
+    fn saz(path: &std::path::Path) {
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, value) in [
+            (
+                "raw/1_c.txt",
+                "POST https://example.invalid/path HTTP/1.1\r\nCookie: secret\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n",
+            ),
+            (
+                "raw/1_s.txt",
+                "HTTP/1.1 404 Custom reason\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello",
+            ),
+            (
+                "raw/1_m.xml",
+                "<Session BitFlags='1'><SessionTimers ClientBeginRequest='2026-10-08T10:00:00Z' ClientDoneResponse='2026-10-08T10:00:00.250Z' DNSLookupTime='12'/><SessionFlags><SessionFlag N='x-clientIP' V='192.0.2.8'/></SessionFlags></Session>",
+            ),
+        ] {
+            zip.start_file(
+                name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Deflated),
+            )
+            .unwrap();
+            zip.write_all(value.as_bytes()).unwrap();
+        }
+        std::fs::write(path, zip.finish().unwrap().into_inner()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_import_preserves_provenance_unknowns_and_body_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.tmg");
+        native(&path, Some(vec![0, 255, 7]), 3);
+        let app = app(root.path());
+        let first = app
+            .import_trace(request(path.clone(), "one"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let second = app
+            .import_trace(request(path, "two"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        assert_eq!(rows.len(), 2);
+        assert_ne!(rows[0].id, rows[1].id);
+        assert_ne!(first.trace.id, second.trace.id);
+        assert_eq!(rows[0].trace_id.as_deref(), Some(first.trace.id.as_str()));
+        assert_eq!(rows[0].duration_ms, None);
+        assert_eq!(rows[0].protocol, "Unavailable");
+        let detail = app.session_detail(&rows[0].id).unwrap();
+        assert_eq!(detail.source_ip.as_deref(), Some("192.0.2.5"));
+        assert_eq!(detail.requests[0].headers[1].field_bytes, None);
+        assert_eq!(first.trace.context["networkContext"], "original machine");
+        assert_eq!(app.composer_source(&rows[0].id).unwrap().body, "00ff07");
+        assert!(
+            app.request_command(&rows[0].id, RequestCommandFormat::Curl)
+                .unwrap()
+                .body_file_required
+        );
+        if cfg!(windows) {
+            assert!(
+                !app.request_command(&rows[0].id, RequestCommandFormat::Powershell)
+                    .unwrap()
+                    .body_file_required
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(root.path().join("cache"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_native_body_is_not_a_replayable_empty_body() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.tmg");
+        native(&path, None, 3);
+        let app = app(root.path());
+        app.import_trace(request(path, "lost"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let id = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0]
+            .id
+            .clone();
+        assert!(!app.composer_source(&id).unwrap().body_available);
+        let command = app
+            .request_command(&id, RequestCommandFormat::Curl)
+            .unwrap();
+        assert!(command.body_file_required);
+        assert!(!command.body_file_available);
+    }
+
+    #[tokio::test]
+    async fn saz_import_dechunks_for_direct_copy_and_keeps_original_heads_and_timing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.SAZ");
+        saz(&path);
+        let app = app(root.path());
+        let result = app
+            .import_trace(request(path, "saz"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert!(result.issues.is_empty(), "{:?}", result.issues);
+        let row = &app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0];
+        assert_eq!(row.duration_ms, Some(250));
+        let command = app
+            .request_command(&row.id, RequestCommandFormat::Curl)
+            .unwrap();
+        assert!(!command.body_file_required);
+        assert!(command.text.contains("abc"));
+        assert_eq!(app.composer_source(&row.id).unwrap().body, "616263");
+        let headers = app.copy_all_headers(&row.id).unwrap();
+        assert!(headers.contains("\r\n\r\n\r\nHTTP/1.1 404 Custom reason"));
+        assert!(headers.contains("Cookie: secret"));
+        assert_eq!(
+            app.session_detail(&row.id).unwrap().saved_evidence["DNSLookupTime"],
+            "12"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_and_corruption_publish_no_partial_batch() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("trace.tmg");
+        native(&path, Some(vec![1, 2, 3]), 3);
+        let app = app(root.path());
+        let registry = app.traces.clone();
+        assert!(
+            app.import_trace(
+                request(path.clone(), "cancel"),
+                Arc::new(move |_| registry.cancel("cancel"))
+            )
+            .await
+            .is_err()
+        );
+        assert!(app.trace_metadata_list().is_empty());
+        assert!(
+            app.query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions
+                .is_empty()
+        );
+        let mut bytes = std::fs::read(&path).unwrap();
+        let end = bytes.len() - 1;
+        bytes[end] ^= 255;
+        std::fs::write(&path, bytes).unwrap();
+        assert!(
+            app.import_trace(request(path, "corrupt"), Arc::new(|_| {}))
+                .await
+                .is_err()
+        );
+        assert!(app.trace_metadata_list().is_empty());
+    }
+}

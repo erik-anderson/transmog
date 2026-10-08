@@ -27,6 +27,8 @@ pub struct SazImportLimits {
     pub max_total_bytes: u64,
     /// Maximum HTTP head length before its body.
     pub max_head_bytes: usize,
+    /// Maximum total retained heads and per-session metadata in the index.
+    pub max_index_bytes: usize,
     /// Maximum XML or namespaced JSON metadata length.
     pub max_metadata_bytes: usize,
 }
@@ -41,6 +43,7 @@ impl Default for SazImportLimits {
             max_member_bytes: 1024 * 1024 * 1024,
             max_total_bytes: 8 * 1024 * 1024 * 1024,
             max_head_bytes: 1024 * 1024,
+            max_index_bytes: 256 * 1024 * 1024,
             max_metadata_bytes: 1024 * 1024,
         }
     }
@@ -257,6 +260,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
     /// # Errors
     /// Returns archive/resource/cancellation errors. Malformed individual
     /// sessions are reported while the rest remain usable.
+    #[allow(clippy::too_many_lines)]
     pub fn index(
         &mut self,
         mut progress: impl FnMut(usize, usize),
@@ -297,6 +301,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             additional_issues: 0,
             trace_metadata,
         };
+        let mut index_bytes = 0_usize;
         for (position, (id, parts)) in parts.into_iter().enumerate() {
             if canceled() {
                 return Err(SazError::Canceled);
@@ -319,6 +324,15 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                 );
                 ArchiveMetadata::default()
             };
+            index_bytes = index_bytes.saturating_add(
+                metadata
+                    .flags
+                    .iter()
+                    .chain(metadata.timers.iter())
+                    .chain(metadata.metrics.iter())
+                    .map(|(key, value)| key.len() + value.len())
+                    .sum::<usize>(),
+            );
             let request = self.message_or_issue(
                 parts.request,
                 &metadata,
@@ -339,6 +353,17 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                 &mut result,
             );
             if request.is_some() || response.is_some() {
+                // Parsed fields duplicate head strings; budget both copies.
+                index_bytes = index_bytes.saturating_add(
+                    request
+                        .iter()
+                        .chain(response.iter())
+                        .map(|message| message.raw_head.len().saturating_mul(2))
+                        .sum::<usize>(),
+                );
+                if index_bytes > self.limits.max_index_bytes {
+                    return Err(SazError::ImportLimitExceeded);
+                }
                 result.sessions.push(ArchiveSession {
                     source_id,
                     request,

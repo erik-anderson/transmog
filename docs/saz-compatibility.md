@@ -27,6 +27,16 @@ Indexing reads headers and metadata; bodies stay in the source archive until
 requested, at which point chunk framing is removed and ZIP CRC is checked.
 Content-Encoding and original body bytes are preserved.
 
+The application import API publishes a complete indexed batch with per-file
+trace metadata and a unique namespace, so importing the same file twice cannot
+collide. Saved bodies remain in pinned, read-only source files and are opened
+on demand by the same inspector, command-copy and Composer APIs used for live
+traffic. They do not consume or get evicted by the live body-cache quota.
+Native files use a streaming checksummed frame index; later body reads verify
+both CRC and the indexed body digest. Missing native protocol and terminal-time
+fields remain unavailable. Older redacted headers with unknown sizes remain
+unknown instead of being presented as zero bytes.
+
 Classic origin-form requests use the recorded HTTPS bit and Host header. Missing
 scheme evidence is reported rather than guessed. Original start lines, ordered
 duplicate headers, timing/metric attributes and session flags are preserved.

@@ -53,8 +53,8 @@ export class MessageInspector extends WebUIElement {
     const head = heads.find((head) => head.boundary === this.boundary);
     this.bodyMetadata = this.detail?.storedBodies.find((body) => body.boundary === this.boundary) ?? null;
     this.headSummary = head ? this.side === 'request' ? (head.method ?? '')+' '+(head.target ?? '') : 'HTTP '+head.status+' · '+(stages[head.boundary] ?? head.boundary) : this.detail ? 'Waiting for '+this.side+' headers' : 'Select an exchange';
-    this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value,bytes:header.fieldBytes??0,size:header.fieldBytes===undefined?'Unavailable':formatBytes(header.fieldBytes)}));
-    const measured = head?.headers.every(header=>header.fieldBytes!==undefined)??false;
+    this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes)}));
+    const measured = head?.headers.every(header=>header.fieldBytes!=null)??false;
     this.headersSummary=head?`${head.headers.length} fields · ${measured?formatBytes(this.headerRows.reduce((sum,row)=>sum+row.bytes,2))+' including final CRLF':'size unavailable'} · HTTP/1 equivalent`:'';
     this.authorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='authorization')??false;
     this.proxyAuthorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='proxy-authorization')??false;

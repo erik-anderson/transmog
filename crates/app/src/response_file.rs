@@ -95,7 +95,7 @@ impl ResponseFile {
                 .await?,
             )?;
         }
-        if encoded_bytes != self.metadata.retained_bytes {
+        if self.metadata.length_known && encoded_bytes != self.metadata.retained_bytes {
             return Err(unavailable("Retained response is incomplete"));
         }
         for index in 0..decoders.len() {
@@ -303,6 +303,7 @@ mod tests {
 
     fn metadata(length: usize, codings: Vec<String>) -> StoredBodyMetadata {
         StoredBodyMetadata {
+            length_known: true,
             exchange_id: format!("{:032x}", 1),
             boundary: "client-response",
             observed_bytes: length as u64,

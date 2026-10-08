@@ -103,6 +103,8 @@ pub enum BodyAvailability {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredBodyMetadata {
+    /// Whether byte counts exclude any deferred HTTP transfer framing.
+    pub length_known: bool,
     /// Stable exchange identifier.
     pub exchange_id: String,
     /// Explicit observation boundary.
@@ -140,7 +142,7 @@ pub struct BodyRange {
 
 /// File-backed read lease that prevents circular eviction until dropped.
 pub struct BodyReadLease {
-    file: std::fs::File,
+    reader: Box<dyn Read + Send>,
     key: BodyKey,
     inner: Arc<BodyStoreInner>,
     metadata: StoredBodyMetadata,
@@ -164,7 +166,7 @@ impl BodyReadLease {
 
 impl Read for BodyReadLease {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.file.read(buffer)
+        self.reader.read(buffer)
     }
 }
 
@@ -272,6 +274,8 @@ impl Hash for BodyKey {
 
 #[derive(Debug)]
 struct StoredBody {
+    source: Option<Arc<dyn SavedBodySource>>,
+    source_size_deferred: bool,
     path: Option<PathBuf>,
     observed_bytes: u64,
     retained_bytes: u64,
@@ -290,6 +294,8 @@ struct StoredBody {
 impl StoredBody {
     fn new(availability: BodyAvailability) -> Self {
         Self {
+            source: None,
+            source_size_deferred: false,
             path: None,
             observed_bytes: 0,
             retained_bytes: 0,
@@ -308,10 +314,25 @@ impl StoredBody {
 
     fn metadata(&self, key: BodyKey) -> StoredBodyMetadata {
         StoredBodyMetadata {
+            length_known: self
+                .source
+                .as_ref()
+                .is_none_or(|source| source.length().is_some()),
             exchange_id: format!("{:032x}", key.exchange_id.0),
             boundary: key.boundary.name(),
-            observed_bytes: self.observed_bytes,
-            retained_bytes: self.retained_bytes,
+            observed_bytes: if self.source_size_deferred {
+                self.source
+                    .as_ref()
+                    .and_then(|source| source.length())
+                    .unwrap_or(self.observed_bytes)
+            } else {
+                self.observed_bytes
+            },
+            retained_bytes: self
+                .source
+                .as_ref()
+                .and_then(|source| source.length())
+                .unwrap_or(self.retained_bytes),
             availability: self.availability,
             media_type: self.media_type.clone(),
             charset: self.charset.clone(),
@@ -320,6 +341,11 @@ impl StoredBody {
             reason: self.reason.clone(),
         }
     }
+}
+
+pub(crate) trait SavedBodySource: Send + Sync + std::fmt::Debug {
+    fn open(&self) -> std::io::Result<Box<dyn Read + Send>>;
+    fn length(&self) -> Option<u64>;
 }
 
 #[derive(Debug)]
@@ -393,6 +419,38 @@ impl std::fmt::Debug for BodyStore {
 }
 
 impl BodyStore {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_saved(
+        &self,
+        id: ExchangeId,
+        boundary: ExchangeBoundary,
+        headers: &HeaderBlock,
+        response: Option<ResponseHead>,
+        source: Arc<dyn SavedBodySource>,
+        bytes: u64,
+        complete: bool,
+    ) {
+        let mut state = self.lock_state();
+        let key = BodyKey {
+            exchange_id: id,
+            boundary: BoundaryKey::from_boundary(boundary),
+        };
+        observe_headers(&self.inner, &mut state, id, boundary, headers);
+        let record = state.records.get_mut(&key).expect("registered head");
+        record.source_size_deferred = source.length().is_none();
+        record.source = Some(source);
+        record.response_head = response;
+        record.observed_bytes = bytes;
+        record.retained_bytes = bytes;
+        record.terminal = true;
+        record.availability = if complete {
+            BodyAvailability::Complete
+        } else {
+            BodyAvailability::Lost
+        };
+        record.reason =
+            (!complete).then(|| "The saved trace did not retain a complete body".into());
+    }
     /// Creates the cache, removes stale temporary files, and starts its bounded
     /// disk worker.
     ///
@@ -537,7 +595,7 @@ impl BodyStore {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
         };
-        let (path, retained_bytes, availability) = {
+        let (path, source, retained_bytes, availability) = {
             let mut state = self.lock_state();
             let record = state
                 .records
@@ -546,13 +604,39 @@ impl BodyStore {
             if offset >= record.retained_bytes && !(offset == 0 && record.retained_bytes == 0) {
                 return Err(BodyStoreError::InvalidOffset);
             }
-            let path = record.path.clone().ok_or(BodyStoreError::ReadUnavailable)?;
+            let path = record.path.clone();
+            let source = record.source.clone();
             record.leases = record.leases.saturating_add(1);
-            (path, record.retained_bytes, record.availability)
+            (path, source, record.retained_bytes, record.availability)
         };
-        let result = read_file_range(&path, offset, length).map(|bytes| BodyRange {
+        let result = if let Some(source) = &source {
+            source
+                .open()
+                .and_then(|mut reader| {
+                    let skipped =
+                        std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())?;
+                    if skipped != offset {
+                        return Err(std::io::ErrorKind::UnexpectedEof.into());
+                    }
+                    let mut bytes = Vec::new();
+                    // One additional read observes the ZIP checksum/EOF when this
+                    // range reaches the end, rather than hiding it behind Take.
+                    reader.take(length as u64 + 1).read_to_end(&mut bytes)?;
+                    bytes.truncate(length);
+                    Ok(bytes)
+                })
+                .map_err(|_| BodyStoreError::ReadUnavailable)
+        } else {
+            path.as_ref()
+                .ok_or(BodyStoreError::ReadUnavailable)
+                .and_then(|path| read_file_range(path, offset, length))
+        };
+        let result = result.map(|bytes| BodyRange {
             offset,
-            retained_bytes,
+            retained_bytes: source
+                .as_ref()
+                .and_then(|source| source.length())
+                .unwrap_or(retained_bytes),
             bytes,
             availability,
         });
@@ -578,7 +662,7 @@ impl BodyStore {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
         };
-        let (path, metadata) = {
+        let (path, source, metadata) = {
             let mut state = self.lock_state();
             let record = state
                 .records
@@ -587,13 +671,21 @@ impl BodyStore {
             if record.availability != BodyAvailability::Complete || !record.terminal {
                 return Err(BodyStoreError::ReadUnavailable);
             }
-            let path = record.path.clone().ok_or(BodyStoreError::ReadUnavailable)?;
+            let path = record.path.clone();
+            let source = record.source.clone();
             record.leases = record.leases.saturating_add(1);
-            (path, record.metadata(key))
+            (path, source, record.metadata(key))
         };
-        if let Ok(file) = std::fs::File::open(path) {
+        let reader = if let Some(source) = source {
+            source.open()
+        } else {
+            path.ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+                .and_then(std::fs::File::open)
+                .map(|file| Box::new(file) as Box<dyn Read + Send>)
+        };
+        if let Ok(reader) = reader {
             Ok(BodyReadLease {
-                file,
+                reader,
                 key,
                 inner: Arc::clone(&self.inner),
                 metadata,
@@ -636,7 +728,9 @@ impl BodyStore {
         let keys = state
             .records
             .iter()
-            .filter_map(|(key, record)| (record.terminal && record.leases == 0).then_some(*key))
+            .filter_map(|(key, record)| {
+                (record.terminal && record.leases == 0 && record.source.is_none()).then_some(*key)
+            })
             .collect::<Vec<_>>();
         for key in &keys {
             if let Some(record) = state.records.remove(key) {
