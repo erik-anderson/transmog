@@ -8,12 +8,14 @@ or WebUI.
 
 ## Operating model
 
-Saved SAZ and TMCap files can be imported through **Traffic → Import…** or by
+Saved SAZ, TMCap and compressed `.tmcap.gz` files can be imported through **Traffic → Import…** or by
 dropping them onto the traffic list. Each import keeps its source identity and
 metadata; use **Trace metadata** on a selected imported request, or **Files →
 Trace metadata…** to browse all sources. Network configuration is shown as
 readable original console output, rather than being replaced with the viewer
 machine's settings. Imported bodies are read on demand from the original file.
+Compressed native files expand into a bounded, temporary reader owned by that
+viewer; decoded body inspection remains lazy and the selected source is unchanged.
 
 **Files → Open in a separate viewer…** creates an independent saved-capture
 window with Traffic and Composer. It is labeled **Capture viewer** and has an

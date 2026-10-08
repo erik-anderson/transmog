@@ -40,6 +40,8 @@ sources of truth.
 
 ## Product data and safety
 
+- [CLI support capture](cli-support-capture.md): start, reproduce, stop, review
+  and share a compressed trace; certificate ownership and cleanup.
 - [Product state and support diagnostics](product-state-and-support.md)
 - [Safe response previews](safe-previews.md)
 - [SAZ compatibility](saz-compatibility.md)

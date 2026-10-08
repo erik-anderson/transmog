@@ -116,6 +116,18 @@ engine from a C# command-line application.
 
 ## Headless proxy and capture tools
 
+For a guided support capture, run the separate signed CLI, reproduce the issue,
+then press Ctrl+C to stop and save a compressed trace:
+
+```powershell
+.\transmog-cli.exe record --output .\support-trace.tmcap.gz
+```
+
+The CLI asks to install its public root without relaunching, configures the
+Windows proxy, and removes the root afterward. Its default ephemeral private
+key stays in memory. See [the support capture guide](docs/cli-support-capture.md)
+for review and sharing, persistent roots, redaction, and interrupted-run recovery.
+
 The lower-level CLI can run the proxy without the desktop shell. Create and
 trust an operator-controlled CA, then start a loopback listener:
 

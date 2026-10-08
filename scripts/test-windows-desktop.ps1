@@ -8,6 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$ViewerChecks,
+    [string]$CompressedTracePath,
     [switch]$HostedRunnerDevToolsPolicy
 )
 
@@ -22,6 +23,8 @@ if ($ExecutablePath) {
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($CompressedTracePath -and -not $ViewerChecks) { throw 'CompressedTracePath requires ViewerChecks.' }
+if ($CompressedTracePath) { $CompressedTracePath = (Resolve-Path -LiteralPath $CompressedTracePath).Path }
 if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
 if (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($executable)) -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
 
@@ -138,6 +141,7 @@ try {
         if ($ViewerChecks) {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
+            if ($CompressedTracePath) { $viewerArguments += @('--compressed-source', $CompressedTracePath) }
             & node @viewerArguments
         } else { & npm @smokeArguments }
     } finally {

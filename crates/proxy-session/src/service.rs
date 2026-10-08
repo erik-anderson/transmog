@@ -110,6 +110,7 @@ pub enum ServiceError {
 }
 
 struct RunTask {
+    force_stopped: Arc<AtomicBool>,
     drain_generation: Option<u64>,
     host_plan: Option<HostIntegrationPlan>,
     generation: u64,
@@ -121,6 +122,7 @@ struct RunTask {
 }
 
 struct Lifecycle {
+    runtime_abort: Option<(tokio::task::AbortHandle, Arc<AtomicBool>)>,
     status: ServiceStatus,
     next_generation: u64,
     task: Option<RunTask>,
@@ -185,6 +187,7 @@ impl ApplicationSessionService {
                 controller,
                 observer_queue_capacity: config.observer_queue_capacity,
                 lifecycle: Mutex::new(Lifecycle {
+                    runtime_abort: None,
                     status: ServiceStatus::Stopped,
                     next_generation: 0,
                     task: None,
@@ -360,6 +363,20 @@ impl ApplicationSessionService {
         self.stop_locked().await
     }
 
+    /// Explicitly terminates unfinished runtime work, then seals the available
+    /// capture prefix and restores host settings. Intended for a user's force
+    /// stop action, not normal desktop Off.
+    ///
+    /// # Errors
+    /// Returns capture or host restoration failures after cleanup is attempted.
+    pub async fn stop_now(&self) -> Result<(), ServiceError> {
+        if let Some((abort, forced)) = &self.lock_lifecycle().runtime_abort {
+            forced.store(true, Ordering::Release);
+            abort.abort();
+        }
+        self.stop().await
+    }
+
     async fn stop_locked(&self) -> Result<(), ServiceError> {
         let (task, pending_restore, existing_failure) = {
             let mut lifecycle = self.lock_lifecycle();
@@ -381,9 +398,17 @@ impl ApplicationSessionService {
         };
 
         let (runtime_result, host) = if let Some(task) = task {
-            let RunTask { handle, host, .. } = task;
+            let RunTask {
+                handle,
+                host,
+                force_stopped,
+                ..
+            } = task;
             let result = match handle.await {
                 Ok(result) => result,
+                Err(error) if error.is_cancelled() && force_stopped.load(Ordering::Acquire) => {
+                    Ok(())
+                }
                 Err(error) => Err(format!("runtime task join failed: {error}")),
             };
             (result, host.or(pending_restore))
@@ -419,6 +444,7 @@ impl ApplicationSessionService {
             .and_then(|()| capture_result.map_err(ServiceError::Capture))
             .and(host_result);
         let mut lifecycle = self.lock_lifecycle();
+        lifecycle.runtime_abort = None;
         lifecycle.status = match &result {
             Ok(()) => ServiceStatus::Stopped,
             Err(error) => ServiceStatus::Failed {
@@ -669,7 +695,10 @@ impl ApplicationSessionService {
         });
         let mut lifecycle = self.lock_lifecycle();
         lifecycle.status = ServiceStatus::Running { local_addr };
+        let force_stopped = Arc::new(AtomicBool::new(false));
+        lifecycle.runtime_abort = Some((handle.abort_handle(), force_stopped.clone()));
         lifecycle.task = Some(RunTask {
+            force_stopped,
             drain_generation: None,
             host_plan: host.as_ref().map(HostTransaction::plan),
             generation,
@@ -822,6 +851,47 @@ mod tests {
             address: "127.0.0.1:43210".parse().unwrap(),
             immediate_failure: failure.map(str::to_owned),
         })
+    }
+
+    #[tokio::test]
+    async fn explicit_force_stop_unblocks_a_shutdown_already_waiting_for_the_runner() {
+        struct StalledRunner;
+        impl SessionRunner for StalledRunner {
+            fn local_addr(&self) -> SocketAddr {
+                "127.0.0.1:43211".parse().unwrap()
+            }
+            fn control(&self) -> Option<ProxyControl> {
+                None
+            }
+            fn run(self: Box<Self>, _: ExchangeCancellation) -> RunnerFuture {
+                Box::pin(std::future::pending())
+            }
+        }
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        service
+            .start_runner_with_host(
+                Box::new(StalledRunner),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let stopping = {
+            let service = service.clone();
+            tokio::spawn(async move { service.stop().await })
+        };
+        while !matches!(service.status(), ServiceStatus::Stopping { .. }) {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::timeout(Duration::from_secs(1), service.stop_now())
+            .await
+            .unwrap()
+            .unwrap();
+        stopping.await.unwrap().unwrap();
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_eq!(host.restored.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -6050,15 +6050,23 @@ dependencies = [
 name = "transmog"
 version = "0.1.0+0"
 dependencies = [
+ "boring",
  "bytes",
+ "flate2",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "transmog-capture",
  "transmog-content",
  "transmog-core",
+ "transmog-host-windows",
  "transmog-runtime",
  "transmog-saz",
+ "transmog-session",
  "transmog-tls",
 ]
 
@@ -6068,6 +6076,7 @@ version = "0.1.0+0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "flate2",
  "getrandom 0.4.3",
  "http",
  "percent-encoding",

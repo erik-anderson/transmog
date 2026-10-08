@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 
-const argument=name=>process.argv[process.argv.indexOf(name)+1];
+const argument=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const port=argument('--port'), source=argument('--source'), executable=argument('--executable'), screenshot=argument('--screenshot');
+const compressedSource=argument('--compressed-source');
 if(!port||!source||!executable)throw new Error('Viewer verification requires a DevTools port, isolated executable, and fixture source.');
 const sockets=[];
 async function connect(target){
@@ -63,5 +64,14 @@ try{
   const additional=await waitFor(async()=>{const all=await targets();return all.find(target=>!before.includes(target.id));},'Additional viewer did not open');
   const second=await connect(additional);
   await waitFor(()=>second.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Additional viewer did not load its saved capture');
-  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true})+'\n');
+  if(compressedSource){
+    const existing=(await targets()).map(target=>target.id);
+    await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(compressedSource)}]})`);
+    const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Compressed capture viewer did not open');
+    const compressed=await connect(target);
+    await waitFor(()=>compressed.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Compressed capture did not import');
+    const found=await compressed.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='CLI support fixture';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
+    assert.equal(found,1,'Compressed CLI response body was not searchable');
+  }
+  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,compressedCapture:!!compressedSource})+'\n');
 }finally{for(const socket of sockets)socket.close();}

@@ -27,10 +27,17 @@ checkout contains independent updater work and is preserved.
    catalogs, compact layout, accessibility, contrast, DPI and long labels.
 7. `42dd7e1`: full retained-header and decoded-body search, quiet binary skips,
    bounded regex, all-match selection and whole-workspace removal with Undo.
-8. Graceful desktop Off restores host settings first, keeps admitted work alive,
+8. `be92a19`: graceful desktop Off restores host settings first, keeps admitted work alive,
    excludes idle clients, and permits resume on the same listener. Generations
    invalidate old shutdowns and stale UI status. Real streaming integration,
    protocol matrix, browser and native WebView2 checks pass.
+9. Guided `transmog-cli record`, console Ctrl+C instructions, memory-only
+   ephemeral keys, a separately protected multi-root ownership ledger and
+   recovery, explicit persistent reuse, persistent redaction preferences,
+   force stop with cleanup, and streaming compressed native captures. Bounded,
+   cancellable gzip imports keep body reads lazy. CLI, facade and host tests,
+   browser checks, a real console capture, and native compressed-viewer checks
+   pass. The support guide covers start, reproduce, stop, review and sharing.
 
 ## Remaining isolated phases
 
@@ -45,12 +52,6 @@ checkout contains independent updater work and is preserved.
   empty-body 404 for misses, no proxy dependency, security warning with an
   Enable scripts choice. Use an isolated untrusted-content profile and prevent
   uncaptured egress and application IPC. Other platforms may be deferred.
-- Guided CLI support capture: console instructions including Ctrl+C; default
-  root-install prompt without relaunch; ephemeral private key in memory only;
-  default root cleanup; explicit persistent-root reuse. Keep a separate CLI
-  root-ownership ledger in Local AppData, retain removal-failure metadata, retry
-  orphan cleanup on later runs, and permit a fresh root without losing prior
-  identities. Document start, reproduce, stop and compressed sharing.
 - Installer offers SAZ association. Release pipeline builds and signs a
   separate `transmog-cli.exe` artifact without bundling it in the app installer.
 - Final full UX review and appropriate integrated release/interop checks.

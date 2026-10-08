@@ -1,5 +1,8 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
+mod roots;
+mod support;
+
 use std::{
     collections::HashMap,
     env,
@@ -64,6 +67,12 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<String> = env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
+        Some("record") => support::record(&arguments[1..]).await,
+        Some("roots") => support::cleanup_roots(&arguments[1..]),
+        Some("--version" | "-V") => {
+            println!("transmog-cli {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("serve") => serve(&arguments[1..]).await,
         Some("ca") if arguments.get(1).map(String::as_str) == Some("generate") => {
             generate_ca(&arguments[2..])
@@ -145,6 +154,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("LISTEN_ADDR={actual_addr}");
     println!("CA_SHA256={thumbprint}");
     println!("ROUTE_POLICY={route_policy:?}");
+    println!("Press Ctrl+C to stop the proxy and save any active capture.");
     let result = proxy
         .serve(async {
             if let Err(error) = tokio::signal::ctrl_c().await {
@@ -341,7 +351,10 @@ fn recover_file(arguments: &[String]) -> Result<RecoveredCapture, Box<dyn Error>
 fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let capture = recover_file(arguments)?;
     let summary = capture.summary();
-    println!("FORMAT_REVISION=1");
+    println!(
+        "FORMAT_REVISION={}",
+        transmog_capture::CAPTURE_FORMAT_REVISION
+    );
     println!("RECORDS={}", summary.records);
     println!("EXCHANGES={}", summary.exchanges);
     println!("LOSS_MARKERS={}", summary.loss_markers);
@@ -608,6 +621,11 @@ fn invalid_input(message: impl Into<String>) -> io::Error {
 fn print_usage() {
     println!(
         "transmog-cli\n\n\
+         Guided support capture (press Ctrl+C to stop and save):\n  \
+         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive]\n  \
+         [--install-root|--no-install-root] [--no-system-proxy] [--listen 127.0.0.1:0] [--allow-remote] [--route auto|h1|h2|h3]\n\n\
+         Remove CLI-owned roots, including retrying canceled OS prompts:\n  \
+         transmog-cli roots cleanup [--include-persistent]\n\n\
          Generate a CA (files must not already exist):\n  \
          transmog-cli ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
          Issue a short-lived server leaf from an existing CA:\n  \

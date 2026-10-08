@@ -173,7 +173,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(event.payload.type!=='drop'||this.view!=='traffic')return;
         const point=event.payload.position, bounds=this.sessionScroller.getBoundingClientRect(), scale=window.devicePixelRatio;
         if(point.x/scale<bounds.left||point.x/scale>bounds.right||point.y/scale<bounds.top||point.y/scale>bounds.bottom)return;
-        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap)$/i.test(path));
+        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap|tmcap\.gz)$/i.test(path));
         this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));
         void this.processOpenedTraces();
       });
