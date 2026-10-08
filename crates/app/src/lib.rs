@@ -59,7 +59,7 @@ pub use diagnostics::{
 };
 pub use inspector::{
     AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
-    HeaderView, SessionDetail,
+    HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
 pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 pub use product_state::{
@@ -1046,6 +1046,28 @@ impl Application {
             );
         }
         Ok(command)
+    }
+
+    /// Reads a bounded page with measurements from the complete header block.
+    ///
+    /// # Errors
+    /// Returns an invalid selection or unavailable message stage.
+    pub fn inspect_headers(
+        &self,
+        id: &str,
+        boundary: &str,
+        offset: usize,
+        largest_first: bool,
+    ) -> Result<inspector::HeaderPage, AppError> {
+        inspector::header_page(&self.service, id, boundary, offset, largest_first)
+    }
+
+    /// Copies complete original headers for the selected message stage.
+    ///
+    /// # Errors
+    /// Returns unavailable evidence or non-text header values.
+    pub fn copy_message_headers(&self, id: &str, boundary: &str) -> Result<String, AppError> {
+        inspector::copy_message_headers(&self.service, id, boundary)
     }
 
     /// Copies full request and response heads separated by two blank lines.

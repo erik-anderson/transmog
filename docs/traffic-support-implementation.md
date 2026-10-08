@@ -84,7 +84,7 @@ checkout contains independent updater work and is preserved.
     The interoperability harness supports shared Cargo output and explicitly
     reusing installed browser dependencies in a managed worktree.
 
-## Final verification
+## Verification of phases 1–14
 
 - `npm run check` and `npm run test:workspaces` pass with production templates,
   CSP and Trusted Types. Reviewed populated and compact views, keyboard/focus,
@@ -118,5 +118,41 @@ saving preserves complete merged source associations; SAZ conversion reports its
 compatibility limits. Copy actions never execute generated commands. Saved-capture
 viewers own independent catalogs; replay is an explicit Composer action.
 
-The approved work is complete in the attached `codex/traffic-support-features`
-worktree. The primary checkout's independent updater changes are preserved.
+## Audit follow-up
+
+A comparison with the original plan identified remaining work. The user
+requested fixing every gap and clarified Unlimited capture keeps the overall
+storage budget. The implementation remains in progress; phases 1–14 are a
+qualified baseline, not completion of the complete plan.
+
+15. Header fidelity: complete-block measurements, per-value sizes, global
+    largest-first ordering and paged inspection; present/absent/unknown
+    authentication states; copying the full original message block.
+
+Remaining isolated phases:
+
+- Request-body capture: persistent 25 MB (25,000,000 bytes) default, Unlimited
+  per-request option with finite overall storage; forwarding and file-backed
+  Composer replay of larger bodies; replay history/result source associations.
+- Command generation: plain curl with no wrapper or .exe suffix;
+  Invoke-WebRequest for PowerShell 5.1/7 where sufficient; only offer body-file
+  UX when inline generation cannot preserve the request; execute generated
+  commands solely in controlled shell qualification against a local echo.
+- Performance: shared H2/H3 setup normalized to each request, setup age and
+  request wait; waterfall and copied report; separately measured proxy work,
+  transport/delivery evidence and compressed entity-body wire sizes.
+- Search: request/response scopes, match locations and highlighted occurrence
+  navigation, normalized-character mapping, cancellation preserving selections.
+- Captured-page preview: selectable source scope, resource/version decisions,
+  missing-resource diagnostics and request variants while retaining isolation.
+- Trace exports: opt-in export redaction without changing retained evidence,
+  clearer collector provenance and original-versus-save network context.
+- SAZ fidelity: trailers, conventional timers, extended evidence and merged
+  source associations with documented interoperability boundaries.
+- CLI lifecycle: persistent-root expiry/rotation, richer recovery ledger,
+  cleanup retries at completion and interruption/crash recovery instructions.
+- Final qualification: updated support guide with download authenticity and
+  recovery steps, full product/browser/native/interoperability checks and
+  protected signed-release qualification where credentials permit.
+
+The primary checkout's independent updater changes remain preserved.

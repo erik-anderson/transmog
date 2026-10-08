@@ -62,6 +62,8 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "record_frontend_diagnostic"
             | "query_sessions"
             | "session_detail"
+            | "inspect_headers"
+            | "copy_message_headers"
             | "request_command"
             | "copy_all_headers"
             | "composer_source"

@@ -1,6 +1,6 @@
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import type { BodyInspection, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
+import type { BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
@@ -14,11 +14,18 @@ export class MessageInspector extends WebUIElement {
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
   @observable boundary = '';
-  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string}> = [];
+  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string}> = [];
   @observable headersSummary = '';
   @observable largestFirst = false;
   @observable authorizationPresent = false;
   @observable proxyAuthorizationPresent = false;
+  @observable authorizationState='unknown';
+  @observable proxyAuthorizationState='unknown';
+  @observable headerPageText='';
+  @observable headerOffset=0;
+  @observable headerNextOffset:number|null=null;
+  @observable headersBusy=false;
+  private headerGeneration=0;
   @observable sourceIp = '';
   @observable headSummary = 'Select an exchange';
   @observable bodyText = 'Select an exchange to preview its body.';
@@ -41,11 +48,12 @@ export class MessageInspector extends WebUIElement {
   sideChanged(): void { this.mode = this.side === 'request' ? 'headers' : 'body'; this.updateMessage(); }
   splitChanged(): void { this.headerShare = this.split+'%'; }
   detailChanged(): void {
-    if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.viewer = 'auto'; this.boundary = ''; this.imageUrl = ''; }
+    if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.viewer = 'auto'; this.boundary = ''; this.imageUrl = ''; }
     this.updateMessage();
   }
   private heads(): HeadView[] { return this.side === 'request' ? this.detail?.requests ?? [] : this.detail?.responses ?? []; }
   private updateMessage(): void {
+    this.headerGeneration++;this.headersBusy=false;
     const heads = this.heads();
     const expected = this.side === 'request' ? 'client-request' : 'client-response';
     this.boundaries = heads.map((head) => ({id:head.boundary,label:stages[head.boundary] ?? head.boundary}));
@@ -53,11 +61,8 @@ export class MessageInspector extends WebUIElement {
     const head = heads.find((head) => head.boundary === this.boundary);
     this.bodyMetadata = this.detail?.storedBodies.find((body) => body.boundary === this.boundary) ?? null;
     this.headSummary = head ? this.side === 'request' ? (head.method ?? '')+' '+(head.target ?? '') : 'HTTP '+head.status+' · '+(stages[head.boundary] ?? head.boundary) : this.detail ? 'Waiting for '+this.side+' headers' : 'Select an exchange';
-    this.headerRows = (head?.headers ?? []).map((header,index) => ({id:String(index),name:header.name,value:header.sensitive ? '[redacted]' : header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes)}));
-    const measured = head?.headers.every(header=>header.fieldBytes!=null)??false;
-    this.headersSummary=head?`${head.headers.length} fields · ${measured?formatBytes(this.headerRows.reduce((sum,row)=>sum+row.bytes,2))+' including final CRLF':'size unavailable'} · HTTP/1 equivalent`:'';
-    this.authorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='authorization')??false;
-    this.proxyAuthorizationPresent=head?.headers.some(header=>header.name.toLowerCase()==='proxy-authorization')??false;
+    if(this.headerOffset>0)void this.loadHeaderPage(this.headerOffset);
+    else {this.renderHeaders(head?.headers??[],head?.summary,0);if(this.largestFirst && (head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);}
     this.sourceIp=this.side==='request'?this.detail?.sourceIp??'':'';
     this.sortHeaders();
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss},null,2) : 'No exchange selected.';
@@ -65,8 +70,26 @@ export class MessageInspector extends WebUIElement {
     else { this.generation++; this.hexPreview = null; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
   }
   showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(); }
-  changeBoundary(event:Event): void { this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
-  toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.sortHeaders();}
+  changeBoundary(event:Event): void { this.headerOffset=0; this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
+  toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.headerOffset=0;const head=this.heads().find(head=>head.boundary===this.boundary);if((head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);else this.sortHeaders();}
+  previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
+  nextHeaders():void {if(this.headerNextOffset!==null)void this.loadHeaderPage(this.headerNextOffset);}
+  private renderHeaders(fields:HeadView['headers'],summary?:HeaderSummary,offset=0):void {
+    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
+    const total=summary?.totalFields??fields.length, measured=fields.every(header=>header.fieldBytes!=null);
+    const bytes=summary?summary.serializedBytes:measured?this.headerRows.reduce((sum,row)=>sum+row.bytes,2):null;
+    this.headersSummary=fields.length||summary?total+' fields · '+(bytes===null?'size unavailable':formatBytes(bytes)+' including final CRLF')+' · HTTP/1 equivalent':'';
+    this.authorizationState=summary?.authorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='authorization')?'present':'absent':'unknown');
+    this.proxyAuthorizationState=summary?.proxyAuthorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='proxy-authorization')?'present':'absent':'unknown');
+    this.authorizationPresent=this.authorizationState==='present';this.proxyAuthorizationPresent=this.proxyAuthorizationState==='present';
+    this.headerNextOffset=offset+fields.length<total?offset+fields.length:null;this.headerPageText=total>512?'Showing '+(offset+1)+'–'+(offset+fields.length)+' of '+total+' headers':'';
+  }
+  private async loadHeaderPage(offset:number):Promise<void> {
+    if(!this.detail)return;const id=this.detail.id,boundary=this.boundary,generation=++this.headerGeneration;this.headersBusy=true;
+    try {const page=await invoke<HeaderPage>('inspect_headers',{id,boundary,offset,largestFirst:this.largestFirst});if(!this.isConnected||this.detail?.id!==id||this.boundary!==boundary||generation!==this.headerGeneration)return;this.headerOffset=page.offset;this.renderHeaders(page.headers,page.summary,page.offset);}
+    catch(error:unknown){if(generation===this.headerGeneration)this.$emit('diagnostic','Headers could not be loaded: '+describeError(error));}
+    finally {if(generation===this.headerGeneration)this.headersBusy=false;}
+  }
   private sortHeaders():void {this.headerRows=[...this.headerRows].sort(this.largestFirst?(a,b)=>b.bytes-a.bytes:(a,b)=>Number(a.id)-Number(b.id));}
   changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value; void this.inspectBody(); }
   changeDecoding(event:Event): void { this.decodeContent = (event.currentTarget as HTMLInputElement).checked; void this.inspectBody(); }
@@ -129,7 +152,7 @@ export class MessageInspector extends WebUIElement {
     };
     return (reasons[body.availability] ?? 'Body capture status: '+body.availability+'.')+(body.reason ? ' Reason: '+body.reason+'.' : '');
   }
-  async copyHeaders(): Promise<void> { await this.copy([...this.headerRows].sort((a,b)=>Number(a.id)-Number(b.id)).map((row) => row.name+': '+row.value).join('\r\n'),'Headers copied.'); }
+  async copyHeaders():Promise<void> {if(!this.detail)return;try {const text=await invoke<string>('copy_message_headers',{id:this.detail.id,boundary:this.boundary});await this.copy(text,'Complete message headers copied.');}catch(error:unknown){this.$emit('diagnostic','Headers could not be copied: '+describeError(error));}}
   async saveBody():Promise<void> {
     if (this.saving || !this.detail || this.bodyMetadata?.availability !== 'complete' || !this.bodyMetadata.retainedBytes) return;
     this.saving = true;
@@ -144,6 +167,6 @@ export class MessageInspector extends WebUIElement {
     try { await navigator.clipboard.writeText(text); this.$emit('diagnostic',message); }
     catch { this.$emit('diagnostic','Select the text and use Copy.'); }
   }
-  disconnectedCallback(): void { this.generation++; super.disconnectedCallback(); }
+  disconnectedCallback(): void { this.headerGeneration++;this.generation++; super.disconnectedCallback(); }
 }
 MessageInspector.define('message-inspector');

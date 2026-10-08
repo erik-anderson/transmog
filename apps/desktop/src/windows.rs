@@ -816,6 +816,36 @@ async fn request_command(
 }
 
 #[tauri::command]
+async fn inspect_headers(
+    id: String,
+    boundary: String,
+    offset: usize,
+    largest_first: bool,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::HeaderPage, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || {
+        application.inspect_headers(&id, &boundary, offset, largest_first)
+    })
+    .await
+    .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+async fn copy_message_headers(
+    id: String,
+    boundary: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.copy_message_headers(&id, &boundary))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
 fn copy_all_headers(
     id: String,
     window: tauri::WebviewWindow,
@@ -1360,6 +1390,8 @@ pub fn run() {
                 reset_ca,
                 query_sessions,
                 session_detail,
+                inspect_headers,
+                copy_message_headers,
                 request_command,
                 copy_all_headers,
                 composer_source,

@@ -79,8 +79,11 @@ export interface SessionDetail {
   sequenceLoss: number;
   autoResponse: AutoResponseMatch | null;
 }
-export interface HeaderView { name: string; value: string; binary: boolean; sensitive: boolean; valueBytes?:number|null; fieldBytes?:number|null; }
+export interface HeaderSummary { totalFields:number;valueBytes:number|null;serializedBytes:number|null;authorization:string;proxyAuthorization:string; }
+export interface HeaderPage {summary:HeaderSummary;headers:HeaderView[];offset:number;nextOffset:number|null;}
+export interface HeaderView { index?:number; name: string; value: string; binary: boolean; sensitive: boolean; valueBytes?:number|null; fieldBytes?:number|null; }
 export interface HeadView {
+  summary?:HeaderSummary;
   boundary: string;
   method: string | null;
   target: string | null;

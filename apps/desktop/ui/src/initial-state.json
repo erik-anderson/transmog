@@ -720,5 +720,11 @@
   "previewPageAvailable": false,
   "previewPageBusy": false,
   "previewPageUrl": "",
-  "previewPageStatus": ""
+  "previewPageStatus": "",
+  "authorizationState": "unknown",
+  "proxyAuthorizationState": "unknown",
+  "headerPageText": "",
+  "headerOffset": 0,
+  "headerNextOffset": null,
+  "headersBusy": false
 }

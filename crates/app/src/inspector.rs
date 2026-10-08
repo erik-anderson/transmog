@@ -24,6 +24,8 @@ const MAX_DIAGNOSTICS: usize = 64;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeaderView {
+    /// Original ordinal, independent of display sorting and pagination.
+    pub index: usize,
     /// Original field-value size, including a redacted value.
     pub value_bytes: Option<usize>,
     /// HTTP/1 serialized field size: name, colon-space, value and CRLF.
@@ -60,6 +62,8 @@ pub struct BodyView {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeadView {
+    /// Measurements and presence from the complete header block.
+    pub summary: HeaderSummary,
     /// Observation boundary.
     pub boundary: String,
     /// Request method, when this is a request.
@@ -72,6 +76,161 @@ pub struct HeadView {
     pub protocol: String,
     /// Ordered duplicate-preserving headers.
     pub headers: Vec<HeaderView>,
+}
+
+/// Complete measurements, independent of the bounded displayed header page.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderSummary {
+    /// Number of original fields, including duplicates.
+    pub total_fields: usize,
+    /// Sum of original value bytes; unavailable when legacy evidence omitted sizes.
+    pub value_bytes: Option<u64>,
+    /// HTTP/1-equivalent field bytes including the final empty line.
+    pub serialized_bytes: Option<u64>,
+    /// Present or absent based on the complete observed block.
+    pub authorization: &'static str,
+    /// Present or absent based on the complete observed block.
+    pub proxy_authorization: &'static str,
+}
+
+/// One bounded page of complete header evidence, sorted over the whole block.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderPage {
+    /// Complete block measurements.
+    pub summary: HeaderSummary,
+    /// Original fields in display order.
+    pub headers: Vec<HeaderView>,
+    /// Actual page offset.
+    pub offset: usize,
+    /// Next offset, if further fields exist.
+    pub next_offset: Option<usize>,
+}
+
+pub(crate) fn header_page(
+    service: &ApplicationSessionService,
+    id: &str,
+    stage: &str,
+    offset: usize,
+    largest_first: bool,
+) -> Result<HeaderPage, AppError> {
+    let snapshot = service
+        .catalog()
+        .get(transmog_core::intercept::ExchangeId(parse_session_id(id)?))
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Request is no longer retained",
+                false,
+            )
+        })?;
+    let block = snapshot
+        .request_heads
+        .iter()
+        .find(|head| boundary(head.boundary) == stage)
+        .map(|head| &head.head.headers)
+        .or_else(|| {
+            snapshot
+                .response_heads
+                .iter()
+                .find(|head| boundary(head.boundary) == stage)
+                .map(|head| &head.head.headers)
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Headers are not available for this message stage",
+                false,
+            )
+        })?;
+    let mut fields = block.iter().enumerate().collect::<Vec<_>>();
+    if largest_first {
+        fields.sort_by_key(|(index, field)| {
+            (
+                std::cmp::Reverse(
+                    field
+                        .original_value_bytes()
+                        .map(|bytes| bytes.saturating_add(field.name().len()).saturating_add(4)),
+                ),
+                *index,
+            )
+        });
+    }
+    let offset = offset.min(fields.len().saturating_sub(1) / 512 * 512);
+    let headers = fields
+        .iter()
+        .skip(offset)
+        .take(512)
+        .map(|(index, field)| header_view(*index, field))
+        .collect::<Vec<_>>();
+    Ok(HeaderPage {
+        summary: header_summary(block),
+        next_offset: (offset + headers.len() < fields.len()).then_some(offset + headers.len()),
+        headers,
+        offset,
+    })
+}
+
+pub(crate) fn copy_message_headers(
+    service: &ApplicationSessionService,
+    id: &str,
+    stage: &str,
+) -> Result<String, AppError> {
+    let snapshot = service
+        .catalog()
+        .get(transmog_core::intercept::ExchangeId(parse_session_id(id)?))
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Request is no longer retained",
+                false,
+            )
+        })?;
+    let block = snapshot
+        .request_heads
+        .iter()
+        .find(|head| boundary(head.boundary) == stage)
+        .map(|head| &head.head.headers)
+        .or_else(|| {
+            snapshot
+                .response_heads
+                .iter()
+                .find(|head| boundary(head.boundary) == stage)
+                .map(|head| &head.head.headers)
+        })
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Headers are not available for this message stage",
+                false,
+            )
+        })?;
+    block
+        .iter()
+        .map(|field| {
+            let name = std::str::from_utf8(field.name()).map_err(|_| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "A header name cannot be represented as clipboard text",
+                    false,
+                )
+            })?;
+            let value = if field.is_redacted() {
+                "[redacted]"
+            } else {
+                std::str::from_utf8(field.value()).map_err(|_| {
+                    AppError::new(
+                        ErrorCategory::Unavailable,
+                        "A header value cannot be represented as clipboard text",
+                        false,
+                    )
+                })?
+            };
+            Ok(format!("{name}: {value}"))
+        })
+        .collect::<Result<Vec<_>, AppError>>()
+        .map(|lines| lines.join("\r\n"))
 }
 
 /// Complete bounded safe inspector model for one retained exchange.
@@ -272,6 +431,7 @@ pub(crate) fn session_detail(
                 &boundary(observed.boundary),
                 observed.head.source_version,
             ),
+            summary: header_summary(&observed.head.headers),
             headers: headers(&observed.head.headers),
         })
         .collect();
@@ -288,6 +448,7 @@ pub(crate) fn session_detail(
                 &boundary(observed.boundary),
                 observed.head.source_version,
             ),
+            summary: header_summary(&observed.head.headers),
             headers: headers(&observed.head.headers),
         })
         .collect();
@@ -1020,24 +1181,56 @@ fn hex_dump(bytes: &[u8], offset: u64) -> String {
     output
 }
 
+fn header_summary(block: &HeaderBlock) -> HeaderSummary {
+    let total_fields = block.iter().count();
+    let value_bytes = block.iter().try_fold(0_u64, |total, field| {
+        total.checked_add(u64::try_from(field.original_value_bytes()?).ok()?)
+    });
+    let serialized_bytes = block.iter().try_fold(2_u64, |total, field| {
+        total
+            .checked_add(u64::try_from(field.name().len()).ok()?)?
+            .checked_add(u64::try_from(field.original_value_bytes()?).ok()?)?
+            .checked_add(4)
+    });
+    HeaderSummary {
+        total_fields,
+        value_bytes,
+        serialized_bytes,
+        authorization: if block.iter().any(|field| field.name_eq("authorization")) {
+            "present"
+        } else {
+            "absent"
+        },
+        proxy_authorization: if block
+            .iter()
+            .any(|field| field.name_eq("proxy-authorization"))
+        {
+            "present"
+        } else {
+            "absent"
+        },
+    }
+}
+fn header_view(index: usize, field: &HeaderField) -> HeaderView {
+    let (value, binary) = display_bytes(field.value());
+    HeaderView {
+        index,
+        value_bytes: field.original_value_bytes(),
+        field_bytes: field
+            .original_value_bytes()
+            .map(|bytes| field.name().len().saturating_add(bytes).saturating_add(4)),
+        name: display_text(field.name()),
+        value,
+        binary,
+        sensitive: field.is_redacted(),
+    }
+}
 fn headers(block: &HeaderBlock) -> Vec<HeaderView> {
     block
         .iter()
+        .enumerate()
         .take(512)
-        .map(|field| {
-            let sensitive = field.is_redacted();
-            let (value, binary) = display_bytes(field.value());
-            HeaderView {
-                value_bytes: field.original_value_bytes(),
-                field_bytes: field
-                    .original_value_bytes()
-                    .map(|bytes| field.name().len().saturating_add(bytes).saturating_add(4)),
-                name: display_text(field.name()),
-                value,
-                binary,
-                sensitive,
-            }
-        })
+        .map(|(index, field)| header_view(index, field))
         .collect()
 }
 
@@ -1157,6 +1350,95 @@ mod tests {
         assert_eq!(view[0].value, "Bearer secret");
         assert!(!view[0].sensitive);
         assert_eq!(view[0].field_bytes, Some(13 + 13 + 4));
+    }
+
+    #[tokio::test]
+    async fn full_header_measurements_paging_sort_and_copy_cover_fields_after_the_preview() {
+        use std::sync::Arc;
+        use transmog_core::{
+            ClientIdentity, ConnectionId, HttpLegVersion, RequestHead, SessionId, SessionMetadata,
+            StreamId, Target,
+            intercept::{ExchangeId, ExchangeMetadata},
+            observe::{ObserverEvent, ObserverEventKind},
+        };
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let mut fields = (0..700)
+            .map(|index| HeaderField::try_new(format!("X-{index}"), "v").unwrap())
+            .collect::<Vec<_>>();
+        fields.push(HeaderField::try_new("Cookie", "a".repeat(5000)).unwrap());
+        fields.push(HeaderField::try_new("Authorization", "Bearer secret").unwrap());
+        fields.push(HeaderField::try_new("Proxy-Authorization", "Basic proxy-secret").unwrap());
+        let block = HeaderBlock::from_fields(fields);
+        let expected = block
+            .iter()
+            .map(|field| (field.name().len() + field.value().len() + 4) as u64)
+            .sum::<u64>()
+            + 2;
+        let target = Target {
+            scheme: "http".into(),
+            authority: "example.invalid".into(),
+            host: "example.invalid".into(),
+            port: 80,
+            path: "/".into(),
+            query: None,
+        };
+        let metadata = Arc::new(ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(1),
+                downstream_connection_id: ConnectionId(1),
+                stream_id: StreamId(1),
+                client_addr: "127.0.0.1:1000".parse().unwrap(),
+                client_identity: ClientIdentity::default(),
+                proxy_addr: "127.0.0.1:8888".parse().unwrap(),
+                ingress_version: HttpLegVersion::Http1,
+                egress_version: Some(HttpLegVersion::Http1),
+            },
+            target.clone(),
+        ));
+        service.catalog().apply(ObserverEvent {
+            exchange_id: ExchangeId(1),
+            sequence: 1,
+            kind: ObserverEventKind::ExchangeStarted { metadata },
+        });
+        service.catalog().apply(ObserverEvent {
+            exchange_id: ExchangeId(1),
+            sequence: 2,
+            kind: ObserverEventKind::RequestHeadObserved {
+                boundary: ExchangeBoundary::ClientRequest,
+                head: RequestHead {
+                    method: "GET".into(),
+                    target,
+                    headers: block.clone(),
+                    source_version: HttpLegVersion::Http1,
+                },
+            },
+        });
+        let id = "00000000000000000000000000000001";
+        let page = header_page(&service, id, "client-request", 0, false).unwrap();
+        assert_eq!(page.headers.len(), 512);
+        assert_eq!(page.summary.total_fields, 703);
+        assert_eq!(page.summary.serialized_bytes, Some(expected));
+        assert_eq!(page.summary.authorization, "present");
+        assert_eq!(page.summary.proxy_authorization, "present");
+        let next = header_page(
+            &service,
+            id,
+            "client-request",
+            page.next_offset.unwrap(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(next.headers.last().unwrap().name, "Proxy-Authorization");
+        assert!(next.next_offset.is_none());
+        let sorted = header_page(&service, id, "client-request", 0, true).unwrap();
+        assert_eq!(sorted.headers[0].name, "Cookie");
+        let copied = copy_message_headers(&service, id, "client-request").unwrap();
+        assert!(copied.contains(&"a".repeat(5000)));
+        assert!(copied.ends_with("Proxy-Authorization: Basic proxy-secret"));
+        let mut redacted = block;
+        redacted.redact_sensitive();
+        assert_eq!(header_summary(&redacted).serialized_bytes, Some(expected));
     }
 
     #[test]

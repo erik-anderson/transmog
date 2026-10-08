@@ -45,7 +45,9 @@ await page.addInitScript((workspace) => {
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
-    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: [{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}] }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
+    const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
+    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const ruleDiagnostics=()=>{
@@ -154,6 +156,8 @@ await page.addInitScript((workspace) => {
           if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
           const request=detail(args.id).requests[0];return {method:request.method,url:request.target,headers:request.headers.filter(header=>!header.sensitive),body:'',bodyAvailable:true,notices:[]};
         }
+        case 'copy_message_headers': {const head=[...detail(args.id).requests,...detail(args.id).responses].find(head=>head.boundary===args.boundary);return (args.boundary==='client-request'&&state.fullHeaders?state.fullHeaders:head.headers).map(header=>header.name+': '+(header.sensitive?'[redacted]':header.value)).join('\r\n');}
+        case 'inspect_headers': {const head=[...detail(args.id).requests,...detail(args.id).responses].find(head=>head.boundary===args.boundary);let headers=(args.boundary==='client-request'&&state.fullHeaders?state.fullHeaders:head.headers).map((header,index)=>({...header,index}));if(args.largestFirst)headers.sort((a,b)=>(b.fieldBytes??0)-(a.fieldBytes??0));return {summary:head.summary,headers:headers.slice(args.offset,args.offset+512),offset:args.offset,nextOffset:args.offset+512<headers.length?args.offset+512:null};}
         case 'request_command': state.lastRequestCommand=args;return state.directCommand ? {text:'fixture direct '+args.format,notices:[],bodyFileRequired:false,bodyFileAvailable:true} : {text:'fixture generated '+args.format,notices:['The command needs a request body file.'],bodyFileRequired:true,bodyFileAvailable:true};
         case 'save_request_body': state.savedRequestBody=args;return {text:'fixture saved body command',notices:[],bodyFileRequired:true,bodyFileAvailable:true};
         case 'copy_all_headers': return 'GET http://example.test/second HTTP/1.1\r\nAccept: */*\r\n\r\n\r\nHTTP/1.1 200 OK';
@@ -511,6 +515,33 @@ try {
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).isVisible(),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-small.png')});
   await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(async()=>{
+    const state=globalThis.__workspaceFixture;
+    state.fullHeaders=Array.from({length:700},(_,index)=>({name:'X-Field-'+index,value:'v',valueBytes:1,fieldBytes:18,sensitive:false,binary:false}));
+    state.fullHeaders.push({name:'Cookie',value:'x'.repeat(5000),valueBytes:5000,fieldBytes:5010,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:20,fieldBytes:37,sensitive:true,binary:false},{name:'Proxy-Authorization',value:'[redacted]',valueBytes:20,fieldBytes:43,sensitive:true,binary:false});
+    await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').inspectSession(state.sessions[1]);
+  });
+  await requestHeaders.getByText('Showing 1–512 of 703 headers',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await requestHeaders.getByText('PROXY AUTH',{exact:true}).isVisible(),true);
+  assert.match(await requestHeaders.locator('.headers-table tbody tr').first().textContent(),/Cookie.*4.9 KB/);
+  await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).click();
+  await requestHeaders.getByRole('button',{name:'Next headers',exact:true}).click();
+  await requestHeaders.getByText('Showing 513–703 of 703 headers',{exact:true}).waitFor({state:'visible'});
+  await requestHeaders.getByRole('button',{name:'Copy headers',exact:true}).click();
+  const fullCopy=await page.evaluate(()=>navigator.clipboard.readText());
+  assert.equal(fullCopy.split('\r\n').length,703);
+  assert.ok(fullCopy.includes('Cookie: '+'x'.repeat(5000)));
+  assert.ok(fullCopy.includes('Proxy-Authorization: [redacted]'));
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/header-pages-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  await requestHeaders.getByRole('button',{name:'Previous headers',exact:true}).scrollIntoViewIfNeeded();
+  const pagerBounds=await requestHeaders.getByRole('button',{name:'Previous headers',exact:true}).boundingBox();
+  assert.ok(pagerBounds&&pagerBounds.y>=0&&pagerBounds.y+pagerBounds.height<=520,'Header navigation is unreachable in a compact window');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/header-pages-small.png')});
+  await requestHeaders.getByRole('button',{name:'Previous headers',exact:true}).click();
+  await requestHeaders.getByText('Showing 1–512 of 703 headers',{exact:true}).waitFor({state:'visible'});
+  await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;delete state.fullHeaders;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').inspectSession(state.sessions[0]);await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').inspectSession(state.sessions[1]);});
   await page.locator('tr[data-session-id="second"]').click({button:'right'});
   await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
   const commandDialog=page.locator('.request-command-dialog');
