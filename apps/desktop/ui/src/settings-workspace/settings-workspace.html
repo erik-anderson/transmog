@@ -8,15 +8,16 @@
         <h2>Proxy and interception certificate</h2>
         <form w-ref="{proxyForm}" @submit="{startProxy(e)}">
           <fieldset class="proxy-controls" ?disabled="{{!proxyReady}}">
-            <label>CA certificate <input value="{{certificatePath}}" name="certificate" required></label>
-            <label>CA private key <input value="{{privateKeyPath}}" name="privateKey" required></label>
-            <label>CA SHA-256 <input value="{{caSha256}}" name="thumbprint" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
+            <label>CA certificate <input value="{{certificatePath}}" name="certificate" ?readonly="{{proxyPending}}" required></label>
+            <label>CA private key <input value="{{privateKeyPath}}" name="privateKey" ?readonly="{{proxyPending}}" required></label>
+            <label>CA SHA-256 <input value="{{caSha256}}" name="thumbprint" ?readonly="{{proxyPending}}" pattern="[0-9A-Fa-f]{64}" placeholder="Created or existing certificate thumbprint"></label>
             <p>Start automatically configures the current-user Windows proxy and restores the exact prior settings when stopped or closed.</p>
             <div class="actions">
-              <button type="button" @click="{setupCa()}">Set up HTTPS interception</button>
-              <button type="button" class="secondary" @click="{removeCa()}">Remove exact CA</button>
+              <button type="button" ?disabled="{{proxyPending}}" @click="{setupCa()}">Set up HTTPS interception</button>
+              <button type="button" class="secondary" ?disabled="{{proxyPending}}" @click="{removeCa()}">Remove exact CA</button>
+              <button type="button" class="secondary" ?disabled="{{proxyPending || proxyLifecycle == 'running' || proxyLifecycle == 'stopping'}}" @click="{resetCa()}">Reset certificate and set up again</button>
               <proxy-toggle lifecycle="{{proxyLifecycle}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
-              <button type="button" class="secondary" @click="{recoverProxy()}">Recover host settings</button>
+              <button type="button" class="secondary" ?disabled="{{proxyPending}}" @click="{recoverProxy()}">Recover host settings</button>
             </div>
           </fieldset>
           <output class="operation-status" data-kind="{{proxyKind}}" aria-live="polite">{{proxyText}}</output>

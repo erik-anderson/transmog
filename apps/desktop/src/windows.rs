@@ -18,7 +18,7 @@ use tauri::{
     utils::config::WebviewUrl,
 };
 use transmog_app::{
-    AppConfig, AppError, AppStatus, Application, ArtifactKind, AuthoredResponseAsset,
+    AppConfig, AppError, AppLifecycle, AppStatus, Application, ArtifactKind, AuthoredResponseAsset,
     AutoResponseBatchInput, AutoResponseBatchResult, AutoResponseTestInput, AutoResponseTestResult,
     AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
     BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
@@ -46,6 +46,7 @@ struct DesktopState {
     application: Application,
     host: Arc<WindowsProxyIntegration>,
     owned_certificate: OwnedCertificateRegistry,
+    certificate_operation: Arc<tokio::sync::Mutex<()>>,
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     diagnostics_path: PathBuf,
@@ -56,10 +57,12 @@ struct DesktopState {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)] // Independent file, trust, and recovery observations for IPC.
 struct DesktopBootstrap {
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     ca_files_present: bool,
+    ca_files_exist: bool,
     owned_ca_sha256: Option<String>,
     owned_ca_trusted: bool,
     host_restore_pending: bool,
@@ -110,6 +113,7 @@ fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap,
         ca_private_key_path: state.ca_private_key_path.clone(),
         ca_files_present: state.ca_certificate_path.is_file()
             && state.ca_private_key_path.is_file(),
+        ca_files_exist: state.ca_certificate_path.exists() || state.ca_private_key_path.exists(),
         owned_ca_sha256,
         owned_ca_trusted,
         host_restore_pending: state.host.recovery_pending(),
@@ -347,6 +351,7 @@ async fn start_proxy(
     request: ProxyStartRequest,
     state: State<'_, DesktopState>,
 ) -> Result<AppStatus, String> {
+    let _certificate_operation = state.certificate_operation.lock().await;
     if state.host.recovery_pending() {
         return Err(
             "Restore the journaled Windows proxy settings before starting a new proxy run."
@@ -448,6 +453,10 @@ fn install_certificate(
     sha256: String,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
+    let _certificate_operation = state
+        .certificate_operation
+        .try_lock()
+        .map_err(|_| "Another certificate or proxy operation is in progress.".to_owned())?;
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "certificate",
@@ -491,6 +500,10 @@ fn install_certificate(
 
 #[tauri::command]
 fn remove_certificate(sha256: String, state: State<'_, DesktopState>) -> Result<(), String> {
+    let _certificate_operation = state
+        .certificate_operation
+        .try_lock()
+        .map_err(|_| "Another certificate or proxy operation is in progress.".to_owned())?;
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "certificate",
@@ -535,6 +548,7 @@ async fn create_ca(
     request: CaCreateRequest,
     state: State<'_, DesktopState>,
 ) -> Result<CaIdentity, String> {
+    let _certificate_operation = state.certificate_operation.lock().await;
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "certificate",
@@ -586,6 +600,90 @@ async fn create_ca(
         "durable interception CA creation and private-key protection succeeded",
     );
     Ok(identity)
+}
+
+#[tauri::command]
+async fn reset_ca(state: State<'_, DesktopState>) -> Result<(), String> {
+    let _certificate_operation = state.certificate_operation.lock().await;
+    if !matches!(
+        state.application.status().lifecycle,
+        AppLifecycle::Stopped | AppLifecycle::Failed
+    ) {
+        return Err("Stop the proxy before resetting its interception certificate.".to_owned());
+    }
+    let result = reset_managed_ca(
+        &state.owned_certificate,
+        &state.ca_certificate_path,
+        &state.ca_private_key_path,
+        |sha256| {
+            CurrentUserCertificateStore
+                .remove(sha256)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        },
+    );
+    match &result {
+        Ok(()) => state.application.record_diagnostic(
+            DiagnosticLevel::Info,
+            "certificate",
+            "reset-succeeded",
+            "app-managed interception CA files and recorded identity were removed",
+        ),
+        Err(message) => state.application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "reset-failed",
+            message,
+        ),
+    }
+    result
+}
+
+fn reset_managed_ca(
+    ownership: &OwnedCertificateRegistry,
+    certificate_path: &std::path::Path,
+    private_key_path: &std::path::Path,
+    remove_trusted: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let sha256 = ownership
+        .owned_thumbprint()
+        .map_err(|error| error.to_string())?;
+    if let Some(sha256) = &sha256 {
+        remove_trusted(sha256)?;
+    }
+    remove_managed_ca_files(certificate_path, private_key_path)?;
+    if let Some(sha256) = sha256 {
+        ownership
+            .clear(&sha256)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn remove_managed_ca_files(
+    certificate_path: &std::path::Path,
+    private_key_path: &std::path::Path,
+) -> Result<(), String> {
+    // Validate both destinations before deleting either; never follow links or
+    // remove a directory in place of an app-managed certificate file.
+    for path in [private_key_path, certificate_path] {
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => return Err("An interception CA path is not a regular file.".to_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not inspect interception CA files: {error}")),
+        }
+    }
+    // Retain the ownership record until both files are gone so cleanup can be
+    // retried after a permission or I/O failure.
+    for path in [private_key_path, certificate_path] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not remove interception CA files: {error}")),
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -880,6 +978,7 @@ pub fn run() {
             application: application.clone(),
             host: Arc::clone(&host),
             owned_certificate,
+            certificate_operation: Arc::new(tokio::sync::Mutex::new(())),
             ca_certificate_path,
             ca_private_key_path,
             diagnostics_path,
@@ -940,6 +1039,7 @@ pub fn run() {
             install_certificate,
             remove_certificate,
             create_ca,
+            reset_ca,
             query_sessions,
             session_detail,
             inspect_body,
@@ -1088,7 +1188,6 @@ fn run_maintenance(uninstall: bool) -> Result<(), ()> {
         CurrentUserCertificateStore
             .remove(&sha256)
             .map_err(|_| ())?;
-        ownership.clear(&sha256).map_err(|_| ())?;
     }
     remove_owned_app_data(&state_root)
 }
@@ -1097,6 +1196,11 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
     if state_root.file_name().and_then(|name| name.to_str()) != Some("Transmog") {
         return Err(());
     }
+    remove_managed_ca_files(
+        &state_root.join("interception-ca.pem"),
+        &state_root.join("interception-ca.key"),
+    )
+    .map_err(|_| ())?;
     let entries = match std::fs::read_dir(state_root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1239,7 +1343,89 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_navigation, preview_handle, remove_owned_app_data};
+    use super::{
+        OwnedCertificateRegistry, is_allowed_navigation, preview_handle, remove_owned_app_data,
+        reset_managed_ca,
+    };
+
+    #[test]
+    fn certificate_reset_removes_the_exact_recorded_root_and_material() {
+        let root = tempfile::tempdir().unwrap();
+        let ownership = OwnedCertificateRegistry::new(root.path().join("ownership.json"));
+        let sha256 = "AB".repeat(32);
+        ownership.claim(&sha256).unwrap();
+        let certificate = root.path().join("interception-ca.pem");
+        let key = root.path().join("interception-ca.key");
+        std::fs::write(&certificate, b"certificate").unwrap();
+        std::fs::write(&key, b"key").unwrap();
+        reset_managed_ca(&ownership, &certificate, &key, |expected| {
+            assert_eq!(expected, sha256);
+            assert!(certificate.is_file() && key.is_file());
+            assert_eq!(ownership.owned_thumbprint().unwrap(), Some(sha256.clone()));
+            Ok(())
+        })
+        .unwrap();
+        assert!(!certificate.exists() && !key.exists());
+        assert_eq!(ownership.owned_thumbprint().unwrap(), None);
+    }
+
+    #[test]
+    fn certificate_reset_handles_legacy_and_partial_files_without_guessing_a_root() {
+        for (has_certificate, has_key) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let ownership = OwnedCertificateRegistry::new(root.path().join("ownership.json"));
+            let certificate = root.path().join("interception-ca.pem");
+            let key = root.path().join("interception-ca.key");
+            if has_certificate {
+                std::fs::write(&certificate, b"legacy certificate").unwrap();
+            }
+            if has_key {
+                std::fs::write(&key, b"legacy key").unwrap();
+            }
+            reset_managed_ca(&ownership, &certificate, &key, |_| {
+                panic!("unrecorded roots must not be removed")
+            })
+            .unwrap();
+            assert!(!certificate.exists() && !key.exists());
+        }
+    }
+
+    #[test]
+    fn certificate_reset_retains_material_and_identity_when_root_removal_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let ownership = OwnedCertificateRegistry::new(root.path().join("ownership.json"));
+        let sha256 = "CD".repeat(32);
+        ownership.claim(&sha256).unwrap();
+        let certificate = root.path().join("interception-ca.pem");
+        let key = root.path().join("interception-ca.key");
+        std::fs::write(&certificate, b"certificate").unwrap();
+        std::fs::write(&key, b"key").unwrap();
+        assert!(
+            reset_managed_ca(&ownership, &certificate, &key, |_| {
+                Err("store unavailable".to_owned())
+            })
+            .is_err()
+        );
+        assert!(certificate.is_file() && key.is_file());
+        assert_eq!(ownership.owned_thumbprint().unwrap(), Some(sha256));
+    }
+
+    #[test]
+    fn uninstall_retains_identity_and_key_when_a_ca_path_is_not_a_file() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("Transmog");
+        std::fs::create_dir(&root).unwrap();
+        let ownership = OwnedCertificateRegistry::new(root.join("certificate-ownership-v1.json"));
+        let sha256 = "EF".repeat(32);
+        ownership.claim(&sha256).unwrap();
+        std::fs::create_dir(root.join("interception-ca.pem")).unwrap();
+        std::fs::write(root.join("interception-ca.key"), b"key").unwrap();
+        assert!(remove_owned_app_data(&root).is_err());
+        assert!(root.join("interception-ca.key").is_file());
+        assert_eq!(ownership.owned_thumbprint().unwrap(), Some(sha256));
+    }
 
     #[test]
     fn navigation_is_limited_to_the_embedded_origin() {
@@ -1284,6 +1470,9 @@ mod tests {
         for name in [
             "diagnostics.jsonl",
             "diagnostics.jsonl.1",
+            "certificate-ownership-v1.json",
+            "interception-ca.pem",
+            "interception-ca.key",
             "preferences.00000000000000000001.json",
             "preferences.00000000000000000002.json.corrupt",
             ".transmog-state-00000000000000000003-1.tmp",
@@ -1292,9 +1481,19 @@ mod tests {
         }
         std::fs::write(root.join("preferences.user-notes.txt"), b"keep too").unwrap();
         std::fs::write(root.join("user-kept.txt"), b"keep").unwrap();
+        std::fs::write(root.join("custom-ca.pem"), b"user certificate").unwrap();
+        std::fs::write(root.join("custom-ca.key"), b"user key").unwrap();
         remove_owned_app_data(&root).unwrap();
         assert_eq!(std::fs::read(root.join("user-kept.txt")).unwrap(), b"keep");
-        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+        assert_eq!(
+            std::fs::read(root.join("custom-ca.pem")).unwrap(),
+            b"user certificate"
+        );
+        assert_eq!(
+            std::fs::read(root.join("custom-ca.key")).unwrap(),
+            b"user key"
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
         std::fs::remove_dir_all(parent).unwrap();
     }
 }

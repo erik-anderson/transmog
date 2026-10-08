@@ -162,6 +162,7 @@ export class AppShell extends WebUIElement {
     this.dismissNotice();
     if (action === 'settings') void this.activateView('settings');
     else if (action === 'setup-ca') void this.settings.setupCa();
+    else if (action === 'reset-ca') void this.settings.resetCa();
     else if (action === 'start-proxy') void this.startProxy();
     else if (action === 'recover-proxy') void this.settings.recoverProxy();
   }

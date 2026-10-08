@@ -11,6 +11,7 @@ export interface DesktopBootstrap {
   caCertificatePath: string;
   caPrivateKeyPath: string;
   caFilesPresent: boolean;
+  caFilesExist: boolean;
   ownedCaSha256: string | null;
   ownedCaTrusted: boolean;
   hostRestorePending: boolean;
@@ -263,5 +264,5 @@ export interface ScriptCandidate { candidateId: string; scriptId: string; revisi
 
 export interface SelectedResponse { sessionId: string; detail: SessionDetail; reusable: boolean; }
 export type ViewName = 'traffic' | 'breakpoints' | 'automation' | 'composer' | 'captures' | 'settings';
-export type NoticeAction = 'setup-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null;
+export type NoticeAction = 'setup-ca' | 'reset-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null;
 export interface Notice { title: string; message: string; actionLabel: string | null; action: NoticeAction; }

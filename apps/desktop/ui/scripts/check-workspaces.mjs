@@ -15,7 +15,8 @@ const built = build({ appDir: resolve(root, 'src'), plugin: 'webui', css: 'link'
 assert.deepEqual(built.warnings, []);
 const protocol = new Protocol(built.protocol, { plugin: 'webui' });
 const html = protocol.render({ ...initial, language: 'en', pageTitle: 'Transmog', heading: 'Inspect traffic without losing the thread', lifecycleLabel: 'Stopped', lifecycleKind: 'stopped', listener: 'Not listening' }).toString().replace(/<script(?=[\s>])/g, '<script nonce="workspace-check"');
-const resources = new Map(assets.map((asset) => [asset.path, { file: resolve(root, 'dist', asset.file), contentType: asset.contentType }]));
+// Keep one build's bytes for the whole run, even if another workspace rebuilds dist.
+const resources = new Map(await Promise.all(assets.map(async (asset) => [asset.path, { body: await readFile(resolve(root, 'dist', asset.file)), contentType: asset.contentType }])));
 resources.set('/document.css', { file: resolve(root, 'src/document.css'), contentType: 'text/css' });
 resources.set('/transmog-icon.svg', { file: resolve(root, '../icons/icon.svg'), contentType: 'image/svg+xml' });
 for (let index = 0; index < built.cssFiles.length; index += 2) resources.set('/' + built.cssFiles[index], { body: built.cssFiles[index + 1], contentType: 'text/css' });
@@ -66,7 +67,24 @@ await page.addInitScript((workspace) => {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
-        case 'desktop_bootstrap': return { caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl' };
+        case 'desktop_bootstrap': return { caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
+        case 'reset_ca': {
+          state.caEvents??=[];state.caEvents.push('reset');state.resetCaArgs=structuredClone(args);
+          if(state.deferCaReset){state.caResetPending=true;await new Promise(resolve=>state.releaseCaReset=resolve);state.deferCaReset=false;}
+          if(state.caResetError)throw new Error('Fixture CA file deletion failed');
+          state.caBootstrap={caFilesPresent:false,caFilesExist:false,ownedCaSha256:null,ownedCaTrusted:false};return;
+        }
+        case 'create_ca': {
+          state.caEvents??=[];state.caEvents.push('create');state.lastCaCreate=structuredClone(args.request);
+          if(state.caBootstrap?.caFilesExist || state.caBootstrap?.ownedCaSha256)throw new Error('Fixture CA destination or identity already exists');
+          state.caBootstrap={caFilesPresent:true,caFilesExist:true,ownedCaSha256:'1'.repeat(64),ownedCaTrusted:false};
+          return {sha256:'1'.repeat(64),certificatePath:args.request.certificatePath};
+        }
+        case 'install_certificate': {
+          state.caEvents??=[];state.caEvents.push('install');state.lastCaInstall=structuredClone(args);
+          if(state.caTrustError)throw new Error('Fixture Windows trust canceled');
+          state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
+        }
         case 'product_state': return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
@@ -913,6 +931,62 @@ try {
   const smallMenu=await page.locator('#column-actions').boundingBox();
   assert.ok(smallMenu.y+smallMenu.height<=520,'Column menu extends below a small window');
   await page.keyboard.press('Escape');
+  await page.setViewportSize({width:1280,height:800});
+  await view('settings');
+  const setupCertificate=page.locator('#settings').getByRole('button',{name:'Set up HTTPS interception',exact:true});
+  const resetCertificate=page.locator('#settings').getByRole('button',{name:'Reset certificate and set up again',exact:true});
+  const certificateNotice=page.locator('.notice');
+  const caIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').proxyPending);
+  // Legacy, partial, and missing material all offer recovery without attempting
+  // to overwrite files or trust a certificate with an unknown identity.
+  for(const bootstrap of [
+    {caFilesPresent:true,caFilesExist:true,ownedCaSha256:null,ownedCaTrusted:false},
+    {caFilesPresent:false,caFilesExist:true,ownedCaSha256:null,ownedCaTrusted:false},
+    {caFilesPresent:false,caFilesExist:false,ownedCaSha256:'0'.repeat(64),ownedCaTrusted:true},
+  ]) {
+    await page.evaluate(bootstrap=>{const state=globalThis.__workspaceFixture;state.caBootstrap=bootstrap;state.caEvents=[];},bootstrap);
+    await setupCertificate.click();await caIdle();
+    assert.match(await certificateNotice.textContent(),/Interception certificate needs a reset/);
+    assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),[]);
+    page.once('dialog',dialog=>dialog.dismiss());
+    await certificateNotice.getByRole('button',{name:'Reset certificate and set up again',exact:true}).click();await caIdle();
+    assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),[],'Canceling reset changed certificate state');
+    // Reset always targets the backend-owned paths even when the form contains
+    // a user-selected CA, and uses the default paths for the fresh certificate.
+    await page.getByLabel('CA certificate',{exact:true}).fill('custom.pem');
+    await page.getByLabel('CA private key',{exact:true}).fill('custom.key');
+    await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaReset=true;});
+    page.once('dialog',async dialog=>{assert.match(dialog.message(),/fixture.pem\nfixture.key/);await dialog.accept();});
+    await resetCertificate.click();
+    await page.waitForFunction(()=>globalThis.__workspaceFixture.caResetPending);
+    assert.equal(await setupCertificate.isDisabled(),true);
+    assert.equal(await resetCertificate.isDisabled(),true);
+    await page.evaluate(async()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');await settings.resetCa();globalThis.__workspaceFixture.releaseCaReset();delete globalThis.__workspaceFixture.caResetPending;});
+    await caIdle();
+    assert.match(await certificateNotice.textContent(),/HTTPS interception is ready/);
+    assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),['reset','create','install']);
+    assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.resetCaArgs),{},'Reset accepted arbitrary file paths');
+    assert.deepEqual(await page.evaluate(()=>[globalThis.__workspaceFixture.lastCaCreate.certificatePath,globalThis.__workspaceFixture.lastCaCreate.privateKeyPath,globalThis.__workspaceFixture.lastCaInstall.path]),['fixture.pem','fixture.key','fixture.pem']);
+    assert.equal(await page.getByLabel('CA SHA-256',{exact:true}).inputValue(),'1'.repeat(64));
+  }
+  // A cleanup failure must not advance to certificate creation or trust.
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.caResetError=true;state.caEvents=[];});
+  page.once('dialog',dialog=>dialog.accept());await resetCertificate.click();await caIdle();
+  assert.match(await certificateNotice.textContent(),/Certificate reset failed: Fixture CA file deletion failed/);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),['reset']);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.caResetError=false;globalThis.__workspaceFixture.caTrustError=true;globalThis.__workspaceFixture.caEvents=[];});
+  page.once('dialog',dialog=>dialog.accept());await resetCertificate.click();await caIdle();
+  assert.match(await certificateNotice.textContent(),/Certificate setup failed: Fixture Windows trust canceled/);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.caTrustError=false;globalThis.__workspaceFixture.caEvents=[];});
+  page.once('dialog',dialog=>dialog.accept());
+  await certificateNotice.getByRole('button',{name:'Try again',exact:true}).click();await caIdle();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),['install'],'Retrying trust recreated the certificate');
+  await certificateNotice.getByRole('button',{name:'Start proxy',exact:true}).click();await caIdle();
+  assert.equal(await resetCertificate.isDisabled(),true,'Reset remained available while the proxy was running');
+  await page.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
+  assert.equal(await resetCertificate.isDisabled(),false);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__cspViolations),[]);
+  assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace-failure.png')});

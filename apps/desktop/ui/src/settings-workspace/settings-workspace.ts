@@ -43,15 +43,16 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.populateSettings(productState);
       this.applyTheme(productState.preferences.theme, productState.workspace);
       this.renderAppStatus(status);
-      const certificate = bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent
-        ? `Owned CA ${bootstrap.ownedCaSha256} is remembered, but its app-managed files are missing. Remove exact CA, then create and trust a new durable CA.`
+      const recovery = this.caRecoveryRequired(bootstrap);
+      const certificate = recovery
+        ? 'The saved interception certificate needs to be reset. Reset certificate and set up again to create and trust a new one.'
         : bootstrap.ownedCaSha256 === null
           ? 'No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS.'
           : bootstrap.ownedCaTrusted
             ? `Owned CA ${bootstrap.ownedCaSha256} is present in current-user trust.`
             : `Owned CA ${bootstrap.ownedCaSha256} is not present in current-user trust.`;
       const ready = bootstrap.caFilesPresent && bootstrap.ownedCaTrusted;
-      this.setProxyOutput(`${certificate} Diagnostic log: ${bootstrap.diagnosticsPath}`, ready ? 'success' : bootstrap.ownedCaSha256 !== null && !bootstrap.caFilesPresent ? 'error' : 'progress');
+      this.setProxyOutput(`${certificate} Diagnostic log: ${bootstrap.diagnosticsPath}`, ready ? 'success' : recovery ? 'error' : 'progress');
       if (bootstrap.hostRestorePending) {
         this.showNotice(
           'Windows proxy recovery required',
@@ -59,6 +60,8 @@ export class SettingsWorkspace extends WorkspaceElement {
           'Restore settings',
           'recover-proxy',
         );
+      } else if (recovery) {
+        this.showCaRecovery(bootstrap);
       } else if (!ready) {
         this.showNotice(
           'HTTPS interception needs setup',
@@ -108,6 +111,11 @@ export class SettingsWorkspace extends WorkspaceElement {
         return;
       }
       if (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted) {
+        if (this.caRecoveryRequired(bootstrap)) {
+          this.showCaRecovery(bootstrap);
+          this.activateView('settings');
+          return;
+        }
         const missing = !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
           ? 'Create and trust Transmog’s interception certificate before starting the proxy.'
           : 'Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.';
@@ -139,14 +147,65 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async setupCa(): Promise<void> {
-    const proceed = window.confirm(
-      'Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?',
-    );
-    if (!proceed) return;
-    const data = new FormData(this.proxyForm);
+    await this.runProxyChange('certificate-setup', () => this.setupCaNow());
+  }
+
+  private caRecoveryRequired(bootstrap: DesktopBootstrap): boolean {
+    return bootstrap.caFilesExist && (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null)
+      || !bootstrap.caFilesPresent && bootstrap.ownedCaSha256 !== null;
+  }
+
+  private showCaRecovery(bootstrap: DesktopBootstrap): void {
+    const reason = bootstrap.ownedCaSha256 === null
+      ? 'Certificate files from a previous setup remain, but their Transmog identity is not recorded.'
+      : 'The recorded interception certificate is missing one or both of its files.';
+    const message = `${reason} Reset the certificate to remove the app-managed certificate and private key, then create and trust a new certificate.`;
+    this.setProxyOutput(message, 'error');
+    this.showNotice('Interception certificate needs a reset', message, 'Reset certificate and set up again', 'reset-ca');
+  }
+
+  async resetCa(): Promise<void> {
+    await this.runProxyChange('certificate-setup', async () => {
+      try {
+        const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+        const proceed = window.confirm(
+          `Reset HTTPS interception? This permanently deletes Transmog’s app-managed certificate and private key:\n${bootstrap.caCertificatePath}\n${bootstrap.caPrivateKeyPath}\n\nAny exact certificate recorded by Transmog will also be removed from your current-user trusted roots. Transmog will create a new certificate and ask Windows to trust it. You must approve the Windows certificate dialog. Continue?`,
+        );
+        if (!proceed) return;
+        this.setProxyOutput('Removing the previous interception certificate and private key…', 'progress');
+        await invoke<void>('reset_ca');
+        this.certificatePath = bootstrap.caCertificatePath;
+        this.privateKeyPath = bootstrap.caPrivateKeyPath;
+        this.caSha256 = '';
+        this.$flushUpdates();
+        const elements = this.proxyForm.elements;
+        (elements.namedItem('certificate') as HTMLInputElement).value = this.certificatePath;
+        (elements.namedItem('privateKey') as HTMLInputElement).value = this.privateKeyPath;
+        (elements.namedItem('thumbprint') as HTMLInputElement).value = '';
+        await this.setupCaNow(true);
+      } catch (error: unknown) {
+        const message = `Certificate reset failed: ${describeError(error)}`;
+        this.setProxyOutput(message, 'error');
+        this.showNotice('Certificate reset needs attention', message, 'Reset certificate and set up again', 'reset-ca');
+      }
+    });
+  }
+
+  private async setupCaNow(confirmed = false): Promise<void> {
     this.setProxyOutput('Preparing the interception certificate…', 'progress');
     try {
       let bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      if (this.caRecoveryRequired(bootstrap)) {
+        this.showCaRecovery(bootstrap);
+        return;
+      }
+      if (!confirmed && !window.confirm(
+        'Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?',
+      )) {
+        this.setProxyOutput('Certificate setup canceled.', 'progress');
+        return;
+      }
+      const data = new FormData(this.proxyForm);
       let sha256 = bootstrap.ownedCaSha256;
       if (!bootstrap.caFilesPresent) {
         const identity = await invoke<CaIdentity>('create_ca', {
@@ -161,7 +220,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         this.caSha256 = identity.sha256;
       }
       if (sha256 === null) {
-        throw new Error('The existing certificate files do not have a recorded Transmog identity. Remove the files and run setup again.');
+        throw new Error('The interception certificate identity is unavailable. Reset certificate and set up again.');
       }
       this.setProxyOutput('Approve the Windows certificate dialog to trust the Transmog interception CA.', 'progress');
       await invoke<void>('install_certificate', {
@@ -221,6 +280,10 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async removeCa(): Promise<void> {
+    await this.runProxyChange('certificate-removal', () => this.removeCaNow());
+  }
+
+  private async removeCaNow(): Promise<void> {
     const data = new FormData(this.proxyForm);
     try {
       await invoke<void>('remove_certificate', { sha256: String(data.get('thumbprint') ?? '') });

@@ -249,14 +249,23 @@ Runtime product state under `%LOCALAPPDATA%\Transmog` owns these names:
 
 - `proxy-recovery-v1.json`;
 - `certificate-ownership-v1.json`;
+- `interception-ca.pem` and `interception-ca.key`, the default app-managed CA;
 - `preferences.<generation>.json` and quarantined variants;
 - `.transmog-state-*.tmp`; and
 - `diagnostics.jsonl` plus its single rotation.
 
-Uninstall removes only those regular files. Unknown files and directories are
-left in place. User-selected CAs, private keys, captures, JSONL files, SAZ
+Uninstall removes the default app-managed CA files before discarding its ownership
+record. Unknown files and directories are left in place. User-selected CAs,
+private keys, captures, JSONL files, SAZ
 files, and support bundles are user artifacts and are never deleted by the
 uninstaller. Updates preserve product state and certificate ownership.
+
+If an older installation left CA files without an ownership record, Settings
+offers **Reset certificate and set up again**. After confirmation, it deletes
+only the default app-managed CA files and clears any recorded identity. It
+removes a trusted root only when its exact SHA-256 identity is recorded, then
+creates a fresh CA and asks for Windows trust approval. Reset is blocked while
+the proxy is active.
 
 ## Desktop qualification gates
 
