@@ -2,7 +2,7 @@
 
 ## Signed draft releases
 
-Dispatch **Windows signed draft release** (`.github/workflows/windows-release.yml`)
+Dispatch **Windows signed release** (`.github/workflows/windows-release.yml`)
 on `main` for Canaries, or a numeric per-major release branch such as `release/1`
 for Beta/Stable. It uses standard
 `windows-2025` runners and skips private repositories
@@ -13,7 +13,7 @@ for seven days; compiled targets and signing tools are never restored from cache
 For each release, set and commit the version with
 `pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch.revision>`,
 push it to the selected branch, then use
-**Actions > Windows signed draft release > Run workflow** and select that branch.
+**Actions > Windows signed release > Run workflow** and select that branch.
 **Branch default** uses the checked-in Canary/Beta/Stable track. A release branch
 can override its build to Beta or Stable; main can only build Canary.
 Approve the signing environment after the build passes. Download and review the

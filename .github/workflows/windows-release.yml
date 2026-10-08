@@ -1,4 +1,4 @@
-name: Windows signed draft release
+name: Windows signed release
 
 on:
   workflow_dispatch:

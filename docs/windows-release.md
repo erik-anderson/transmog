@@ -45,7 +45,7 @@ decisions. No push or tag automatically starts a release build.
    version embedded in an already-built installer. Published versions, mismatched
    branch majors/tracks, and Canaries on a reserved release major fail before builds.
 
-3. Open [Actions → Windows signed draft release](https://github.com/erik-anderson/transmog/actions/workflows/windows-release.yml),
+3. Open [Actions → Windows signed release](https://github.com/erik-anderson/transmog/actions/workflows/windows-release.yml),
    click **Run workflow**, select **main** (or the approved hotfix branch), and
    click **Run workflow** again. With
    Leave **Release type** at **Branch default** to use the checked-in track. You
@@ -187,7 +187,7 @@ No certificate identity, private key, token, or password belongs in this
 repository. The release wrapper injects the certificate thumbprint in a
 temporary ignored config overlay and removes that overlay after packaging.
 
-For hosted releases, dispatch **Windows signed draft release** on an approved branch and
+For hosted releases, dispatch **Windows signed release** on an approved branch and
 approve its protected `release-signing` job after the build passes. The workflow
 uses Azure Artifact Signing through profile-scoped OIDC, signs the inner binaries
 and NSIS bundle, verifies timestamps/publisher, tests permission rejection, and
