@@ -682,7 +682,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async copyRequest(format:RequestCommandFormat):Promise<void> {
     if(this.commandBusy || !this.selectedSessionId)return;
     this.trafficMenu.hidePopover();this.commandBusy=true;
-    const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]!:this.selectedSessionId;this.commandSourceId=id;this.commandFormat=format==='curl'&&this.windowsCommands?'curl-windows':format;
+    const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]!:this.selectedSessionId;this.commandSourceId=id;this.commandFormat=format;
     this.commandTitle=format==='powershell'?'Copy as PowerShell (5.1 and 7)':'Copy as cURL';this.commandText='';this.commandPreview.value='';this.commandNotices=[];this.commandFileRequired=false;this.commandStatus='Preparing command…';this.diagnostic=this.commandStatus;
     try {const result=await invoke<RequestCommand>('request_command',{id,format:this.commandFormat});if(!this.isConnected)return;this.setCommand(result);const copied=await this.copyCommand();if(result.bodyFileRequired||!copied)this.commandDialog.showModal();else this.diagnostic=this.commandTitle.replace('Copy as','').trim()+' command copied.'+(result.notices.length?' '+result.notices.join(' '):'');}
     catch(error:unknown){this.diagnostic='Could not generate command: '+describeError(error);}

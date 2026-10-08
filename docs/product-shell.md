@@ -116,15 +116,18 @@ narrow pane. Detailed body retention information stays in a disclosure.
 The traffic context menu and selection More menu offer **Copy as cURL**,
 **Copy as PowerShell** on Windows, and **Copy all headers** for one entry.
 These actions only put text on the clipboard; they never execute a request.
-Windows cURL text is a PowerShell-compatible script that passes an encoded
-configuration through standard input, avoiding native argument quoting differences
-between PowerShell 5.1 and 7. PowerShell commands use the .NET HTTP client and
-explain its normalization limits. Both preserve duplicate captured fields,
-retain origin credentials unless capture redacted them, and regenerate body framing.
+cURL text starts with plain curl and uses POSIX shell quoting, suitable for Bash
+on any supported platform; it has no PowerShell wrapper or executable suffix.
+Windows PowerShell 5.1 aliases curl, so its users should choose Copy as PowerShell.
+PowerShell uses Invoke-WebRequest with basic parsing for the portable 5.1/7 subset.
+It uses .NET commands when duplicate fields, Cookie, restricted headers, a custom
+method, an HTTP/1.0 version, or a body on GET/HEAD/TRACE need that fallback.
+Both retain origin credentials unless capture redacted them and regenerate framing.
+Generated notices explain normalization and fallback reasons.
 cURL selects the recorded HTTP version and scopes Proxy-Authorization to its
 proxy headers. PowerShell preserves HTTP/1.x, uses HTTP/1.1 for newer protocols,
 and explains why proxy authentication must be configured separately.
-Commands that need a body file use a path placeholder; small PowerShell bodies
+Commands that need a body file use a path placeholder; PowerShell bodies
 can embed even binary bytes as base64. Commands that can represent the request
 directly go straight to the clipboard without opening a dialog. The file dialog's
 Save as action saves complete original bytes with an eviction lease, then copies

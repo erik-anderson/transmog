@@ -129,15 +129,22 @@ qualified baseline, not completion of the complete plan.
     largest-first ordering and paged inspection; present/absent/unknown
     authentication states; copying the full original message block.
 
+16. Clipboard commands: plain curl, POSIX quoting and no Windows wrapper or
+    executable suffix; Invoke-WebRequest for the 5.1/7-compatible subset with
+    explicit .NET fallback reasons. Removed the arbitrary 16 KiB body cutoff;
+    inline generation considers the generated command length. Windows Unicode
+    cURL body arguments need files because native encoding changes their bytes.
+    Local raw echo qualification checks literal hostile text, credentials,
+    duplicate-field fallback, binary inline PowerShell and saved body files in
+    Windows PowerShell 5.1, PowerShell 7 and Bash. App copy actions never send.
+    App tests/clippy, browser flow checks and documented UX semantics pass.
+
 Remaining isolated phases:
 
 - Request-body capture: persistent 25 MB (25,000,000 bytes) default, Unlimited
   per-request option with finite overall storage; forwarding and file-backed
   Composer replay of larger bodies; replay history/result source associations.
-- Command generation: plain curl with no wrapper or .exe suffix;
-  Invoke-WebRequest for PowerShell 5.1/7 where sufficient; only offer body-file
-  UX when inline generation cannot preserve the request; execute generated
-  commands solely in controlled shell qualification against a local echo.
+
 - Performance: shared H2/H3 setup normalized to each request, setup age and
   request wait; waterfall and copied report; separately measured proxy work,
   transport/delivery evidence and compressed entity-body wire sizes.

@@ -284,7 +284,7 @@ export interface ScriptCandidate { candidateId: string; scriptId: string; revisi
 export interface SelectedResponse { sessionId: string; detail: SessionDetail; reusable: boolean; }
 export type ViewName = 'traffic' | 'breakpoints' | 'automation' | 'composer' | 'captures' | 'settings';
 export type NoticeAction = 'setup-ca' | 'reset-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null;
-export type RequestCommandFormat = 'curl' | 'curl-windows' | 'powershell';
+export type RequestCommandFormat = 'curl' | 'powershell';
 export interface RequestCommand {text:string;notices:string[];bodyFileRequired:boolean;bodyFileAvailable:boolean;}
 export interface ComposerSource {method:string;url:string;headers:Array<{name:string;value:string}>;body:string;bodyAvailable:boolean;notices:string[];}
 export interface Notice { title: string; message: string; actionLabel: string | null; action: NoticeAction; }

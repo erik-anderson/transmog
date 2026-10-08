@@ -18,18 +18,18 @@ use crate::{
     inspector::parse_session_id,
 };
 
-const INLINE_BYTES: u64 = 16 * 1024;
+const CURL_COMMAND_BYTES: usize = 120 * 1024;
+const POWERSHELL_COMMAND_BYTES: usize = 32 * 1024 * 1024;
 const COMPOSER_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Shell targeted by a clipboard-only request command.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequestCommandFormat {
-    /// cURL with POSIX shell quoting.
+    /// Plain cURL with POSIX shell quoting (including legacy Windows callers).
+    #[serde(alias = "curl-windows")]
     Curl,
-    /// cURL configuration piped by PowerShell 5.1 or 7 on Windows.
-    CurlWindows,
-    /// .NET HTTP commands compatible with PowerShell 5.1 and 7 on Windows.
+    /// Invoke-WebRequest or .NET HTTP commands for PowerShell 5.1 and 7.
     Powershell,
 }
 
@@ -165,19 +165,24 @@ pub(crate) fn command(
         command.notices.push("The complete request body is unavailable. Supply your own file before running this command.".into());
         return Ok(command);
     };
-    if body.bytes == 0 {
+    if body.bytes == 0 && body.length_known {
         return generate_version(head, version, format, CommandBody::Empty, true);
     }
-    if body.bytes <= INLINE_BYTES || !body.length_known {
+    let command_limit = match format {
+        RequestCommandFormat::Curl => CURL_COMMAND_BYTES,
+        RequestCommandFormat::Powershell => POWERSHELL_COMMAND_BYTES,
+    };
+    let read_limit = command_limit as u64;
+    if body.bytes <= read_limit || !body.length_known {
         let mut bytes = Vec::new();
         body.reader
-            .take(INLINE_BYTES + 1)
+            .take(read_limit + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| unavailable("Request body could not be read"))?;
         if body.length_known && bytes.len() as u64 != body.bytes {
             return Err(unavailable("Retained request body is incomplete"));
         }
-        if bytes.len() as u64 > INLINE_BYTES {
+        if bytes.len() as u64 > read_limit {
             let mut command = generate_version(
                 head,
                 version,
@@ -189,12 +194,22 @@ pub(crate) fn command(
             return Ok(command);
         }
         if matches!(format, RequestCommandFormat::Powershell) {
-            return generate_version(head, version, format, CommandBody::Bytes(&bytes), true);
+            let generated =
+                generate_version(head, version, format, CommandBody::Bytes(&bytes), true)?;
+            if generated.text.len() <= command_limit {
+                return Ok(generated);
+            }
         }
         if let Ok(text) = std::str::from_utf8(&bytes)
             && !text.contains('\0')
+            && (!cfg!(windows)
+                || text.is_ascii()
+                || matches!(format, RequestCommandFormat::Powershell))
         {
-            return generate_version(head, version, format, CommandBody::Text(text), true);
+            let generated = generate_version(head, version, format, CommandBody::Text(text), true)?;
+            if generated.text.len() <= command_limit {
+                return Ok(generated);
+            }
         }
     }
     let mut command = generate_version(
@@ -204,7 +219,7 @@ pub(crate) fn command(
         CommandBody::File("request-body.bin"),
         true,
     )?;
-    command.notices.push("Save the complete request body, then replace request-body.bin with its path. Save as… also copies an updated command.".into());
+    command.notices.push("This body cannot be safely passed inline in the target shell (binary bytes, Windows text encoding or command-length limits). Save its complete bytes, then replace request-body.bin with its path. Save as… also copies an updated command.".into());
     Ok(command)
 }
 
@@ -441,11 +456,7 @@ fn generate_version(
     body: CommandBody<'_>,
     available: bool,
 ) -> Result<RequestCommand, AppError> {
-    if matches!(
-        format,
-        RequestCommandFormat::Powershell | RequestCommandFormat::CurlWindows
-    ) && !cfg!(windows)
-    {
+    if matches!(format, RequestCommandFormat::Powershell) && !cfg!(windows) {
         return Err(invalid("PowerShell generation is available on Windows"));
     }
     let mut notices = Vec::new();
@@ -472,11 +483,18 @@ fn generate_version(
     }
     let headers = command_headers(&head.headers)?;
     let text = match format {
-        RequestCommandFormat::Curl => curl(head, version, &headers, &body)?,
-        RequestCommandFormat::CurlWindows => curl_windows(head, version, &headers, &body)?,
+        RequestCommandFormat::Curl => {
+            notices.push("Uses POSIX shell quoting. Paste into a shell such as Bash; Windows PowerShell 5.1 has a curl alias, so use Copy as PowerShell there.".into());
+            curl(head, version, &headers, &body)?
+        }
         RequestCommandFormat::Powershell => {
-            notices.push("PowerShell 5.1 and 7 use .NET HTTP transport; it may normalize header formatting and uses the recorded HTTP/1.x version (HTTP/1.1 for HTTP/2 or HTTP/3). Redirects and automatic cookies are disabled.".into());
-            powershell(head, version, &headers, &body)
+            if let Some(reason) = webrequest_limit(head, version, &headers, &body) {
+                notices.push(format!("Uses .NET HTTP commands because Invoke-WebRequest in PowerShell 5.1 cannot preserve {reason}. Header formatting may be normalized; redirects and automatic cookies are disabled. HTTP/2 and HTTP/3 use HTTP/1.1."));
+                powershell(head, version, &headers, &body)
+            } else {
+                notices.push("Uses Invoke-WebRequest with basic parsing and redirects disabled, compatible with PowerShell 5.1 and 7. The HTTP client may normalize the URL and transport headers; HTTP errors are shown by PowerShell.".into());
+                webrequest(head, &headers, &body)
+            }
         }
     };
     Ok(RequestCommand {
@@ -644,79 +662,120 @@ fn curl_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
     result
 }
 
-fn config_quote(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    )
-}
-
-fn curl_windows(
+// Select the portable 5.1/7 subset, rather than dropping fields or silently
+// combining duplicate values to fit the cmdlet's dictionary input.
+fn webrequest_limit(
     head: &RequestHead,
     version: &str,
     headers: &[(String, String)],
     body: &CommandBody<'_>,
-) -> Result<String, AppError> {
-    let mut config = format!(
-        "globoff\npath-as-is\nrequest = {}\nurl = {}\n",
-        config_quote(&head.method),
-        config_quote(&url(head))
+) -> Option<&'static str> {
+    if version == "HTTP/1.0" {
+        return Some("the recorded HTTP/1.0 version");
+    }
+    if !["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "TRACE"].contains(&head.method.as_str())
+    {
+        return Some("this HTTP method");
+    }
+    if matches!(head.method.as_str(), "GET" | "HEAD" | "TRACE")
+        && !matches!(body, CommandBody::Empty)
+    {
+        return Some("a body on this HTTP method");
+    }
+    let mut names = std::collections::HashSet::new();
+    for (name, value) in headers {
+        let name = name.to_ascii_lowercase();
+        if !names.insert(name.clone()) {
+            return Some("duplicate header fields");
+        }
+        if [
+            "connection",
+            "expect",
+            "date",
+            "range",
+            "trailer",
+            "upgrade",
+            "keep-alive",
+        ]
+        .contains(&name.as_str())
+        {
+            return Some("this restricted transport header");
+        }
+        if name == "cookie" {
+            return Some("the original Cookie header");
+        }
+        if name == "content-type" && value.is_empty() {
+            return Some("an explicitly empty Content-Type");
+        }
+    }
+    None
+}
+
+fn webrequest(head: &RequestHead, headers: &[(String, String)], body: &CommandBody<'_>) -> String {
+    let mut out = format!(
+        "$requestParameters = @{{\r\n  Uri = {}\r\n  Method = {}\r\n  UseBasicParsing = $true\r\n  MaximumRedirection = 0\r\n  ErrorAction = 'Stop'\r\n  UserAgent = ''\r\n  Headers = @{{\r\n",
+        ps_quote(&url(head)),
+        ps_quote(&head.method)
     );
-    writeln!(
-        config,
-        "{}",
-        curl_protocol(version).trim_start_matches("--")
-    )
-    .expect("string write");
-    for (name, value) in curl_headers(headers) {
-        writeln!(
-            config,
-            "{} = {}",
-            if name.eq_ignore_ascii_case("proxy-authorization") {
-                "proxy-header"
-            } else {
-                "header"
-            },
-            config_quote(&curl_header(&name, &value, headers))
-        )
-        .expect("string write");
+    for (name, value) in headers {
+        if ["user-agent", "content-type", "proxy-authorization"]
+            .iter()
+            .any(|field| name.eq_ignore_ascii_case(field))
+        {
+            continue;
+        }
+        writeln!(out, "    {} = {}\r", ps_quote(name), ps_quote(value)).expect("string write");
+    }
+    out.push_str("  }\r\n}\r\n");
+    for (name, value) in headers {
+        let parameter = if name.eq_ignore_ascii_case("user-agent") {
+            Some("UserAgent")
+        } else if name.eq_ignore_ascii_case("content-type") {
+            Some("ContentType")
+        } else {
+            None
+        };
+        if let Some(parameter) = parameter {
+            writeln!(
+                out,
+                "$requestParameters.{parameter} = {}\r",
+                ps_quote(value)
+            )
+            .expect("string write");
+        }
     }
     match body {
-        CommandBody::Bytes(_) => return Err(invalid("Binary cURL bodies require a file")),
         CommandBody::Empty => {}
+        CommandBody::File(path) => {
+            writeln!(out, "$requestParameters.InFile = {}\r", ps_quote(path))
+                .expect("string write");
+        }
         CommandBody::Text(value) => {
             writeln!(
-                config,
-                "{} = {}",
-                if value.starts_with('@') {
-                    "data-raw"
-                } else {
-                    "data-binary"
-                },
-                config_quote(value)
+                out,
+                "$requestParameters.Body = [Convert]::FromBase64String('{}')\r",
+                STANDARD.encode(value.as_bytes())
             )
             .expect("string write");
         }
-        CommandBody::File(path) => {
+        CommandBody::Bytes(value) => {
             writeln!(
-                config,
-                "data-binary = {}",
-                config_quote(&format!("@{path}"))
+                out,
+                "$requestParameters.Body = [Convert]::FromBase64String('{}')\r",
+                STANDARD.encode(value)
             )
             .expect("string write");
         }
     }
-    // Base64 data is decoded into a PowerShell string; hostile traffic can never
-    // terminate a literal or become shell syntax. OutputEncoding handles 5.1.
-    Ok(format!(
-        "$curlConfig = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}'))\r\n$previousOutputEncoding = $OutputEncoding\r\ntry {{\r\n  $OutputEncoding = New-Object Text.UTF8Encoding($false)\r\n  $curlConfig | & curl.exe --disable --config -\r\n}} finally {{ $OutputEncoding = $previousOutputEncoding }}",
-        STANDARD.encode(config)
-    ))
+    if head.target.scheme == "http"
+        && headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+    {
+        out.push_str("if ($PSVersionTable.PSVersion.Major -ge 7) { $requestParameters.AllowUnencryptedAuthentication = $true }\r\n");
+    }
+    out.push_str("Invoke-WebRequest @requestParameters");
+    out
 }
 
 fn powershell(
@@ -815,30 +874,19 @@ mod tests {
         assert!(!result.notices.is_empty());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn windows_config_transports_utf8_and_quotes_without_native_argument_round_trips() {
-        let head = head();
-        let result = generate(
-            &head,
-            RequestCommandFormat::CurlWindows,
+    fn plain_curl_never_has_a_shell_wrapper_or_executable_suffix() {
+        let generated = generate(
+            &head(),
+            RequestCommandFormat::Curl,
             CommandBody::Text("é\n\"test\""),
             true,
         )
         .unwrap();
-        let encoded = result
-            .text
-            .split("FromBase64String('")
-            .nth(1)
-            .unwrap()
-            .split('\'')
-            .next()
-            .unwrap();
-        let config = String::from_utf8(STANDARD.decode(encoded).unwrap()).unwrap();
-        assert!(config.contains("data-binary = \"é\\n\\\"test\\\"\""));
-        assert!(config.contains("X-Test: two'$(never)"));
-        assert!(result.text.contains("curl.exe --disable --config -"));
-        assert!(!result.text.contains("$(never)"));
+        assert!(generated.text.starts_with("curl --disable"));
+        assert!(!generated.text.contains("curl.exe"));
+        assert!(!generated.text.contains("FromBase64String"));
+        assert!(generated.text.contains("--data-binary 'é\n\"test\"'"));
     }
 
     #[cfg(windows)]
@@ -882,23 +930,6 @@ mod tests {
         );
         #[cfg(windows)]
         {
-            let result = generate(
-                &head,
-                RequestCommandFormat::CurlWindows,
-                CommandBody::Empty,
-                true,
-            )
-            .unwrap();
-            let encoded = result
-                .text
-                .split("FromBase64String('")
-                .nth(1)
-                .unwrap()
-                .split('\'')
-                .next()
-                .unwrap();
-            let config = String::from_utf8(STANDARD.decode(encoded).unwrap()).unwrap();
-            assert!(config.contains("proxy-header = \"Proxy-Authorization: Basic proxy-secret\""));
             let result = generate(
                 &head,
                 RequestCommandFormat::Powershell,
@@ -1039,12 +1070,226 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    #[allow(clippy::too_many_lines)] // Qualifies generated commands against raw local HTTP evidence.
+    fn generated_commands_reach_only_a_controlled_echo_with_original_bytes() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            time::{Duration, Instant},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        for scenario in [
+            "webrequest",
+            "duplicate",
+            "file",
+            "curl-text",
+            "curl-file",
+            "curl-unicode-file",
+        ] {
+            let shells: Vec<&str> = if scenario.starts_with("curl") {
+                vec!["C:\\Program Files\\Git\\bin\\bash.exe"]
+            } else {
+                vec!["powershell.exe", "pwsh.exe"]
+            };
+            for shell in shells {
+                let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                listener.set_nonblocking(true).unwrap();
+                let server = std::thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(15);
+                    let mut socket = loop {
+                        match listener.accept() {
+                            Ok((socket, _)) => break socket,
+                            Err(error)
+                                if error.kind() == std::io::ErrorKind::WouldBlock
+                                    && Instant::now() < deadline =>
+                            {
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(error) => panic!("local fixture accept: {error}"),
+                        }
+                    };
+                    socket.set_nonblocking(false).unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(10)))
+                        .unwrap();
+                    let mut captured = Vec::new();
+                    let mut buf = [0_u8; 4096];
+                    loop {
+                        let count = socket.read(&mut buf).unwrap();
+                        assert_ne!(count, 0, "request ended early");
+                        captured.extend_from_slice(&buf[..count]);
+                        if let Some(offset) =
+                            captured.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+                        {
+                            let headers = String::from_utf8_lossy(&captured[..offset]);
+                            let length = headers
+                                .lines()
+                                .find_map(|line| {
+                                    line.split_once(':')
+                                        .filter(|(name, _)| {
+                                            name.eq_ignore_ascii_case("content-length")
+                                        })
+                                        .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                                })
+                                .unwrap_or(0);
+                            if captured.len() >= offset + 4 + length {
+                                break;
+                            }
+                            if headers
+                                .lines()
+                                .any(|line| line.eq_ignore_ascii_case("Expect: 100-continue"))
+                            {
+                                socket.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+                            }
+                        }
+                    }
+                    socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK",
+                        )
+                        .unwrap();
+                    captured
+                });
+                let mut request = head();
+                request.target.scheme = "http".into();
+                request.target.authority = address.to_string();
+                request.target.host = "127.0.0.1".into();
+                request.target.port = address.port();
+                request.target.query = Some("q=%27%24%28hostile%29&x=[1]".into());
+                request.headers = HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("User-Agent", "Transmog qualification").unwrap(),
+                    HeaderField::try_new("Content-Type", "application/octet-stream").unwrap(),
+                    HeaderField::try_new("Authorization", "Bearer fixture-only").unwrap(),
+                    HeaderField::try_new("Cookie", "fixture=one").unwrap(),
+                    HeaderField::try_new("X-Literal", "two'$(never)").unwrap(),
+                ]);
+                if scenario == "webrequest" || scenario == "file" {
+                    request.headers.remove_all("cookie");
+                }
+                if scenario == "duplicate" {
+                    request
+                        .headers
+                        .push(HeaderField::try_new("X-Literal", "second").unwrap());
+                }
+                let bytes: &[u8] = if scenario == "curl-text" {
+                    "text'$(never)\nnext".as_bytes()
+                } else if scenario == "curl-unicode-file" {
+                    "é\r\n".as_bytes()
+                } else {
+                    b"\x00\xffraw\r\n"
+                };
+                let path = directory.path().join("body's é.bin");
+                std::fs::write(&path, bytes).unwrap();
+                let file = path.to_string_lossy().replace('\\', "/");
+                let body = if scenario.ends_with("file") {
+                    CommandBody::File(&file)
+                } else if scenario == "curl-text" {
+                    CommandBody::Text(std::str::from_utf8(bytes).unwrap())
+                } else {
+                    CommandBody::Bytes(bytes)
+                };
+                let format = if scenario.starts_with("curl") {
+                    RequestCommandFormat::Curl
+                } else {
+                    RequestCommandFormat::Powershell
+                };
+                let generated = generate(&request, format, body, true).unwrap();
+                assert_eq!(
+                    generated.text.contains("Invoke-WebRequest"),
+                    scenario == "webrequest" || scenario == "file"
+                );
+                let script = directory.path().join(if scenario.starts_with("curl") {
+                    "echo.sh"
+                } else {
+                    "echo.ps1"
+                });
+                std::fs::write(
+                    &script,
+                    if scenario.starts_with("curl") {
+                        generated.text.clone()
+                    } else {
+                        format!("\u{feff}{}", generated.text)
+                    },
+                )
+                .unwrap();
+                let mut command = std::process::Command::new(shell);
+                if scenario.starts_with("curl") {
+                    command.arg(script.to_string_lossy().replace('\\', "/"));
+                } else {
+                    command
+                        .args([
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                        ])
+                        .arg(&script);
+                }
+                let output = command
+                    .env("NO_PROXY", "*")
+                    .env("no_proxy", "*")
+                    .env_remove("HTTP_PROXY")
+                    .env_remove("HTTPS_PROXY")
+                    .env_remove("ALL_PROXY")
+                    .output()
+                    .unwrap();
+                let captured = server.join().unwrap();
+                assert!(
+                    output.status.success(),
+                    "{scenario}/{shell}: {} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let offset = captured
+                    .windows(4)
+                    .position(|part| part == b"\r\n\r\n")
+                    .unwrap();
+                assert_eq!(
+                    &captured[offset + 4..],
+                    bytes,
+                    "{scenario}/{shell} changed body bytes"
+                );
+                let headers = String::from_utf8_lossy(&captured[..offset]);
+                assert!(
+                    headers.starts_with("POST /path?q=%27%24%28hostile%29&x=[1] HTTP/1.1")
+                        || !scenario.starts_with("curl")
+                            && headers
+                                .starts_with("POST /path?q=%27%24%28hostile%29&x=%5B1%5D HTTP/1.1"),
+                    "{scenario}/{shell}: {headers}"
+                );
+                for field in [
+                    "User-Agent: Transmog qualification",
+                    "Content-Type: application/octet-stream",
+                    "Authorization: Bearer fixture-only",
+                    "two'$(never)",
+                ] {
+                    assert!(
+                        headers
+                            .to_ascii_lowercase()
+                            .contains(&field.to_ascii_lowercase()),
+                        "{scenario}/{shell} lost {field}: {headers}"
+                    );
+                }
+                if scenario != "webrequest" && scenario != "file" {
+                    assert!(
+                        headers.contains("Cookie: fixture=one"),
+                        "{scenario}/{shell} lost cookies: {headers}"
+                    );
+                }
+                if scenario == "duplicate" {
+                    assert!(headers.contains("second"));
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn generated_windows_scripts_parse_in_both_powershell_versions_without_execution() {
         let directory = tempfile::tempdir().unwrap();
-        for format in [
-            RequestCommandFormat::CurlWindows,
-            RequestCommandFormat::Powershell,
-        ] {
+        for format in [RequestCommandFormat::Powershell] {
             let generated =
                 generate(&head(), format, CommandBody::File("C:\\body's é.bin"), true).unwrap();
             let path = directory.path().join("parse-only.ps1");

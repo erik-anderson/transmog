@@ -546,12 +546,12 @@ try {
   await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
   const commandDialog=page.locator('.request-command-dialog');
   await commandDialog.getByText('Command copied. Supply the body file before running it.',{exact:true}).waitFor({state:'visible'});
-  assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture generated curl-windows');
+  assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture generated curl');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.execute_composer??0),0,'Copying a command executed a request');
   await commandDialog.getByRole('button',{name:'Save as…',exact:true}).click();
   await commandDialog.getByText('Request body saved. Updated command copied.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture saved body command');
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedRequestBody),{id:'second',format:'curl-windows'});
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedRequestBody),{id:'second',format:'curl'});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/request-command-wide.png')});
   await page.setViewportSize({width:760,height:520});
   assert.equal(await commandDialog.getByRole('button',{name:'Close',exact:true}).isVisible(),true);
@@ -569,7 +569,7 @@ try {
   await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').commandBusy);
   assert.equal(await commandDialog.isVisible(),false);
-  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct curl-windows');
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct curl');
   await page.getByRole('button',{name:'Edit and replay',exact:true}).click();
   await page.locator('#composer').waitFor({state:'visible'});
   assert.equal(await page.locator('#composer input[name="url"]').inputValue(),'http://example.test/second');
