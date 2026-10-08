@@ -710,6 +710,8 @@ struct ConnectionContext {
 struct ClientTlsObservation {
     began: Instant,
     done: Instant,
+    certificate_began: Instant,
+    certificate_done: Instant,
     version: String,
     resumed: bool,
     cipher: Option<String>,
@@ -924,12 +926,14 @@ impl ProxyState {
             return Ok(());
         };
 
+        let certificate_began = self.clock.instant();
         let identity = EndpointIdentity::parse(authority.host())?;
         let leaf = self
             .certificates
             .resolve(&identity, self.clock.system_time())?;
         validate_resolved_leaf(&identity, &leaf)?;
         let acceptor = self.downstream_tls.acceptor(&leaf)?;
+        let certificate_done = self.clock.instant();
         let tls_began = self.clock.instant();
         let tls = timeout(
             self.config.limits.tls_handshake_timeout,
@@ -943,6 +947,8 @@ impl ProxyState {
         let tls_observation = Arc::new(ClientTlsObservation {
             began: tls_began,
             done: self.clock.instant(),
+            certificate_began,
+            certificate_done,
             version: tls.ssl().version_str().into(),
             resumed: tls.ssl().session_reused(),
             cipher: tls
@@ -1098,9 +1104,17 @@ impl ProxyState {
                 metadata: Arc::new(metadata.clone()),
             })
             .await;
-        let mut chain = match self.hooks.create_exchange(metadata) {
+        let initialized = {
+            let _timing = performance.work("initialization", "Hook initialization");
+            self.hooks.create_exchange(metadata)
+        };
+        let mut chain = match initialized {
             Ok(chain) => chain,
             Err(error) => {
+                performance.mark(Milestone::ExchangeDone);
+                observer
+                    .emit(ObserverEventKind::Performance(performance.snapshot()))
+                    .await;
                 observer
                     .failed(ExchangeFailure {
                         metadata: Arc::new(ExchangeMetadata::from_session_at(
@@ -3421,11 +3435,18 @@ impl ClientPerformanceSource {
         if let Some(tls) = tls {
             recorder.project_connection_setup(
                 &mut observation,
-                &[ConnectionSetupTime {
-                    phase: "tls",
-                    began: tls.began,
-                    ended: tls.done,
-                }],
+                &[
+                    ConnectionSetupTime {
+                        phase: "certificate",
+                        began: tls.certificate_began,
+                        ended: tls.certificate_done,
+                    },
+                    ConnectionSetupTime {
+                        phase: "tls",
+                        began: tls.began,
+                        ended: tls.done,
+                    },
+                ],
             );
         }
         recorder.transport(observation);
@@ -3718,6 +3739,14 @@ async fn observe_body_frames(
     let Some(observer) = runtime_observer(chain) else {
         return;
     };
+    if boundary == ExchangeBoundary::UpstreamResponse
+        && frames
+            .iter()
+            .any(|frame| matches!(frame,BodyFrame::Data(bytes) if !bytes.is_empty()))
+        && let Some(recorder) = performance_recorder(chain)
+    {
+        recorder.mark(Milestone::UpstreamResponseFirstBody);
+    }
     for frame in frames {
         match frame {
             BodyFrame::Data(data) => {
@@ -3879,9 +3908,15 @@ async fn stream_incoming_through_hooks(
             }
         };
         observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
-        if send_streaming_frames(&sender, &mut output, frames)
-            .await
-            .is_err()
+        if send_streaming_frames(
+            &sender,
+            &mut output,
+            frames,
+            &chain,
+            "Upstream request queue",
+        )
+        .await
+        .is_err()
         {
             emit_hook_failure(
                 &chain,
@@ -3897,9 +3932,15 @@ async fn stream_incoming_through_hooks(
     match pipeline.finish().await {
         Ok(frames) => {
             observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
-            if send_streaming_frames(&sender, &mut output, frames)
-                .await
-                .is_err()
+            if send_streaming_frames(
+                &sender,
+                &mut output,
+                frames,
+                &chain,
+                "Upstream request queue",
+            )
+            .await
+            .is_err()
             {
                 emit_hook_failure(
                     &chain,
@@ -3916,7 +3957,7 @@ async fn stream_incoming_through_hooks(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // One response stream owns failure and completion handling.
 async fn stream_response_through_hooks(
     mut body: BodyStream,
     sender: BodyStreamSender,
@@ -3974,9 +4015,15 @@ async fn stream_response_through_hooks(
             }
         };
         observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-        if send_streaming_frames(&sender, &mut output, frames)
-            .await
-            .is_err()
+        if send_streaming_frames(
+            &sender,
+            &mut output,
+            frames,
+            &chain,
+            "Client response queue",
+        )
+        .await
+        .is_err()
         {
             emit_hook_failure(
                 &chain,
@@ -3997,9 +4044,15 @@ async fn stream_response_through_hooks(
         }
     };
     observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-    if send_streaming_frames(&sender, &mut output, frames)
-        .await
-        .is_err()
+    if send_streaming_frames(
+        &sender,
+        &mut output,
+        frames,
+        &chain,
+        "Client response queue",
+    )
+    .await
+    .is_err()
     {
         emit_hook_failure(
             &chain,
@@ -4070,9 +4123,15 @@ async fn stream_local_response_through_hooks(
             }
         };
         observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-        if send_streaming_frames(&sender, &mut output, frames)
-            .await
-            .is_err()
+        if send_streaming_frames(
+            &sender,
+            &mut output,
+            frames,
+            &chain,
+            "Client response queue",
+        )
+        .await
+        .is_err()
         {
             emit_hook_failure(
                 &chain,
@@ -4092,9 +4151,15 @@ async fn stream_local_response_through_hooks(
         }
     };
     observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-    if send_streaming_frames(&sender, &mut output, frames)
-        .await
-        .is_err()
+    if send_streaming_frames(
+        &sender,
+        &mut output,
+        frames,
+        &chain,
+        "Client response queue",
+    )
+    .await
+    .is_err()
     {
         emit_hook_failure(
             &chain,
@@ -4219,16 +4284,45 @@ async fn send_streaming_frames(
     sender: &BodyStreamSender,
     tracker: &mut StreamingBodyTracker,
     frames: Vec<BodyFrame>,
+    chain: &ExchangeChain,
+    label: &'static str,
 ) -> Result<(), BodyStreamError> {
     for frame in frames {
         if let Err(error) = tracker.accept(&frame) {
             let _ = sender.send(Err(error.clone())).await;
             return Err(error);
         }
-        sender
-            .send(Ok(frame))
-            .await
-            .map_err(|error| BodyStreamError::Failed(error.to_string()))?;
+        let data = matches!(&frame,BodyFrame::Data(bytes) if !bytes.is_empty());
+        let future = sender.send(Ok(frame));
+        tokio::pin!(future);
+        let mut waiting = None;
+        let result =
+            std::future::poll_fn(|cx| match std::future::Future::poll(future.as_mut(), cx) {
+                std::task::Poll::Pending => {
+                    if waiting.is_none() {
+                        waiting = performance_recorder(chain)
+                            .map(|recorder| recorder.work("queue", label));
+                    }
+                    std::task::Poll::Pending
+                }
+                std::task::Poll::Ready(result) => std::task::Poll::Ready(result),
+            })
+            .await;
+        if waiting.is_none()
+            && let Some(recorder) = performance_recorder(chain)
+        {
+            let now = std::time::Instant::now();
+            recorder.record_work("queue", label, now, now);
+        }
+        drop(waiting);
+        result.map_err(|error| BodyStreamError::Failed(error.to_string()))?;
+        if data && let Some(recorder) = performance_recorder(chain) {
+            recorder.mark(if label == "Client response queue" {
+                Milestone::ClientResponseFirstBodyQueued
+            } else {
+                Milestone::UpstreamRequestFirstBodyQueued
+            });
+        }
     }
     Ok(())
 }
@@ -6542,6 +6636,82 @@ mod tests {
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
         origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn queue_measurements_distinguish_pending_wait_and_canceled_send() {
+        let metadata = ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(1),
+                downstream_connection_id: ConnectionId(1),
+                stream_id: StreamId(1),
+                client_addr: "127.0.0.1:1".parse().unwrap(),
+                client_identity: transmog_core::ClientIdentity::default(),
+                proxy_addr: "127.0.0.1:2".parse().unwrap(),
+                ingress_version: HttpLegVersion::Http1,
+                egress_version: None,
+            },
+            Target {
+                scheme: "http".into(),
+                authority: "example.invalid".into(),
+                host: "example.invalid".into(),
+                port: 80,
+                path: "/".into(),
+                query: None,
+            },
+        );
+        let chain = Arc::new(
+            transmog_core::intercept::InterceptorChainFactory::new(
+                Vec::new(),
+                transmog_core::intercept::HookLimits::default(),
+            )
+            .create_exchange(metadata)
+            .unwrap(),
+        );
+        let performance = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
+        chain.context().extensions().insert(performance.clone());
+        let (sender, mut receiver) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+        sender
+            .send(Ok(BodyFrame::Data(Bytes::from_static(b"occupied"))))
+            .await
+            .unwrap();
+        for cancel in [false, true] {
+            let sender = sender.clone();
+            let chain = chain.clone();
+            let mut task = tokio::spawn(async move {
+                send_streaming_frames(
+                    &sender,
+                    &mut StreamingBodyTracker::new(100),
+                    vec![BodyFrame::Data(Bytes::from_static(b"next"))],
+                    &chain,
+                    "Client response queue",
+                )
+                .await
+            });
+            assert!(timeout(Duration::from_millis(20), &mut task).await.is_err());
+            if cancel {
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            } else {
+                assert!(receiver.recv().await.is_some());
+                task.await.unwrap().unwrap();
+            }
+        }
+        let snapshot = performance.snapshot();
+        assert!(snapshot.valid());
+        let wait = snapshot
+            .work
+            .iter()
+            .find(|row| row.kind == "queue")
+            .unwrap();
+        assert_eq!(wait.calls, 2);
+        assert!(wait.busy_nanos >= 30_000_000);
+        assert!(
+            snapshot
+                .points
+                .iter()
+                .any(|point| point.milestone == Milestone::ClientResponseFirstBodyQueued)
+        );
     }
 
     #[tokio::test]

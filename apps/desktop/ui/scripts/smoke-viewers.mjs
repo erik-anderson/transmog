@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {writeFile, readFile, glob} from 'node:fs/promises';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 
@@ -83,6 +83,27 @@ try{
   const timingState=await viewer.evaluate(`({open:${traffic}.timingDialog.open,summary:${traffic}.timingSummary,unknown:${traffic}.timingPhases[0].value})`);
   assert.ok(timingState.open);assert.match(timingState.summary,/no measured proxy timeline/);assert.equal(timingState.unknown,'Unavailable');
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timings.png'),Buffer.from(image.data,'base64'));}
+
+  await viewer.evaluate(`${traffic}.closeTimings()`);
+  // A real native capture exercises import, timing persistence and WebView2
+  // geometry together; it uses only deterministic, nonsensitive fixture data.
+  const timingSource=join(dirname(source),'timing-fixture.tmcap');
+  const perf={points:[{milestone:'request-headers',unixMillis:1800000000000,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000004,offsetMicros:4000}],protocols:[],transports:[],work:[{kind:'hook',label:'Request headers · native support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · native support script',beganOffsetMicros:1200,endedOffsetMicros:3500,busyNanos:500000,calls:3}]};
+  const fixture=[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/native-waterfall',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'performance',payload:perf},{kind:'completed',payload:null}];
+  const frames=[Buffer.from('TMCAP01\0')];
+  const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
+  for(const [index,record] of [...fixture,{kind:'seal',payload:{record_count:fixture.length}}].entries()) {const payload=Buffer.from(JSON.stringify({revision:3,sequence:index+1,exchange_id:record.kind==='seal'?0:99,...record}));const header=Buffer.alloc(8);header.writeUInt32LE(payload.length);header.writeUInt32LE(crc(payload),4);frames.push(header,payload);}
+  await writeFile(timingSource,Buffer.concat(frames));
+  await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(timingSource)})`);
+  await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-waterfall')`),'Native timing fixture did not import');
+  const timingId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-waterfall');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
+  await viewer.evaluate(`${traffic}.showTimings()`);
+  await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingWaterfall.length>=3`),'Native timing waterfall was not restored');
+  const chart=await viewer.evaluate(`(()=>{const workspace=${traffic};const bars=Array.from(workspace.timingDialog.querySelectorAll('.waterfall-bar'));return {rows:workspace.timingWaterfall.length,svg:bars.every(node=>node.namespaceURI==='http://www.w3.org/2000/svg'),painted:bars.every(node=>node.getBoundingClientRect().width>0),report:workspace.timingReportText.includes('native support script'),footer:workspace.timingDialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight};})()`);
+  assert.ok(chart.rows>=3&&chart.svg&&chart.painted&&chart.report&&chart.footer,'Native timing waterfall failed to render or left its actions unreachable: '+JSON.stringify(chart));
+  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-waterfall.png'),Buffer.from(image.data,'base64'));}
+  await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.closeTimings();await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(timingId)}],restore:false});await workspace.refreshSessions(undefined,true);})()`);
+
   await viewer.evaluate(`${traffic}.closeTimings()`);
   await viewer.evaluate(`${traffic}.showSaveTrace()`);
   const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked})`);

@@ -1,4 +1,4 @@
-import {timingView, type TimingRow, type TimelineRow, type TransportView} from '../timings.js';
+import {timingView, type TimingRow, type TimelineRow, type TransportView, type WaterfallRow} from '../timings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -20,6 +20,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable timingError="";
   @observable timingBusy=false;
   @observable timingPhases:TimingRow[]=[];
+  @observable timingWaterfall:WaterfallRow[]=[];
+  @observable timingWork:TimingRow[]=[];
+  @observable timingRange="";
+  @observable timingReportText="";
+  timingReportPreview!:HTMLTextAreaElement;
+  @observable timingReportVisible=false;
+  @observable timingStatus="";
   @observable timingRows:TimelineRow[]=[];
   @observable timingTransports:TransportView[]=[];
   @observable timingSaved:TimingRow[]=[];
@@ -244,14 +251,15 @@ export class TrafficWorkspace extends WorkspaceElement {
   async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
   async showTimings():Promise<void> {
     this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;
-    this.timingId=id;this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
+    this.timingId=id;this.timingWaterfall=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
   }
   async refreshTimings():Promise<void> {
     const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
-    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;}
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
     catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
     finally {if(generation===this.timingGeneration)this.timingBusy=false;}
   }
+  async copyTimings():Promise<void> {if(!this.timingReportText)return;try {await navigator.clipboard.writeText(this.timingReportText);this.timingStatus='Timing report copied.';}catch{this.timingReportVisible=true;this.timingStatus='Select the report text below and use Copy.';}}
   closeTimings():void {this.timingDialog.close();}
   timingsClosed():void {this.timingGeneration++;this.timingBusy=false;}
   async showTraceMetadata(id?:string):Promise<void> {

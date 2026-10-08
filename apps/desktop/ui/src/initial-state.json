@@ -726,5 +726,11 @@
   "headerPageText": "",
   "headerOffset": 0,
   "headerNextOffset": null,
-  "headersBusy": false
+  "headersBusy": false,
+  "timingWaterfall": [],
+  "timingWork": [],
+  "timingRange": "",
+  "timingReportText": "",
+  "timingReportVisible": false,
+  "timingStatus": ""
 }

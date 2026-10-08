@@ -142,6 +142,15 @@ setup still in progress shows the request's wait alongside the full original
 phase duration. Connection start and finish offsets explain how long before or
 after this request's zero timestamp setup occurred. Older captures lacking
 these timestamps show connection measurements without inventing a wait or age.
+The waterfall compares overlapping request intervals and named local operations.
+Repeated callback windows use dashed borders; their displayed call time sums the
+observed invocations, excluding gaps between them. Call time includes nested work
+and waits, so it does not measure CPU time. Separate rows show breakpoint decisions,
+script/hook callbacks, codec work and forwarding-channel waits. First-body markers
+are adapter observations and queue acceptance; they do not claim remote receipt.
+Copy report includes the measured phases, source association, UTC timeline,
+connection facts and original saved timers. Report text remains available for
+manual copying when clipboard access fails.
 
 **Edit and replay** loads complete original request bytes as hex, preserving
 Content-Encoding. It preserves an edited draft until the user chooses to replace

@@ -750,6 +750,13 @@ fn poll_responses(
             Ok((stream_id, quiche::h3::Event::Data)) => loop {
                 match http3.recv_body(connection, stream_id, recv_buffer) {
                     Ok(read) => {
+                        if read > 0
+                            && let Some(performance) = active
+                                .get(&stream_id)
+                                .and_then(|request| request.performance.as_ref())
+                        {
+                            performance.mark(Milestone::UpstreamResponseFirstBody);
+                        }
                         let result = active
                             .get_mut(&stream_id)
                             .map(|request| request.response.data(&recv_buffer[..read]));

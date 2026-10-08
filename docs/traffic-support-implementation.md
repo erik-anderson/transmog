@@ -168,13 +168,27 @@ qualified baseline, not completion of the complete plan.
     and compact sizes. A separate curl follow-up respects the Windows native
     command line length even when invoked through Bash.
 
+19. Proxy work and waterfall: named request/response hook and script callbacks,
+    transforms, content decoding/encoding, breakpoint decisions and concurrency
+    permits are measured on the request clock. Repeated call duration preserves
+    nanosecond contributions and excludes gaps, with bounded groups and explicit
+    overflow accounting. Canceled/failed operations still record their duration.
+    Forwarding-channel waits distinguish actual pending sends from zero waits;
+    cancellation and first-body adapter/queue observations are covered. Certificate
+    preparation joins the physical client connection evidence. The request
+    waterfall and copyable report expose overlap, call totals, original timers,
+    source IDs and delivery limitations. Core/content/HTTP/H3/runtime/session/native
+    suites, clippy and browser checks pass. A real native timing capture exercises
+    import/persistence and populated SVG geometry in WebView2. Reviewed wide,
+    compact and native snapshots, copy feedback and reachable dialog actions.
+
 Remaining isolated phases:
 
 - Composer replay: file-backed replay of larger bodies, with source trace and
   entry associations retained in history and results.
 
-- Performance: waterfall and copied report; separately measured proxy work,
-  first-byte/delivery/backpressure evidence and TCP transport statistics.
+- Transport metrics: sample supported TCP RTT, retransmission and window
+  statistics and expose socket backpressure/completion evidence.
 - Search: request/response scopes, match locations and highlighted occurrence
   navigation, normalized-character mapping, cancellation preserving selections.
 - Captured-page preview: selectable source scope, resource/version decisions,

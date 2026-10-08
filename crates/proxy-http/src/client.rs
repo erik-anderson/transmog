@@ -279,8 +279,13 @@ impl HyperOriginClient {
         let source_version = protocol_version(response.version())?;
         let status = response.status().as_u16();
         let headers = block_from_headers(response.headers())?;
-        let body =
-            collect_incoming(response.body_mut(), max_response_bytes, body_idle_timeout).await?;
+        let body = collect_incoming(
+            response.body_mut(),
+            max_response_bytes,
+            body_idle_timeout,
+            self.performance.as_ref(),
+        )
+        .await?;
         if let Some(performance) = &self.performance {
             performance.mark(Milestone::UpstreamResponseDone);
         }
@@ -606,6 +611,11 @@ async fn stream_incoming(
                 return;
             }
         };
+        if matches!(&canonical,BodyFrame::Data(data) if !data.is_empty())
+            && let Some(performance) = &performance
+        {
+            performance.mark(Milestone::UpstreamResponseFirstBody);
+        }
         if sender.send(Ok(canonical)).await.is_err() {
             return;
         }
@@ -616,6 +626,7 @@ async fn collect_incoming(
     body: &mut Incoming,
     limit: usize,
     body_idle_timeout: Duration,
+    performance: Option<&PerformanceRecorder>,
 ) -> Result<Vec<BodyFrame>, HyperOriginError> {
     let mut frames = Vec::new();
     let mut received = 0_usize;
@@ -627,6 +638,11 @@ async fn collect_incoming(
         };
         let frame = match frame.into_data() {
             Ok(data) => {
+                if !data.is_empty()
+                    && let Some(performance) = performance
+                {
+                    performance.mark(Milestone::UpstreamResponseFirstBody);
+                }
                 received = received
                     .checked_add(data.len())
                     .ok_or(HyperOriginError::ResponseBodyTooLarge { limit })?;

@@ -34,6 +34,12 @@ pub enum Milestone {
     UpstreamConnected,
     /// The upstream HTTP adapter consumed the final outgoing request body frame.
     UpstreamRequestConsumed,
+    /// The first nonempty request body was queued for the upstream HTTP adapter.
+    UpstreamRequestFirstBodyQueued,
+    /// First nonempty response body exposed by the upstream HTTP adapter.
+    UpstreamResponseFirstBody,
+    /// First nonempty response body queued for the client HTTP adapter.
+    ClientResponseFirstBodyQueued,
     /// Complete upstream response headers became available.
     ResponseHeaders,
     /// The upstream response body ended at the adapter.
@@ -179,6 +185,40 @@ pub struct ProtocolObservation {
     pub reason: Option<String>,
 }
 
+/// Aggregated measured local work. The window can include gaps between calls;
+/// busy time is the sum of actual observed calls, including their own waits.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkTiming {
+    /// Stable work category, such as hook, transform, decode, encode or pause.
+    pub kind: String,
+    /// Bounded operation or interceptor name.
+    pub label: String,
+    /// First observed call start on the request's clock.
+    pub began_offset_micros: i64,
+    /// Last observed call completion on that clock.
+    pub ended_offset_micros: i64,
+    /// Sum of measured call time in nanoseconds, preserving sub-microsecond work.
+    pub busy_nanos: u64,
+    /// Number of measured invocations represented by this row.
+    pub calls: u64,
+}
+
+/// Records an operation even when its future is canceled or fails.
+#[derive(Debug)]
+pub struct WorkTimer {
+    recorder: PerformanceRecorder,
+    kind: &'static str,
+    label: String,
+    began: Instant,
+}
+impl Drop for WorkTimer {
+    fn drop(&mut self) {
+        self.recorder
+            .record_work(self.kind, &self.label, self.began, Instant::now());
+    }
+}
+
 /// Bounded point-in-time evidence carried by observers and native captures.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -189,6 +229,9 @@ pub struct PerformanceEvidence {
     pub transports: Vec<TransportObservation>,
     /// At most four actual message boundary protocols.
     pub protocols: Vec<ProtocolObservation>,
+    /// At most 128 named work groups, including an overflow group.
+    #[serde(default)]
+    pub work: Vec<WorkTiming>,
 }
 impl PerformanceEvidence {
     /// Processing duration from incoming headers to the local terminal event.
@@ -208,6 +251,13 @@ impl PerformanceEvidence {
         self.points.len() <= 24
             && self.transports.len() <= 16
             && self.protocols.len() <= 4
+            && self.work.len() <= 128
+            && self.work.iter().all(|work| {
+                work.kind.len() <= 256
+                    && work.label.len() <= 512
+                    && work.calls > 0
+                    && work.ended_offset_micros >= work.began_offset_micros
+            })
             && self.points.iter().enumerate().all(|(index, point)| {
                 point.unix_millis <= 253_402_300_799_999
                     && !self.points[..index]
@@ -219,14 +269,16 @@ impl PerformanceEvidence {
                     && transport.connection_id.len() <= 128
                     && transport.setup_timings.len() <= 4
                     && transport.setup_timings.iter().all(|timing| {
-                        matches!(timing.phase.as_str(), "dns" | "tcp" | "tls" | "quic")
-                            && timing
-                                .ended_offset_micros
-                                .checked_sub(timing.began_offset_micros)
-                                .is_some_and(|elapsed| {
-                                    elapsed >= 0
-                                        && timing.request_wait_micros <= elapsed.cast_unsigned()
-                                })
+                        matches!(
+                            timing.phase.as_str(),
+                            "dns" | "tcp" | "tls" | "quic" | "certificate"
+                        ) && timing
+                            .ended_offset_micros
+                            .checked_sub(timing.began_offset_micros)
+                            .is_some_and(|elapsed| {
+                                elapsed >= 0
+                                    && timing.request_wait_micros <= elapsed.cast_unsigned()
+                            })
                     })
                     && [
                         &transport.peer,
@@ -276,6 +328,19 @@ impl PerformanceEvidence {
                 }
             } else if self.transports.len() < 16 {
                 self.transports.push(transport.clone());
+            }
+        }
+        for work in &incoming.work {
+            if let Some(existing) = self
+                .work
+                .iter_mut()
+                .find(|existing| existing.kind == work.kind && existing.label == work.label)
+            {
+                if work.calls >= existing.calls && work.busy_nanos >= existing.busy_nanos {
+                    *existing = work.clone();
+                }
+            } else if self.work.len() < 128 {
+                self.work.push(work.clone());
             }
         }
         for protocol in &incoming.protocols {
@@ -402,6 +467,58 @@ impl PerformanceRecorder {
             .collect();
     }
 
+    /// Starts one measured operation, storing a bounded friendly label.
+    pub fn work(&self, kind: &'static str, label: &str) -> WorkTimer {
+        WorkTimer {
+            recorder: self.clone(),
+            kind,
+            label: label.chars().take(128).collect(),
+            began: Instant::now(),
+        }
+    }
+    /// Records an explicitly observed operation interval, including zero waits.
+    pub fn record_work(&self, kind: &str, label: &str, began: Instant, ended: Instant) {
+        if ended < began {
+            return;
+        }
+        let label = label.chars().take(128).collect::<String>();
+        let kind = kind.chars().take(64).collect::<String>();
+        let start = self.offset_micros(began);
+        let end = self.offset_micros(ended);
+        let busy =
+            u64::try_from(ended.saturating_duration_since(began).as_nanos()).unwrap_or(u64::MAX);
+        let mut evidence = self.lock();
+        let overflow = evidence.work.len() >= 127
+            && !evidence
+                .work
+                .iter()
+                .any(|row| row.kind == kind && row.label == label);
+        let (kind, label) = if overflow {
+            ("other".into(), "Additional measured work".into())
+        } else {
+            (kind, label)
+        };
+        if let Some(row) = evidence
+            .work
+            .iter_mut()
+            .find(|row| row.kind == kind && row.label == label)
+        {
+            row.began_offset_micros = row.began_offset_micros.min(start);
+            row.ended_offset_micros = row.ended_offset_micros.max(end);
+            row.busy_nanos = row.busy_nanos.saturating_add(busy);
+            row.calls = row.calls.saturating_add(1);
+        } else if evidence.work.len() < 128 {
+            evidence.work.push(WorkTiming {
+                kind,
+                label,
+                began_offset_micros: start,
+                ended_offset_micros: end,
+                busy_nanos: busy,
+                calls: 1,
+            });
+        }
+    }
+
     /// Updates the snapshot of a physical connection rather than charging its
     /// setup or byte counters to each stream independently.
     pub fn transport(&self, mut observation: TransportObservation) {
@@ -474,6 +591,50 @@ mod tests {
         assert!(snapshot.valid());
         assert!(recorder.finished());
     }
+    #[test]
+    fn work_aggregates_actual_calls_rejects_stale_samples_and_bounds_names() {
+        let zero = Instant::now();
+        let recorder = PerformanceRecorder::new(SystemTime::now(), zero);
+        recorder.record_work(
+            "transform",
+            "Request body · script",
+            zero,
+            zero + std::time::Duration::from_nanos(500),
+        );
+        let old = recorder.snapshot();
+        recorder.record_work(
+            "transform",
+            "Request body · script",
+            zero + std::time::Duration::from_secs(1),
+            zero + std::time::Duration::from_secs(1) + std::time::Duration::from_nanos(600),
+        );
+        let mut latest = recorder.snapshot();
+        assert_eq!(latest.work[0].busy_nanos, 1100);
+        assert_eq!(latest.work[0].calls, 2);
+        latest.merge(&old);
+        assert_eq!(latest.work[0].busy_nanos, 1100);
+        for index in 0..200 {
+            recorder.record_work("hook", &format!("Hook {index}"), zero, zero);
+        }
+        let latest = recorder.snapshot();
+        assert_eq!(latest.work.len(), 128);
+        assert!(
+            latest
+                .work
+                .iter()
+                .any(|row| row.kind == "other" && row.calls > 1)
+        );
+        assert!(latest.valid());
+        let timer = recorder.work("pause", "Dropped operation");
+        drop(timer);
+        assert!(recorder.snapshot().valid());
+        assert_eq!(
+            serde_json::from_slice::<PerformanceEvidence>(&serde_json::to_vec(&latest).unwrap())
+                .unwrap(),
+            latest
+        );
+    }
+
     #[test]
     fn shared_setup_preserves_its_age_and_charges_only_the_request_wait() {
         let zero = Instant::now()
@@ -561,6 +722,7 @@ mod tests {
                 ..TransportObservation::default()
             }],
             protocols: vec![],
+            work: vec![],
         };
         let mut stale = latest.clone();
         stale.points.clear();

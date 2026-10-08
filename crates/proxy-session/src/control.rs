@@ -491,6 +491,7 @@ async fn request_decision(
     input: BreakpointInput,
     context: &transmog_core::intercept::HookContext,
 ) -> Result<DecisionAction, String> {
+    let _timing = context.measure_work("pause", "Breakpoint decision");
     let cancellation = RequestCancellation::new();
     tokio::select! {
         result = producer.request(input, &cancellation) => result.map_err(|_| {

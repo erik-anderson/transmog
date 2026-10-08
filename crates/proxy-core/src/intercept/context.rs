@@ -166,6 +166,17 @@ impl HookContext {
         &self.extensions
     }
 
+    /// Measures local work when the embedding runtime enabled timing evidence.
+    pub fn measure_work(
+        &self,
+        kind: &'static str,
+        label: &str,
+    ) -> Option<crate::performance::WorkTimer> {
+        self.extensions
+            .get::<crate::performance::PerformanceRecorder>()
+            .map(|recorder| recorder.work(kind, label))
+    }
+
     /// Cloneable cancellation signal.
     pub fn cancellation(&self) -> &ExchangeCancellation {
         &self.cancellation
