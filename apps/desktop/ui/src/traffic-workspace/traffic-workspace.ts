@@ -23,6 +23,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable selectedSessionId:string | null = null;
   @observable selectedTrafficCount=0;
   @observable trafficSelectionText='';
+  @observable trafficCreateLabel='Create auto-responses…';
   @observable removingTraffic=false;
   @observable trafficUndoText='';
   @observable trafficMenuX='12px';
@@ -37,6 +38,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable selectedUrlText = 'Select a request';
   @observable selectedStatusText = 'No response';
   @observable selectedTone = 'pending';
+  @observable inspectorSide = 'response';
+  showInspectorSide(side:string):void {this.inspectorSide=side;}
   @observable reuseDisabled = true;
   @observable reuseTitle = '';
   @observable matchedRuleId = '';
@@ -127,6 +130,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.selectedTrafficCount=this.trafficSelection.ids.size;
     const outside=this.selectedTrafficCount-rows.filter(row=>this.trafficSelection.ids.has(row.id)).length;
     this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
+    this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
   }
   private measurePinnedColumns():void {
     if (!this.columns.length) return;
@@ -314,6 +318,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.selectedTrafficCount=this.trafficSelection.ids.size;
     const outside=this.selectedTrafficCount-this.sessions.filter(row=>this.trafficSelection.ids.has(row.id)).length;
     this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
+    this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
     this.rebuildRows(this.sessions);
   }
   clearTrafficSelection():void {this.trafficSelection.clear();this.selectedTraffic.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}

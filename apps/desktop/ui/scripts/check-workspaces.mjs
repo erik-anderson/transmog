@@ -232,7 +232,7 @@ try {
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.reviewOriginalRows=state.sessions;state.sessions=Array.from({length:60},(_,index)=>({...state.sessions[1],id:'layout-'+index,path:'/layout/'+index,url:'http://example.test/layout/'+index,startedAt:2000+index}));await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
   await page.locator('tr[data-session-id="layout-59"]').click();
   await page.keyboard.press('Control+A');
-  const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:'Create autoresponses…',exact:true});
+  const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ auto-responses?…$/});
   const selectionBounds=await page.locator('.traffic-selection-bar').boundingBox();
   const tableBounds=await page.locator('.table-wrap').boundingBox();
   assert.ok(selectionBounds.y+selectionBounds.height<=tableBounds.y+1,'Traffic table overlaps bulk actions');
@@ -302,10 +302,14 @@ try {
   const listBefore = await page.locator('.session-list-pane').evaluate(pane=>pane.getBoundingClientRect().height);
   await listDivider.focus(); await page.keyboard.press('ArrowDown');
   assert.ok(await page.locator('.session-list-pane').evaluate(pane=>pane.getBoundingClientRect().height)>listBefore+5,'Panel divider did not resize list');
+  await page.getByRole('button',{name:'Table settings',exact:true}).click();
   await page.getByLabel('Traffic layout',{exact:true}).selectOption('side-by-side');
+  await page.keyboard.press('Escape');
   const panes = await page.locator('.traffic-workspace').evaluate(grid=>({list:grid.querySelector('.session-list-pane').getBoundingClientRect().toJSON(),details:grid.querySelector('.details-pane').getBoundingClientRect().toJSON()}));
   assert.ok(panes.details.x>panes.list.x+panes.list.width,'Side-by-side layout did not arrange panes horizontally');
+  await page.getByRole('button',{name:'Table settings',exact:true}).click();
   await page.getByLabel('Traffic layout',{exact:true}).selectOption('stacked');
+  await page.keyboard.press('Escape');
   const proxy = page.locator('.top-actions proxy-toggle button');
   const proxyBackground = async lifecycle => {
     await page.waitForFunction(lifecycle => document.querySelector('app-shell').shadowRoot.querySelector('.top-actions proxy-toggle button').dataset.lifecycle === lifecycle, lifecycle);
@@ -389,12 +393,12 @@ try {
     globalThis.__workspaceFixture.slowDetail = true;
     await Promise.all([traffic.inspectSession(globalThis.__workspaceFixture.sessions[0]), traffic.inspectSession(globalThis.__workspaceFixture.sessions[1])]);
   });
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.selection-bar strong').textContent.endsWith('/second'));
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('#inspector-heading').textContent.endsWith('/second'));
   assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'), 'true');
   assert.match(await page.locator('.list-footer').textContent(),/Inspection pinned · showing captured traffic/);
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.match(await page.locator('message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
-  await page.getByRole('button',{name:'Replay',exact:true}).click();
+  await page.getByRole('button',{name:'Edit and replay',exact:true}).click();
   await page.locator('#composer').waitFor({state:'visible'});
   assert.equal(await page.locator('#composer input[name="url"]').inputValue(),'http://example.test/second');
   assert.equal(await page.locator('#composer textarea[name="headers"]').inputValue(),'Accept: */*');
@@ -754,7 +758,7 @@ try {
   await page.locator('tr[data-session-id="second"]').click({modifiers:['Control']});
   await page.locator('tr[data-session-id="cached"]').click({modifiers:['Control']});
   assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),3);
-  await page.locator('.traffic-selection-bar').getByRole('button',{name:'Create autoresponses…',exact:true}).click();
+  await page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ auto-responses?…$/}).click();
   await page.waitForFunction(()=>{const auto=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !auto.batchReviewHidden && !auto.batchLoading && auto.batchRows.length===3;});
   assert.match(await page.locator('.batch-review').textContent(),/3 selected · 2 ready · 1 unavailable/);
   assert.match(await page.locator('.batch-review').textContent(),/Wait for this request to complete/);

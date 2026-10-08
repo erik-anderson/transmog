@@ -584,5 +584,8 @@
       "label": "Full URL"
     }
   ],
-  "tableWidth": "986px"
+  "tableWidth": "986px",
+  "inspectorSide": "response",
+  "bodySummary": "",
+  "trafficCreateLabel": "Create auto-responses…"
 }

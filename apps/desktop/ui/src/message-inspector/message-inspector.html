@@ -7,7 +7,7 @@
       <button type="button" ?data-selected="{{mode == 'split'}}" @click="{showMode('split')}">Split</button>
       <button type="button" ?data-selected="{{mode == 'details'}}" @click="{showMode('details')}">Details</button>
     </header>
-    <div class="message-stage">
+    <div class="message-stage" ?hidden="{{boundaries.length <= 1}}">
       <select aria-label="Message stage" @change="{changeBoundary(e)}"><for each="stage in boundaries"><option key="{{stage.id}}" value="{{stage.id}}" ?selected="{{stage.id == boundary}}">{{stage.label}}</option></for></select>
       <span title="{{headSummary}}">{{headSummary}}</span>
     </div>
@@ -25,7 +25,7 @@
           <details class="preview-options"><summary>Preview limit</summary><label>Bytes <input w-ref="{bodyLimit}" type="number" min="1" max="16777216" value="262144" @change="{inspectBody()}"></label><button type="button" class="secondary compact-button" @click="{inspectBody()}">Refresh preview</button></details>
           <if condition="side == 'response'"><button type="button" class="secondary compact-button" title="Save the full original response body with content decoding" @click="{saveBody()}" ?disabled="{{saving || !bodyMetadata || bodyMetadata.availability != 'complete' || bodyMetadata.retainedBytes == 0}}"><if condition="saving">Saving…</if><if condition="!saving">Save as…</if></button></if>
         </div>
-        <div class="body-facts"><strong>{{viewerLabel}}</strong><span>{{bodyFacts}}</span></div>
+        <details class="body-facts"><summary><strong>{{viewerLabel}}</strong><span>{{bodySummary}}</span></summary><p>{{bodyFacts}}</p></details>
         <div class="body-scroll"><if condition="!imageUrl"><pre class="body-preview" tabindex="0">{{bodyText}}</pre></if><if condition="imageUrl"><img class="body-image-preview" src="{{imageUrl}}" alt="Response image preview" decoding="async"></if></div>
       </section>
       <pre class="exchange-details" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>

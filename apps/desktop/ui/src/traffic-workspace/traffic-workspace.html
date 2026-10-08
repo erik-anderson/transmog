@@ -10,7 +10,6 @@
         <autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch>
         <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filter <if condition="filters.length">({{filters.length}})</if></button>
         <button type="button" class="secondary compact-button" popovertarget="table-settings">Table settings</button>
-        <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">List above inspector</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select>
       </div>
     </header>
     <div class="traffic-summary"><output class="session-status" data-kind="{{sessionKind}}">{{sessionText}}</output><span class="sort-summary">{{sortLabel}}</span></div>
@@ -19,7 +18,7 @@
     </if>
     <div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
       <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
-        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">Create autoresponses…</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
+        <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" @click="{selectedResponses()}" ?disabled="{{removingTraffic}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
@@ -60,10 +59,11 @@
       <pane-divider orientation="{{dividerOrientation}}" label="Resize traffic list and inspector" value="{{preferences.listSplit}}" initial="45" @pane-resize="{resizeList(e)}"></pane-divider>
       <section class="details-pane" aria-labelledby="inspector-heading">
         <header class="selection-bar">
-          <span class="method-badge">{{selectedMethodText}}</span><strong id="inspector-heading" title="{{selectedUrlText}}">{{selectedUrlText}}</strong><span class="status-badge" data-tone="{{selectedTone}}">{{selectedStatusText}}</span>
-          <div class="selection-actions"><button type="button" class="secondary compact-button" @click="{copyUrl()}" ?disabled="{{!selectedSessionId}}">Copy URL</button><button type="button" class="secondary compact-button" @click="{replaySelected()}" ?disabled="{{!selectedDetail}}">Replay</button><button type="button" class="secondary compact-button" title="{{reuseTitle}}" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}">Create auto-response</button><button type="button" class="secondary compact-button" @click="{showMatchedAutoResponse()}" ?hidden="{{!matchedRuleId}}">{{matchedRuleLabel}}</button></div>
+          <span class="method-badge">{{selectedMethodText}}</span><button id="inspector-heading" class="selected-url" type="button" title="Show full URL" popovertarget="selected-url-full" ?disabled="{{!selectedSessionId}}">{{selectedUrlText}}</button><span class="status-badge" data-tone="{{selectedTone}}">{{selectedStatusText}}</span>
+          <div class="selection-actions"><button type="button" class="secondary compact-button" @click="{replaySelected()}" ?disabled="{{!selectedDetail}}">Edit and replay</button><button type="button" class="secondary compact-button" title="{{reuseTitle}}" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}">Create auto-response</button><button type="button" class="secondary compact-button" @click="{showMatchedAutoResponse()}" ?hidden="{{!matchedRuleId}}">{{matchedRuleLabel}}</button></div>
         </header>
-        <div class="exchange-inspector" data-request-share="{{requestShare}}" @inspector-resize="{resizeMessage(e)}">
+        <div class="inspector-side-tabs" role="group" aria-label="Message to inspect"><button type="button" ?data-selected="{{inspectorSide == 'request'}}" @click="{showInspectorSide('request')}">Request</button><button type="button" ?data-selected="{{inspectorSide == 'response'}}" @click="{showInspectorSide('response')}">Response</button></div>
+        <div class="exchange-inspector" data-side="{{inspectorSide}}" data-request-share="{{requestShare}}" @inspector-resize="{resizeMessage(e)}">
           <message-inspector side="request" split="{{preferences.requestBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
           <pane-divider orientation="vertical" label="Resize request and response inspectors" value="{{preferences.requestSplit}}" initial="45" @pane-resize="{resizeRequest(e)}"></pane-divider>
           <message-inspector side="response" split="{{preferences.responseBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
@@ -71,7 +71,8 @@
       </section>
     </div>
 
-    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">Create autoresponses…</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
+    <div id="selected-url-full" class="table-popover url-popover" popover="auto"><strong>Selected URL</strong><p class="full-value">{{selectedUrlText}}</p><button type="button" @click="{copyUrl()}">Copy URL</button></div>
+    <div id="traffic-entry-menu" w-ref="{trafficMenu}" class="table-popover traffic-entry-menu" data-x="{{trafficMenuX}}" data-y="{{trafficMenuY}}" popover="auto"><strong>{{trafficSelectionText}}</strong><button type="button" @click="{selectedResponses()}">{{trafficCreateLabel}}</button><button type="button" @click="{removeSelectedTraffic()}" ?disabled="{{removingTraffic}}">Remove from Traffic <kbd>Del</kbd></button><button type="button" @click="{clearTrafficSelection()}">Clear selection</button><p class="field-help">Shift selects a range; Ctrl adds entries. Removal preserves saved responses and capture files.</p></div>
 
     <div id="column-actions" class="table-popover column-menu" w-ref="{columnMenu}" popover="auto" data-x="{{menuX}}" data-y="{{menuY}}">
       <strong class="popover-title">{{menuColumn.label}}</strong>
@@ -88,7 +89,7 @@
     </div>
     <div id="filter-fields" class="table-popover filter-menu" popover="auto"><strong class="popover-title">Filter by</strong><for each="column in settingsColumns"><button key="{{column.id}}" type="button" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}">{{column.label}}</button></for></div>
     <div id="table-settings" class="table-popover table-settings" popover="auto">
-      <strong class="popover-title">Table settings</strong>
+      <strong class="popover-title">Table settings</strong><label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">List above inspector</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.wrapCells}}" @change="{setWrap(e)}"> Wrap cells</label><label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <strong class="popover-title">Columns</strong><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
       <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset table to default</button>

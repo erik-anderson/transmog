@@ -17,6 +17,7 @@ export class MessageInspector extends WebUIElement {
   @observable headSummary = 'Select an exchange';
   @observable bodyText = 'Select an exchange to preview its body.';
   @observable bodyFacts = '';
+  @observable bodySummary = '';
   @observable viewerLabel = 'Auto';
   @observable imageUrl = '';
   @observable detailsText = '';
@@ -65,6 +66,7 @@ export class MessageInspector extends WebUIElement {
     if (!this.detail) return;
     const head = this.heads().find((head) => head.boundary === this.boundary);
     this.bodyFacts = body ? this.retentionFacts(body) : '';
+    this.bodySummary=body?formatBytes(body.retainedBytes)+' · '+body.availability:'';
     this.viewerLabel = this.viewer === 'auto' ? 'Auto' : this.viewer;
     if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : 'No body metadata was captured for this message stage.'; this.viewerLabel = 'Metadata'; return; }
     if (this.side === 'response' && head?.status === 304 && !body?.retainedBytes) {
