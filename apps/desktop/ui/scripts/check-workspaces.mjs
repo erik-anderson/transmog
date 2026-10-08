@@ -228,6 +228,19 @@ try {
   assert.match(await page.locator('.auto-response-start-hint').textContent(),/Select one or more captured responses in Traffic/);
   await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).click();
   await page.locator('#traffic').waitFor({state:'visible'});
+  // Populated lists must leave bulk actions reachable by an actual mouse click.
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.reviewOriginalRows=state.sessions;state.sessions=Array.from({length:60},(_,index)=>({...state.sessions[1],id:'layout-'+index,path:'/layout/'+index,url:'http://example.test/layout/'+index,startedAt:2000+index}));await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
+  await page.locator('tr[data-session-id="layout-59"]').click();
+  await page.keyboard.press('Control+A');
+  const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:'Create autoresponses…',exact:true});
+  const selectionBounds=await page.locator('.traffic-selection-bar').boundingBox();
+  const tableBounds=await page.locator('.table-wrap').boundingBox();
+  assert.ok(selectionBounds.y+selectionBounds.height<=tableBounds.y+1,'Traffic table overlaps bulk actions');
+  await bulkAction.click();
+  await page.locator('.batch-review').waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Cancel batch',exact:true}).click();
+  await view('traffic');
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.reviewOriginalRows;delete state.reviewOriginalRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.clearTrafficSelection();await traffic.refreshSessions(undefined,true);});
   assert.equal(await page.evaluate(() => CSS.supports('width','attr(data-width type(<length>))')), true, 'Typed CSS attributes required by resizable panels are unavailable');
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
@@ -808,6 +821,12 @@ try {
   await view('breakpoints');
   await page.locator('paused-exchange').first().getByRole('button', { name: 'Continue', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange')?.editorReady);
+  await page.setViewportSize({width:760,height:520});
+  const pausedBounds=await page.locator('paused-exchange').first().boundingBox();
+  const expandBounds=await page.locator('paused-exchange').first().getByRole('button',{name:'Expand editor',exact:true}).boundingBox();
+  assert.ok(pausedBounds.x+pausedBounds.width<=760,'Paused editor exceeds the narrow viewport');
+  assert.ok(expandBounds.x+expandBounds.width<=760,'Expand editor control is clipped');
+  await page.setViewportSize({width:1280,height:800});
   const editorsVisible = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
   assert.ok(editorsVisible > editorsBefore && editorsVisible <= editorsBefore + 2, 'Offscreen breakpoint editors were eagerly created');
   await page.evaluate(async () => {
