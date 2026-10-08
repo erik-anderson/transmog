@@ -31,13 +31,19 @@ checkout contains independent updater work and is preserved.
    excludes idle clients, and permits resume on the same listener. Generations
    invalidate old shutdowns and stale UI status. Real streaming integration,
    protocol matrix, browser and native WebView2 checks pass.
-9. Guided `transmog-cli record`, console Ctrl+C instructions, memory-only
+9. `ee3b7f8`: guided `transmog-cli record`, console Ctrl+C instructions, memory-only
    ephemeral keys, a separately protected multi-root ownership ledger and
    recovery, explicit persistent reuse, persistent redaction preferences,
    force stop with cleanup, and streaming compressed native captures. Bounded,
    cancellable gzip imports keep body reads lazy. CLI, facade and host tests,
    browser checks, a real console capture, and native compressed-viewer checks
    pass. The support guide covers start, reproduce, stop, review and sharing.
+10. Optional current-user SAZ registration, owned-path uninstall and update
+    preservation. Standalone CLI release build/signing, four-part Windows
+    resources, required release asset/checksums/signature evidence, qualification
+    and provenance. CLI tests, compiled NSIS bundle/isolated registry fixtures,
+    script parsing and release-provenance/publication/lifecycle checks pass.
+    Actual signing remains part of the protected release workflow.
 
 ## Remaining isolated phases
 
@@ -52,8 +58,6 @@ checkout contains independent updater work and is preserved.
   empty-body 404 for misses, no proxy dependency, security warning with an
   Enable scripts choice. Use an isolated untrusted-content profile and prevent
   uncaptured egress and application IPC. Other platforms may be deferred.
-- Installer offers SAZ association. Release pipeline builds and signs a
-  separate `transmog-cli.exe` artifact without bundling it in the app installer.
 - Final full UX review and appropriate integrated release/interop checks.
 
 Every substantially complete isolated phase is committed after verification.

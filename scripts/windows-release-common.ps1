@@ -68,7 +68,7 @@ function Assert-ReleasePayload {
     if ($actualFiles.Count -ne $seen.Count) { throw 'The build payload contains unlisted files.' }
     ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
     Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
-    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
     }
@@ -86,5 +86,6 @@ function Assert-SignedRelease {
         if ((Get-FileHash -LiteralPath (Join-Path $ReleaseRoot $entry.Name) -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Release asset checksum mismatch: $($entry.Name)" }
     }
     if (@($manifest.Files | Where-Object { $_.Name -ceq $manifest.Installer }).Count -ne 1 -or $manifest.Installer -notmatch '^Transmog_.+-setup\.exe$') { throw 'Missing or ambiguous release installer.' }
+    if ($manifest.Cli -cne 'transmog-cli.exe' -or @($manifest.Files | Where-Object { $_.Name -ceq $manifest.Cli }).Count -ne 1) { throw 'Missing or ambiguous standalone CLI release asset.' }
     return $manifest
 }

@@ -5,6 +5,9 @@ if ($env:ACTIONS_ID_TOKEN_REQUEST_TOKEN) { throw 'Installer execution must not h
 $installer = Join-Path $ReleaseRoot $manifest.Installer
 $signatures = [System.Collections.Generic.List[object]]::new()
 $signatures.Add((Get-WindowsSignatureEvidence -FilePath $installer -ExpectedPublisher $manifest.Publisher))
+$cli = Join-Path $ReleaseRoot $manifest.Cli
+$signatures.Add((Get-WindowsSignatureEvidence -FilePath $cli -ExpectedPublisher $manifest.Publisher))
+if ((Get-Item -LiteralPath $cli).VersionInfo.FileVersion -cne $manifest.Version) { throw 'Standalone CLI resource version differs from the release.' }
 $installDirectory = Join-Path $env:RUNNER_TEMP "transmog-install-$env:GITHUB_RUN_ID"
 if (Test-Path -LiteralPath $installDirectory) { throw 'The installation test requires a fresh directory.' }
 function Invoke-MaintenanceProcess([string]$FilePath, [string[]]$Arguments) {
@@ -17,10 +20,16 @@ function Get-HostState {
     [ordered]@{
         ProxyEnable = $proxy.ProxyEnable; ProxyServer = $proxy.ProxyServer; ProxyOverride = $proxy.ProxyOverride; AutoConfigURL = $proxy.AutoConfigURL
         CurrentUserRoots = @(Get-ChildItem Cert:\CurrentUser\Root | ForEach-Object Thumbprint | Sort-Object)
+        SazDefault = (Get-Item -LiteralPath 'HKCU:\Software\Classes\.saz' -ErrorAction SilentlyContinue)?.GetValue('')
+        SazUserChoice = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.saz\UserChoice' -ErrorAction SilentlyContinue | Select-Object ProgId, Hash
     } | ConvertTo-Json -Depth 3 -Compress
 }
 $before = Get-HostState
-Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', "/D=$installDirectory")
+Invoke-MaintenanceProcess -FilePath $cli -Arguments @('--version')
+Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', '/SAZ=1', "/D=$installDirectory")
+if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe')) { throw 'The standalone CLI must not be bundled in the app installer.' }
+$sazCommand = (Get-Item -LiteralPath 'HKCU:\Software\Classes\Transmog.Saz\shell\open\command').GetValue('')
+if ($sazCommand -cne ('"' + (Join-Path $installDirectory 'transmog.exe') + '" "%1"')) { throw 'SAZ registration did not quote the executable and file path correctly.' }
 foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }

@@ -44,16 +44,20 @@ branding, so reviewed Beta assets can become Stable without another build/signin
 The build runs the full locked repository gate, browser workspace
 tests, and 30-minute WebView soak before credentials exist. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The
-signing job checks that catalog before restoring the three binaries and UI assets;
+signing job checks that catalog before restoring the app, two bundled helpers,
+standalone CLI and UI assets;
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
 
 Browser workspace checks run first so UI failures do not wait for Rust compilation.
 The repository-wide Clippy/tests then run before optimized compilation. That full gate
-replaces the packaging wrapper's narrower test pass. Tauri forwards the three
-shipped package selections to one Cargo release build, and sidecars are staged
+replaces the packaging wrapper's narrower test pass. Tauri forwards all four
+package selections to one Cargo release build, and sidecars are staged
 later during bundling. Clippy/development and release artifacts remain separate;
 this avoids redundant test/package passes without removing the quality checks.
+The CLI is signed and published separately, with version, checksum, signature
+and provenance checks. The installer qualification gate confirms it is excluded
+from the app install directory.
 
 The hosted WebView check isolates product data and temporarily sets loopback
 DevTools arguments for the desktop executable through machine policy. WebView2

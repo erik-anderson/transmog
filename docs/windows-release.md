@@ -5,6 +5,20 @@ current-user NSIS installer that uses the Evergreen WebView2 runtime already
 present on the supported Windows host. The app does not bundle a browser or
 WebView runtime, require administrator installation, or fetch runtime UI assets.
 
+Each release also builds, signs, timestamps and publishes `transmog-cli.exe` as
+a separate asset. It has the same four-part Windows version and is covered by
+release checksums, signature evidence and provenance. Qualification verifies its
+version command and confirms that the app installer contains no CLI executable.
+Local packaging returns both the installer and the standalone CLI paths.
+
+The interactive installer offers **Register Transmog to open .saz files**. This
+adds a current-user Open with/default-app registration and establishes a default
+only when none exists. Windows' existing default remains authoritative; users
+can select Transmog through Open with or default-app settings. Silent installs
+preserve the saved registration choice; `/SAZ=1` or `/SAZ=0` sets it explicitly.
+Updates preserve registration, and uninstall removes only registrations owned by
+that installation's exact command path.
+
 ## Manual GitHub release process
 
 The normal release path is **commit a version → manually build a signed draft →

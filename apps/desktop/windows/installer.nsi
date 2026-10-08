@@ -393,6 +393,8 @@ FunctionEnd
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
+!insertmacro TRANSMOG_SAZ_PAGE
+
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
 !if "${STARTMENUFOLDER}" != ""
@@ -480,6 +482,7 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
+  !insertmacro TRANSMOG_SAZ_INIT
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1

@@ -6,8 +6,10 @@ $evidenceRoot = Join-Path $fixture 'evidence'
 New-Item -ItemType Directory -Force $releaseRoot, $evidenceRoot | Out-Null
 $installerName = 'Transmog_0.1.0.0_x64-setup.exe'
 'fixture, never executable' | Set-Content -LiteralPath (Join-Path $releaseRoot $installerName)
+'standalone CLI fixture' | Set-Content -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')
+$cliHash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')).Hash
 $hash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $installerName)).Hash
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Files = @(@{ Name = $installerName; Sha256 = $hash }) } |
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Cli = 'transmog-cli.exe'; Files = @(@{ Name = $installerName; Sha256 = $hash }, @{ Name = 'transmog-cli.exe'; Sha256 = $cliHash }) } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
 [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; InstallerSha256 = $hash } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'installer-test.json')
@@ -75,7 +77,7 @@ try {
             $env:GITHUB_REF = "refs/heads/$($candidate.SourceBranch)"
             $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }
             & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot
-            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 5) { throw 'Wrong release track flags or asset count.' }
+            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 6) { throw 'Wrong release track flags or asset count.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }

@@ -121,6 +121,10 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+The installer offers SAZ registration as an explicit choice. Preserve an existing
+Windows default, explain how Windows may ask for a default-app choice, and remove
+only registrations owned by the uninstalling executable's exact path.
+
 Turning the proxy off restores the host proxy settings first. Show **Finishing
 requests** while admitted requests, TLS handshakes or upgraded connections
 finish; idle clients do not delay shutdown. Keep **Start proxy** available during
