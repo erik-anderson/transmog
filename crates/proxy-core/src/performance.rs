@@ -76,6 +76,31 @@ pub enum TransportOutcome {
     TlsFailed,
 }
 
+/// Request-relative view of one physical connection setup phase.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectionTiming {
+    /// dns, tcp, tls, or quic (QUIC transport and TLS together).
+    pub phase: String,
+    /// Original connection phase start relative to this request's header clock.
+    pub began_offset_micros: i64,
+    /// Original phase end on that same monotonic clock.
+    pub ended_offset_micros: i64,
+    /// Time this request actually overlapped the phase after upstream admission.
+    pub request_wait_micros: u64,
+}
+
+/// Adapter-owned monotonic setup measurements; never stored as a foreign clock.
+#[derive(Clone, Debug)]
+pub struct ConnectionSetupTime {
+    /// dns, tcp, tls, or quic.
+    pub phase: &'static str,
+    /// Physical phase start, shared across all uses of this connection.
+    pub began: Instant,
+    /// Physical phase completion.
+    pub ended: Instant,
+}
+
 /// Measurable facts from a physical connection, shared by HTTP/2 streams.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -95,11 +120,17 @@ pub struct TransportObservation {
     pub local: Option<String>,
     /// True when the same physical connection has served another exchange.
     pub shared: bool,
-    /// System DNS resolution duration, absent when no lookup occurred.
+    /// Physical phase timestamps projected onto this request, with its own wait.
+    #[serde(default)]
+    pub setup_timings: Vec<ConnectionTiming>,
+    /// Request-specific DNS wait with setup timings; legacy captures may hold
+    /// the physical duration. Absent when no lookup occurred.
     pub dns_micros: Option<u64>,
-    /// TCP connect race duration, separate from DNS and TLS.
+    /// Request-specific TCP race wait with setup timings; otherwise the physical
+    /// duration, separate from DNS and TLS.
     pub tcp_micros: Option<u64>,
-    /// TLS handshake duration, absent for plaintext or unavailable adapters.
+    /// Request-specific TLS/QUIC wait with setup timings; otherwise physical
+    /// duration. Absent for plaintext or unavailable adapters.
     pub tls_micros: Option<u64>,
     /// Negotiated TLS protocol, without any key material.
     pub tls_version: Option<String>,
@@ -186,6 +217,17 @@ impl PerformanceEvidence {
             && self.transports.iter().all(|transport| {
                 matches!(transport.leg.as_str(), "client" | "upstream")
                     && transport.connection_id.len() <= 128
+                    && transport.setup_timings.len() <= 4
+                    && transport.setup_timings.iter().all(|timing| {
+                        matches!(timing.phase.as_str(), "dns" | "tcp" | "tls" | "quic")
+                            && timing
+                                .ended_offset_micros
+                                .checked_sub(timing.began_offset_micros)
+                                .is_some_and(|elapsed| {
+                                    elapsed >= 0
+                                        && timing.request_wait_micros <= elapsed.cast_unsigned()
+                                })
+                    })
                     && [
                         &transport.peer,
                         &transport.local,
@@ -314,6 +356,52 @@ impl PerformanceRecorder {
             evidence.points.push(point);
         }
     }
+    /// Projects a physical monotonic instant onto this request's zero timestamp.
+    pub fn offset_micros(&self, instant: Instant) -> i64 {
+        if instant < self.inner.start {
+            -i64::try_from(self.inner.start.duration_since(instant).as_micros()).unwrap_or(i64::MAX)
+        } else {
+            i64::try_from(instant.duration_since(self.inner.start).as_micros()).unwrap_or(i64::MAX)
+        }
+    }
+    /// Keeps original setup ages while charging only this request's overlap.
+    pub fn project_connection_setup(
+        &self,
+        observation: &mut TransportObservation,
+        timings: &[ConnectionSetupTime],
+    ) {
+        let admitted = self
+            .lock()
+            .points
+            .iter()
+            .find(|point| point.milestone == Milestone::UpstreamBegin)
+            .map_or(0, |point| point.offset_micros);
+        observation.setup_timings = timings
+            .iter()
+            .take(4)
+            .map(|timing| {
+                let began = self.offset_micros(timing.began);
+                let ended = self.offset_micros(timing.ended);
+                let wait = ended
+                    .saturating_sub(began.max(admitted).max(0))
+                    .max(0)
+                    .cast_unsigned();
+                match timing.phase {
+                    "dns" => observation.dns_micros = Some(wait),
+                    "tcp" => observation.tcp_micros = Some(wait),
+                    "tls" | "quic" => observation.tls_micros = Some(wait),
+                    _ => {}
+                }
+                ConnectionTiming {
+                    phase: timing.phase.into(),
+                    began_offset_micros: began,
+                    ended_offset_micros: ended,
+                    request_wait_micros: wait,
+                }
+            })
+            .collect();
+    }
+
     /// Updates the snapshot of a physical connection rather than charging its
     /// setup or byte counters to each stream independently.
     pub fn transport(&self, mut observation: TransportObservation) {
@@ -386,6 +474,76 @@ mod tests {
         assert!(snapshot.valid());
         assert!(recorder.finished());
     }
+    #[test]
+    fn shared_setup_preserves_its_age_and_charges_only_the_request_wait() {
+        let zero = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(1))
+            .unwrap();
+        let recorder = PerformanceRecorder::new(SystemTime::now(), zero);
+        recorder.mark_at(
+            Milestone::UpstreamBegin,
+            zero + std::time::Duration::from_millis(1),
+        );
+        let before = |micros| {
+            zero.checked_sub(std::time::Duration::from_micros(micros))
+                .unwrap()
+        };
+        let after = |micros| zero + std::time::Duration::from_micros(micros);
+        let mut observation = TransportObservation {
+            leg: "upstream".into(),
+            connection_id: "pending-shared-h2".into(),
+            shared: true,
+            ..TransportObservation::default()
+        };
+        recorder.project_connection_setup(
+            &mut observation,
+            &[
+                ConnectionSetupTime {
+                    phase: "dns",
+                    began: before(30_000),
+                    ended: before(20_000),
+                },
+                ConnectionSetupTime {
+                    phase: "tcp",
+                    began: before(20_000),
+                    ended: before(10_000),
+                },
+                ConnectionSetupTime {
+                    phase: "tls",
+                    began: before(10_000),
+                    ended: after(5_000),
+                },
+            ],
+        );
+        assert_eq!(observation.dns_micros, Some(0));
+        assert_eq!(observation.tcp_micros, Some(0));
+        assert_eq!(observation.tls_micros, Some(4_000));
+        assert_eq!(observation.setup_timings[2].began_offset_micros, -10_000);
+        assert_eq!(observation.setup_timings[2].ended_offset_micros, 5_000);
+        assert_eq!(observation.setup_timings[2].request_wait_micros, 4_000);
+        recorder.transport(observation);
+        let snapshot = recorder.snapshot();
+        assert!(snapshot.valid());
+        assert_eq!(
+            serde_json::from_slice::<PerformanceEvidence>(&serde_json::to_vec(&snapshot).unwrap())
+                .unwrap(),
+            snapshot
+        );
+        let reused = PerformanceRecorder::new(SystemTime::now(), after(30_000));
+        let mut connection = TransportObservation::default();
+        reused.project_connection_setup(
+            &mut connection,
+            &[ConnectionSetupTime {
+                phase: "quic",
+                began: before(10_000),
+                ended: after(5_000),
+            }],
+        );
+        assert_eq!(connection.tls_micros, Some(0));
+        assert_eq!(connection.setup_timings[0].began_offset_micros, -40_000);
+        assert_eq!(connection.setup_timings[0].ended_offset_micros, -25_000);
+    }
+
     #[test]
     fn delayed_samples_cannot_erase_terminal_points_or_newer_shared_counters() {
         let mut latest = PerformanceEvidence {

@@ -53,7 +53,7 @@ impl Service<Name> for HappyEyeballsResolver {
         let limit = self.happy_eyeballs.max_candidates();
         Box::pin(async move {
             let result = resolution.await;
-            crate::metrics::dns_finished(started.elapsed(), result.is_ok());
+            crate::metrics::dns_finished(started, result.is_ok());
             let addresses = result?;
             Ok(interleave_candidates(addresses, limit).into_iter())
         })

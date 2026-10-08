@@ -100,7 +100,7 @@
         <dl class="timing-facts"><for each="phase in timingPhases"><div key="{{phase.id}}"><dt>{{phase.label}}</dt><dd>{{phase.value}}<small>{{phase.note}}</small></dd></div></for></dl>
         <if condition="timingRows.length"><h3>Proxy timeline</h3><div class="timing-table-scroll"><table><thead><tr><th scope="col">Observation</th><th scope="col">UTC time</th><th scope="col">From headers</th></tr></thead><tbody><for each="point in timingRows"><tr key="{{point.id}}"><th scope="row">{{point.label}}</th><td>{{point.time}}</td><td>{{point.offset}}</td></tr></for></tbody></table></div></if>
         </if>
-        <h3>Physical connections</h3><p class="field-help">Setup durations and counters belong to the whole connection, including other HTTP streams. TCP counts socket payload, including TLS, without IP/TCP headers or kernel retransmissions. TCP round trip and packet loss are unavailable in this adapter.</p>
+        <h3>Physical connections</h3><p class="field-help">Setup waits belong to this request; notes preserve the original connection phases. Socket counters include every HTTP stream on the connection. TCP counts socket payload, including TLS, without IP/TCP headers or kernel retransmissions. TCP round trip and packet loss are unavailable in this adapter.</p>
         <if condition="!timingTransports.length"><p>No physical connection measurements were saved.</p></if>
         <for each="transport in timingTransports"><details key="{{transport.id}}"><summary>{{transport.title}}</summary><p class="field-help full-value">{{transport.summary}}</p><dl class="timing-facts"><for each="field in transport.fields"><div key="{{field.id}}"><dt>{{field.label}}</dt><dd>{{field.value}}<small>{{field.note}}</small></dd></div></for></dl></details></for>
 

@@ -28,8 +28,8 @@ use transmog_tls::UpstreamTlsContextFactory;
 use crate::{H3ConfigError, H3TransportLimits, build_quiche_config};
 
 use transmog_core::performance::{
-    Milestone, PerformanceRecorder, ProtocolObservation, QuicObservation, TransportObservation,
-    TransportOutcome,
+    ConnectionSetupTime, Milestone, PerformanceRecorder, ProtocolObservation, QuicObservation,
+    TransportObservation, TransportOutcome,
 };
 
 const MAX_DATAGRAM_SIZE: usize = 1_350;
@@ -365,6 +365,7 @@ struct H3ConnectionDriver {
     connection: quiche::Connection,
     h3_config: quiche::h3::Config,
     transport: TransportObservation,
+    setup_timings: Vec<ConnectionSetupTime>,
     uses: u64,
 }
 
@@ -378,7 +379,9 @@ impl H3ConnectionDriver {
     ) -> Result<Self, H3OriginError> {
         let dns_begin = Instant::now();
         let candidates = resolve_candidates(&host, peer_port, happy_eyeballs).await?;
-        let dns_micros = u64::try_from(dns_begin.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let dns_done = Instant::now();
+        let dns_micros =
+            u64::try_from(dns_done.duration_since(dns_begin).as_micros()).unwrap_or(u64::MAX);
         if candidates.is_empty() {
             return Err(H3OriginError::DnsNoAddresses(host));
         }
@@ -388,7 +391,17 @@ impl H3ConnectionDriver {
         .await
         {
             Ok((mut driver, _)) => {
-                driver.transport.dns_micros = Some(dns_micros);
+                if host.parse::<std::net::IpAddr>().is_err() {
+                    driver.transport.dns_micros = Some(dns_micros);
+                    driver.setup_timings.insert(
+                        0,
+                        ConnectionSetupTime {
+                            phase: "dns",
+                            began: dns_begin,
+                            ended: dns_done,
+                        },
+                    );
+                }
                 Ok(driver)
             }
             Err(HappyEyeballsError::NoCandidates) => Err(H3OriginError::DnsNoAddresses(host)),
@@ -444,6 +457,7 @@ impl H3ConnectionDriver {
                     tls_version: Some("TLSv1.3".into()),
                     ..TransportObservation::default()
                 },
+                setup_timings: Vec::new(),
                 uses: 0,
             }
             .establish(setup_begin),
@@ -457,6 +471,11 @@ impl H3ConnectionDriver {
         flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         loop {
             if self.connection.is_established() {
+                self.setup_timings.push(ConnectionSetupTime {
+                    phase: "quic",
+                    began: setup_begin,
+                    ended: Instant::now(),
+                });
                 self.transport.tls_micros =
                     Some(u64::try_from(setup_begin.elapsed().as_micros()).unwrap_or(u64::MAX));
                 return Ok(self);
@@ -539,6 +558,7 @@ impl H3ConnectionDriver {
                     pending,
                     active,
                     &self.transport,
+                    &self.setup_timings,
                     &mut self.uses,
                 )?;
                 progress_active_requests(http3, &mut self.connection, active);
@@ -613,6 +633,7 @@ fn dispatch_pending(
     pending: &mut VecDeque<DriverCommand>,
     active: &mut HashMap<u64, ActiveRequest>,
     physical: &TransportObservation,
+    setup_timings: &[ConnectionSetupTime],
     uses: &mut u64,
 ) -> Result<(), H3OriginError> {
     while let Some(command) = pending.pop_front() {
@@ -638,6 +659,7 @@ fn dispatch_pending(
                 version: "HTTP/3".into(),
                 reason: None,
             });
+            performance.project_connection_setup(&mut transport, setup_timings);
             performance.transport(quic_observation(connection, &transport));
             if finished {
                 performance.mark(Milestone::UpstreamRequestConsumed);
@@ -1929,6 +1951,21 @@ mod tests {
             assert!(sample.valid());
             let connection = &sample.transports[0];
             assert!(connection.tls_micros.is_some());
+            assert!(
+                connection
+                    .setup_timings
+                    .iter()
+                    .any(|timing| timing.phase == "quic")
+            );
+            for timing in &connection.setup_timings {
+                assert!(
+                    timing.request_wait_micros
+                        <= timing
+                            .ended_offset_micros
+                            .saturating_sub(timing.began_offset_micros)
+                            .cast_unsigned()
+                );
+            }
             let quic = connection.quic.as_ref().unwrap();
             assert!(quic.packets_sent > 0);
             assert!(quic.packets_received > 0);

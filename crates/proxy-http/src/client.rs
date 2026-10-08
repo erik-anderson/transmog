@@ -39,8 +39,10 @@ struct ResponseObservation {
 }
 impl Drop for ResponseObservation {
     fn drop(&mut self) {
-        self.performance
-            .transport(self.connection.snapshot(self.shared));
+        self.performance.transport(
+            self.connection
+                .snapshot(self.shared, Some(&self.performance)),
+        );
     }
 }
 
@@ -112,7 +114,7 @@ impl HyperOriginClient {
                         let shared = connection.claim();
                         assigned = Some((connection.clone(), shared));
                         if let Some(performance) = &self.performance {
-                            performance.transport(connection.snapshot(shared));
+                            performance.transport(connection.snapshot(shared,Some(performance)));
                             performance.mark(Milestone::UpstreamConnected);
                             performance.protocol(ProtocolObservation {boundary: "upstream-request".into(), version: if connected.is_negotiated_h2() || mode == HyperEgressMode::Http2Only {"HTTP/2"} else {"HTTP/1.1"}.into(), reason: None});
                         }
@@ -127,7 +129,7 @@ impl HyperOriginClient {
         };
         if let Err(error) = &result
             && let Some(performance) = &self.performance
-            && let Some(observation) = crate::metrics::failed_observation(error)
+            && let Some(observation) = crate::metrics::failed_observation(error, performance)
         {
             performance.transport(observation);
         }
@@ -156,7 +158,7 @@ impl HyperOriginClient {
                     .into(),
                     reason: None,
                 });
-                performance.transport(connection.snapshot(shared));
+                performance.transport(connection.snapshot(shared, Some(performance)));
             }
             performance.mark(Milestone::ResponseHeaders);
             performance.protocol(ProtocolObservation {
@@ -811,6 +813,13 @@ mod tests {
         );
         assert!(!samples[0].transports[0].shared);
         assert!(samples[1].transports[0].shared);
+        assert_eq!(samples[1].transports[0].tcp_micros, Some(0));
+        assert!(
+            samples[1].transports[0]
+                .setup_timings
+                .iter()
+                .all(|timing| timing.ended_offset_micros < 0 && timing.request_wait_micros == 0)
+        );
         assert!(samples[1].transports[0].bytes_read > samples[0].transports[0].bytes_read);
         origin.await.unwrap();
     }

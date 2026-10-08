@@ -156,14 +156,25 @@ qualified baseline, not completion of the complete plan.
     full runtime protocol/content tests pass; clippy and browser/native checks
     pass. Reviewed populated wide and compact retention settings.
 
+18. Shared setup timing: DNS/TCP/TLS and QUIC phases carry original monotonic
+    start/end offsets on each request's clock plus its actual upstream wait.
+    Completed phases reused by a later exchange report zero; a request joining
+    setup in progress reports only the overlap after admission, alongside the
+    full phase duration and setup age. HTTP pool and H3 projections preserve
+    physical identities and counters. Native serialization keeps these fields;
+    legacy measurements remain explicitly unavailable for age/wait calculations.
+    Core/HTTP/H3/runtime suites, protocol/content matrix, clippy, browser and
+    saved-viewer WebView2 checks pass. Reviewed expanded connection facts at wide
+    and compact sizes. A separate curl follow-up respects the Windows native
+    command line length even when invoked through Bash.
+
 Remaining isolated phases:
 
 - Composer replay: file-backed replay of larger bodies, with source trace and
   entry associations retained in history and results.
 
-- Performance: shared H2/H3 setup normalized to each request, setup age and
-  request wait; waterfall and copied report; separately measured proxy work,
-  transport/delivery evidence and compressed entity-body wire sizes.
+- Performance: waterfall and copied report; separately measured proxy work,
+  first-byte/delivery/backpressure evidence and TCP transport statistics.
 - Search: request/response scopes, match locations and highlighted occurrence
   navigation, normalized-character mapping, cancellation preserving selections.
 - Captured-page preview: selectable source scope, resource/version decisions,

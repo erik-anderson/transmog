@@ -51,7 +51,8 @@ use transmog_core::{
         ObserverStats,
     },
     performance::{
-        Milestone, PerformanceRecorder, ProtocolObservation, TransportObservation, TransportOutcome,
+        ConnectionSetupTime, Milestone, PerformanceRecorder, ProtocolObservation,
+        TransportObservation, TransportOutcome,
     },
     prepare_headers,
     route::{
@@ -3398,7 +3399,7 @@ impl ClientPerformanceSource {
             return;
         }
         let tls = self.context.tls.as_deref();
-        recorder.transport(TransportObservation {
+        let mut observation = TransportObservation {
             leg: "client".into(),
             connection_id: format!("client-{:032x}", self.context.connection_id.0),
             outcome: TransportOutcome::Connected,
@@ -3416,7 +3417,18 @@ impl ClientPerformanceSource {
             bytes_read: Some(read),
             bytes_written: Some(written),
             ..TransportObservation::default()
-        });
+        };
+        if let Some(tls) = tls {
+            recorder.project_connection_setup(
+                &mut observation,
+                &[ConnectionSetupTime {
+                    phase: "tls",
+                    began: tls.began,
+                    ended: tls.done,
+                }],
+            );
+        }
+        recorder.transport(observation);
     }
 }
 

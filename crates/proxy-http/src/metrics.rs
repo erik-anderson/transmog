@@ -23,7 +23,9 @@ use tokio::{
     net::TcpStream,
 };
 use tower_service::Service;
-use transmog_core::performance::{TransportObservation, TransportOutcome};
+use transmog_core::performance::{
+    ConnectionSetupTime, PerformanceRecorder, TransportObservation, TransportOutcome,
+};
 use transmog_network::{
     HappyEyeballsConfig,
     metrics::{ConnectionMetrics, MeteredIo},
@@ -45,6 +47,11 @@ struct ConnectionSetup {
 struct SetupValues {
     facts: TransportObservation,
     tls_begin: Option<Instant>,
+    dns_begin: Option<Instant>,
+    dns_done: Option<Instant>,
+    tcp_begin: Option<Instant>,
+    tcp_done: Option<Instant>,
+    tls_done: Option<Instant>,
     dns_failed: bool,
 }
 impl ConnectionSetup {
@@ -67,8 +74,30 @@ impl ConnectionSetup {
 #[derive(Clone, Debug)]
 pub(crate) struct ConnectionObservation(Arc<ConnectionSetup>);
 impl ConnectionObservation {
-    pub(crate) fn snapshot(&self, shared: bool) -> TransportObservation {
-        let mut facts = self.0.values().facts.clone();
+    pub(crate) fn snapshot(
+        &self,
+        shared: bool,
+        performance: Option<&PerformanceRecorder>,
+    ) -> TransportObservation {
+        let values = self.0.values();
+        let mut facts = values.facts.clone();
+        if let Some(performance) = performance {
+            let phases = [
+                ("dns", values.dns_begin, values.dns_done),
+                ("tcp", values.tcp_begin, values.tcp_done),
+                ("tls", values.tls_begin, values.tls_done),
+            ]
+            .into_iter()
+            .filter_map(|(phase, begin, end)| {
+                Some(ConnectionSetupTime {
+                    phase,
+                    began: begin?,
+                    ended: end?,
+                })
+            })
+            .collect::<Vec<_>>();
+            performance.project_connection_setup(&mut facts, &phases);
+        }
         facts.leg = "upstream".into();
         facts.connection_id = format!("upstream-{}", self.0.id);
         facts.shared = shared;
@@ -98,20 +127,24 @@ impl Error for ConnectionFailure {
 }
 pub(crate) fn failed_observation(
     mut error: &(dyn Error + 'static),
+    performance: &PerformanceRecorder,
 ) -> Option<TransportObservation> {
     for _ in 0..16 {
         if let Some(failure) = error.downcast_ref::<ConnectionFailure>() {
-            return Some(failure.observation.snapshot(false));
+            return Some(failure.observation.snapshot(false, Some(performance)));
         }
         error = error.source()?;
     }
     None
 }
 
-pub(crate) fn dns_finished(duration: std::time::Duration, succeeded: bool) {
+pub(crate) fn dns_finished(started: Instant, succeeded: bool) {
     let _ = SETUP.try_with(|setup| {
         let mut values = setup.values();
-        values.facts.dns_micros = Some(micros(duration));
+        let done = Instant::now();
+        values.dns_begin = Some(started);
+        values.dns_done = Some(done);
+        values.facts.dns_micros = Some(micros(done.duration_since(started)));
         values.dns_failed = !succeeded;
     });
 }
@@ -138,6 +171,8 @@ impl Service<Uri> for MeasuredTcpConnector {
             {
                 let mut values = setup.values();
                 if !values.dns_failed {
+                    values.tcp_begin = Some(values.dns_done.unwrap_or(started));
+                    values.tcp_done = Some(Instant::now());
                     values.facts.tcp_micros =
                         Some(overall.saturating_sub(values.facts.dns_micros.unwrap_or(0)));
                 }
@@ -223,6 +258,7 @@ impl Service<Uri> for MeasuredHttpsConnector {
                 Err(source) => {
                     {
                         let mut values = setup.values();
+                        values.tls_done = values.tls_begin.map(|_| Instant::now());
                         values.facts.tls_micros =
                             values.tls_begin.map(|begin| micros(begin.elapsed()));
                         values.facts.outcome = if values.tls_begin.is_some() {
@@ -242,6 +278,7 @@ impl Service<Uri> for MeasuredHttpsConnector {
             setup.values().facts.outcome = TransportOutcome::Connected;
             if let MaybeHttpsStream::Https(tls) = &stream {
                 let mut values = setup.values();
+                values.tls_done = values.tls_begin.map(|_| Instant::now());
                 values.facts.tls_micros = values.tls_begin.map(|begin| micros(begin.elapsed()));
                 values.facts.tls_version = Some(tls.ssl().version_str().into());
                 values.facts.tls_resumed = Some(tls.ssl().session_reused());

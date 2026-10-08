@@ -135,6 +135,14 @@ a command referencing the selected path. Missing bytes and redacted values have
 explicit placeholders. Copy all headers uses complete backend heads and puts
 exactly two blank lines between the request and response blocks.
 
+**Timings** shows request-relative measurements, original saved timers and shared
+physical connection facts. DNS/TCP/TLS and QUIC setup costs use only the request's
+actual overlap after upstream admission. Completed reused phases show zero;
+setup still in progress shows the request's wait alongside the full original
+phase duration. Connection start and finish offsets explain how long before or
+after this request's zero timestamp setup occurred. Older captures lacking
+these timestamps show connection measurements without inventing a wait or age.
+
 **Edit and replay** loads complete original request bytes as hex, preserving
 Content-Encoding. It preserves an edited draft until the user chooses to replace
 it. Missing bodies require a replacement or an explicit empty-body choice before
