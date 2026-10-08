@@ -13,6 +13,8 @@ sources of truth.
   application, and build libraries and explains where they are contained.
 - [Product shell](product-shell.md) describes the Windows desktop behavior and
   its relationship to the reusable application facade.
+- [UX design principles](ux-principles.md) guides interaction, density,
+  alignment, accessibility, and review of user-visible changes.
 - [Current limitations](limitations.md) states what the implementation does
   not support.
 - [Roadmap](roadmap.md) contains only planned or deliberately deferred work.
