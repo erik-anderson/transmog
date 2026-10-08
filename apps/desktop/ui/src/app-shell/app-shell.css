@@ -107,10 +107,14 @@
 
 .app-body { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); min-height: 0; overflow: hidden; }
 .rail { display: flex; min-height: 0; flex-direction: column; gap: .18rem; padding: .55rem .45rem; border-right: 1px solid var(--line); background: var(--panel-subtle); }
-.rail a { display: flex; align-items: center; gap: .6rem; min-height: 2.35rem; padding: .4rem .55rem; border-radius: .36rem; color: var(--muted); font-size: .8rem; font-weight: 600; text-decoration: none; }
-.rail a:hover { color: var(--text); background: var(--row-hover); }
+.rail a, .rail-toggle, .rail-reset { position: relative; display: flex; align-items: center; gap: .6rem; min-height: 2.35rem; padding: .4rem .55rem; border: 0; border-radius: .36rem; color: var(--muted); background: transparent; font-size: .8rem; font-weight: 600; text-align: left; text-decoration: none; }
+.rail a:hover, .rail-toggle:hover, .rail-reset:hover { color: var(--text); background: var(--row-hover); }
 .rail a[data-active] { color: var(--accent-strong); background: var(--accent-soft); }
-.nav-icon { display: grid; place-items: center; width: 1.25rem; flex: 0 0 1.25rem; font-family: "Cascadia Mono", Consolas, monospace; font-size: .95rem; }
+.rail a[data-active]::before { content: ""; position: absolute; inset-inline-start: 0; top: .65rem; bottom: .65rem; width: .18rem; border-radius: .1rem; background: currentColor; }
+/* One optical grid and stroke treatment for every navigation and utility symbol. */
+.nav-icon { display: block; width: 1.25rem; height: 1.25rem; flex: 0 0 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.rail-toggle-chevron { transform-origin: 14.5px 12px; }
+.rail-toggle[aria-expanded="false"] .rail-toggle-chevron { transform: rotate(180deg); }
 .nav-spacer { flex: 1; }
 
 main { min-width: 0; min-height: 0; overflow: hidden; background: var(--panel); }
@@ -312,8 +316,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .listener-value { max-width: 10rem; }
   .app-body { grid-template-columns: 3.6rem minmax(0, 1fr); }
   .rail { align-items: stretch; }
-  .rail a { justify-content: center; padding-inline: .35rem; }
-  .nav-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .rail a, .rail-toggle, .rail-reset { justify-content: center; padding-inline: .25rem; }
+  .nav-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .view-title span { display: none; }
   .filters { grid-template-columns: 5rem minmax(7rem, 1fr) auto; }
   .exchange-inspector { grid-template-columns: 1fr 1fr; }
@@ -341,6 +345,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 @media (forced-colors: active) {
   .topbar, .rail, .session-list-pane, .details-pane, .message-pane, .settings-card, .app-footer { border-color: CanvasText; }
   .status-dot, .brand-mark { forced-color-adjust: none; }
+  .rail a[data-active] { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .rail a:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -358,9 +364,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .app-body { grid-row:3; grid-template-columns:9.5rem minmax(0,1fr); }
 .app-footer { grid-row:4; min-height:1.6rem; }
 .app-body[data-collapsed] { grid-template-columns:3.4rem minmax(0,1fr); }
-.app-body[data-collapsed] .nav-label { display:none; }
-.app-body[data-collapsed] .rail a { justify-content:center; padding-inline:.25rem; }
-.rail-toggle, .rail-reset { min-height:1.9rem; padding:.3rem .5rem; border:0; color:var(--muted); background:transparent; font-size:.75rem; text-align:left; }
-.rail-toggle:hover, .rail-reset:hover { background:var(--row-hover); }
+.app-body[data-collapsed] .nav-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.app-body[data-collapsed] .rail a, .app-body[data-collapsed] .rail-toggle, .app-body[data-collapsed] .rail-reset { justify-content:center; padding-inline:.25rem; }
 .listener-copy { min-height:0; max-width:16rem; padding:0; overflow:hidden; border:0; color:var(--muted); background:transparent; font: .75rem "Cascadia Mono",Consolas,monospace; white-space:nowrap; text-overflow:ellipsis; }
 @media (max-width:52rem) { .topbar { grid-template-columns:auto minmax(0,1fr) auto; } .top-spacer { display:none; } .app-body { grid-template-columns:3.4rem minmax(0,1fr); } }

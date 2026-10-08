@@ -27,15 +27,38 @@
 
     <div class="app-body" ?data-collapsed="{{workspace.sidebarCollapsed}}">
       <nav class="rail" aria-label="Primary">
-        <button type="button" class="rail-toggle" title="Toggle navigation labels" aria-label="Toggle navigation labels" aria-expanded="{{navigationExpanded}}" @click="{toggleNavigation()}">☰</button>
-        <a href="#traffic" title="Traffic" data-view="traffic" ?data-active="{{activeView == 'traffic'}}" aria-current="{{currentNavigation.traffic}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">↕</span><span class="nav-label">Traffic</span></a>
-        <a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">Ⅱ</span><span class="nav-label">Breakpoints</span></a>
-        <a href="#automation" title="Automation" data-view="automation" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⌁</span><span class="nav-label">Automation</span></a>
-        <a href="#composer" title="Composer" data-view="composer" ?data-active="{{activeView == 'composer'}}" aria-current="{{currentNavigation.composer}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">›_</span><span class="nav-label">Composer</span></a>
-        <a href="#captures" title="Captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">▣</span><span class="nav-label">Captures</span></a>
+        <button type="button" class="rail-toggle" title="Toggle navigation labels" aria-label="Toggle navigation labels" aria-expanded="{{navigationExpanded}}" @click="{toggleNavigation()}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path class="rail-toggle-chevron" d="m16 9-3 3 3 3"></path></svg>
+        </button>
+        <a href="#traffic" title="Traffic" data-view="traffic" ?data-active="{{activeView == 'traffic'}}" aria-current="{{currentNavigation.traffic}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7h17m-4-4 4 4-4 4M21 17H4m4-4-4 4 4 4"></path></svg>
+          <span class="nav-label">Traffic</span>
+        </a>
+        <a href="#breakpoints" title="Breakpoints" data-view="breakpoints" ?data-active="{{activeView == 'breakpoints'}}" aria-current="{{currentNavigation.breakpoints}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8Z M9.5 8.5v7m5-7v7"></path></svg>
+          <span class="nav-label">Breakpoints</span>
+        </a>
+        <a href="#automation" title="Automation" data-view="automation" ?data-active="{{activeView == 'automation'}}" aria-current="{{currentNavigation.automation}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="9" width="6" height="6" rx="1.5"></rect><rect x="15" y="3" width="6" height="6" rx="1.5"></rect><rect x="15" y="15" width="6" height="6" rx="1.5"></rect><path d="M9 12h3m3-6h-1a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1"></path></svg>
+          <span class="nav-label">Automation</span>
+        </a>
+        <a href="#composer" title="Composer" data-view="composer" ?data-active="{{activeView == 'composer'}}" aria-current="{{currentNavigation.composer}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-6M16 7l3 3M9 14l-1 4 4-1 8-8a2.12 2.12 0 0 0-3-3Z"></path></svg>
+          <span class="nav-label">Composer</span>
+        </a>
+        <a href="#captures" title="Captures" data-view="captures" ?data-active="{{activeView == 'captures'}}" aria-current="{{currentNavigation.captures}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="5" rx="1.5"></rect><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8m-10 5h6"></path></svg>
+          <span class="nav-label">Captures</span>
+        </a>
         <span class="nav-spacer"></span>
-        <button type="button" class="rail-reset" aria-label="Restore default layout and columns" title="Restore default layout and columns" @click="{resetWorkspace()}">↺ <span class="nav-label">Reset layout</span></button>
-        <a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}"><span class="nav-icon" aria-hidden="true">⚙</span><span class="nav-label">Settings</span></a>
+        <button type="button" class="rail-reset" aria-label="Restore default layout and columns" title="Restore default layout and columns" @click="{resetWorkspace()}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 4v5h5M3.5 9a9 9 0 1 1 0 6"></path></svg>
+          <span class="nav-label">Reset layout</span>
+        </button>
+        <a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.5 3h3l.5 2 1.5.6 1.8-1 2.1 2.1-1 1.8.6 1.5 2 .5v3l-2 .5-.6 1.5 1 1.8-2.1 2.1-1.8-1-1.5.6-.5 2h-3l-.5-2-1.5-.6-1.8 1-2.1-2.1 1-1.8-.6-1.5-2-.5v-3l2-.5.6-1.5-1-1.8 2.1-2.1 1.8 1 1.5-.6Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          <span class="nav-label">Settings</span>
+        </a>
       </nav>
 
       <main>
