@@ -635,5 +635,17 @@
   "capturePathText": "",
   "captureDetails": "",
   "captureFacts": [],
-  "canExportInspected": false
+  "canExportInspected": false,
+  "settingsSection": "preferences",
+  "settingsDirty": false,
+  "settingsBusy": false,
+  "settingsText": "",
+  "settingsError": "",
+  "certificateReady": false,
+  "certificateRecovery": false,
+  "hostRecoveryPending": false,
+  "supportBusy": false,
+  "supportPathsAllowed": false,
+  "supportDetails": "",
+  "supportFacts": []
 }

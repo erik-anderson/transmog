@@ -48,8 +48,7 @@ as the application facade initializes. Command dispatch, proxy lifecycle,
 Windows host integration, certificate create/trust/remove outcomes,
 live-session subscription, and bounded frontend exceptions are recorded
 there. A prior `diagnostics.jsonl` rotates to
-`diagnostics.jsonl.1`; neither file contains captured traffic. The Settings and
-support view displays the exact active path so support reports do not depend on
+`diagnostics.jsonl.1`; neither file contains captured traffic. Settings → Support → Technical details displays the exact active path so support reports do not depend on
 knowing the Tauri package identifier.
 
 The diagnostics report includes the Transmog version, selected dependency
@@ -66,8 +65,8 @@ destination.
 ## Recovery and support procedure
 
 1. Stop the proxy normally; state/log failures cannot block this step.
-2. Use **Settings and support → Refresh redacted diagnostics** to inspect the
-   copyable report.
+2. Use **Settings → Support → Refresh diagnostics** to inspect the
+   readable summary and copyable technical report.
 3. Choose a new destination and create a support bundle. Leave path inclusion
    disabled unless the paths themselves are needed to diagnose a problem.
 4. If preferences are corrupt, restart Transmog. It automatically quarantines
