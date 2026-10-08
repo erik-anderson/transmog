@@ -932,6 +932,8 @@ impl Application {
 
     /// Attaches the exclusive same-build breakpoint controller.
     ///
+    /// Must be called within a Tokio runtime. The proxy may be stopped.
+    ///
     /// # Errors
     /// Returns a configuration, exclusivity, negotiation, or runtime failure.
     pub fn enable_breakpoints(

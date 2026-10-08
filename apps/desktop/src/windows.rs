@@ -780,7 +780,8 @@ fn watch_sessions(
 }
 
 #[tauri::command]
-fn enable_breakpoints(
+#[allow(clippy::unused_async)] // Tauri must enter its Tokio runtime before spawning the worker.
+async fn enable_breakpoints(
     settings: BreakpointSettings,
     state: State<'_, DesktopState>,
 ) -> Result<BreakpointStatus, AppError> {

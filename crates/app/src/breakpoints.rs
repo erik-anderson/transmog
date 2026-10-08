@@ -152,6 +152,13 @@ impl BreakpointManager {
                 ));
             }
         }
+        let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "interactive breakpoint controller requires an async runtime",
+                false,
+            )
+        })?;
         let control_phases = settings
             .phases
             .iter()
@@ -184,7 +191,7 @@ impl BreakpointManager {
             )
             .map_err(|error| AppError::new(ErrorCategory::Conflict, error.to_string(), false))?;
         let state = Arc::clone(&self.state);
-        let worker = tokio::spawn(async move {
+        let worker = runtime.spawn(async move {
             let mut controller = controller;
             while let Some(message) = controller.recv().await {
                 if let ControllerMessage::Decision(decision) = message {
@@ -441,6 +448,34 @@ mod tests {
         assert!(validate_settings(&settings).is_ok());
         settings.max_pending = MAX_PENDING_DECISIONS + 1;
         assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn enabling_without_a_runtime_returns_an_error_and_can_be_retried() {
+        let application = crate::Application::new(crate::AppConfig::default()).unwrap();
+        assert_eq!(application.status().lifecycle, crate::AppLifecycle::Stopped);
+        let error = application
+            .enable_breakpoints(&BreakpointSettings::default())
+            .unwrap_err();
+        assert_eq!(error.category, ErrorCategory::Unavailable);
+        assert!(!application.paused_exchanges().enabled);
+        assert!(application.paused_exchanges().paused.is_empty());
+        assert!(application.breakpoints.lock().worker.is_none());
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert!(
+                application
+                    .enable_breakpoints(&BreakpointSettings::default())
+                    .unwrap()
+                    .enabled
+            );
+            application.shutdown().await.unwrap();
+            assert!(!application.paused_exchanges().enabled);
+        });
     }
 
     #[tokio::test]

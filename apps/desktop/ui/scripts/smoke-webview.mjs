@@ -42,6 +42,13 @@ const pending = new Map();
 const eventWaiters = new Map();
 const browserErrors = [];
 
+socket.addEventListener('close', () => {
+  for (const request of pending.values()) {
+    request.reject(new Error(`WebView2 connection closed during ${request.method}`));
+  }
+  pending.clear();
+});
+
 socket.addEventListener('message', ({ data }) => {
   const message = JSON.parse(String(data));
   if (message.id !== undefined) {
@@ -361,6 +368,44 @@ try {
     && result.ux.denseRuleList && result.ux.computedEntityHeaders && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
     `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
+
+  result.stoppedProxyBreakpoints = await evaluate(`(async () => {
+    const shell = document.querySelector('app-shell');
+    const root = shell.shadowRoot;
+    const before = await window.__TAURI_INTERNALS__.invoke('app_status');
+    if (before.lifecycle !== 'stopped') throw new Error('breakpoint regression requires a stopped proxy');
+    root.querySelector('a[data-view="breakpoints"]').click();
+    await customElements.whenDefined('breakpoint-workspace');
+    const workspace = root.querySelector('breakpoint-workspace');
+    const waitForState = async (enabled) => {
+      const deadline = performance.now() + 10_000;
+      while (workspace.controllerEnabled !== enabled || workspace.decisionBusy) {
+        if (workspace.breakpointError) throw new Error(workspace.breakpointError);
+        if (performance.now() >= deadline) throw new Error('stopped-proxy breakpoint toggle timed out');
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      workspace.$flushUpdates();
+    };
+    const readyDeadline = performance.now() + 10_000;
+    while (root.querySelector('#breakpoints').hidden || workspace.refreshPending) {
+      if (performance.now() >= readyDeadline) throw new Error('breakpoint workspace did not become ready');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      workspace.querySelector('.workspace-header .actions button').click();
+      await waitForState(true);
+      const enabled = await window.__TAURI_INTERNALS__.invoke('breakpoint_status');
+      if (!enabled.enabled || enabled.paused.length) throw new Error('idle breakpoint controller did not attach');
+      workspace.querySelector('.workspace-header .actions button').click();
+      await waitForState(false);
+      const disabled = await window.__TAURI_INTERNALS__.invoke('breakpoint_status');
+      if (disabled.enabled || disabled.paused.length) throw new Error('idle breakpoint controller did not detach');
+    }
+    const after = await window.__TAURI_INTERNALS__.invoke('app_status');
+    if (after.lifecycle !== 'stopped' || after.listener !== null) throw new Error('breakpoint toggle started the proxy');
+    root.querySelector('a[data-view="traffic"]').click();
+    return { cycles: 2, lifecycle: after.lifecycle, listener: after.listener };
+  })()`);
 
   if (screenshotPath !== undefined) {
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
