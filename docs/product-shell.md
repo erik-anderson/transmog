@@ -120,7 +120,10 @@ Windows cURL text is a PowerShell-compatible script that passes an encoded
 configuration through standard input, avoiding native argument quoting differences
 between PowerShell 5.1 and 7. PowerShell commands use the .NET HTTP client and
 explain its normalization limits. Both preserve duplicate captured fields,
-retain credentials unless capture redacted them, and regenerate body framing.
+retain origin credentials unless capture redacted them, and regenerate body framing.
+cURL selects the recorded HTTP version and scopes Proxy-Authorization to its
+proxy headers. PowerShell preserves HTTP/1.x, uses HTTP/1.1 for newer protocols,
+and explains why proxy authentication must be configured separately.
 Commands that need a body file use a path placeholder; small PowerShell bodies
 can embed even binary bytes as base64. Commands that can represent the request
 directly go straight to the clipboard without opening a dialog. The file dialog's
@@ -169,8 +172,10 @@ Routine workspace output stays near the action that produced it.
 
 ## File safety
 
-Captures, generated CAs, JSONL, and SAZ use create-new semantics. Existing
-destinations are not replaced. Imports are subject to explicit file, record,
+Recording captures, generated CAs, JSONL, and SAZ exports use create-new semantics.
+Traffic **Save trace** and body **Save as…** can replace a destination after the
+native file picker's overwrite confirmation; an unsuccessful save keeps the
+existing file intact. Imports are subject to explicit file, record,
 and record-size bounds; interrupted native files recover only their checksummed
 valid prefix.
 

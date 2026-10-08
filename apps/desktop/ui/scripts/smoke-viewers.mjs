@@ -9,6 +9,12 @@ const port=argument('--port'), source=argument('--source'), executable=argument(
 const compressedSource=argument('--compressed-source');
 const pageSource=argument('--page-source');
 const profileRoot=argument('--profile-root');
+const processId=argument('--process-id'), closeHelper=argument('--close-helper');
+async function closeNative(title){
+  if(!processId||!closeHelper)throw new Error('Native close verification requires an isolated process identity.');
+  const child=spawn('pwsh.exe',['-NoProfile','-NonInteractive','-File',closeHelper,'-ProbeProcessId',processId,'-WindowTitle',title],{windowsHide:true,stdio:'inherit'});
+  await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error('Native close probe exited '+code)));});
+}
 if(!port||!source||!executable)throw new Error('Viewer verification requires a DevTools port, isolated executable, and fixture source.');
 const sockets=[];
 async function connect(target){
@@ -127,10 +133,23 @@ try{
     try{const url='http://127.0.0.1:'+sink.address().port+'/uncaptured';await enabled.evaluate(`fetch(${JSON.stringify(url)},{mode:'no-cors'}).then(()=>true,()=>false)`);await new Promise(resolve=>setTimeout(resolve,100));assert.equal(contacted,0,'Preview contacted an uncaptured endpoint');}finally{await new Promise(resolve=>sink.close(resolve));}
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped','Preview enabled the proxy');
     if(screenshot){const image=await enabled.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-page.png'),Buffer.from(image.data,'base64'));}
-    await disabled.call('Page.close');
-    await enabled.call('Page.close');
+    await closeNative('Captured page preview — Transmog');
+    await waitFor(async()=>(await targets()).filter(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)).length===1,'First native preview did not close');
+    await closeNative('Captured page preview — Transmog');
     await waitFor(async()=>!(await targets()).some(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)),'Closed captured previews retained browser targets');
+    if(profileRoot)await waitFor(async()=>{
+      for await(const _ of glob('temp/transmog-captured-webview-*',{cwd:profileRoot}))return false;
+      return true;
+    },'Closed captured preview profiles were not cleaned up');
     process.stdout.write('Captured HTML, CSS, image, script choice, empty misses, IPC and uncaptured egress verified.\n');
   }
+  const beforeReopen=(await targets()).map(target=>target.id);
+  await closeNative('Transmog');
+  await waitFor(async()=>!(await targets()).some(target=>target.id===mainTarget.id),'Main window did not close with saved viewers remaining');
+  await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
+  const reopenedTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>target.url.includes('transmog-ui')&&!beforeReopen.includes(target.id));},'Main window did not reopen from the viewer');
+  const reopened=await connect(reopenedTarget);
+  await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===1`),'Reopened main window lost its catalog');
+  assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
   process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,compressedCapture:!!compressedSource})+'\n');
 }finally{for(const socket of sockets)socket.close();}

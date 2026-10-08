@@ -1,9 +1,14 @@
 # Safe response previews
 
-Transmog treats every captured response body as hostile input. Text and byte
-views are assigned as text, never parsed as markup. Images are displayed only
+Transmog treats every captured response body as hostile input. Workbench text
+and byte views are assigned as text, never parsed as markup. Images are displayed only
 through an `<img>` element using an opaque resource on the isolated preview
 origin. Raster images also cross a process sandbox before reaching that origin.
+
+The explicit [captured-page preview](captured-page-preview.md) is a separate
+Windows browser window with its own profile, native resource interception and
+warning/script-choice flow. It does not render captured HTML in the workbench
+or grant access to application commands.
 
 ## Allowed image path
 

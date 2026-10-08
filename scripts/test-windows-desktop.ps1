@@ -180,6 +180,7 @@ try {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
             $viewerArguments += @('--page-source', $pageSource)
             $viewerArguments += @('--profile-root', $probeRoot)
+            $viewerArguments += @('--process-id', "$($process.Id)", '--close-helper', (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1'))
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
             if ($CompressedTracePath) { $viewerArguments += @('--compressed-source', $CompressedTracePath) }
             & node @viewerArguments

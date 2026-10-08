@@ -48,8 +48,40 @@ const HARDENING: &str = r"(() => {
 
 struct PreviewOwner {
     page: CapturedPage,
-    profile: tempfile::TempDir,
+    profile: PreviewProfile,
     _firewall: DenyProxy,
+}
+struct PreviewProfile(Option<tempfile::TempDir>);
+impl PreviewProfile {
+    fn path(&self) -> &std::path::Path {
+        self.0.as_ref().expect("owned preview profile").path()
+    }
+}
+impl Drop for PreviewProfile {
+    fn drop(&mut self) {
+        if let Some(profile) = self.0.take() {
+            // WebView2 releases profile locks after its window closes. Retry
+            // removal away from the UI thread, retaining only our owned TempDir.
+            let _ = thread::Builder::new()
+                .name("captured-preview-profile-cleanup".into())
+                .spawn(move || {
+                    let path = profile.path().to_owned();
+                    if profile.close().is_ok() {
+                        return;
+                    }
+                    for _ in 0..100 {
+                        thread::sleep(Duration::from_millis(100));
+                        match std::fs::remove_dir_all(&path) {
+                            Ok(()) => return,
+                            Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => {
+                                return;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                });
+        }
+    }
 }
 /// Open only after the trusted warning has collected the script choice.
 #[tauri::command]
@@ -75,7 +107,7 @@ pub(super) async fn open_captured_page(
     let address = firewall.address;
     let owner = Arc::new(PreviewOwner {
         page,
-        profile,
+        profile: PreviewProfile(Some(profile)),
         _firewall: firewall,
     });
     let creation_owner = owner.clone();

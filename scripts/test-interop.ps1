@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipBrowserInstall
+    [switch]$SkipBrowserInstall,
+    [switch]$SkipDependencyInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,7 +84,8 @@ $runId = [Guid]::NewGuid().ToString('N')
 $runRoot = [IO.Path]::GetFullPath((Join-Path $interopRoot $runId))
 $project = "transmog-interop-$($runId.Substring(0, 12))"
 $binaryName = if ($IsWindows) { 'transmog-cli.exe' } else { 'transmog-cli' }
-$binary = Join-Path $repoRoot "target\release\$binaryName"
+$cargoOutput = if ($env:CARGO_TARGET_DIR) { [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR, $repoRoot) } else { Join-Path $repoRoot 'target' }
+$binary = Join-Path $cargoOutput "release\$binaryName"
 $caCertificate = Join-Path $runRoot 'ca.pem'
 $caPrivateKey = Join-Path $runRoot 'ca.key'
 $originCertificate = Join-Path $runRoot 'origin.pem'
@@ -135,8 +137,8 @@ try {
     $env:TRANSMOG_APACHE_URL = Get-PublishedUrl $dockerCli $composeFile $project 'apache'
     $env:TRANSMOG_CADDY_URL = "https://127.0.0.1:$($env:TRANSMOG_INTEROP_TLS_PORT)/"
     $env:TRANSMOG_INTEROP = '1'
-    $env:TRANSMOG_SCRIPT_HOST = Join-Path $repoRoot "target\release\transmog-script-host.exe"
-    $env:TRANSMOG_PREVIEW_WORKER = Join-Path $repoRoot "target\release\transmog-preview-worker.exe"
+    $env:TRANSMOG_SCRIPT_HOST = Join-Path $cargoOutput "release\transmog-script-host.exe"
+    $env:TRANSMOG_PREVIEW_WORKER = Join-Path $cargoOutput "release\transmog-preview-worker.exe"
 
     Write-Output "NGINX_ORIGIN=$($env:TRANSMOG_NGINX_URL)"
     Write-Output "APACHE_ORIGIN=$($env:TRANSMOG_APACHE_URL)"
@@ -148,7 +150,7 @@ try {
 
     Push-Location $playwrightProject
     try {
-        npm ci
+        if (-not $SkipDependencyInstall) { npm ci }
         if (-not $SkipBrowserInstall) {
             npx playwright install chromium
         }

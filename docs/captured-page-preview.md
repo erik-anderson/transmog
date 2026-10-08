@@ -34,6 +34,7 @@ it never contacts origins, changes system proxy settings or installs roots.
 Render-only CSP blocks workers and privileged content, and every frame receives
 transport API restrictions. Normal app protocols reject preview window labels.
 The preview owns its response files and profile until its browser releases them.
+Profile deletion retries in the background while WebView2 releases file locks.
 At most three previews may be preparing or open at once.
 
 Captured content can still be malicious. The warning and optional script choice

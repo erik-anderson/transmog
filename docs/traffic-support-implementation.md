@@ -64,7 +64,7 @@ checkout contains independent updater work and is preserved.
     overwrite, metadata quota and Unicode subprocess tests pass. Browser and native
     UX checks cover defaults, cancellation, retry drafts, compact/populated layout.
 
-13. Windows captured-page preview: separate fresh-profile WebView2 windows,
+13. `7fc8e95`: Windows captured-page preview: separate fresh-profile WebView2 windows,
     bounded frozen responses from the selected original trace, nearest-time
     method/URL matching, empty 404 misses and no proxy dependency. The warning
     defaults scripts off and offers opt-in scripts per window. Native all-source
@@ -75,9 +75,48 @@ checkout contains independent updater work and is preserved.
     script choices, misses, uncaptured loopback egress and window closure. Reviewed
     compact and populated warning layouts. See docs/captured-page-preview.md.
 
-## Remaining isolated phase
-- Final full UX review and appropriate integrated release/interop checks.
+14. Final workflow review: copied commands preserve recorded HTTP versions and
+    scope proxy credentials correctly. PowerShell explains its proxy-authentication
+    limit. Compressed import cancellation also interrupts runs of empty gzip
+    members. Preview profiles retry cleanup after WebView2 releases locks. Native
+    probes close actual desktop windows, verify profile removal, and reopen the
+    main window while preserving its catalog and independent saved viewers.
+    The interoperability harness supports shared Cargo output and explicitly
+    reusing installed browser dependencies in a managed worktree.
 
-Every substantially complete isolated phase is committed after verification.
-Copy actions never execute a generated command. Additional viewers hold saved
-captures only; replay is an explicit Composer action.
+## Final verification
+
+- `npm run check` and `npm run test:workspaces` pass with production templates,
+  CSP and Trusted Types. Reviewed populated and compact views, keyboard/focus,
+  loading, cancellation and failure/retry flows, direct clipboard commands,
+  header diagnostics, search/selection/removal, metadata and save dialogs.
+- Strict `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- `cargo test --workspace` passes 425 tests with no failures. Its one ignored
+  Docker-backed product test passes separately in the interoperability run.
+- Real Windows WebView2 checks pass for accessibility, forced colors, DPI,
+  long labels, layout, proxy drain feedback and single-instance behavior.
+  Saved-file checks cover SAZ and compressed CLI imports, file handoff choices,
+  isolated catalogs and permissions, timing/source navigation, captured-page
+  resources and script choice, empty misses, no uncaptured HTTP contacts,
+  actual window closure/profile cleanup and main-window reopening.
+- Docker interoperability passes the full product workflow/restart test and all
+  eight Chromium/cURL origin, HTTP/2, HTTP/3, content-coding and WebSocket tests.
+  These controlled interop calls are separate from clipboard-only copy actions.
+- Release safety/publication/lifecycle fixtures and compiled NSIS association
+  fixtures pass. Standalone CLI signing and publication are required by the
+  protected release pipeline; no production signed release was issued locally.
+
+The final native cache repair rebuilt only the affected BoringSSL CMake output;
+no source or shared checkout changes were needed. UI asset generation and Rust
+builds run sequentially to avoid transient missing generated assets.
+
+## Product boundaries
+
+Captured-page preview initially supports Windows. Timings and transport metrics
+report measured evidence, with unsupported points left unavailable. Native/gzip
+saving preserves complete merged source associations; SAZ conversion reports its
+compatibility limits. Copy actions never execute generated commands. Saved-capture
+viewers own independent catalogs; replay is an explicit Composer action.
+
+The approved work is complete in the attached `codex/traffic-support-features`
+worktree. The primary checkout's independent updater changes are preserved.

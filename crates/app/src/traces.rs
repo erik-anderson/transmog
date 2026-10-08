@@ -339,6 +339,19 @@ impl TraceRegistry {
     }
 }
 
+struct CancellableReader<'a, R> {
+    reader: R,
+    canceled: &'a AtomicBool,
+}
+impl<R: std::io::Read> std::io::Read for CancellableReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.canceled.load(Ordering::Acquire) {
+            return Err(std::io::Error::other("Trace import canceled"));
+        }
+        self.reader.read(buffer)
+    }
+}
+
 fn expand_native_gzip(
     file: File,
     request: &TraceImportRequest,
@@ -349,7 +362,10 @@ fn expand_native_gzip(
     // Anonymous temporary file disappears with the last saved-body
     // reader. Decompression is bounded, cancellable and CRC checked;
     // bodies remain lazy once the native index is built.
-    let mut decoder = flate2::read::MultiGzDecoder::new(file);
+    let mut decoder = flate2::read::MultiGzDecoder::new(CancellableReader {
+        reader: file,
+        canceled,
+    });
     let mut output = tempfile::tempfile()
         .map_err(|_| unavailable("Compressed trace cache could not be created"))?;
     let mut buffer = [0_u8; 16 * 1024];
@@ -359,9 +375,13 @@ fn expand_native_gzip(
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
-        let count = decoder
-            .read(&mut buffer)
-            .map_err(|_| invalid("Compressed trace is incomplete or failed its checksum"))?;
+        let count = decoder.read(&mut buffer).map_err(|_| {
+            if canceled.load(Ordering::Acquire) {
+                unavailable("Trace import canceled")
+            } else {
+                invalid("Compressed trace is incomplete or failed its checksum")
+            }
+        })?;
         if count == 0 {
             break;
         }
@@ -377,7 +397,12 @@ fn expand_native_gzip(
         if expanded % (1024 * 1024) < count as u64 {
             progress(TraceImportProgress {
                 operation_id: request.operation_id.clone(),
-                completed: decoder.get_mut().stream_position().unwrap_or(0).min(bytes),
+                completed: decoder
+                    .get_mut()
+                    .reader
+                    .stream_position()
+                    .unwrap_or(0)
+                    .min(bytes),
                 total: bytes,
             });
         }
@@ -1314,6 +1339,36 @@ mod tests {
     use std::io::{Cursor, Write};
     use transmog_capture::{CaptureRecord, CaptureWriter};
 
+    #[test]
+    fn compressed_import_can_cancel_while_consuming_empty_members() {
+        use std::io::Read;
+        struct CancelAfterRead<'a> {
+            input: Cursor<Vec<u8>>,
+            canceled: &'a AtomicBool,
+        }
+        impl Read for CancelAfterRead<'_> {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                let count = self.input.read(bytes)?;
+                self.canceled.store(true, Ordering::Release);
+                Ok(count)
+            }
+        }
+        let member = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast())
+            .finish()
+            .unwrap();
+        let canceled = AtomicBool::new(false);
+        let reader = CancellableReader {
+            reader: CancelAfterRead {
+                input: Cursor::new(member.repeat(1024)),
+                canceled: &canceled,
+            },
+            canceled: &canceled,
+        };
+        let mut decoder = flate2::read::MultiGzDecoder::new(reader);
+        assert!(decoder.read(&mut [0_u8; 1]).is_err());
+        assert!(canceled.load(Ordering::Acquire));
+    }
+
     fn app(root: &std::path::Path) -> Application {
         Application::new(AppConfig {
             body_store: Some(BodyStoreConfig::product_default(root.join("cache"))),
@@ -1485,6 +1540,18 @@ mod tests {
         let detail = application.session_detail(&rows[0].id).unwrap();
         assert_eq!(detail.performance.elapsed_micros(), Some(550));
         assert_eq!(detail.responses[0].protocol, "HTTP/1.0");
+        let command = application
+            .request_command(&rows[0].id, RequestCommandFormat::Curl)
+            .unwrap();
+        assert!(command.text.contains("--http1.0"));
+        #[cfg(windows)]
+        assert!(
+            application
+                .request_command(&rows[0].id, RequestCommandFormat::Powershell)
+                .unwrap()
+                .text
+                .contains("[Version]'1.0'")
+        );
         assert!(
             application
                 .copy_all_headers(&rows[0].id)
