@@ -1,5 +1,6 @@
 import initialState from '../initial-state.json';
 import '../autoresponse-switch/autoresponse-switch.js';
+import '../app-updates/app-updates.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
@@ -8,6 +9,7 @@ import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
 import type { AutomationWorkspace } from '../automation-workspace/automation-workspace.js';
 import type { ComposerWorkspace } from '../composer-workspace/composer-workspace.js';
+import type { AppUpdates } from '../app-updates/app-updates.js';
 import { describeError, lifecycleLabel } from '../utilities.js';
 
 const loaders = {
@@ -44,6 +46,28 @@ export class AppShell extends WebUIElement {
   settings!: SettingsWorkspace;
   automation!: AutomationWorkspace;
   composer!: ComposerWorkspace;
+  updates!: AppUpdates;
+  updateDraftDialog!: HTMLDialogElement;
+  @observable updateDraftSummary = initialState.updateDraftSummary;
+  private installPending = false;
+  private resolveUpdateDrafts: ((proceed: boolean) => void) | undefined;
+  async onInstallUpdate(event: CustomEvent<{reopen: boolean}>): Promise<void> {
+    if (this.installPending) return;
+    this.installPending = true;
+    try {
+      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.automation?.draftDirty ? 'Autoresponses' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
+      if (dirty.length) {
+        this.updateDraftSummary = `There are unsaved changes in ${dirty.join(', ')}. Installing will close Transmog and discard those drafts. Keep working to save them first.`;
+        const proceed = await new Promise<boolean>(resolve => { this.resolveUpdateDrafts = resolve; this.updateDraftDialog.showModal(); });
+        if (!proceed) return;
+      }
+      await this.updates.install(event.detail.reopen);
+      await this.settings.refreshStatus();
+    } finally { this.installPending = false; }
+  }
+  resolveUpdateDraftsChoice(proceed: boolean): void { this.updateDraftDialog.close(); this.resolveUpdateDrafts?.(proceed); this.resolveUpdateDrafts = undefined; }
+  cancelUpdateDrafts(event: Event): void { event.preventDefault(); this.resolveUpdateDraftsChoice(false); }
+  checkUpdates(): void { void this.updates.check(true); }
   private noticeAction: NoticeAction = null;
   private navigationGeneration = 0;
   private workspaceTouched = false;
@@ -190,7 +214,7 @@ export class AppShell extends WebUIElement {
   async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
   }
-  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); super.disconnectedCallback(); }
+  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); super.disconnectedCallback(); }
 
 }
 

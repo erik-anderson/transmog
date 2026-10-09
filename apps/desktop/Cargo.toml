@@ -22,12 +22,17 @@ transmog-app-webui = { version = "=0.1.0", path = "../../crates/app-webui" }
 transmog-session = { version = "=0.1.0", path = "../../crates/proxy-session" }
 tokio.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+minisign-verify = "=0.2.5"
+semver = "=1.0.28"
 percent-encoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.4.5"
+tauri-plugin-updater = { version = "=2.13.2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 transmog-host-windows = { version = "=0.1.0", path = "../../crates/host-windows" }
 
 [target.'cfg(windows)'.build-dependencies]

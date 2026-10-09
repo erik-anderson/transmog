@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-content"
-version = "0.1.0+0"
+version = "0.1.0"
 dependencies = [
  "async-compression",
  "bytes",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-core"
-version = "0.1.0+0"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "http",
@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-websocket"
-version = "0.1.0+0"
+version = "0.1.0"
 dependencies = [
  "base64",
  "bytes",

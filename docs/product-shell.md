@@ -6,6 +6,20 @@ bounded session queries, safe inspectors, breakpoints, replay, capture, import,
 export, product state, and privacy-safe diagnostics without depending on Tauri
 or WebUI.
 
+## Software updates
+
+Startup checks run after the window is ready and keep the workspace usable. A
+new stable release appears in Updates without taking keyboard focus. The user
+can update now, download an update for normal app exit, or pause automatic prompts
+for thirty days. Manual checking remains available in Updates and Support.
+Offline startup stays quiet; a manual check reports a useful failure.
+
+Downloads show progress and can be cancelled. Installation follows signature and
+version verification, draft resolution, capture sealing, proxy shutdown, and
+Windows host restoration. A deferred update installs when the user quits Transmog
+and does not reopen it. Crashes and operating-system shutdown do not launch an
+installer. A failed safe handoff keeps the app open with recovery feedback.
+
 ## Operating model
 
 - **Set up HTTPS interception** creates a durable PEM CA and matching private

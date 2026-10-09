@@ -6,6 +6,7 @@ import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePr
 import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
+  checkUpdates(): void { this.$emit('check-updates'); }
   @attr view = 'traffic';
   @observable settingsSection='preferences';
   @observable settingsDirty=false;

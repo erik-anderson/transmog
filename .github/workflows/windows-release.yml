@@ -100,6 +100,8 @@ jobs:
       SIGNING_CERTIFICATE_PROFILE: ${{ secrets.SIGNING_CERTIFICATE_PROFILE }}
       SIGNING_PUBLISHER: ${{ vars.SIGNING_PUBLISHER }}
       SIGNING_DENIED_PROFILE: ${{ secrets.SIGNING_DENIED_PROFILE }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TRANSMOG_UPDATER_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TRANSMOG_UPDATER_PRIVATE_KEY_PASSWORD }}
     steps:
       - name: Mask operational signing configuration
         run: |
@@ -107,6 +109,7 @@ jobs:
             $value = [Environment]::GetEnvironmentVariable($name)
             if ($value) { Write-Output "::add-mask::$value" }
           }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Configure TRANSMOG_UPDATER_PRIVATE_KEY in the release-signing environment before requesting Azure signing.' }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -219,6 +222,8 @@ jobs:
             artifacts/windows-signed/*-setup.exe
             artifacts/windows-signed/release-manifest.json
             artifacts/windows-signed/sbom.cdx.json
+            artifacts/windows-signed/latest.json
+            artifacts/windows-signed/*-setup.exe.sig
           create-storage-record: false
       - name: Retain and verify the Sigstore bundle
         env:

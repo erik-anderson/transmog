@@ -43,6 +43,12 @@ On Windows these files live under `%LOCALAPPDATA%\Transmog` using the
 directory, and storage failures are reported as bounded diagnostics and never
 participate in proxy shutdown or host restoration.
 
+Desktop update reminders use a separate bounded `update-preferences.<generation>.json`
+store under the same product-state root. Independent Settings saves cannot
+overwrite the reminder deadline. Three generations are retained; updates preserve
+them, and uninstall removes only their owned numeric filenames. Staged installer
+bytes and installation consent are scoped to the running app session.
+
 ## Operational diagnostics
 
 Operational events have a timestamp, severity, stable component and code, and

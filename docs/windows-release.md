@@ -11,30 +11,26 @@ The normal release path is **commit a version → manually build a signed draft 
 review the installer → publish that draft**. Building and publication are separate
 decisions. No push or tag automatically starts a release build.
 
-1. Choose an unused `major.minor.patch.revision` version, for example `0.1.0.1`, and run from
+1. Choose an unused `major.minor.patch` version, for example `0.1.1`, and run from
    the repository root:
 
    ```powershell
-   pwsh ./scripts/set-release-version.ps1 -Version 0.1.0.1
+   pwsh ./scripts/set-release-version.ps1 -Version 0.1.1
    git diff
    ```
 
-   `release-version.json` records the four-part version, source channel, and default
+   `release-version.json` records the semantic version, source channel, and default
    release track. `main` uses `Canary`; a release branch has the neutral `Release`
    source channel and a `Beta` or `Stable` track. The command preserves that track
-   unless `-ReleaseType` is supplied. It synchronizes the Cargo workspace and exact
-   internal dependency pins, both Cargo lockfiles, the Tauri installer/app version,
-   and the private desktop UI package/lockfile. It uses the installed Rust tools
-   and cached Cargo dependencies, without updating external dependency versions.
-   If cached dependencies are missing, restore them using the normal build setup
-   before retrying. `pwsh ./scripts/set-release-version.ps1 -Check` checks version
-   consistency without changing files. Each numeric component must fit in
-   `0..65535`. Cargo, npm, and Tauri require SemVer, so `0.1.0.1` maps internally
-   to `0.1.0+1`; release tags, installer filenames/display versions, Windows numeric
-   version resources, the product title/diagnostics, and the SBOM use the four-part
-   product version. The NSIS template compares all four numeric parts for updates
-   and downgrade prevention. The app title and diagnostics add `Canary` on main.
-   Beta and Stable installers from a release branch use neutral product branding,
+   unless `-ReleaseType` is supplied. It synchronizes Cargo, both lockfiles,
+   Tauri, and the desktop UI package without updating external dependencies.
+   `pwsh ./scripts/set-release-version.ps1 -Check` verifies committed versions.
+   The normal SemVer `major.minor.patch` is used unchanged in packages, tags,
+   installer filenames, product titles, diagnostics, and the SBOM. Components
+   must fit `0..65535` for Windows numeric version resources; their final component
+   is zero. Publication advances patch; choose minor and major changes explicitly.
+   The standard Tauri NSIS installer compares SemVer and prevents downgrades. Main adds
+   Canary to the product title. Beta and Stable installers use neutral branding,
    so the same reviewed Beta installer can be promoted to Stable without rebuilding.
 
 2. Review the version diff, commit the version changes with the code to release,
@@ -47,7 +43,7 @@ decisions. No push or tag automatically starts a release build.
 
 3. Open [Actions → Windows signed release](https://github.com/erik-anderson/transmog/actions/workflows/windows-release.yml),
    click **Run workflow**, select **main** (or the approved hotfix branch), and
-   click **Run workflow** again. With
+   click **Run workflow** again.
    Leave **Release type** at **Branch default** to use the checked-in track. You
    can explicitly choose **Beta** or **Stable** on a release branch; main permits
    only **Canary**. With GitHub CLI installed and authenticated, the equivalent is:
@@ -87,7 +83,7 @@ decisions. No push or tag automatically starts a release build.
    commit if it does not already exist; there is no need to create a tag first.
 
 Once published, treat a version as final: the workflow refuses to overwrite it.
-Use a new revision or another unused four-part version for subsequent fixes.
+Use a new patch or another unused semantic version for subsequent fixes.
 Before publication, start a fresh
 manual run or use **Re-run all jobs**; **Re-run failed jobs** alone is insufficient
 because this workflow's artifacts are specific to the run attempt. Leave the
@@ -113,11 +109,11 @@ Canary version. The same major is checked again at publication as a recovery pat
 
 | Event | Release branch | Main |
 | --- | --- | --- |
-| Create `release/1` while main is on major 1 or earlier | Existing version, Beta track | `2.0.0.0 Canary` |
-| Publish Beta `1.2.3.7` from `release/1` | `1.2.3.8`, still Beta | Later major retained |
-| Promote that published Beta to Stable | `1.2.3.8`, switch to Stable | Later major retained |
-| Publish Stable `1.2.3.8` from `release/1` | `1.2.3.9`, still Stable | Later major retained |
-| Publish Canary `2.0.0.0` from main | Unchanged | `2.0.0.1 Canary` |
+| Create `release/1` while main is on major 1 or earlier | Existing version, Beta track | `2.0.0 Canary` |
+| Publish Beta `1.2.7` from `release/1` | `1.2.8`, still Beta | Later major retained |
+| Promote that published Beta to Stable | `1.2.8`, switch to Stable | Later major retained |
+| Publish Stable `1.2.8` from `release/1` | `1.2.9`, still Stable | Later major retained |
+| Publish Canary `2.0.0` from main | Unchanged | `2.0.1 Canary` |
 
 The local fixture in `scripts/test-release-lifecycle.ps1` exercises these events
 against a disposable Git remote, including retries, old-major hotfixes, and deleted
@@ -126,7 +122,7 @@ branches. It is part of the release safety gate and does not contact GitHub or A
 Main's reservation rule compares **major numbers**: a release branch with an equal
 or higher major moves main to `release-major + 1`, resetting its other components
 to zero. Main already on a later major is left alone. Canary publication increments
-the least significant component. Canaries are rejected before building and again
+the patch component. Canaries are rejected before building and again
 before draft creation if `release/<their-major>` exists, covering the window while
 the branch-creation hook is pending. Never rewind main to an already-reserved major.
 
@@ -152,15 +148,14 @@ Repeated creation/publication events do not increment twice. Promotion persists
 Stable, and a delayed Beta event cannot reset that track. Deleted branches are
 skipped without being recreated. A reset release branch older than its published
 version fails for inspection. Concurrent pushes are retried without force-pushing;
-published tags are preserved. Numeric component overflow carries to the next
-component; a release branch cannot cross into another major.
+published tags are preserved. Patch overflow requires an explicit minor or major choice; a release branch cannot cross into another major.
 
 The maintenance job has only `contents: write` and no signing environment or
 Azure access. It loads its implementation from `main`, then inspects the affected
 branch. If branch protection prevents the bot commit, the job fails visibly;
 apply the version command manually and commit it through the branch's normal
 review process. The published-version preflight still prevents duplicate builds
-while the hook is pending or failed. Legacy three-part releases do not trigger
+while the hook is pending or failed. Legacy four-part releases do not trigger
 a version bump. Create branches and publish/promote releases through the GitHub
 UI or an authenticated user CLI: events created by another workflow's `GITHUB_TOKEN`
 do not trigger this hook automatically. These branches must include the release
@@ -221,6 +216,31 @@ pwsh ./scripts/package-windows.ps1 `
   -SigningCertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567 `
   -Offline
 ```
+
+## Desktop update feed
+
+The desktop checks GitHub's latest stable release after the window is ready.
+`latest.json` identifies the NSIS installer and its updater signature. The signed
+release pipeline creates these assets from the final Authenticode-signed bytes,
+binds the semantic version into the signature, and qualifies the signature against
+the public key embedded in the installed app. Drafts and prereleases are excluded
+from automatic updates. Publication and Beta-to-Stable promotion refresh GitHub's
+Latest pointer to the highest stable version with update assets, so an older-major
+hotfix cannot displace the current stable feed.
+
+Before the first signed update, configure `TRANSMOG_UPDATER_PRIVATE_KEY` in the
+protected `release-signing` GitHub environment. The matching local key is kept in
+the ignored `.local/updater.key`; upload it with
+`pwsh ./scripts/setup-updater-signing.ps1 -Upload`. Keep a secure backup. The public
+key in `tauri.conf.json` is committed; the private key must never be committed.
+An optional password belongs in `TRANSMOG_UPDATER_PRIVATE_KEY_PASSWORD` in the
+same protected environment.
+
+The updater signature is separate from Windows Authenticode. Both are retained.
+Installer qualification verifies the signature and version without starting the UI
+or launching an update, then normal installation/removal qualification proceeds.
+A missing secret, stale manifest, mismatched signature, or failed qualification
+prevents creation of a publishable draft.
 
 ## Installer and lifecycle policy
 

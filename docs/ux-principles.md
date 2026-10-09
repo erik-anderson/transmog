@@ -48,6 +48,11 @@ its actual effect on the user's task.
 
 ## Preserve the user's place and work
 
+- Startup update checks must keep the workspace usable and avoid taking focus.
+  Update consent specifies when installation happens. Resolve unsaved drafts and
+  finish capture/proxy/host cleanup before installation can close the app. A
+  thirty-day reminder pauses automatic prompts across subsequent releases.
+
 - Keep selection, scroll position, and drafts stable across live updates and
   workspace changes. Allocate one editor for the selected item rather than an
   editor for every row. Switching items must preserve or explicitly resolve an

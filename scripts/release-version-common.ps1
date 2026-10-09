@@ -1,12 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 function ConvertTo-ReleaseSemVer([string]$Version) {
-    if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
+    if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
         @($Version.Split('.') | Where-Object { [decimal]$_ -gt 65535 }).Count) {
-        throw 'Use major.minor.patch.revision, each component 0-65535, without a v prefix.'
+        throw 'Use major.minor.patch without a v prefix or build metadata; Windows installer components must fit in 0-65535.'
     }
-    $parts = $Version.Split('.')
-    "$($parts[0]).$($parts[1]).$($parts[2])+$($parts[3])"
+    $Version
 }
 
 function Get-ReleaseVersionState([string]$RepositoryRoot) {
@@ -21,11 +20,9 @@ function Get-ReleaseVersionState([string]$RepositoryRoot) {
 function Get-NextReleaseVersion([string]$Version) {
     ConvertTo-ReleaseSemVer $Version | Out-Null
     $parts = @($Version.Split('.') | ForEach-Object { [int]$_ })
-    for ($index = 3; $index -ge 0; $index--) {
-        if ($parts[$index] -lt 65535) { $parts[$index]++; return $parts -join '.' }
-        $parts[$index] = 0
-    }
-    throw 'The four-part version range is exhausted.'
+    if ($parts[2] -ge 65535) { throw 'The Windows patch range is exhausted. Choose the next minor or major version explicitly.' }
+    $parts[2]++
+    $parts -join '.'
 }
 
 function Assert-ReleaseSourceBranch([string]$Branch, [string]$Version) {
@@ -48,7 +45,7 @@ function Get-MainMajorDecision($State, [int]$ReleaseMajor) {
     $currentMajor = [int]$State.Version.Split('.')[0]
     if ($currentMajor -gt $ReleaseMajor) { return [pscustomobject]@{ Bump = $false; Reason = 'Main is already on a later major.' } }
     if ($ReleaseMajor -ge 65535) { throw 'No Windows-compatible major remains after this release branch.' }
-    [pscustomobject]@{ Bump = $true; Version = "$($ReleaseMajor + 1).0.0.0"; Channel = 'Canary'; ReleaseType = 'Canary' }
+    [pscustomobject]@{ Bump = $true; Version = "$($ReleaseMajor + 1).0.0"; Channel = 'Canary'; ReleaseType = 'Canary' }
 }
 
 function Get-PostReleaseDecision($State, [string]$PublishedVersion, [string]$Branch = 'main', [string]$PublishedType = 'Beta') {

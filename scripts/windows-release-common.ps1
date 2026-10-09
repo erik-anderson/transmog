@@ -86,5 +86,14 @@ function Assert-SignedRelease {
         if ((Get-FileHash -LiteralPath (Join-Path $ReleaseRoot $entry.Name) -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Release asset checksum mismatch: $($entry.Name)" }
     }
     if (@($manifest.Files | Where-Object { $_.Name -ceq $manifest.Installer }).Count -ne 1 -or $manifest.Installer -notmatch '^Transmog_.+-setup\.exe$') { throw 'Missing or ambiguous release installer.' }
+    $update = Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot 'latest.json') | ConvertFrom-Json
+    $platform = $update.platforms.'windows-x86_64-nsis'
+    $signature = (Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot "$($manifest.Installer).sig")).Trim()
+    if ($update.version -cne (ConvertTo-ReleaseSemVer $manifest.Version) -or
+        $platform.url -cne "https://github.com/erik-anderson/transmog/releases/download/v$($manifest.Version)/$($manifest.Installer)" -or
+        -not $signature -or $platform.signature -cne $signature) { throw 'Updater manifest version, URL, or signature differs from the signed release.' }
+    foreach ($name in @('latest.json', "$($manifest.Installer).sig")) {
+        if (@($manifest.Files | Where-Object Name -CEQ $name).Count -ne 1) { throw "Updater asset is missing from the release checksums: $name" }
+    }
     return $manifest
 }

@@ -8,7 +8,7 @@ struct ReleaseVersion {
     channel: String,
 }
 
-/// Four-part product version, including the Canary marker for main development.
+/// Semantic product version, including the Canary marker for main development.
 pub fn application_version() -> &'static str {
     static VERSION: LazyLock<String> = LazyLock::new(|| {
         let release: ReleaseVersion =

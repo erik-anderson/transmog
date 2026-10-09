@@ -100,6 +100,9 @@
 .status[data-lifecycle="running"] .status-dot { background: #1cbf73; box-shadow: 0 0 0 .18rem color-mix(in srgb, #1cbf73 18%, transparent); }
 .status[data-lifecycle="failed"] .status-dot { background: var(--danger); }
 .top-actions { display: flex; gap: .4rem; }
+.update-drafts-dialog { width: min(30rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; color: var(--text); background: var(--panel); border: 1px solid var(--line-strong); border-radius: .5rem; padding: 1rem; }
+.update-drafts-dialog h2 { margin: 0; font-size: 1rem; }
+.update-drafts-dialog p { font-size: .85rem; line-height: 1.5; }
 
 .notice { position: fixed; z-index: 20; top: 3.65rem; right: .8rem; display: grid; grid-template-columns: minmax(12rem, 1fr) auto auto; align-items: center; gap: .65rem; width: min(42rem, calc(100vw - 2rem)); padding: .8rem; border: 1px solid var(--focus); border-radius: .5rem; background: var(--panel); box-shadow: 0 .7rem 2rem color-mix(in srgb, #000 25%, transparent); }
 .notice strong { display: block; font-size: .86rem; }

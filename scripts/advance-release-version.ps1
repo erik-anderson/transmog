@@ -14,11 +14,11 @@ if ($creatingBranch) {
     if ($event.ref_type -cne 'branch' -or $event.ref -cnotmatch '^release/(0|[1-9][0-9]*)$') { Write-Host 'Not a per-major release branch.'; return }
     $sourceBranch = $event.ref
     $releaseMajor = [int]$sourceBranch.Substring('release/'.Length)
-    ConvertTo-ReleaseSemVer "$releaseMajor.0.0.0" | Out-Null
+    ConvertTo-ReleaseSemVer "$releaseMajor.0.0" | Out-Null
     $description = "creation of $sourceBranch"
 } else {
     $release = $event.release
-    if ($release.draft -or $release.tag_name -cnotmatch '^v\d+\.\d+\.\d+\.\d+$') { Write-Host 'No version update for a draft or legacy three-part release.'; return }
+    if ($release.draft -or $release.tag_name -cnotmatch '^v\d+\.\d+\.\d+$') { Write-Host 'No version update for a draft or legacy four-part release.'; return }
     $publishedVersion = $release.tag_name.Substring(1)
     ConvertTo-ReleaseSemVer $publishedVersion | Out-Null
     $assets = @($release.assets | Where-Object name -CEQ 'release-manifest.json')

@@ -11,6 +11,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  stable-updates:
+    if: github.repository == 'erik-anderson/transmog' && github.event.repository.private == false && github.event_name == 'release'
+    runs-on: windows-2025
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Point desktop clients at the highest stable version
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/sync-stable-update-release.ps1
   advance:
     if: github.repository == 'erik-anderson/transmog' && github.event.repository.private == false && ((github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/')) || (github.event_name == 'release' && github.event.release.draft == false))
     runs-on: windows-2025

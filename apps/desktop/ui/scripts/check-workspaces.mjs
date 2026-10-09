@@ -67,6 +67,30 @@ await page.addInitScript((workspace) => {
     async invoke(command, args) {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
+        case 'watch_update_close': state.updateCloseChannel = args.channel; return;
+        case 'update_status': return structuredClone(state.update);
+        case 'check_updates': {
+          state.update ??= {phase:sessionStorage.getItem('startup-update-tested')?'idle':'available',currentVersion:'0.1.0',version:sessionStorage.getItem('startup-update-tested')?null:'0.2.0',notes:'Startup release',message:'Release check complete.',downloadedBytes:0,totalBytes:null,scheduled:false,suppressed:false,remindAfterUnixMs:0};
+          if(state.deferUpdateCheck){state.updateCheckPending=true;await new Promise(resolve=>state.releaseUpdateCheck=resolve);state.deferUpdateCheck=false;}
+          if(state.updateNetworkError){state.update.phase='error';state.update.message='Fixture GitHub unavailable';throw new Error(state.update.message);}
+          state.update.suppressed=!args.manual && state.update.remindAfterUnixMs>Date.now();
+          return structuredClone(state.update);
+        }
+        case 'remind_update': state.update.remindAfterUnixMs=Date.now()+30*24*60*60*1000;state.update.suppressed=true;return structuredClone(state.update);
+        case 'download_update': {
+          state.updateCancelled=false;
+          if(state.deferUpdateDownload){state.updateDownloadPending=true;await new Promise(resolve=>state.releaseUpdateDownload=resolve);}
+          if(state.updateCancelled)return structuredClone(state.update);
+          if(state.updateSignatureError)throw new Error('Fixture signature verification failed');
+          state.update.phase='ready';state.update.scheduled=args.afterSession;state.update.message=args.afterSession?'The verified update will install when you quit Transmog. It will not reopen the app.':'The verified update is ready to install.';
+          return structuredClone(state.update);
+        }
+        case 'cancel_update': state.updateCancelled=true;state.update.phase='available';state.update.scheduled=false;state.releaseUpdateDownload?.();return structuredClone(state.update);
+        case 'install_update': {
+          state.updateInstallCalls=(state.updateInstallCalls??0)+1;
+          if(state.updateRestoreError){state.update.phase='ready';throw new Error('Fixture Windows proxy restoration failed');}
+          state.updateInstallerStarted=true;state.updateReopen=args.reopen;return;
+        }
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
         case 'desktop_bootstrap': return { caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
         case 'reset_ca': {
@@ -251,6 +275,11 @@ const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole
 try {
   await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded 4 of 4 exchanges.'));
+  await page.locator('#update-panel').getByRole('button',{name:'Update now',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),1,'Startup did not check exactly once');
+  assert.equal(await page.evaluate(()=>document.activeElement===document.body),true,'The startup update prompt stole focus');
+  await page.locator('#update-panel').getByRole('button',{name:'Dismiss update notification',exact:true}).click();
+  await page.evaluate(()=>sessionStorage.setItem('startup-update-tested','true'));
   assert.match(await page.locator('.session-status').textContent(),/Proxy stopped/,'Traffic banner claims live capture while the proxy is stopped');
   assert.match(await page.locator('.list-footer').textContent(),/Showing captured traffic/);
   assert.doesNotMatch(await page.locator('.list-footer').textContent(),/Following live|capture continues/);
@@ -1123,6 +1152,65 @@ try {
   assert.equal(await resetCertificate.isDisabled(),true,'Reset remained available while the proxy was running');
   await page.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
   assert.equal(await resetCertificate.isDisabled(),false);
+  // Updates preserve startup, snooze, cancellation, drafts, and safe shutdown semantics.
+  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,phase:'available',version:'0.2.0',notes:'A release note with <script>inert text</script>',message:'A new stable release is available.'};});
+  const updatePanel=page.locator('#update-panel');
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(true);});
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
+  await updatePanel.getByText('Release notes',{exact:true}).click();
+  assert.match(await updatePanel.locator('pre').textContent(),/<script>inert text<\/script>/);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/update-available.png')});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferUpdateCheck=true;void document.querySelector('app-shell').updates.check(true);});
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.updateCheckPending);
+  const checksWhilePending=await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates);
+  await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(true);});
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),checksWhilePending,'Manual checking duplicated an in-flight startup check');
+  await updatePanel.getByRole('button',{name:'Dismiss update notification',exact:true}).click();
+  await page.evaluate(()=>globalThis.__workspaceFixture.releaseUpdateCheck());
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updateBusy);
+  assert.equal(await updatePanel.isVisible(),false,'A late check reopened a dismissed update panel');
+  await page.locator('.update-toggle').click();
+  await page.setViewportSize({width:620,height:640});
+  for(const name of ['Update now','Update after this session ends','Remind me in 30 days']) {
+    const button=updatePanel.getByRole('button',{name,exact:true});
+    const bounds=await button.boundingBox();assert.ok(bounds.x>=0 && bounds.x+bounds.width<=620 && bounds.y+bounds.height<=640,`Update action clipped: ${name}`);
+  }
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/update-narrow.png')});
+  await page.setViewportSize({width:1280,height:800});
+  await updatePanel.getByRole('button',{name:'Remind me in 30 days',exact:true}).click();
+  await updatePanel.waitFor({state:'hidden'});
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(false);});
+  assert.equal(await updatePanel.isVisible(),false,'A snoozed update reappeared at startup');
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(true);});
+  assert.match(await updatePanel.textContent(),/Automatic prompts paused until/);
+  await updatePanel.getByRole('button',{name:'Update after this session ends',exact:true}).click();
+  await updatePanel.getByRole('button',{name:'Install and reopen',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.update.scheduled),true);
+  await updatePanel.getByRole('button',{name:'Cancel update',exact:true}).click();
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferUpdateDownload=true;});
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.updateDownloadPending);
+  await updatePanel.getByRole('button',{name:'Cancel update',exact:true}).click();
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.updateInstallCalls??0),0,'Cancelled download initiated installation');
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.deferUpdateDownload=false;state.updateRestoreError=true;const shell=document.querySelector('app-shell');shell.settings.settingsDirty=false;if(shell.composer)shell.composer.composerDirty=false;if(shell.automation)shell.automation.draftDirty=false;});
+  await updatePanel.getByRole('button',{name:'Update after this session ends',exact:true}).click();
+  await updatePanel.getByRole('button',{name:'Install and reopen',exact:true}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.updateCloseChannel.onmessage(null));
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('app-updates').updateError.includes('restoration failed'));
+  assert.equal(await page.evaluate(()=>Boolean(globalThis.__workspaceFixture.updateInstallerStarted)),false);
+  await updatePanel.getByRole('button',{name:'Cancel update',exact:true}).click();
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.updateRestoreError=false;document.querySelector('app-shell').settings.settingsDirty=true;});
+  await updatePanel.getByRole('button',{name:'Update now',exact:true}).click();
+  const draftDialog=page.getByRole('dialog',{name:'Unsaved work'});
+  await draftDialog.getByRole('button',{name:'Keep working',exact:true}).click();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.updateInstallCalls),1);
+  await updatePanel.getByRole('button',{name:'Install and reopen',exact:true}).click();
+  await draftDialog.getByRole('button',{name:'Discard drafts and update',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.updateInstallerStarted);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.updateReopen),true);
   assert.deepEqual(await page.evaluate(()=>globalThis.__cspViolations),[]);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');

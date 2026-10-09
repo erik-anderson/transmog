@@ -12,6 +12,7 @@
         <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button><button type="button" class="secondary status-tools" aria-label="Proxy status and tools" title="Proxy status and tools" popovertarget="proxy-status-tools">⋯</button>
       </div>
       <div class="top-actions">
+        <app-updates w-ref="{updates}" @install-update="{onInstallUpdate(e)}"></app-updates>
         <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
       </div>
     </header>
@@ -63,13 +64,14 @@
         <automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>
         <capture-workspace view="{{activeView}}"></capture-workspace>
-        <settings-workspace w-ref="{settings}" view="{{activeView}}"></settings-workspace>
+        <settings-workspace w-ref="{settings}" view="{{activeView}}" @check-updates="{checkUpdates()}"></settings-workspace>
       </main>
     </div>
 
     <footer class="app-footer" ?hidden="{{!diagnosticText}}">
       <output class="global-diagnostics" aria-live="polite">{{diagnosticText}}</output>
     </footer>
+    <dialog w-ref="{updateDraftDialog}" class="update-drafts-dialog" aria-labelledby="update-drafts-heading" @cancel="{cancelUpdateDrafts(e)}"><h2 id="update-drafts-heading">Unsaved work</h2><p>{{updateDraftSummary}}</p><div class="actions"><button type="button" class="secondary" autofocus @click="{resolveUpdateDraftsChoice(false)}">Keep working</button><button type="button" @click="{resolveUpdateDraftsChoice(true)}">Discard drafts and update</button></div></dialog>
     <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p class="full-value">{{listener}}</p><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
   </div>
 </template>

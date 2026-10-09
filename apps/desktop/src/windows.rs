@@ -53,6 +53,94 @@ struct DesktopState {
     capture_root: PathBuf,
     export_root: PathBuf,
     live_capture_path: Arc<Mutex<Option<PathBuf>>>,
+    closing: Arc<AtomicBool>,
+}
+
+#[tauri::command]
+fn update_status(
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> crate::updates::UpdateStatus {
+    updates.status()
+}
+
+#[tauri::command]
+async fn check_updates(
+    app: tauri::AppHandle,
+    manual: bool,
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> Result<crate::updates::UpdateStatus, String> {
+    updates.check(&app, manual).await
+}
+
+#[tauri::command]
+async fn download_update(
+    after_session: bool,
+    progress: Channel<crate::updates::UpdateStatus>,
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> Result<crate::updates::UpdateStatus, String> {
+    updates.inner().stage(after_session, progress).await
+}
+
+#[tauri::command]
+fn cancel_update(
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> crate::updates::UpdateStatus {
+    updates.cancel()
+}
+
+#[tauri::command]
+fn remind_update(
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> Result<crate::updates::UpdateStatus, String> {
+    updates.remind()
+}
+
+#[tauri::command]
+fn watch_update_close(
+    channel: Channel<()>,
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) {
+    updates.watch_close(channel);
+}
+
+#[tauri::command]
+async fn install_update(
+    app: tauri::AppHandle,
+    reopen: bool,
+    state: State<'_, DesktopState>,
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> Result<(), String> {
+    if state.closing.swap(true, Ordering::AcqRel) {
+        return Err("Transmog is already closing.".to_owned());
+    }
+    let result = async {
+        updates.ensure_ready()?;
+        let _lifecycle = state.certificate_operation.lock().await;
+        if let Some(window) = app.get_webview_window("main") {
+            persist_window_state(&state.application, &window.as_ref().window());
+        }
+        state
+            .application
+            .shutdown()
+            .await
+            .map_err(|error| error.to_string())?;
+        state.host.recover_pending().map_err(
+            |_| "Windows proxy settings could not be restored. The update has not started.",
+        )?;
+        if state.host.recovery_pending() {
+            return Err(
+                "Windows proxy restoration is still pending. The update has not started."
+                    .to_owned(),
+            );
+        }
+        updates.install(reopen)
+    }
+    .await;
+    if let Err(message) = &result {
+        state.closing.store(false, Ordering::Release);
+        updates.fail(message);
+    }
+    result
 }
 
 #[derive(Serialize)]
@@ -352,6 +440,9 @@ async fn start_proxy(
     state: State<'_, DesktopState>,
 ) -> Result<AppStatus, String> {
     let _certificate_operation = state.certificate_operation.lock().await;
+    if state.closing.load(Ordering::Acquire) {
+        return Err("Transmog is closing for an update.".to_owned());
+    }
     if state.host.recovery_pending() {
         return Err(
             "Restore the journaled Windows proxy settings before starting a new proxy run."
@@ -962,6 +1053,9 @@ pub fn run() {
     let close_application = application.clone();
     let close_started = Arc::new(AtomicBool::new(false));
     let close_guard = Arc::clone(&close_started);
+    let updates = Arc::new(crate::updates::UpdateCoordinator::new(state_root.clone()));
+    let close_updates = Arc::clone(&updates);
+    let close_host = Arc::clone(&host);
 
     let exit_host = Arc::clone(&host);
     let exit_application = application.clone();
@@ -975,6 +1069,8 @@ pub fn run() {
                 }
             },
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates)
         .manage(DesktopState {
             application: application.clone(),
             host: Arc::clone(&host),
@@ -986,6 +1082,7 @@ pub fn run() {
             capture_root: state_root.join("captures"),
             export_root: state_root.join("exports"),
             live_capture_path: Arc::new(Mutex::new(None)),
+            closing: close_started,
         })
         .register_uri_scheme_protocol("transmog-ui", move |_context, request: Request<Vec<u8>>| {
             let view = ShellView::from(&protocol_application.status());
@@ -1034,6 +1131,13 @@ pub fn run() {
             diagnostics_report,
             create_support_bundle,
             prepare_update_handoff,
+            update_status,
+            check_updates,
+            download_update,
+            cancel_update,
+            remind_update,
+            watch_update_close,
+            install_update,
             start_proxy,
             stop_application,
             retry_host_restore,
@@ -1063,16 +1167,25 @@ pub fn run() {
         ])
         .setup(move |app| Ok(create_main_window(app, initial_window, webview_data_path)?))
         .on_window_event(move |window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && !close_guard.swap(true, Ordering::AcqRel)
-            {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                if close_guard.load(Ordering::Acquire) || close_updates.request_scheduled_close() {
+                    return;
+                }
+                if close_guard.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                close_updates.cancel();
                 let application = close_application.clone();
+                let host = Arc::clone(&close_host);
                 let window = window.clone();
                 let close_guard = Arc::clone(&close_guard);
                 tauri::async_runtime::spawn(async move {
                     persist_window_state(&application, &window);
-                    if application.shutdown().await.is_ok() {
+                    if application.shutdown().await.is_ok()
+                        && host.recover_pending().is_ok()
+                        && !host.recovery_pending()
+                    {
                         let _ = window.destroy();
                     } else {
                         close_guard.store(false, Ordering::Release);
@@ -1159,6 +1272,9 @@ fn exit_for_maintenance_if_requested() {
 }
 
 fn maintenance_exit_code() -> Option<i32> {
+    if let Some(code) = crate::updates::artifact_verification_exit_code() {
+        return Some(code);
+    }
     let uninstall = std::env::args_os().skip(1).find_map(|argument| {
         let argument = argument.to_string_lossy();
         match argument.as_ref() {
@@ -1232,6 +1348,7 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                 | "certificate-ownership-v1.json"
                 | "proxy-recovery-v1.json"
         ) || is_owned_preference_generation(&name)
+            || crate::update_policy::is_owned_update_file(&name)
             || matches!(
                 name.as_ref(),
                 "automation-v1.0.json"

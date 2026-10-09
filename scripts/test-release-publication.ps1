@@ -4,12 +4,15 @@ $fixture = Join-Path ([System.IO.Path]::GetTempPath()) ('transmog-publication-te
 $releaseRoot = Join-Path $fixture 'release'
 $evidenceRoot = Join-Path $fixture 'evidence'
 New-Item -ItemType Directory -Force $releaseRoot, $evidenceRoot | Out-Null
-$installerName = 'Transmog_0.1.0.0_x64-setup.exe'
+$installerName = 'Transmog_0.1.0_x64-setup.exe'
 'fixture, never executable' | Set-Content -LiteralPath (Join-Path $releaseRoot $installerName)
 $hash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $installerName)).Hash
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Files = @(@{ Name = $installerName; Sha256 = $hash }) } |
+'fixture signature' | Set-Content -LiteralPath (Join-Path $releaseRoot "$installerName.sig")
+[ordered]@{ version = '0.1.0'; platforms = @{ 'windows-x86_64-nsis' = @{ url = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/$installerName"; signature = 'fixture signature' } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'latest.json')
+$files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash } })
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Files = $files } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; InstallerSha256 = $hash } |
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'installer-test.json')
 [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; UnprotectedJobAuthenticationDenied = $true } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'identity-permission-test.json')
@@ -18,10 +21,10 @@ $names = @('GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_REPOSITORY', 'GITHUB_REF', 'GI
 $prior = @{}
 foreach ($name in $names) { $prior[$name] = [Environment]::GetEnvironmentVariable($name) }
 $cases = @(
-    @{ Name = 'a published matching release'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0.0'; draft = $false; id = 1 }) },
-    @{ Name = 'a published match alongside another draft'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0.0'; draft = $false; id = 1 }, [pscustomobject]@{ tag_name = 'v0.2.0.0'; draft = $true; id = 2 }) },
-    @{ Name = 'ambiguous matching drafts'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0.0'; draft = $true; id = 1 }, [pscustomobject]@{ tag_name = 'v0.1.0.0'; draft = $true; id = 2 }) },
-    @{ Name = 'a published match on the second page'; Releases = @(1..100 | ForEach-Object { [pscustomobject]@{ tag_name = "v2.0.0.$_"; draft = $true; id = $_ } }); SecondPage = @([pscustomobject]@{ tag_name = 'v0.1.0.0'; draft = $false; id = 101 }) }
+    @{ Name = 'a published matching release'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0'; draft = $false; id = 1 }) },
+    @{ Name = 'a published match alongside another draft'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0'; draft = $false; id = 1 }, [pscustomobject]@{ tag_name = 'v0.2.0'; draft = $true; id = 2 }) },
+    @{ Name = 'ambiguous matching drafts'; Releases = @([pscustomobject]@{ tag_name = 'v0.1.0'; draft = $true; id = 1 }, [pscustomobject]@{ tag_name = 'v0.1.0'; draft = $true; id = 2 }) },
+    @{ Name = 'a published match on the second page'; Releases = @(1..100 | ForEach-Object { [pscustomobject]@{ tag_name = "v2.0.$_"; draft = $true; id = $_ } }); SecondPage = @([pscustomobject]@{ tag_name = 'v0.1.0'; draft = $false; id = 101 }) }
 )
 try {
     $env:GITHUB_SHA = 'fixture-commit'
@@ -75,7 +78,7 @@ try {
             $env:GITHUB_REF = "refs/heads/$($candidate.SourceBranch)"
             $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }
             & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot
-            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 5) { throw 'Wrong release track flags or asset count.' }
+            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 7) { throw 'Wrong release track flags or asset count.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }

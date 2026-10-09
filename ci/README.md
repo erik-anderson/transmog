@@ -11,7 +11,7 @@ trigger. Runs are serialized, time-limited, and retain intermediate artifacts
 for seven days; compiled targets and signing tools are never restored from caches.
 
 For each release, set and commit the version with
-`pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch.revision>`,
+`pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch>`,
 push it to the selected branch, then use
 **Actions > Windows signed release > Run workflow** and select that branch.
 **Branch default** uses the checked-in Canary/Beta/Stable track. A release branch
@@ -21,12 +21,12 @@ resulting draft's installer, then edit and publish that same draft when ready.
 The [manual release process](../docs/windows-release.md#manual-github-release-process)
 documents version selection, rebuilds, previews, and publication. The workflow
 checks that Cargo, Tauri, and desktop UI versions agree before compiling.
-The canonical four-part version, source channel, and release track live in `release-version.json`;
-Cargo/npm/Tauri use a compatible SemVer mapping with a numeric revision after `+`.
+The canonical semantic version, source channel, and release track live in `release-version.json`;
+Cargo/npm/Tauri, release tags, installer names, and product diagnostics use that same semantic version.
 Published versions, wrong branch majors/tracks, and reserved Canary majors fail
 before build setup. **Maintain release and Canary versions** initializes new
 release branches to Beta and reserves their major by advancing main to the next
-major Canary version. Publication advances the source revision; Beta promotion
+major Canary version. Publication advances the patch version; Beta promotion
 persists Stable on that branch without another version increment. Publication also
 checks main's major as a fallback. The job has only `contents: write`, with no
 Azure identity or signing access. Release branches use neutral Release product
@@ -79,12 +79,16 @@ Certificate Profile Signer assignment on the production certificate profile.
 It has no subscription/resource-group/account-wide roles or application API
 permissions. The login uses the tenant without requiring subscription discovery.
 
-Protected environment secrets (configuration identifiers, no signing keys or
-passwords) mask values from the start of each job:
+Protected environment secrets mask values from the start of each job:
 
 - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`;
 - `SIGNING_ENDPOINT`, `SIGNING_ACCOUNT_NAME`, `SIGNING_CERTIFICATE_PROFILE`;
 - `SIGNING_DENIED_PROFILE`.
+
+Updater signing uses `TRANSMOG_UPDATER_PRIVATE_KEY` and the optional
+`TRANSMOG_UPDATER_PRIVATE_KEY_PASSWORD` in that same environment. This key is
+separate from Azure's Authenticode identity and must match the desktop's embedded
+public key. Keep a secure backup of the ignored local private key.
 
 `SIGNING_PUBLISHER` is an environment variable because the Authenticode publisher
 is public. Azure authentication remains secretless OIDC; storing identifiers in
@@ -120,7 +124,7 @@ includes every OS/NSIS component. The bundle is included in the draft release.
 Consumers can verify the downloaded installer with a recent GitHub CLI:
 
 ```powershell
-gh attestation verify ./Transmog_0.1.0.0_x64-setup.exe `
+gh attestation verify ./Transmog_0.1.0_x64-setup.exe `
   --repo erik-anderson/transmog `
   --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml `
   --source-ref refs/heads/main

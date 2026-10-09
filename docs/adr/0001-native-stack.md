@@ -15,7 +15,15 @@ the selected compiler.
 Pin `boring`, `tokio-boring`, and `hyper-boring` to 5.2.0. Pin quiche to 0.30.0
 with only `boringssl-boring-crate`. All origin TLS contexts derive from one
 `UpstreamTlsContextFactory` and immutable trust snapshot. A CI graph check fails
-on duplicate Boring families or a second production TLS stack.
+on duplicate Boring families or a second proxy/replay TLS stack.
+
+The Windows desktop updater uses the supported Tauri updater SDK's HTTPS client
+and platform trust to retrieve signed GitHub release assets. Its Rustls dependency
+chain is confined to the desktop-owned updater edge. It never supplies a TLS
+context to proxy, replay, interception, or HTTP/3 resources. Cargo-deny permits
+only the named updater wrappers, and the crypto graph gate rejects every other
+production path to those TLS crates. This exception keeps standard signed updates
+available without maintaining a fork of the updater's transport and installer.
 
 ## Consequences
 

@@ -21,8 +21,7 @@ $metadata = cargo metadata --manifest-path (Join-Path $repositoryRoot 'Cargo.tom
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read the locked Cargo workspace.' }
 $currentVersion = [string]$metadata.packages[0].version
 if (@($metadata.packages | Where-Object version -CNE $currentVersion).Count) { throw 'Workspace package versions differ.' }
-if ($currentVersion -cne $state.SemVer -and $currentVersion -cne ($state.SemVer -replace '\+0$', '')) { throw 'Cargo differs from release-version.json.' }
-if ($Check -and $currentVersion -cne $state.SemVer) { throw 'Set the four-part version to synchronize legacy package versions first.' }
+if ($currentVersion -cne $state.SemVer) { throw 'Cargo differs from release-version.json.' }
 $currentRequirement = $currentVersion.Split('+')[0]
 $newRequirement = $newSemVer.Split('+')[0]
 
@@ -52,7 +51,7 @@ foreach ($path in $manifestPaths) {
     }
 }
 if ($Check -or ($newSemVer -ceq $currentVersion -and $selectedChannel -ceq $state.Channel -and $selectedType -ceq $state.ReleaseType)) {
-    Write-Host "Committed release version: $($state.Version) ($($state.ReleaseType)); internal SemVer: $($state.SemVer)"
+    Write-Host "Committed release version: $($state.Version) ($($state.ReleaseType))"
     return
 }
 $statePath = Join-Path $repositoryRoot 'release-version.json'

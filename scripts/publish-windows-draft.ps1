@@ -7,7 +7,7 @@ $identityTest = Get-Content -Raw -LiteralPath (Join-Path $EvidenceRoot 'identity
 foreach ($evidence in @($installerTest, $identityTest)) {
     if ($evidence.Commit -cne $env:GITHUB_SHA -or $evidence.RunId -cne $env:GITHUB_RUN_ID) { throw 'Qualification evidence is from a different run.' }
 }
-if (-not $installerTest.InstallVerified -or -not $installerTest.UninstallVerified -or -not $identityTest.UnprotectedJobAuthenticationDenied) { throw 'Release gate evidence did not pass.' }
+if (-not $installerTest.InstallVerified -or -not $installerTest.UninstallVerified -or -not $installerTest.UpdaterSignatureVerified -or -not $identityTest.UnprotectedJobAuthenticationDenied) { throw 'Release gate evidence did not pass.' }
 if (-not (Test-Path -LiteralPath (Join-Path $EvidenceRoot 'provenance.sigstore.json') -PathType Leaf)) { throw 'Missing verified provenance bundle.' }
 $expectedInstallerHash = ($manifest.Files | Where-Object Name -CEQ $manifest.Installer).Sha256
 if ($installerTest.InstallerSha256 -cne $expectedInstallerHash) { throw 'Qualification used a different installer.' }

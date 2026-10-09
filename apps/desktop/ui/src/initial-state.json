@@ -668,5 +668,24 @@
   "largestFirst": false,
   "authorizationPresent": false,
   "proxyAuthorizationPresent": false,
-  "sourceIp": ""
+  "sourceIp": "",
+  "updateState": {
+    "phase": "idle",
+    "currentVersion": "",
+    "version": null,
+    "notes": "",
+    "message": "",
+    "downloadedBytes": 0,
+    "totalBytes": null,
+    "scheduled": false,
+    "suppressed": false,
+    "remindAfterUnixMs": 0
+  },
+  "updatePanelVisible": false,
+  "updateBusy": false,
+  "updateButtonLabel": "Updates",
+  "updateProgressText": "",
+  "updateReminderText": "",
+  "updateError": "",
+  "updateDraftSummary": ""
 }

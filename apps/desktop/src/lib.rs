@@ -6,6 +6,12 @@ mod file_dialogs;
 #[cfg(windows)]
 mod windows;
 
+#[cfg(any(windows, test))]
+mod update_policy;
+
+#[cfg(windows)]
+mod updates;
+
 /// Starts the Windows desktop shell.
 #[cfg(windows)]
 pub use windows::run;

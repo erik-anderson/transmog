@@ -3,6 +3,7 @@ import { attr, observable } from '@microsoft/webui-framework';
 import '../script-editor/script-editor.js';
 import '../match-editor/match-editor.js';
 import type { MatchEditor } from '../match-editor/match-editor.js';
+import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
@@ -16,6 +17,7 @@ type RuleRow=AutomationRule & {order:number;name:string;criteria:string;state:st
 type BatchRow={included:boolean;order:number;id:string;name:string;method:string;url:string;eligible:boolean;reason:string;duplicate:string;startedAt:number};
 
 export class AutomationWorkspace extends WorkspaceElement {
+  scriptEditor!: ScriptEditor;
   @attr view = 'traffic';
   @attr theme = 'system';
   @observable automationSection='responses';

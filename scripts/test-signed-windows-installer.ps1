@@ -21,6 +21,7 @@ function Get-HostState {
 }
 $before = Get-HostState
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', "/D=$installDirectory")
+Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--verify-update-artifact', ('"' + (Resolve-Path -LiteralPath $installer).Path + '"'), ('"' + (Resolve-Path -LiteralPath "$installer.sig").Path + '"'), (ConvertTo-ReleaseSemVer $manifest.Version))
 foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }
@@ -34,6 +35,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReportPath) | Out
 [ordered]@{
     Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; InstallerSha256 = $signatures[0].Sha256
     InstallVerified = $true; MaintenanceVerified = $true; UninstallVerified = $true; HostStateUnchanged = $true
+    UpdaterSignatureVerified = $true
     OperatingSystem = (Get-CimInstance Win32_OperatingSystem).Caption
     Signatures = $signatures.ToArray(); CleanWindows11Checklist = 'deferred by maintainer'
 } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $ReportPath -Encoding utf8NoBOM

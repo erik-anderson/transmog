@@ -28,6 +28,7 @@ try {
         if (-not ($journal | Where-Object { $_.Name -ceq $name })) { throw "Missing signature evidence for $name" }
     }
     Copy-Item -LiteralPath $package.Installer -Destination (Join-Path $releaseRoot $installerEvidence.Name)
+    & (Join-Path $PSScriptRoot 'create-update-manifest.ps1') -Installer $package.Installer -Version $build.Version -OutputDirectory $releaseRoot
     Copy-Item -Path (Join-Path $PayloadRoot 'evidence\*') -Destination $releaseRoot
     [ordered]@{ Publisher = $env:SIGNING_PUBLISHER; Files = $journal; Installer = $installerEvidence } | ConvertTo-Json -Depth 6 |
         Set-Content -LiteralPath (Join-Path $releaseRoot 'signature-report.json') -Encoding utf8NoBOM
