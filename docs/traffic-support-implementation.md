@@ -278,6 +278,12 @@ qualified baseline, not completion of the complete plan.
     screenshots. Release safety, publication, version lifecycle and compiled
     isolated SAZ registration fixtures pass.
 
+28. Final import review charges structured trailers to the aggregate metadata
+    budget, caps repeated chunk-framing issues, and bounds source notes to the
+    native round-trip contract. Warning-heavy SAZ imports save and reopen all
+    entries, with explicit note-omission counts. The 116 app tests and strict
+    workspace Clippy pass.
+
 Remaining isolated phases:
 
 - Final qualification: updated support guide with download authenticity and

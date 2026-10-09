@@ -256,10 +256,11 @@ impl TraceRegistry {
             sessions: imported.sessions.len(),
             imported_at: millis(SystemTime::now()),
             context: std::mem::take(&mut imported.context),
-            notes: std::mem::take(&mut imported.notes)
-                .into_iter()
-                .chain(imported.issues.iter().cloned())
-                .collect(),
+            notes: bounded_source_notes(
+                std::mem::take(&mut imported.notes)
+                    .into_iter()
+                    .chain(imported.issues.iter().cloned()),
+            ),
         };
         self.publish_import(imported, service, store, trace)
     }
@@ -475,6 +476,7 @@ fn import_saz(
             .push(format!("{} additional issues", index.additional_issues));
     }
     let mut head_bytes = 0_usize;
+    let mut omitted_body_issues = 0_usize;
     for source in index.trace_sources {
         head_bytes += serde_json::to_vec(&source)
             .map_err(|_| invalid("Invalid SAZ source"))?
@@ -697,10 +699,14 @@ fn import_saz(
                         return Err(unavailable("Trace import canceled"));
                     }
                     Err(_) => {
-                        result.issues.push(format!(
-                            "Session {}: chunked body or checksum unavailable",
-                            session.source_id
-                        ));
+                        if result.issues.len() < 512 {
+                            result.issues.push(format!(
+                                "Session {}: chunked body or checksum unavailable",
+                                session.source_id
+                            ));
+                        } else {
+                            omitted_body_issues += 1;
+                        }
                         (message.body.wire_bytes, None, false)
                     }
                 }
@@ -718,6 +724,9 @@ fn import_saz(
                 }
             }
             complete &= !message.body.dropped;
+            if let Some(trailers) = &trailers {
+                charge_trailers(&mut head_bytes, trailers)?;
+            }
             snapshot.bodies.push(BodySnapshot {
                 boundary,
                 observed_bytes: observed,
@@ -778,6 +787,11 @@ fn import_saz(
         };
         result.entries.insert(format!("{:032x}", id.0), entry);
         result.sessions.push(snapshot);
+    }
+    if omitted_body_issues > 0 {
+        result.notes.push(format!(
+            "{omitted_body_issues} additional chunked body issues omitted."
+        ));
     }
     result.index_bytes = head_bytes;
     Ok(result)
@@ -1024,12 +1038,7 @@ fn apply_native_frame(
         }
         CaptureRecordKind::Trailers { boundary, headers } => {
             let trailers = native_headers(headers)?;
-            *budget = budget.saturating_add(
-                trailers
-                    .iter()
-                    .map(|field| field.name().len() + field.value().len())
-                    .sum::<usize>(),
-            );
+            charge_trailers(budget, &trailers)?;
             row.bodies
                 .entry(crate::inspector::boundary(boundary))
                 .or_default()
@@ -1403,6 +1412,36 @@ fn millis(time: SystemTime) -> u64 {
 fn invalid(message: &str) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, message, false)
 }
+fn bounded_source_notes(notes: impl Iterator<Item = String>) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut omitted = 0_usize;
+    for note in notes {
+        if result.len() < 127 {
+            result.push(note.chars().take(2048).collect());
+        } else {
+            omitted += 1;
+        }
+    }
+    if omitted > 0 {
+        result.push(format!("{omitted} additional source notes omitted; inspect individual entries for missing evidence."));
+    }
+    result
+}
+fn charge_trailers(budget: &mut usize, trailers: &HeaderBlock) -> Result<(), AppError> {
+    for field in trailers.iter() {
+        *budget = budget
+            .saturating_add(64)
+            .saturating_add(field.name().len())
+            .saturating_add(field.value().len());
+    }
+    if *budget > MAX_HEAD_BYTES {
+        return Err(invalid(
+            "Saved trace trailers exceed the viewer index limit",
+        ));
+    }
+    Ok(())
+}
+
 fn unavailable(message: &str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, true)
 }
@@ -1865,6 +1904,62 @@ mod tests {
         assert_eq!(
             reopened.composer_source(&saz_row.id).unwrap().body,
             "616263"
+        );
+    }
+
+    #[test]
+    fn trailer_metadata_is_charged_before_publication() {
+        let trailers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new(b"X-Trailer".to_vec(), b"value".to_vec()).unwrap(),
+        ]);
+        let mut budget = MAX_HEAD_BYTES - 4;
+        assert!(charge_trailers(&mut budget, &trailers).is_err());
+    }
+    #[tokio::test]
+    async fn warning_heavy_imports_keep_bounded_reopenable_source_notes() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("warnings.saz");
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for id in 1..=140 {
+            zip.start_file(
+                format!("raw/{id}_c.txt"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            write!(
+                zip,
+                "GET http://example.invalid/{id} HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
+            )
+            .unwrap();
+        }
+        std::fs::write(&source, zip.finish().unwrap().into_inner()).unwrap();
+        let workspace = app(root.path());
+        let imported = workspace
+            .import_trace(request(source, "warnings"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert!(imported.trace.notes.len() <= 128);
+        assert!(
+            imported
+                .trace
+                .notes
+                .last()
+                .unwrap()
+                .contains("additional source notes omitted")
+        );
+        let saved = root.path().join("warnings.tmcap");
+        workspace
+            .save_traffic_trace(saved.clone(), crate::TraceSaveOptions::default())
+            .await
+            .unwrap();
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(saved, "reopen"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.service.catalog().project_retained(|_| ()).len(),
+            140
         );
     }
 
