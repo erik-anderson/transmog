@@ -45,7 +45,7 @@ Save it in a folder you can write to, open PowerShell in that folder, and run:
 
 The default captures complete headers, including cookies and credentials, and
 retains up to 25 MB (25,000,000 bytes) per request body. Response bodies and
-observed byte counts remain available within the overall trace file budget.
+observed byte counts are also recorded; trace files have no fixed size ceiling.
 Large requests continue forwarding when their capture prefix reaches the cap. To redact `Authorization`, `Proxy-Authorization`, `Cookie` and
 `Set-Cookie` values, add `--redact`. This choice persists for subsequent CLI
 captures. Use `--retain-sensitive` to change it back. Bodies can still contain
@@ -54,19 +54,24 @@ private information, so review the trace before sharing.
 To remove the per-request capture cap (trace output has no file-size ceiling):
 
 ```powershell
-.\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap.gz
+.\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap
 ```
 
-This preference persists for subsequent CLI runs. Use --request-body-limit
-25000000 to restore the default, or supply another positive byte count. The
-console prints the active limit before recording. Overall file limits and
-separate bounded body-processing limits still apply.
+This preference persists for subsequent CLI runs. Use `--request-body-limit
+25000000` to restore the default, or supply another positive byte count. The
+console prints the active limit before recording. Separate bounded
+body-processing limits still apply to tasks such as decoding and searching;
+they do not impose a trace-file size ceiling.
 
 Existing files are never overwritten. Choose another filename for the next
-capture. TMCap compresses each record as it arrives and lets the desktop read body
-chunks on demand. An optional `.tmcap.gz` adds an outer wrapper at stop; if that
-wrapper fails, the chunk-compressed `.tmcap` remains available. Use an output ending in `.tmcap` when
-you want an uncompressed trace.
+capture. Use `.tmcap` for normal recording: TMCap compresses each chunk as it
+arrives and lets the desktop read body payloads on demand.
+
+An optional `.tmcap.gz` wrapper may reduce some traces further, but adds another
+compression pass at stop and requires expansion to a temporary native file before
+opening. This takes extra time and disk space. Wrapping an encrypted trace usually
+provides little additional compression. If wrapping fails, the chunk-compressed
+`.tmcap` remains available.
 
 ## Certificates and interrupted runs
 
@@ -91,7 +96,7 @@ memory. To retry cleanup directly:
 For repeated captures on your own test machine, explicitly opt into persistence:
 
 ```powershell
-.\transmog-cli.exe record --persistent-root --output .\next-trace.tmcap.gz
+.\transmog-cli.exe record --persistent-root --output .\next-trace.tmcap
 ```
 
 This retains a protected private key and reuses a valid CLI root on subsequent
@@ -112,10 +117,12 @@ material is created. Do not share it with a support contact.
 
 ## Recover an interrupted capture
 
-If the console or computer closed unexpectedly, keep the leftover native
-`support-trace.tmcap` beside the intended `.tmcap.gz` output. A gzip file left
-mid-compression may be incomplete; the native file is kept until compression
-finishes successfully. Restore CLI-owned proxy/certificate state first:
+If the console or computer closed unexpectedly, keep `support-trace.tmcap`;
+it may contain a recoverable, unsealed prefix. If you chose the optional
+`.tmcap.gz` wrapper, also keep the intermediate `.tmcap` beside it: a gzip file
+interrupted during wrapping may be incomplete, and the native file is retained
+until wrapping finishes successfully. Restore CLI-owned proxy/certificate state
+first:
 
 ```powershell
 .\transmog-cli.exe roots cleanup

@@ -41,8 +41,8 @@ the Transmog UI.
 - **Find the caller.** On supported local platforms, traffic records include
   the originating process name and PID; non-loopback clients are identified as
   remote.
-- **Capture once, analyze later.** Stream to the native checksummed `.tmcap`
-  format, export JSONL, or produce finalized Fiddler-compatible SAZ archives.
+- **Capture once, analyze later.** Stream to the native compressed, checksummed
+  `.tmcap` format, export JSONL, or produce finalized Fiddler-compatible SAZ archives.
 - **Debug modern web traffic.** Intercept HTTP/1.1 and HTTP/2 over an explicit
   proxy, inspect HTTP/1.1 WebSockets, and use HTTP/3 for supported origin
   egress. Content processing supports gzip, Brotli, DEFLATE, and zstd.
@@ -120,8 +120,12 @@ For a guided support capture, run the separate signed CLI, reproduce the issue,
 then press Ctrl+C to stop and save a compressed trace:
 
 ```powershell
-.\transmog-cli.exe record --output .\support-trace.tmcap.gz
+.\transmog-cli.exe record --output .\support-trace.tmcap
 ```
+
+TMCap already compresses individual chunks and opens bodies on demand. Use
+`.tmcap` for normal captures; an optional `.tmcap.gz` wrapper requires full
+expansion before opening and may offer little additional size reduction.
 
 The CLI asks to install its public root without relaunching, configures the
 Windows proxy, and removes the root afterward. Its default ephemeral private
