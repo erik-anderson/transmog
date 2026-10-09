@@ -6,6 +6,19 @@ import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePr
 import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
+  @observable credits:Array<{id:string;name:string;version:string;license:string;text:string}>=[];
+  @observable creditsSummary='';
+  @observable creditsStatus='';
+  creditsDialog!:HTMLDialogElement;
+  async showCredits():Promise<void> {
+    this.creditsDialog.showModal();
+    if(this.credits.length)return;
+    this.creditsStatus='Loading third-party notices…';
+    try {const response=await fetch('/credits.json');if(!response.ok)throw new Error('The bundled notices are unavailable.');const notices=await response.json() as {summary:string;entries:Array<{id:string;name:string;version:string;license:string;text:string}>};this.credits=notices.entries;this.creditsSummary=notices.summary;this.creditsStatus='';}
+    catch(error:unknown){this.creditsStatus=describeError(error);}
+  }
+  closeCredits():void {this.creditsDialog.close();}
+  resetWorkspace():void {this.$emit('reset-workspace');this.settingsText='Layout and columns reset.';}
   checkUpdates(): void { this.$emit('check-updates'); }
   @attr view = 'traffic';
   @observable bufferMode='automatic';
@@ -39,7 +52,6 @@ export class SettingsWorkspace extends WorkspaceElement {
   settingsKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();if(this.settingsDirty)this.settingsForm.requestSubmit();}}
   private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateReady=bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted;this.certificateRecovery=bootstrap.caFilesExist&&(!bootstrap.caFilesPresent||bootstrap.ownedCaSha256===null)||!bootstrap.caFilesPresent&&bootstrap.ownedCaSha256!==null;this.hostRecoveryPending=bootstrap.hostRestorePending;}
   private async runSupport(operation:()=>Promise<void>):Promise<void> {if(this.supportBusy)return;this.supportBusy=true;try {await operation();}finally{this.supportBusy=false;}}
-  async chooseSupportPath():Promise<void> {await this.runSupport(async()=>{try {const path=await invoke<string|null>('pick_support_path');if(path!==null){const input=this.supportForm.elements.namedItem('destination') as HTMLInputElement;input.value=path;input.focus();}}catch(error:unknown){this.supportText='File selection failed: '+describeError(error);}});}
   @observable proxyReady = initialState.proxyReady;
   @observable proxyText = initialState.proxyText;
   @observable proxyKind = initialState.proxyKind;
@@ -154,7 +166,7 @@ export class SettingsWorkspace extends WorkspaceElement {
 
     const data = new FormData(this.proxyForm);
     try {
-      if (this.proxyLifecycle === 'draining') {
+      if (this.proxyLifecycle === 'draining' || this.proxyLifecycle === 'stopping') {
         const resumed = await invoke<AppStatus>('resume_application');
         this.renderAppStatus(resumed);
         if (resumed.lifecycle === 'running') {
@@ -395,7 +407,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.sessionPageSize=Number(data.get('pageSize'));state.preferences.configureSystemProxy=true;state.privacy.bufferLimit=this.bufferMode==='custom'?{mode:'custom',bytes:Math.round(Number(data.get('bufferSize'))*1073741824)}:{mode:this.bufferMode==='unlimited'?'unlimited':'automatic'};const entryLimit=data.get('limitEntries')==='on'?Number(data.get('maxEntries')):null;if(entryLimit!==null&&(!Number.isSafeInteger(entryLimit)||entryLimit<1))throw new Error('Choose a positive whole number of live entries.');state.privacy.maxLiveEntries=entryLimit;state.privacy.retainRequestBodies=data.get('requestBodies')==='on';state.privacy.requestBodyLimit=data.get('requestBodyLimit')==='unlimited'?null:25000000;state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);await this.refreshBufferStatus();this.settingsText='Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
 
   async refreshDiagnostics():Promise<void> {await this.runSupport(async()=>{try {const report=await invoke<{applicationVersion:string;runtime:{operatingSystem:string;architecture:string;webviewVersion:string|null};events:Array<{level:string}>;privacyNotice:string}>('diagnostics_report');this.supportFacts=[{label:'Transmog version',value:report.applicationVersion},{label:'Operating system',value:report.runtime.operatingSystem},{label:'Architecture',value:report.runtime.architecture},{label:'WebView2',value:report.runtime.webviewVersion??'Unavailable'},{label:'Recent events',value:String(report.events.length)},{label:'Warnings / errors',value:String(report.events.filter(event=>event.level!=='info').length)},{label:'Privacy',value:report.privacyNotice}];this.supportDetails=JSON.stringify(report,null,2);this.supportText='Diagnostics refreshed.';}catch(error:unknown){this.supportText='Diagnostics unavailable: '+describeError(error);}});}
-  async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination:String(data.get('destination')??''),includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);}});}
+  async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const destination=await invoke<string|null>('pick_support_path');if(destination===null){this.supportText='Support bundle canceled.';return;}const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination,includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);await this.showError('Support bundle could not be saved',describeError(error));}});}
   async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.renderAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
 
   async refreshStatus(): Promise<string | null> {

@@ -25,10 +25,16 @@ cannot participate in proxy shutdown or host restoration.
 
 ## Retention and privacy
 
+Closing the main window releases its live traffic, removed-entry Undo evidence and
+owned body-cache files. Saved traces and explicitly recorded files remain.
+Traffic → Clear all acts across pages and filters. At 100 MB or more, Undo expires
+after five minutes and releases the data; at 1 GB or more, data is released
+immediately and Undo is unavailable.
+
 New installations retain request and response bodies and include bodies in
-explicit recordings. Sensitive header values are collected by default.
+explicit recordings. Sensitive header values are collected by default; the Privacy redaction checkbox is initially unchecked.
 **Settings → Preferences** offers persistent redaction of Authorization,
-Proxy-Authorization, Cookie and Set-Cookie values for new traffic. Header names,
+Proxy-Authorization, Cookie and Set-Cookie values for newly received traffic and recordings. Header names,
 ordering, duplicates and measured original lengths remain available. Changing
 redaction does not rewrite retained traffic or saved files. Export-only redaction
 applies just to the new copy; bodies, URLs and metadata can still contain private
@@ -88,8 +94,17 @@ saved privacy opt-in and an opt-in for this export.
 1. Stop the proxy normally; preference or log failures cannot block restoration.
 2. Use **Settings → Support → Refresh diagnostics** and inspect the readable
    summary before copying technical details.
-3. Create a support bundle at a new destination. Include paths only if needed.
+3. Use **Create support bundle…** and choose a destination in the save dialog.
+   Include remembered capture/export filenames and folders only if needed; file
+   contents are excluded. This option requires the saved Privacy permission.
 4. If preferences are corrupt, restart and review the recovery message.
 
 A support bundle diagnoses the tool itself. To share captured traffic, review
 and save a `.tmcap` trace instead.
+
+## Third-party credits
+
+**Settings → Credits** opens a scrollable modal inventory with dependency
+versions, licenses, copyright notices and vendored native library notices. The
+notices ship with the app and are available offline. Builds require version-pinned
+license snapshots when published dependencies omit their license files.

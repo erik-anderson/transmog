@@ -791,5 +791,11 @@
   "passwordConfirm": false,
   "passwordVisible": false,
   "passwordError": "",
-  "exportCanEncrypt": true
+  "exportCanEncrypt": true,
+  "timingMinor": [],
+  "credits": [],
+  "creditsSummary": "",
+  "creditsStatus": "",
+  "trafficUndo": [],
+  "saveTraceFormat": "native"
 }

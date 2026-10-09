@@ -132,12 +132,16 @@ fn client_assets(ui_dir: &Path) -> Vec<AssetSource> {
         assert_eq!(public_path, format!("/{filename}"));
         assert!(matches!(
             content_type,
-            "text/javascript; charset=utf-8" | "text/css; charset=utf-8"
+            "text/javascript; charset=utf-8"
+                | "text/css; charset=utf-8"
+                | "application/json; charset=utf-8"
         ));
         sources.push(AssetSource {
             public_path: public_path.to_owned(),
             content_type: if content_type.starts_with("text/css;") {
                 "text/css; charset=utf-8"
+            } else if content_type.starts_with("application/json;") {
+                "application/json; charset=utf-8"
             } else {
                 "text/javascript; charset=utf-8"
             },

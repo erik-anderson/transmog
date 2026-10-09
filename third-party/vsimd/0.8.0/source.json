@@ -1,0 +1,8 @@
+{
+  "package": "vsimd",
+  "version": "0.8.0",
+  "commit": "d74c030d9dc4f3cae02146d1f497ff62726ef09a",
+  "sources": [
+    "https://raw.githubusercontent.com/Nugine/simd/d74c030d9dc4f3cae02146d1f497ff62726ef09a/LICENSE"
+  ]
+}

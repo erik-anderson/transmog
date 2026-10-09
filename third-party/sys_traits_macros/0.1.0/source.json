@@ -1,0 +1,8 @@
+{
+  "package": "sys_traits_macros",
+  "version": "0.1.0",
+  "commit": "75cbf3ea478624cc78275b0264e78e9ae13ce3f5",
+  "sources": [
+    "https://raw.githubusercontent.com/dsherret/sys_traits/75cbf3ea478624cc78275b0264e78e9ae13ce3f5/macros/Cargo.toml"
+  ]
+}

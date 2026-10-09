@@ -1,0 +1,8 @@
+{
+  "package": "microsoft-webui-tokens",
+  "version": "0.0.30",
+  "commit": "d513b57caaffaf6cc3d1bd80cb32cb5fabd1c9f0",
+  "sources": [
+    "https://raw.githubusercontent.com/microsoft/webui/d513b57caaffaf6cc3d1bd80cb32cb5fabd1c9f0/LICENSE"
+  ]
+}

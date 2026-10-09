@@ -1,0 +1,8 @@
+{
+  "package": "deno_core",
+  "version": "0.412.0",
+  "commit": "0c071246a412575e07423263404a5d13e7ed6aa2",
+  "sources": [
+    "https://raw.githubusercontent.com/denoland/deno/0c071246a412575e07423263404a5d13e7ed6aa2/LICENSE.md"
+  ]
+}

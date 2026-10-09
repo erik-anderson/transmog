@@ -1,0 +1,9 @@
+{
+  "package": "ndk-sys",
+  "version": "0.6.0+11769913",
+  "commit": "49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25",
+  "sources": [
+    "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-APACHE",
+    "https://raw.githubusercontent.com/rust-mobile/ndk/49bbbba16c58ff63cb8a0ad0eca5a9fb7ecaec25/LICENSE-MIT"
+  ]
+}

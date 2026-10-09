@@ -3,6 +3,7 @@ import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 import { esbuildProjection } from '@microsoft/webui/projection.js';
+import { buildCredits } from './scripts/build-credits.mjs';
 
 const workingDirectory = fileURLToPath(new URL('./', import.meta.url));
 const outputDirectory = resolve(workingDirectory, 'dist');
@@ -18,6 +19,7 @@ for (const file of await readdir(join(workingDirectory, 'src'), { recursive: tru
 if (relative(workingDirectory, outputDirectory) !== 'dist') throw new Error('Unsafe build output directory: ' + outputDirectory);
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
+await buildCredits(workingDirectory, join(outputDirectory, 'credits.json'));
 
 const client = await esbuild.build({
   absWorkingDir: workingDirectory,
@@ -43,6 +45,9 @@ const outputs = { ...client.metafile.outputs };
 for (const [entryPoint, outfile] of [
   ['node_modules/monaco-editor/esm/vs/editor/editor.worker.js', 'monaco-editor.worker.js'],
   ['node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js', 'monaco-ts.worker.js'],
+  ['node_modules/monaco-editor/esm/vs/language/json/json.worker.js', 'monaco-json.worker.js'],
+  ['node_modules/monaco-editor/esm/vs/language/css/css.worker.js', 'monaco-css.worker.js'],
+  ['node_modules/monaco-editor/esm/vs/language/html/html.worker.js', 'monaco-html.worker.js'],
 ]) {
   const worker = await esbuild.build({
     absWorkingDir: workingDirectory,
@@ -66,6 +71,7 @@ const assets = Object.entries(outputs).filter(([file]) => !file.endsWith('.css')
   if (!/^(?:chunks\/)?[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(name)) throw new Error('Unsafe client asset path: ' + name);
   return { path: '/' + name, file: name, contentType: name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8', bytes: metadata.bytes };
 }).sort((a, b) => a.path.localeCompare(b.path));
+assets.push({path:'/credits.json',file:'credits.json',contentType:'application/json; charset=utf-8',bytes:(await readFile(join(outputDirectory,'credits.json'))).length});
 await writeFile(join(outputDirectory, 'client-assets.json'), JSON.stringify(assets, null, 2) + '\n');
 await writeFile(join(outputDirectory, 'client-metafile.json'), JSON.stringify(client.metafile, null, 2) + '\n');
 await copyFile(join(workingDirectory, 'src/document.css'), join(outputDirectory, 'document.css'));

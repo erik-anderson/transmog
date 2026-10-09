@@ -1,0 +1,8 @@
+{
+  "package": "dprint-swc-ext",
+  "version": "0.26.1",
+  "commit": "9236c9292cd1f1e56ba2e55d592c69ef30fcaaba",
+  "sources": [
+    "https://raw.githubusercontent.com/dprint/dprint-swc-ext/9236c9292cd1f1e56ba2e55d592c69ef30fcaaba/LICENSE"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "package": "objc2-encode",
+  "version": "4.1.0",
+  "commit": "8d214f5477365ffcbcbb7de058c86ed9a518efb7",
+  "sources": [
+    "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+  ]
+}

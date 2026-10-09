@@ -1,0 +1,8 @@
+{
+  "package": "v8",
+  "version": "150.4.0",
+  "commit": "5c15a6995c9bb4bacd3e341b59fff32c909c80bf",
+  "sources": [
+    "https://raw.githubusercontent.com/denoland/rusty_v8/5c15a6995c9bb4bacd3e341b59fff32c909c80bf/LICENSE"
+  ]
+}

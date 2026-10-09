@@ -1,0 +1,8 @@
+{
+  "package": "sys_traits",
+  "version": "0.1.29",
+  "commit": "0b168a2935d4c398d38ea5d25af8f793858299b5",
+  "sources": [
+    "https://raw.githubusercontent.com/dsherret/sys_traits/0b168a2935d4c398d38ea5d25af8f793858299b5/Cargo.toml"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "package": "dlopen2_derive",
+  "version": "0.4.3",
+  "commit": "cc80e4a0a90d499b677fdf7743699b4b3a43a989",
+  "sources": [
+    "https://raw.githubusercontent.com/OpenByteDev/dlopen2/cc80e4a0a90d499b677fdf7743699b4b3a43a989/LICENSE"
+  ]
+}
