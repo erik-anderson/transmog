@@ -2,7 +2,6 @@
   "theme": "system",
   "view": "traffic",
   "activeView": "traffic",
-  "pageSize": "100",
   "lifecycleLabel": "Stopped",
   "lifecycleKind": "stopped",
   "listener": "Not listening",
@@ -365,9 +364,6 @@
   "newTrafficCount": 0,
   "updatesPending": false,
   "totalMatched": 0,
-  "pageIndex": 0,
-  "pageLimit": 100,
-  "pageEnd": 0,
   "sort": {
     "column": "started-at",
     "direction": "descending"
@@ -826,5 +822,9 @@
   "creditsSummary": "",
   "creditsStatus": "",
   "trafficUndo": [],
-  "saveTraceFormat": "native"
+  "saveTraceFormat": "native",
+  "rowCount": 2,
+  "topSpace": "0px",
+  "bottomSpace": "0px",
+  "activeRowId": ""
 }

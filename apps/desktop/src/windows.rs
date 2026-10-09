@@ -34,8 +34,9 @@ use transmog_app::{
     RequestCommandFormat, ResponseAsset, ResponseAssetEdit, ResponseAssetInspection,
     ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
     ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
-    SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
-    TraceSaveOptions, TraceSaveResult, WindowState, WorkspacePreferences,
+    SessionResponseAsset, SessionSummary, SupportBundleRequest, SupportBundleResult,
+    SystemReplayExecutor, TraceSaveOptions, TraceSaveResult, TrafficView, WindowState,
+    WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -45,6 +46,28 @@ use transmog_host_windows::{
 
 const UI_HOST: &str = "transmog-ui.localhost";
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+// Large imports and searches must not enqueue one WebView message per entry.
+// Always report the first update and completion; intermediate feedback is bounded.
+fn progress_due(
+    last: &std::sync::Mutex<Option<std::time::Instant>>,
+    completed: u64,
+    total: u64,
+) -> bool {
+    let now = std::time::Instant::now();
+    let mut last = last
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if last.is_none_or(|previous| {
+        now.duration_since(previous) >= std::time::Duration::from_millis(100)
+    }) || completed >= total
+    {
+        *last = Some(now);
+        true
+    } else {
+        false
+    }
+}
 
 #[derive(Clone)]
 struct DesktopState {
@@ -323,10 +346,18 @@ async fn search_traffic(
 ) -> Result<transmog_app::TrafficSearchResult, AppError> {
     let application = state.window_application(&window)?;
     let cancel = application.clone();
+    let last_progress = std::sync::Mutex::new(None);
     application
         .search_traffic(
             request,
             Arc::new(move |progress| {
+                if !progress_due(
+                    &last_progress,
+                    progress.completed as u64,
+                    progress.total as u64,
+                ) {
+                    return;
+                }
                 let operation = progress.operation_id.clone();
                 if on_progress.send(progress).is_err() {
                     cancel.cancel_traffic_search(&operation);
@@ -920,6 +951,47 @@ fn query_sessions(
 }
 
 #[tauri::command]
+async fn query_traffic_view(
+    query: SessionQueryInput,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<TrafficView, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || application.query_traffic_view(&query))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Traffic query worker failed".into(),
+            retryable: true,
+        })?
+}
+
+#[tauri::command]
+fn traffic_view_rows(
+    view_id: String,
+    offset: usize,
+    limit: usize,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<SessionSummary>, AppError> {
+    state
+        .window_application(&window)?
+        .traffic_view_rows(&view_id, offset, limit)
+}
+
+#[tauri::command]
+fn release_traffic_view(
+    view_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .release_traffic_view(&view_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn session_detail(
     id: String,
     window: tauri::WebviewWindow,
@@ -1044,10 +1116,14 @@ async fn import_trace(
 ) -> Result<transmog_app::TraceImportResult, AppError> {
     let application = state.window_application(&window)?;
     let cancel_application = application.clone();
+    let last_progress = std::sync::Mutex::new(None);
     application
         .import_trace(
             request,
             Arc::new(move |progress| {
+                if !progress_due(&last_progress, progress.completed, progress.total) {
+                    return;
+                }
                 let operation = progress.operation_id.clone();
                 if on_progress.send(progress).is_err() {
                     cancel_application.cancel_trace_import(&operation);
@@ -1585,6 +1661,9 @@ pub fn run() {
                 create_ca,
                 reset_ca,
                 query_sessions,
+                query_traffic_view,
+                traffic_view_rows,
+                release_traffic_view,
                 session_detail,
                 inspect_headers,
                 copy_message_headers,

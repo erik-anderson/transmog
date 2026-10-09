@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build, Protocol } from '@microsoft/webui';
 import { checkHexViewer } from './check-hex-viewer.mjs';
+import { checkTrafficList } from './check-traffic-list.mjs';
+import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -164,7 +166,8 @@ await page.addInitScript((workspace) => {
           state.dismissedIds??=[];const changed=state.sessions.map(row=>row.id).filter(id=>!args.ids.includes(id)&&!state.dismissedIds.includes(id));state.dismissedIds.push(...changed);return changed;
         }
         case 'watch_sessions': state.channel = args.onEvent; return;
-        case 'query_sessions': {
+        case 'query_sessions':
+        case 'query_traffic_view': {
           if(state.deferResultQuery&&args.query.searchResultId){state.deferResultQuery=false;state.resultQueryPending=true;await new Promise(resolve=>state.releaseResultQuery=resolve);}
           if(state.searchQueryFailure&&args.query.searchResultId===state.searchResults?.at(-1)?.id)throw new Error('Fixture result paging failed');
           if (state.queryError) throw new Error('Fixture query failure');
@@ -172,7 +175,8 @@ await page.addInitScript((workspace) => {
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
-          let rows = structuredClone(state.sessions).filter(row => (!args.query.searchResultId||state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids.includes(row.id)) && !state.dismissedIds?.includes(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
+          const dismissedQuery=new Set(state.dismissedIds??[]),matchingQuery=args.query.searchResultId?new Set(state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids??[]):null;
+          let rows = structuredClone(state.sessions).filter(row => (!matchingQuery||matchingQuery.has(row.id)) && !dismissedQuery.has(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
           if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
@@ -183,7 +187,16 @@ await page.addInitScript((workspace) => {
             if (index<0) throw new Error('Source no longer in Traffic.');
             offset=Math.floor(index/limit)*limit;
           }
-          return {sessions:rows.slice(offset,offset+limit),focusOffset:args.query.focusId?offset:null,totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
+          const page={sessions:rows.slice(offset,offset+limit),focusOffset:args.query.focusId?offset:null,totalMatched:rows.length,retainedCount:state.sessions.length,nextCursor:null,evicted:0,sequenceGaps:0,subscriberLag:0};
+          if(command==='query_sessions')return page;
+          const id='view-'+(state.viewSequence=(state.viewSequence??0)+1),view={id,ids:rows.map(row=>row.id),page};
+          (state.trafficViews??=new Map()).set(id,view);state.rowMap=new Map(state.sessions.map(row=>[row.id,row]));return view;
+        }
+        case 'release_traffic_view': state.trafficViews?.delete(args.viewId);return;
+        case 'traffic_view_rows': {
+          const snapshot=state.trafficViews?.get(args.viewId);if(!snapshot)throw new Error('Traffic view expired');
+          const dismissed=new Set(state.dismissedIds??[]);
+          return snapshot.ids.slice(args.offset,args.offset+args.limit).filter(id=>!dismissed.has(id)).map(id=>state.rowMap.get(id)).filter(Boolean);
         }
         case 'composer_source': {
           if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
@@ -266,7 +279,8 @@ await page.addInitScript((workspace) => {
         case 'clear_traffic': {const ids=state.sessions.map(row=>row.id);state.dismissedIds=[...ids];return {ids,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};}
         case 'remove_traffic_entries': {
           const dismissed=new Set(state.dismissedIds??[]);const changed=[];
-          for(const id of args.ids)if(state.sessions.some(row=>row.id===id) && (args.restore?dismissed.has(id):!dismissed.has(id))) {if(args.restore)dismissed.delete(id);else dismissed.add(id);changed.push(id);}
+          const retained=new Set(state.sessions.map(row=>row.id));
+          for(const id of args.ids)if(retained.has(id) && (args.restore?dismissed.has(id):!dismissed.has(id))) {if(args.restore)dismissed.delete(id);else dismissed.add(id);changed.push(id);}
           state.dismissedIds=[...dismissed];return changed;
         }
         case 'create_autoresponse_batch': {
@@ -337,7 +351,7 @@ const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
   await page.goto('https://workspace.test/');
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded 4 of 4 exchanges.'));
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('4 traffic entries.'));
   await page.locator('#update-panel').getByRole('button',{name:'Update now',exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),1,'Startup did not check exactly once');
   assert.equal(await page.evaluate(()=>document.activeElement===document.body),true,'The startup update prompt stole focus');
@@ -362,6 +376,7 @@ try {
   await page.locator('#traffic').waitFor({state:'visible'});
   // Populated lists must leave bulk actions reachable by an actual mouse click.
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.reviewOriginalRows=state.sessions;state.sessions=Array.from({length:60},(_,index)=>({...state.sessions[1],id:'layout-'+index,path:'/layout/'+index,url:'http://example.test/layout/'+index,startedAt:2000+index}));await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
+  await page.evaluate(async()=>await document.querySelector('app-shell').traffic.revealCurrent('layout-59'));
   await page.locator('tr[data-session-id="layout-59"]').click();
   await page.keyboard.press('Control+A');
   const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ auto-responses?…$/});
@@ -449,7 +464,7 @@ try {
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move right',exact:true}).click();
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Unpin column',exact:true}).click();
   await openColumn('status'); await page.locator('#column-actions').getByRole('button',{name:'Highest first',exact:false}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.traffic-table tbody tr').dataset.sessionId==='cached');
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.traffic-table tbody tr[data-session-id]').dataset.sessionId==='cached');
   assert.equal(await page.locator('#header-status').getAttribute('aria-sort'),'descending');
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Pin column',exact:true}).click();
   assert.equal(await page.locator('#header-host').getAttribute('data-pinned'),'');
@@ -561,15 +576,15 @@ try {
 
   await page.evaluate(() => { globalThis.__row = document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]'); });
   await page.locator('form.filters button[type=submit]').click();
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded '));
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('traffic entries.'));
   assert.equal(await page.evaluate(() => globalThis.__row === document.querySelector('app-shell').shadowRoot.querySelector('tr[data-session-id="first"]')), true, 'A refresh replaced a keyed row');
   const coalesced = await page.evaluate(async () => {
     const traffic = document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');
-    const before = globalThis.__workspaceFixture.calls.query_sessions;
+    const before = globalThis.__workspaceFixture.calls.query_traffic_view;
     globalThis.__workspaceFixture.queryDelay = 25;
     await Promise.all(Array.from({ length: 30 }, () => traffic.refreshSessions()));
     globalThis.__workspaceFixture.queryDelay = 0;
-    return globalThis.__workspaceFixture.calls.query_sessions - before;
+    return globalThis.__workspaceFixture.calls.query_traffic_view - before;
   });
   assert.ok(coalesced <= 2, 'Burst refreshes were not coalesced');
   await page.evaluate(async () => {
@@ -804,7 +819,7 @@ try {
   await page.locator('.new-traffic-button').waitFor({state:'visible'});
   assert.match(await page.locator('.new-traffic-button').textContent(), /1\s+new/);
   await page.locator('.new-traffic-button').click();
-  assert.equal(await page.locator('.traffic-table tbody tr').first().getAttribute('data-session-id'),'new');
+  assert.equal(await page.locator('.traffic-table tbody tr[data-session-id]').first().getAttribute('data-session-id'),'new');
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;Object.assign(state.sessions[0],{status:null,terminal:'active',responseBytes:0});await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
   await page.locator('tr[data-session-id="first"]').click();
   await page.locator('.selection-bar').getByText('Pending',{exact:true}).waitFor({state:'visible'});
@@ -859,7 +874,7 @@ try {
     const rows=structuredClone(state.sessions);
     for(let index=0;index<130;index++) state.sessions.push({...rows[0],id:'source-page-'+index,path:'/filler/'+index,url:'http://example.test/filler/'+index,startedAt:2000+index});
     const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');
-    traffic.pageSize='10'; traffic.sort={column:'started-at',direction:'descending'};
+    traffic.sort={column:'started-at',direction:'descending'};
     traffic.filters=[{column:'status',operator:'equals',value:'304'}]; traffic.searchText='cached'; traffic.searchInput.value='cached';
     await traffic.refreshSessions(undefined,true);
     state.deferFocus=true;
@@ -874,7 +889,7 @@ try {
   await page.waitForFunction(()=>globalThis.__workspaceFixture.refreshPending);
   await page.evaluate(()=>globalThis.__workspaceFixture.releaseFocus());
   await page.locator('#traffic').waitFor({state:'visible'});
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedSessionId==='second' && document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').pageIndex>0);
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedSessionId==='second' && document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessionScroller.scrollTop>0);
   await page.evaluate(async()=>{globalThis.__workspaceFixture.releaseRefresh();await globalThis.__pendingRefresh;});
   assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'),'true');
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched),originalSourceRows.length+130,'A late filtered refresh replaced the source page');
@@ -905,7 +920,7 @@ try {
   assert.equal(await autoField('body').inputValue(),'Edited after source removal');
   await page.evaluate(async rows=>{
     const state=globalThis.__workspaceFixture;state.sessions=rows;state.evictedIds=[];
-    const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';
+    const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');
     await traffic.refreshSessions(undefined,true);
   },originalSourceRows);
   await sourceLink.waitFor({state:'visible'});
@@ -1067,24 +1082,7 @@ try {
 
   // Traffic supports multiselection, eligibility review, atomic failure and batch creation.
   await view('traffic');
-  await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');const state=globalThis.__workspaceFixture;state.pagingRows=structuredClone(state.sessions);for(let index=0;index<10;index++)state.sessions.push({...state.sessions[0],id:'paging-'+index,path:'/paging/'+index,url:'http://example.test/paging/'+index,startedAt:-index});traffic.clearTrafficSelection();traffic.pageSize='10';await traffic.refreshSessions(undefined,true);});
-  await page.locator('tr[data-session-id]').first().click();
-  await page.locator('tr[data-session-id]').first().press('Control+Shift+ArrowDown');
-  await page.getByRole('button',{name:'Next',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').pageIndex===1 && document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions[0].id.startsWith('paging-'));
-  assert.match(await page.locator('.traffic-selection-bar').textContent(),/2 selected · 2 on other pages/);
-  await page.locator('tr[data-session-id]').first().click({modifiers:['Control']});
-  await page.evaluate(async()=>await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true));
-  assert.match(await page.locator('.traffic-selection-bar').textContent(),/3 selected · 2 on other pages/);
-  await page.getByRole('button',{name:'Previous',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.some(row=>row.id==='new'));
-  assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),2);
-  await page.getByLabel('Search traffic',{exact:true}).fill('first');
-  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').totalMatched===1);
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),0);
-  await page.getByRole('button',{name:'Clear search',exact:true}).click();
-  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.pagingRows;delete state.pagingRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.pageSize='100';await traffic.refreshSessions(undefined,true);});
+  await checkTrafficList(page,resolve(root,'../../../target/ui-check'));
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions.find(row=>row.id==='cached').terminal='active';await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
   await page.locator('tr[data-session-id="first"]').click();
   await page.locator('tr[data-session-id="second"]').click({modifiers:['Control']});
@@ -1273,7 +1271,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace.png')});
   const beforeReload=requests.length;
   await page.reload();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('Loaded '));
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('traffic entries.'));
   assert.equal(await page.getByRole('button',{name:'Toggle navigation labels'}).getAttribute('aria-expanded'),'false');
   assert.equal(await page.getByRole('separator',{name:'Resize traffic list and inspector',exact:true}).getAttribute('aria-valuenow'),'47');
   assert.equal(await page.locator('#header-host').getAttribute('data-pinned'),'');
@@ -1322,7 +1320,7 @@ try {
   await preferences.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
   assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'25000000');
   await preferences.getByLabel('Request body limit',{exact:true}).selectOption('unlimited');
-  await preferences.getByLabel('Entries per page',{exact:true}).fill('75');
+  assert.equal(await preferences.getByLabel('Entries per page',{exact:true}).count(),0);
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await preferences.getByText('Settings saved.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.redactSensitiveHeaders),true);
@@ -1332,8 +1330,8 @@ try {
   await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'unlimited');
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences.sessionPageSize),75,'Disabled form controls were omitted from the saved preferences');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').pageSize),'75','Saving failed to apply the page size to Traffic');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences.sessionPageSize),100,'Saving settings discarded the legacy preference');
+
   assert.equal(await preferences.getByRole('button',{name:'Save settings',exact:true}).isDisabled(),true);
   await page.setViewportSize({width:1280,height:800});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/settings-wide.png')});
@@ -1512,7 +1510,7 @@ try {
   const nextEntry=matchDialog.getByRole('button',{name:'Next entry',exact:true});if(await nextEntry.isEnabled())await nextEntry.click();else await matchDialog.getByRole('button',{name:'Previous entry',exact:true}).click();await page.waitForFunction(previous=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').matchEntryId!==previous,initialMatchEntry);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/search-matches-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/search-matches-compact.png')});
   const matchBounds=await matchDialog.boundingBox();assert.ok(matchBounds.width<=760&&matchBounds.height<=520);
-  await matchDialog.getByRole('button',{name:'Close',exact:true}).click();assert.equal(await page.getByRole('button',{name:'View matches…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);await page.setViewportSize({width:1280,height:800});
+  await matchDialog.getByRole('button',{name:'Close',exact:true}).click();assert.equal(await page.locator('tr[data-current]').evaluate(node=>node.getRootNode().activeElement===node),true);await page.setViewportSize({width:1280,height:800});
 
   await page.screenshot({path:resolve(root,'../../../target/ui-check/content-search-wide.png')});
   await page.getByLabel('Search traffic',{exact:true}).fill('marker');
@@ -1787,6 +1785,7 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.clearBytes=1000000000;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
+  await checkTrafficNavigation(page);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

@@ -70,7 +70,7 @@ with a capture path opens a viewer when no main window exists; otherwise the app
 asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
-**Save trace…** saves retained traffic across pages and searches, with optional
+**Save trace…** saves retained traffic across the entire list and searches, with optional
 password encryption, export-only header redaction and network context for TMCap,
 or HAR output for HTTP archive interchange. File-only
 recording, recovery and native/JSONL/SAZ export are in Captures. Record chooses a

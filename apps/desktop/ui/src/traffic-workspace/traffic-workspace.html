@@ -27,18 +27,19 @@
       <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
         <div class="traffic-selection-bar" ?hidden="{{!selectedTrafficCount && !contentSearchActive}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic || !selectedTrafficCount}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
-          <table w-ref="{trafficTable}" class="traffic-table" role="grid" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
+          <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
-            <thead><tr><for each="column in columns">
+            <thead><tr aria-rowindex="1"><for each="column in columns">
               <th key="{{column.id}}" id="header-{{column.id}}" scope="col" data-column-id="{{column.id}}" ?data-pinned="{{column.pinned}}" data-offset="{{column.offsetCss}}" aria-sort="{{column.sortDirection}}" ?data-dragging="{{column.id == draggingColumn}}" ?data-drop-target="{{column.id == dropColumnId}}" data-drop-placement="{{dropPlacement}}">
                 <button type="button" class="column-trigger" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}" @pointerdown="{startColumnDrag(column.id,e)}" @pointermove="{moveColumnDrag(e)}" @pointerup="{finishColumnDrag(e)}" @pointercancel="{cancelColumnDrag(e)}" @lostpointercapture="{cancelColumnDrag(e)}" @keydown="{cancelColumnDrag(e)}" title="Click to sort or filter; drag to move {{column.label}}"><span class="column-label">{{column.label}}</span><span class="sort-arrow">{{column.sortArrow}}</span><span class="column-caret" aria-hidden="true">⌄</span></button>
                 <span class="column-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize {{column.label}} column" aria-valuemin="32" aria-valuemax="1200" aria-valuenow="{{column.width}}" @pointerdown="{startColumnResize(column.id,e)}" @pointermove="{resizeColumn(e)}" @pointerup="{finishColumnResize(e)}" @pointercancel="{cancelColumnResize(e)}" @keydown="{resizeColumnWithKeyboard(column.id,e)}" @dblclick="{fitColumn(column.id)}"></span>
               </th>
             </for></tr></thead>
             <tbody>
-              <if condition="!sessions.length"><tr><td colspan="{{columns.length}}" class="empty-cell">No matching exchanges.<br>Capture traffic or adjust your filters.</td></tr></if>
+              <if condition="!totalMatched"><tr aria-rowindex="2"><td colspan="{{columns.length}}" class="empty-cell">No matching exchanges.<br>Capture traffic or adjust your filters.</td></tr></if>
+              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{columns.length}}"><div data-size="{{topSpace}}"></div></td></tr>
               <for each="session in sessions">
-                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="0" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-tone="{{session.tone}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}">
+                <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="-1" aria-rowindex="{{session.rowIndex}}" aria-busy="{{session.loading}}" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-loading="{{session.loading}}" data-tone="{{session.tone}}" ?data-current="{{session.id == selectedSessionId}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}">
                   <for each="cell in session.cells">
                     <td key="{{cell.id}}" data-column-id="{{cell.id}}" data-offset="{{cell.offsetCss}}" ?data-pinned="{{cell.pinned}}" ?data-numeric="{{cell.numeric}}" title="{{cell.title}}">
                       <if condition="session.topLevelNavigation && cell.id == 'path'"><span class="navigation-badge" title="Top-level navigation" aria-label="Top-level navigation">Page</span></if>
@@ -50,6 +51,7 @@
                   </for>
                 </tr>
               </for>
+              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{columns.length}}"><div data-size="{{bottomSpace}}"></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -58,8 +60,7 @@
           <span>{{followText}}</span>
           <div class="list-footer-actions">
             <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
-            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" title="Show the newest traffic page and keep it updated as requests arrive. Selecting an entry pauses this.">Follow newest</button>
-            <span class="page-controls" ?hidden="{{totalMatched <= pageLimit}}"><button type="button" class="secondary compact-button" @click="{navigatePage(-1)}" ?disabled="{{pageIndex == 0}}">Previous</button><button type="button" class="secondary compact-button" @click="{navigatePage(1)}" ?disabled="{{pageEnd >= totalMatched}}">Next</button></span>
+            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" title="Show the newest traffic and keep it updated as requests arrive. Selecting an entry pauses this.">Follow newest</button>
 
           </div>
         </div>

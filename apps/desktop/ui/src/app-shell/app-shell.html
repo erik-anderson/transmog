@@ -60,7 +60,7 @@
       </nav>
 
       <main w-ref="{workspaceContent}" tabindex="-1">
-        <traffic-workspace ?viewer-mode="{{viewerMode}}" w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
+        <traffic-workspace ?viewer-mode="{{viewerMode}}" w-ref="{traffic}" view="{{activeView}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
         <if condition="!viewerMode"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
         <if condition="!viewerMode"><automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace></if>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>

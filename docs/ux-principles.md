@@ -169,7 +169,7 @@ minutes and releases the data; at least 1 GB is released immediately without Und
 The Capture Record flow chooses a destination before starting a file-only proxy
 run. It does not populate Traffic; Stop restores routing and seals that file.
 
-**Save trace** saves every retained entry in the current window, across pages and
+**Save trace** saves every retained entry in the current window, across the list and
 search results, excluding entries removed from Traffic. Save native traces as
 `.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
 Preserve original source metadata and request associations when saving merged
@@ -222,10 +222,21 @@ changes apply to new requests and recording changes to the next recording.
 Full traffic search starts with **Search** or Enter, so typing does not repeatedly
 read and decode captured bodies. Results describe a completed search snapshot;
 new traffic remains capturable and a new search refreshes that snapshot. Search
-can select every matching entry across pages, and rerunning it replaces the
+can select every matching entry across the entire list, and rerunning it replaces the
 selection with current matches. Remove selected and remove unselected act on
 the whole workspace and support Undo. Skip inapplicable binary bodies quietly;
 report unavailable text evidence once in the search summary.
+
+Traffic is one continuous virtualized list. Its native scrollbar represents the
+whole matching collection, with only a small window of rows rendered. Selection,
+keyboard focus and range anchors use stable request IDs and the complete display
+order; scrolling a row out of the DOM never deselects it. Ctrl+A selects the
+current filtered/search collection, including offscreen entries, at that moment.
+Later traffic is not automatically selected. Del and Undo act on those IDs.
+Keep row geometry predictable in compact and ordinary modes. Wrapped cells use
+measured heights with scroll anchoring to preserve the request being read.
+Search match review reveals and marks the current request in Traffic while
+preserving multiselection. Closing review returns focus to that request.
 
 Timings opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish

@@ -258,6 +258,60 @@ pub struct SessionPage {
     pub focus_offset: Option<usize>,
 }
 
+/// Ordered metadata snapshot for a continuous virtual traffic list.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficView {
+    /// Window-local handle used to read bounded row windows.
+    pub id: String,
+    /// Every matching entry in display order, independent of rendered rows.
+    pub ids: Vec<String>,
+    /// Initial bounded metadata window and catalog counters.
+    pub page: SessionPage,
+}
+
+#[derive(Default)]
+pub(crate) struct TrafficViews {
+    next: u64,
+    views: std::collections::HashMap<String, Arc<Vec<String>>>,
+}
+
+impl TrafficViews {
+    pub(crate) fn insert(&mut self, ids: Vec<String>) -> Result<String, AppError> {
+        // The desktop owns a displayed view, a pending update and transient searches.
+        // Explicit release keeps old snapshots alive only while they are in use.
+        if self.views.len() >= 8 {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "Too many traffic views are open",
+                true,
+            ));
+        }
+        self.next = self.next.wrapping_add(1);
+        let id = format!("traffic-{:x}", self.next);
+        self.views.insert(id.clone(), Arc::new(ids));
+        Ok(id)
+    }
+
+    pub(crate) fn release(&mut self, id: &str) {
+        self.views.remove(id);
+    }
+
+    pub(crate) fn ids(&self, id: &str) -> Result<Arc<Vec<String>>, AppError> {
+        self.views.get(id).cloned().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Traffic view is no longer available",
+                true,
+            )
+        })
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.views.clear();
+    }
+}
+
 /// Small lossy signal that tells presentation layers to query again.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -644,6 +698,23 @@ fn query_sorted(
     traces: &crate::traces::TraceRegistry,
     matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<SessionPage, AppError> {
+    let (rows, retained_count) = ordered_rows(service, input, traces, matching)?;
+    let limit = input
+        .limit
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .min(service.catalog().page_size_limit());
+    page_from_rows(service, input, rows, retained_count, limit)
+}
+
+fn ordered_rows(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
+) -> Result<(Vec<SessionSummary>, usize), AppError> {
+    validate_filter(input.method.as_deref())?;
+    validate_filter(input.host.as_deref())?;
+    validate_fetch_destinations(&input.fetch_destinations)?;
     if input.cursor.is_some() || input.filters.len() > 14 {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
@@ -658,17 +729,6 @@ fn query_sorted(
         .map(PreparedFilter::new)
         .collect::<Result<Vec<_>, _>>()?;
     let search = input.search.as_ref().map(|value| value.to_lowercase());
-    let limit = input
-        .limit
-        .unwrap_or(DEFAULT_PAGE_SIZE)
-        .min(service.catalog().page_size_limit());
-    if limit == 0 {
-        return Err(AppError::new(
-            ErrorCategory::InvalidInput,
-            "page size must be nonzero",
-            false,
-        ));
-    }
     let capturing = matches!(
         service.capture().status(),
         transmog_session::CaptureStatus::Active { .. }
@@ -684,6 +744,23 @@ fn query_sorted(
         .collect();
     if let Some(sort) = &input.sort {
         sort_rows(&mut rows, sort);
+    }
+    Ok((rows, retained_count))
+}
+
+fn page_from_rows(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+    rows: Vec<SessionSummary>,
+    retained_count: usize,
+    limit: usize,
+) -> Result<SessionPage, AppError> {
+    if limit == 0 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "page size must be nonzero",
+            false,
+        ));
     }
     let total_matched = rows.len();
     let focus_offset = input
@@ -717,6 +794,61 @@ fn query_sorted(
         retained_count,
         focus_offset,
     })
+}
+
+pub(crate) fn traffic_view(
+    service: &ApplicationSessionService,
+    views: &Mutex<TrafficViews>,
+    input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
+) -> Result<TrafficView, AppError> {
+    let (rows, retained) = ordered_rows(service, input, traces, matching)?;
+    let ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+    let page = page_from_rows(service, input, rows, retained, 100)?;
+    let id = views
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(ids.clone())?;
+    Ok(TrafficView { id, ids, page })
+}
+
+pub(crate) fn traffic_rows(
+    service: &ApplicationSessionService,
+    views: &Mutex<TrafficViews>,
+    id: &str,
+    offset: usize,
+    limit: usize,
+    traces: &crate::traces::TraceRegistry,
+) -> Result<Vec<SessionSummary>, AppError> {
+    if limit == 0 || limit > 512 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Request between 1 and 512 traffic rows",
+            false,
+        ));
+    }
+    let ids = views
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .ids(id)?;
+    let now = SystemTime::now();
+    let capturing = matches!(
+        service.capture().status(),
+        transmog_session::CaptureStatus::Active { .. }
+    );
+    Ok(ids
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|id| {
+            let exchange = crate::response_assets::parse_exchange_id(id).ok()?;
+            service
+                .catalog()
+                .get(exchange)
+                .map(|snapshot| summarize_with_trace(&snapshot, now, capturing, traces))
+        })
+        .collect())
 }
 
 fn matches_query_row(
@@ -753,33 +885,8 @@ pub(crate) fn matching_ids(
     traces: &crate::traces::TraceRegistry,
     matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<String>, AppError> {
-    validate_fetch_destinations(&input.fetch_destinations)?;
-    validate_filter(input.method.as_deref())?;
-    validate_filter(input.host.as_deref())?;
-    validate_filter(input.search.as_deref())?;
-    if input.filters.len() > 14 {
-        return Err(AppError::new(
-            ErrorCategory::Limit,
-            "At most 14 column filters are supported",
-            false,
-        ));
-    }
-    let filters = input
-        .filters
-        .iter()
-        .map(PreparedFilter::new)
-        .collect::<Result<Vec<_>, _>>()?;
-    let search = input.search.as_ref().map(|value| value.to_lowercase());
-    let now = SystemTime::now();
-    Ok(service
-        .catalog()
-        .project_retained(|snapshot| {
-            let row = summarize_with_trace(snapshot, now, false, traces);
-            matches_query_row(&row, input, matching, search.as_deref(), &filters).then_some(row.id)
-        })
-        .into_iter()
-        .flatten()
-        .collect())
+    let (rows, _) = ordered_rows(service, input, traces, matching)?;
+    Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
 struct PreparedFilter {
@@ -930,6 +1037,56 @@ mod tests {
                 metadata: Arc::new(ExchangeMetadata::from_session(&session, target)),
             },
         }
+    }
+
+    #[test]
+    fn virtual_view_keeps_full_order_and_reads_current_offscreen_metadata() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=50_000 {
+            service.catalog().apply(started(id));
+        }
+        let traces = crate::traces::TraceRegistry::default();
+        let views = Mutex::new(TrafficViews::default());
+        let query = SessionQueryInput {
+            sort: Some(SessionSort {
+                column: TrafficColumn::Host,
+                direction: SortDirection::Ascending,
+            }),
+            ..Default::default()
+        };
+        let view = traffic_view(&service, &views, &query, &traces, None).unwrap();
+        assert_eq!(view.ids.len(), 50_000);
+        assert_eq!(view.page.sessions.len(), 100);
+        assert_eq!(
+            matching_ids(&service, &query, &traces, None).unwrap(),
+            view.ids
+        );
+        service.catalog().apply(started(50_001));
+        service.catalog().dismiss(&[ExchangeId(5_002)]);
+        let rows = traffic_rows(&service, &views, &view.id, 5_000, 3, &traces).unwrap();
+        assert_eq!(
+            rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+            vec![view.ids[5_000].as_str(), view.ids[5_002].as_str()]
+        );
+        assert_eq!(views.lock().unwrap().ids(&view.id).unwrap().len(), 50_000);
+        assert!(traffic_rows(&service, &views, &view.id, 0, 513, &traces).is_err());
+        views.lock().unwrap().release(&view.id);
+        assert!(traffic_rows(&service, &views, &view.id, 0, 100, &traces).is_err());
+    }
+
+    #[test]
+    fn traffic_views_are_bounded_and_release_does_not_expire_other_views() {
+        let mut views = TrafficViews::default();
+        let first = views.insert(vec!["first".into()]).unwrap();
+        let second = views.insert(vec!["second".into()]).unwrap();
+        for _ in 0..6 {
+            views.insert(Vec::new()).unwrap();
+        }
+        assert!(views.insert(Vec::new()).is_err());
+        views.release(&second);
+        assert!(views.insert(Vec::new()).is_ok());
+        assert_eq!(&*views.ids(&first).unwrap(), &["first".to_owned()]);
     }
 
     #[test]

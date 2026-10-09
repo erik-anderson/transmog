@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {zstdCompressSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
+import {smokeTrafficList} from './smoke-traffic-list.mjs';
 
 // Native probes use the current plain indexed container; encrypted I/O is covered
 // by the CLI and Rust tests. Keep fixtures independent of historical layouts.
@@ -35,6 +36,7 @@ function nativeFixture(records, exchangeId) {
 const argument=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const port=argument('--port'), source=argument('--source'), executable=argument('--executable'), screenshot=argument('--screenshot');
 const nativeSource=argument('--native-source');
+const trafficSource=argument('--traffic-source');
 const pageSource=argument('--page-source');
 const profileRoot=argument('--profile-root');
 const processId=argument('--process-id'), closeHelper=argument('--close-helper');
@@ -193,6 +195,12 @@ try{
   const additional=await waitFor(async()=>{const all=await targets();return all.find(target=>!before.includes(target.id));},'Additional viewer did not open');
   const second=await connect(additional);
   await waitFor(()=>second.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Additional viewer did not load its saved capture');
+  if(trafficSource){
+    const existing=(await targets()).map(target=>target.id);
+    await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(trafficSource)}]})`);
+    const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Large traffic viewer did not open');
+    const large=await connect(target);await smokeTrafficList(large,screenshot);
+  }
   if(nativeSource){
     const existing=(await targets()).map(target=>target.id);
     await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(nativeSource)}]})`);

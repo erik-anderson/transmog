@@ -32,7 +32,7 @@ ones. The principles apply to new features and small edits alike.
 - Save layout through its narrow persistence command. Independent layout and
   settings/window writes must merge so stale snapshots cannot overwrite each
   other's changes. Keep captured traffic and credentials out of UI preferences.
-- Sort/filter retained metadata before pagination so results describe the full
+- Sort/filter retained metadata before virtual windowing so results describe the full
   retained capture. Preserve row keys and inspection position during updates;
   coalesce refresh hints and reject stale asynchronous results.
 - Secondary workspaces stay mounted after first use to preserve drafts. Monaco

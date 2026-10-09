@@ -97,6 +97,7 @@ use serde::Serialize;
 pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
+    TrafficView,
 };
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
@@ -290,6 +291,7 @@ pub struct Application {
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
     searches: search::SearchRegistry,
+    traffic_views: Arc<std::sync::Mutex<sessions::TrafficViews>>,
 }
 
 impl std::fmt::Debug for Application {
@@ -401,6 +403,7 @@ impl Application {
             previews,
             traces: traces::TraceRegistry::default(),
             searches: search::SearchRegistry::default(),
+            traffic_views: Arc::new(std::sync::Mutex::new(sessions::TrafficViews::default())),
         })
     }
 
@@ -1000,6 +1003,49 @@ impl Application {
         sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
     }
 
+    /// Creates an ordered traffic view without transferring offscreen row metadata.
+    ///
+    /// # Errors
+    /// Returns invalid filters, an expired search or too many unreleased views.
+    pub fn query_traffic_view(&self, query: &SessionQueryInput) -> Result<TrafficView, AppError> {
+        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        sessions::traffic_view(
+            &self.service,
+            &self.traffic_views,
+            query,
+            &self.traces,
+            matching.as_deref(),
+        )
+    }
+
+    /// Reads current metadata for a bounded window in a previously ordered view.
+    ///
+    /// # Errors
+    /// Returns an expired view or an invalid window size.
+    pub fn traffic_view_rows(
+        &self,
+        view_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<SessionSummary>, AppError> {
+        sessions::traffic_rows(
+            &self.service,
+            &self.traffic_views,
+            view_id,
+            offset,
+            limit,
+            &self.traces,
+        )
+    }
+
+    /// Releases an unused window-local traffic ordering snapshot.
+    pub fn release_traffic_view(&self, view_id: &str) {
+        self.traffic_views
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .release(view_id);
+    }
+
     /// Searches captured evidence without changing traffic or selections.
     ///
     /// # Errors
@@ -1084,6 +1130,10 @@ impl Application {
     /// # Errors
     /// Returns a cache-worker failure while deleting owned body data.
     pub fn discard_traffic(&self) -> Result<(), AppError> {
+        self.traffic_views
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let ids = self.service.catalog().discard_all();
         self.traces.forget_entries(&ids);
         if let Some(store) = &self.body_store {

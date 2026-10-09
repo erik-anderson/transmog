@@ -124,6 +124,20 @@ try {
     }
     if ($ViewerChecks) {
         $viewerSource = Join-Path $probeRoot 'viewer-fixture.saz'
+        $trafficSource = Join-Path $probeRoot 'traffic-fixture.saz'
+        $trafficZip = [IO.Compression.ZipFile]::Open($trafficSource, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            for ($trafficIndex = 1; $trafficIndex -le 20000; $trafficIndex++) {
+                foreach ($trafficSide in @('c','s')) {
+                    $trafficEntry = $trafficZip.CreateEntry("raw/${trafficIndex}_${trafficSide}.txt")
+                    $trafficWriter = [IO.StreamWriter]::new($trafficEntry.Open(), [Text.UTF8Encoding]::new($false))
+                    try {
+                        if ($trafficSide -eq 'c') { $trafficWriter.Write("GET https://example.invalid/virtual/$trafficIndex HTTP/1.1`r`n`r`n") }
+                        else { $trafficWriter.Write("HTTP/1.1 200 OK`r`nContent-Type: text/plain`r`nContent-Length: 2`r`n`r`nok") }
+                    } finally { $trafficWriter.Dispose() }
+                }
+            }
+        } finally { $trafficZip.Dispose() }
         $responseBody = 'saved viewer response'
         $members = [ordered]@{
             'raw/1_c.txt' = "GET https://example.invalid/path HTTP/1.1`r`nUser-Agent: Transmog fixture`r`n`r`n"
@@ -219,6 +233,7 @@ try {
         if ($ViewerChecks) {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
             $viewerArguments += @('--page-source', $pageSource)
+            $viewerArguments += @('--traffic-source', $trafficSource)
             $viewerArguments += @('--profile-root', $probeRoot)
             $viewerArguments += @('--process-id', "$($process.Id)", '--close-helper', (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1'))
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }

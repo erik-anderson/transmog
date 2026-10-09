@@ -27,7 +27,7 @@ cannot participate in proxy shutdown or host restoration.
 
 Closing the main window releases its live traffic, removed-entry Undo evidence and
 owned body-cache files. Saved traces and explicitly recorded files remain.
-Traffic → Clear all acts across pages and filters. At 100 MB or more, Undo expires
+Traffic → Clear all acts across the whole list and filters. At 100 MB or more, Undo expires
 after five minutes and releases the data; at 1 GB or more, data is released
 immediately and Undo is unavailable.
 

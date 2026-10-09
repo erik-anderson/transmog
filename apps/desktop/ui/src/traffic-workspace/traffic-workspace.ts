@@ -4,15 +4,16 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
+import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
+import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
-type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
   @attr({attribute:'viewer-mode',mode:'boolean'}) viewerMode = false;
@@ -86,7 +87,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   private openedFileQueue:Array<{path:string;ask:boolean}>=[];
   private nativeUnlisteners:UnlistenFn[]=[];
   @attr view = 'traffic';
-  @attr({attribute:'page-size'}) pageSize = '100';
   @attr lifecycle:Lifecycle = 'stopped';
   @attr pending = '';
   @observable preferences = defaultWorkspace();
@@ -118,9 +118,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   trafficMenu!:HTMLElement;
   trafficUndoButton!:HTMLButtonElement;
   private trafficSelection=new ListSelection();
-  private selectedTraffic=new Map<string,SessionSummary>();
+  private trafficSelectionRevision=0;
   private trafficUndoTimer:number|undefined;
-  @observable private trafficUndo:Array<{ids:string[];rows:SessionSummary[];expiresAt?:number|undefined}>=[];
+  @observable private trafficUndo:Array<{ids:string[];expiresAt?:number|undefined}>=[];
   @observable selectedDetail:SessionDetail | null = null;
   @observable selectedMethodText = '—';
   @observable selectedUrlText = 'Select a request';
@@ -139,9 +139,23 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable newTrafficCount = 0;
   @observable updatesPending = false;
   @observable totalMatched = 0;
-  @observable pageIndex = 0;
-  @observable pageLimit = 100;
-  @observable pageEnd = 0;
+  @observable rowCount=2;
+  @observable topSpace='0px';
+  @observable bottomSpace='0px';
+  @observable activeRowId='';
+  private virtualList=new VirtualList();
+  private trafficView:TrafficView|null=null;
+  private pendingView:TrafficView|null=null;
+  private rowCache=new Map<string,SessionSummary>();
+  private rowRevision=0;
+  private rowRequests=new Map<string,Promise<void>>();
+  private rowObserver:ResizeObserver|null=null;
+  private viewportStart=0;
+  private viewportEnd=0;
+  private renderFrame:number|undefined;
+  private refreshTimer:number|undefined;
+  private rowLayout='';
+  private scrollGeneration=0;
   @observable sort:TrafficSort = {column:'started-at',direction:'descending'};
   @observable sortLabel = 'Newest first';
   @observable filters:TrafficFilter[] = [];
@@ -177,6 +191,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   private matchLocations:TrafficSearchMatch[]=[];
   private matchIndex=0;
   private matchEntryId='';
+  private matchCurrentId='';
+  private matchPreserveSelection=false;
   private matchMore=false;
   private matchReturnFocus:HTMLElement|null=null;
   private searchCancelRequested=false;
@@ -216,15 +232,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   private queryPending:Promise<void> | null = null;
   private queryAgain = false;
   private forceUpdate = false;
-  private pendingRows:SessionSummary[] = [];
   private inspectionGeneration = 0;
+  private inspectionSummaryId = '';
   private queryRevision = 0;
   private resize: {id:ColumnId;startX:number;width:number;previous:number;pointer:number} | null = null;
   private columnDrag: {id:ColumnId;startX:number;startY:number;pointer:number;target:ColumnId|null;active:boolean;handle:HTMLElement} | null = null;
   private suppressMenuUntil = 0;
   private searchTimer:number | undefined;
   private layoutObserver:ResizeObserver | null = null;
-  private displayedMatched = 0;
   private liveInspection:Promise<void> | null = null;
   private inspectionAgain = false;
   private queryLoaded = false;
@@ -232,8 +247,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   private watchError = '';
 
   protected hydratedCallback():void {
-    this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns(); });
+    this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns();this.scheduleViewport(); });
     this.layoutObserver.observe(this.sessionScroller);
+    this.rowObserver=new ResizeObserver(entries=>{
+      if(this.view!=='traffic'||!this.sessionScroller.clientHeight)return;
+      const anchor=this.virtualList.anchor(this.sessionScroller.scrollTop);let changed=false;
+      for(const entry of entries){const element=entry.target as HTMLElement;if(element.dataset.loading==='true')continue;const size=entry.borderBoxSize[0]?.blockSize??entry.target.getBoundingClientRect().height;changed=(this.preferences.wrapCells?this.virtualList.measure(element.dataset.sessionId??'',size):this.virtualList.uniformSize(size))||changed;}
+      if(changed){this.updateSpacers();this.$flushUpdates();const top=this.virtualList.restore(anchor);if(top!==null)this.sessionScroller.scrollTop=top;this.scheduleViewport();}
+    });
     void this.watchSessions();
     void this.watchOpenedTraces();
     void invoke<{windows:boolean}>('desktop_bootstrap').then(bootstrap=>{if(this.isConnected)this.windowsCommands=bootstrap.windows;}).catch(()=>{});
@@ -341,15 +362,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   changeMetadataTrace(event:Event):void {void this.loadTraceMetadata((event.currentTarget as HTMLSelectElement).value);}
   closeMetadata():void {this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;this.metadataDialog.close();}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
-  pageSizeChanged():void {
-    this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
-    if (this.watching) { this.pageIndex = 0; void this.refreshSessions(undefined,true); }
-  }
+  viewChanged():void {if(this.view==='traffic')this.scheduleViewport();}
   preferencesChanged():void {
     this.listShare = this.preferences.listSplit+'%';
     this.requestShare = this.preferences.requestSplit+'%';
     this.dividerOrientation = this.preferences.layout === 'stacked' ? 'horizontal' : 'vertical';
     this.rebuildColumns();
+    this.scheduleViewport();
   }
   selectedSessionIdChanged():void { this.rebuildRows(this.sessions); }
   private rebuildColumns():void {
@@ -359,13 +378,102 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(this.sessions);
   }
   private rebuildRows(rows:SessionSummary[]):void {
-    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path,
+    this.sessions = rows.map((row) => ({...row,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
       cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))}));
-    for(const row of rows)if(this.trafficSelection.ids.has(row.id))this.selectedTraffic.set(row.id,row);
     this.selectedTrafficCount=this.trafficSelection.ids.size;
-    const outside=this.selectedTrafficCount-rows.filter(row=>this.trafficSelection.ids.has(row.id)).length;
-    this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
+    this.trafficSelectionText=`${this.selectedTrafficCount.toLocaleString()} selected`;
     this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
+    this.activeRowId=this.sessions.some(row=>row.id===this.trafficSelection.focused)?'session-'+this.trafficSelection.focused:'';
+  }
+  private releaseView(view:TrafficView|null):void {if(view)void invoke('release_traffic_view',{viewId:view.id}).catch(()=>{});}
+  private cacheRows(rows:SessionSummary[]):void {
+    for(const row of rows){this.rowCache.delete(row.id);this.rowCache.set(row.id,row);}
+    // Only metadata near the viewport is retained by the renderer. Selection keeps IDs.
+    while(this.rowCache.size>1024){const first=this.rowCache.keys().next().value;if(first===undefined)break;this.rowCache.delete(first);}
+  }
+  private updateSpacers():void {
+    this.topSpace=this.virtualList.offset(this.viewportStart)+'px';
+    this.bottomSpace=Math.max(0,this.virtualList.total-this.virtualList.offset(this.viewportEnd))+'px';
+  }
+  private scheduleViewport():void {
+    if(!this.sessionScroller||this.renderFrame!==undefined)return;
+    this.renderFrame=requestAnimationFrame(()=>{this.renderFrame=undefined;if(this.isConnected)this.renderViewport();});
+  }
+  private renderViewport():void {
+    if(!this.sessionScroller?.clientHeight||this.view!=='traffic')return;
+    const font=parseFloat(getComputedStyle(this.sessionScroller).fontSize)||13;
+    const layout=[this.preferences.wrapCells,this.preferences.compactRows,font,this.sessionScroller.clientWidth,...this.columns.map(column=>column.width)].join(':');
+    if(layout!==this.rowLayout){
+      const anchor=this.virtualList.anchor(this.sessionScroller.scrollTop);this.rowLayout=layout;
+      const rootFont=parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
+      this.virtualList.reset(this.virtualList.ids,rootFont*(this.preferences.compactRows?2.05:2.6),true);
+      const restored=this.virtualList.restore(anchor);if(restored!==null)this.sessionScroller.scrollTop=restored;
+    }
+    const header=this.trafficTable.tHead?.getBoundingClientRect().height??35;
+    const range=this.virtualList.range(this.sessionScroller.scrollTop,Math.max(1,this.sessionScroller.clientHeight-header));
+    const root=this.getRootNode() as ShadowRoot,active=root.activeElement;
+    if(active instanceof HTMLElement&&active.closest('tr[data-session-id]')){
+      const index=this.virtualList.indexes.get(active.closest<HTMLElement>('tr[data-session-id]')!.dataset.sessionId??'');
+      if(index===undefined||index<range.start||index>=range.end)this.trafficTable.focus({preventScroll:true});
+    }
+    this.viewportStart=range.start;this.viewportEnd=range.end;
+    const ids=this.virtualList.ids.slice(range.start,range.end);
+    const rows=ids.map(id=>this.rowCache.get(id)??{id,caller:{kind:'local-unknown',processName:null,processId:null},method:'…',host:'',path:'',url:'',startedAt:0,contentType:null,topLevelNavigation:false,fetchDestination:null,protocol:'',status:null,durationMs:null,requestBytes:0,responseBytes:0,terminal:'active',loss:false,capturing:false,autoResponse:null} as SessionSummary);
+    this.rebuildRows(rows);this.updateSpacers();this.$flushUpdates();
+    this.rowObserver?.disconnect();
+    for(const id of ids){const element=root.getElementById('session-'+id);if(element)this.rowObserver?.observe(element);}
+    for(let offset=Math.floor(range.start/100)*100;offset<range.end;offset+=100){
+      if(this.virtualList.ids.slice(offset,offset+100).some(id=>!this.rowCache.has(id)))void this.loadWindow(offset).catch(error=>{this.queryError='Traffic rows could not be loaded: '+describeError(error);this.renderSessionState();});
+    }
+  }
+  private async loadWindow(offset:number,force=false):Promise<void> {
+    const view=this.trafficView;if(!view)return;
+    const revision=this.rowRevision,key=view.id+':'+revision+':'+offset;const pending=this.rowRequests.get(key);if(pending)return pending;
+    if(!force&&!view.ids.slice(offset,offset+100).some(id=>!this.rowCache.has(id)))return;
+    const request=invoke<SessionSummary[]>('traffic_view_rows',{viewId:view.id,offset,limit:100}).then(rows=>{
+      if(!this.isConnected||this.trafficView!==view||this.rowRevision!==revision)return;
+      this.cacheRows(rows);this.scheduleViewport();
+      if(rows.length<Math.min(100,view.ids.length-offset))void this.refreshSessions(undefined,true);
+    }).catch((error:unknown)=>{if(this.isConnected&&this.trafficView===view&&this.rowRevision===revision)throw error;}).finally(()=>{this.rowRequests.delete(key);});
+    this.rowRequests.set(key,request);
+    return request;
+  }
+  private applyView(view:TrafficView,resetScroll=false):void {
+    const anchor=resetScroll?null:this.virtualList.anchor(this.sessionScroller.scrollTop);
+    this.releaseView(this.trafficView);if(this.pendingView!==view)this.releaseView(this.pendingView);
+    this.trafficView=view;this.pendingView=null;this.rowRevision++;this.rowCache.clear();this.cacheRows(view.page.sessions);
+    this.virtualList.reset(view.ids);this.totalMatched=view.ids.length;this.rowCount=Math.max(2,view.ids.length+1);
+    this.updatesPending=false;this.newTrafficCount=0;
+    for(const id of this.trafficSelection.ids)if(!this.virtualList.indexes.has(id))this.trafficSelection.ids.delete(id);
+    if(this.trafficSelection.focused&&!this.virtualList.indexes.has(this.trafficSelection.focused))this.trafficSelection.focused=null;
+    if(this.trafficSelection.anchor&&!this.virtualList.indexes.has(this.trafficSelection.anchor))this.trafficSelection.anchor=null;
+    this.viewportStart=0;this.viewportEnd=0;this.updateSpacers();this.$flushUpdates();
+    this.sessionScroller.scrollTop=resetScroll?0:this.virtualList.restore(anchor)??0;
+    this.renderViewport();
+  }
+  private async revealCurrent(id:string,focus=false,current:()=>boolean=()=>true):Promise<SessionSummary|null> {
+    const generation=++this.scrollGeneration;
+    while(this.isConnected&&generation===this.scrollGeneration&&current()){
+      const index=this.virtualList.indexes.get(id),view=this.trafficView,revision=this.rowRevision;if(index===undefined||!view)return null;
+      const height=Math.max(1,this.sessionScroller.clientHeight-(this.trafficTable.tHead?.getBoundingClientRect().height??35));
+      const top=this.virtualList.offset(index),bottom=top+this.virtualList.size(index);
+      if(top<this.sessionScroller.scrollTop)this.sessionScroller.scrollTop=top;
+      else if(bottom>this.sessionScroller.scrollTop+height)this.sessionScroller.scrollTop=Math.max(0,bottom-height);
+      this.renderViewport();
+      if(!this.rowCache.has(id))await this.loadWindow(Math.floor(index/100)*100);
+      if(generation!==this.scrollGeneration||!this.isConnected||!current())return null;
+      // A live refresh can replace the ordering or invalidate an in-flight row read.
+      // Retry this ID in the new view without superseding a newer navigation request.
+      if(view!==this.trafficView||revision!==this.rowRevision)continue;
+      const row=this.rowCache.get(id);
+      if(!row){await this.refreshSessions(undefined,true);if(view===this.trafficView&&revision===this.rowRevision)return null;continue;}
+      this.renderViewport();
+      const element=(this.getRootNode() as ShadowRoot).getElementById('session-'+id);
+      element?.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+      if(focus&&!this.matchDialog.open)element?.focus({preventScroll:true});
+      return row;
+    }
+    return null;
   }
   private measurePinnedColumns():void {
     if (!this.columns.length) return;
@@ -415,7 +523,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private closeMenu():void { if (this.columnMenu.matches(':popover-open')) this.columnMenu.hidePopover(); }
   async applySort(direction:TrafficSort['direction'],column:ColumnId = this.menuColumn.id):Promise<void> {
     this.sort = {column,direction}; this.sortLabel = columnDefinitions.find((item) => item.id === column)!.label+' · '+(direction === 'ascending' ? 'ascending' : 'descending');
-    this.followLatest = false; this.pageIndex = 0; this.queryRevision++; this.rebuildColumns(); this.closeMenu(); await this.refreshSessions(undefined,true);
+    this.followLatest = false; this.queryRevision++; this.rebuildColumns(); this.closeMenu(); await this.refreshSessions(undefined,true);
   }
   async clearSort():Promise<void> { this.menuColumn = columnDefinitions.find((column) => column.id === 'started-at')!; await this.applySort('descending','started-at'); this.sortLabel = 'Newest first'; }
   pinColumn():void { const id = this.menuColumn.id; this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,pinned:!column.pinned} : column)}); this.closeMenu(); }
@@ -440,9 +548,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (others.length >= 14) { this.diagnostic = 'Remove a filter before adding another (maximum 14).'; return; }
     this.clearTrafficSelection();
     this.filters = [...others,{column:this.menuColumn.id,operator,value,label:this.menuColumn.label+' '+operator+' '+value}];
-    this.pageIndex = 0; this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
+    this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
   }
-  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.queryRevision++; await this.refreshSessions(undefined,true); }
   filtersChanged():void {this.filterCount=this.filters.length+(this.fetchDestinations.length?1:0);}
   fetchDestinationsChanged():void {
     this.fetchDestinationOptions=this.fetchDestinationOptions.map(option=>({...option,selected:this.fetchDestinations.includes(option.value)}));
@@ -455,9 +563,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.fetchDestinations=checked?[...new Set([...this.fetchDestinations,value])]:this.fetchDestinations.filter(destination=>destination!==value);
     await this.refreshDestinationFilter();
   }
-  private async refreshDestinationFilter():Promise<void> {this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;this.followLatest=false;await this.refreshSessions(undefined,true);}
+  private async refreshDestinationFilter():Promise<void> {this.clearTrafficSelection();this.queryRevision++;this.followLatest=false;await this.refreshSessions(undefined,true);}
   async clearFetchDestinations():Promise<void> {this.fetchDestinations=[];await this.refreshDestinationFilter();}
-  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.fetchDestinations=[];this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);}
+  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.fetchDestinations=[];this.queryRevision++;await this.refreshSessions(undefined,true);}
   searchChanged(event:Event):void {
     this.searchText=(event.currentTarget as HTMLInputElement).value;
     // Content decoding starts on Search/Enter, rather than on each keystroke.
@@ -474,35 +582,44 @@ export class TrafficWorkspace extends WorkspaceElement {
     try{
       const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,requestHeaders:this.searchRequestHeaders,responseHeaders:this.searchResponseHeaders,requestBodies:this.searchRequestBodies,responseBodies:this.searchBodies},onProgress});
       if(!this.isConnected||this.searchOperation!==operationId)return;
-      let page:SessionPage,ids:string[],revision:number;
+      let view:TrafficView,revision:number;
       do {
         revision=this.queryRevision;
-        const query={searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort,offset:0,limit:this.pageLimit};
-        [page,ids]=await Promise.all([invoke<SessionPage>('query_sessions',{query}),invoke<string[]>('matching_traffic_ids',{query})]);
-        if(!this.isConnected||this.searchOperation!==operationId)return;
+        view=await invoke<TrafficView>('query_traffic_view',{query:{searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
+        if(!this.isConnected||this.searchOperation!==operationId){this.releaseView(view);return;}
+        if(revision!==this.queryRevision)this.releaseView(view);
       }while(revision!==this.queryRevision);
-      if(this.searchCancelRequested){this.contentSearchStatus='Search canceled. Previous results and selections are unchanged.';return;}
+      if(this.searchCancelRequested){this.releaseView(view);this.contentSearchStatus='Search canceled. Previous results and selections are unchanged.';return;}
+      const ids=view.ids;
       this.closeMatches();this.searchResultId=result.id;this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.contentSearchActive=true;this.contentSearchLabel=pattern;
       this.contentSearchStatus=ids.length+' matching '+(ids.length===1?'entry':'entries')+' in '+result.examined+' searched entries.'+(result.unavailableBodies?' '+result.unavailableBodies+' text bodies were unavailable or beyond the search limit.':'');
-      this.pageIndex=0;this.followLatest=false;this.queryRevision++;this.matchRevision=this.queryRevision;
-      this.totalMatched=page.totalMatched??page.sessions.length;this.pageEnd=Math.min(this.totalMatched,page.sessions.length);this.displayedMatched=this.totalMatched;this.pendingRows=[];this.updatesPending=false;this.newTrafficCount=0;
+      this.followLatest=false;this.queryRevision++;this.matchRevision=this.queryRevision;
       if(this.selectSearchMatches)this.trafficSelection.ids=new Set(ids);else this.clearTrafficSelection();
-      this.rebuildRows(page.sessions);this.queryLoaded=true;this.queryError='';this.renderSessionState();this.renderFollowState();this.$flushUpdates();this.measurePinnedColumns();this.$emit('traffic-refreshed');
-      if(this.selectSearchMatches)this.applySearchSelection();
+      this.applyView(view,true);this.queryLoaded=true;this.queryError='';this.renderSessionState();this.renderFollowState();this.$flushUpdates();this.measurePinnedColumns();this.$emit('traffic-refreshed');
+      if(this.selectSearchMatches)await this.applySearchSelection();
     }catch(error:unknown){if(this.isConnected&&this.searchOperation===operationId)this.contentSearchStatus=describeError(error).includes('canceled')?'Search canceled. Previous results and selections are unchanged.':'Search failed: '+describeError(error)+(this.contentSearchActive?' Previous results are still shown.':'');}
     finally{onProgress.onmessage=()=>{};if(this.searchOperation===operationId){this.searchOperation='';this.searchingTraffic=false;}}
   }
   async showMatches():Promise<void> {
     if(!this.contentSearchActive||!this.searchMatchIds.length)return;
     this.matchReturnFocus=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;
+    this.matchCurrentId='';this.matchPreserveSelection=this.trafficSelection.ids.size>1;
     const id=this.selectedSessionId&&this.searchMatchIds.includes(this.selectedSessionId)?this.selectedSessionId:this.searchMatchIds[0];if(!id)return;
     this.matchDialog.showModal();await this.loadMatchEntry(id);
   }
   async loadMatchEntry(id:string):Promise<void> {
     const generation=++this.matchGeneration,search=this.searchResultId;this.matchBusy=true;this.matchError='';this.matchEntryId=id;
+    const current=()=>generation===this.matchGeneration&&search===this.searchResultId&&this.isConnected;
     try {
       const [locations,detail]=await Promise.all([invoke<TrafficSearchEntry>('traffic_search_entry',{searchId:search,id}),invoke<SessionDetail>('session_detail',{id})]);
-      if(generation!==this.matchGeneration||search!==this.searchResultId||!this.isConnected)return;
+      if(!current())return;
+      const row=await this.revealCurrent(id,false,current);
+      if(!current())return;
+      if(!row)throw new Error('The request is no longer in the matching traffic.');
+      if(!this.matchPreserveSelection)this.trafficSelection.replace(id);
+      this.trafficSelection.focused=id;this.selectedSessionId=id;this.inspectionGeneration++;this.followLatest=false;
+      this.setInspectionSummary(row);
+      this.applyDetail(detail);this.updateTrafficSelection();this.renderFollowState();this.matchCurrentId=id;
       this.matchLocations=locations.matches;this.matchIndex=0;this.matchMore=locations.moreMatches;this.matchEntryLabel=(detail.requests[0]?.method??'Request')+' '+(detail.requests[0]?.target??id);this.renderMatch();
     }catch(error:unknown){if(generation===this.matchGeneration){this.matchError='Matches could not be shown: '+describeError(error);this.matchLocations=[];this.renderMatch();}}finally{if(generation===this.matchGeneration)this.matchBusy=false;}
   }
@@ -517,25 +634,44 @@ export class TrafficWorkspace extends WorkspaceElement {
   moveMatch(step:number):void {if(this.matchBusy)return;const next=this.matchIndex+step;if(next<0||next>=this.matchLocations.length)return;this.matchIndex=next;this.renderMatch();}
   async moveMatchEntry(step:number):Promise<void> {if(this.matchBusy)return;const id=this.searchMatchIds[this.searchMatchIds.indexOf(this.matchEntryId)+step];if(id)await this.loadMatchEntry(id);}
   matchKeyboard(event:KeyboardEvent):void {if(event.key==='F3'){event.preventDefault();this.moveMatch(event.shiftKey?-1:1);}}
-  closeMatches(event?:Event):void {event?.preventDefault();this.matchGeneration++;this.matchBusy=false;if(this.matchDialog?.open){this.matchDialog.close();this.matchReturnFocus?.focus();}this.matchReturnFocus=null;}
-
-  private applySearchSelection():void {
-    this.trafficSelection.ids=new Set(this.searchMatchIds);this.selectedTraffic.clear();this.trafficSelection.focused=this.sessions.find(row=>this.trafficSelection.ids.has(row.id))?.id??null;this.trafficSelection.anchor=this.trafficSelection.focused;this.updateTrafficSelection();
-    const first=this.sessions.find(row=>this.trafficSelection.ids.has(row.id));if(first)void this.inspectSession(first,true);
+  closeMatches(event?:Event):void {
+    event?.preventDefault();const generation=++this.matchGeneration;this.matchBusy=false;
+    if(this.matchDialog?.open){
+      const id=this.matchCurrentId,revision=this.queryRevision,returnFocus=this.matchReturnFocus??this.trafficTable;
+      this.matchDialog.close();
+      const current=()=>this.matchGeneration===generation&&this.queryRevision===revision&&!this.matchDialog.open&&this.selectedSessionId===id&&this.trafficSelection.focused===id;
+      if(id)void this.revealCurrent(id,true,current).then(row=>{if(!row&&current())returnFocus.focus({preventScroll:true});}).catch(()=>{if(current())returnFocus.focus({preventScroll:true});});
+      else returnFocus.focus({preventScroll:true});
+    }
+    this.matchReturnFocus=null;
   }
-  async selectAllSearchMatches():Promise<void> {this.selectSearchMatches=true;try{await this.refreshSearchMatchIds();this.applySearchSelection();}catch(error:unknown){this.contentSearchStatus='Matches could not be selected: '+describeError(error);}}
-  private async refreshSearchMatchIds():Promise<void> {
-    if(!this.searchResultId)return;
+
+  private async applySearchSelection():Promise<void> {
+    this.trafficSelection.ids=new Set(this.searchMatchIds);
+    const first=this.virtualList.indexAt(this.sessionScroller.scrollTop),visible=this.virtualList.ids[first];
+    const height=Math.max(1,this.sessionScroller.clientHeight-(this.trafficTable.tHead?.getBoundingClientRect().height??35));
+    const last=this.virtualList.indexAt(this.sessionScroller.scrollTop+height),selectedIndex=this.virtualList.indexes.get(this.selectedSessionId??'');
+    const keepInspector=selectedIndex!==undefined&&selectedIndex>=first&&selectedIndex<=last&&this.selectedSessionId&&this.trafficSelection.ids.has(this.selectedSessionId);
+    const id=keepInspector?this.selectedSessionId:visible&&this.trafficSelection.ids.has(visible)?visible:this.searchMatchIds[0]??null;
+    this.trafficSelection.focused=id;this.trafficSelection.anchor=id;this.updateTrafficSelection();
+    if(!id)return;
+    const search=this.searchResultId;
+    await this.inspectTraffic(id,false,()=>this.searchResultId===search&&this.trafficSelection.focused===id&&this.trafficSelection.ids.has(id));
+  }
+  async selectAllSearchMatches():Promise<void> {this.selectSearchMatches=true;const selection=this.trafficSelectionRevision;try{if(await this.refreshSearchMatchIds()&&selection===this.trafficSelectionRevision)await this.applySearchSelection();}catch(error:unknown){this.contentSearchStatus='Matches could not be selected: '+describeError(error);}}
+  private async refreshSearchMatchIds():Promise<boolean> {
+    if(!this.searchResultId)return false;
     const resultId=this.searchResultId, revision=this.queryRevision;
-    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
-    if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return;
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return false;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
+    return true;
   }
   async cancelContentSearch():Promise<void> {if(this.searchOperation){this.searchCancelRequested=true;this.contentSearchStatus='Canceling search…';try{await invoke('cancel_traffic_search',{operationId:this.searchOperation});}catch(error:unknown){this.contentSearchStatus='Cancel failed: '+describeError(error);}}}
   async clearContentSearch(refresh=true):Promise<void> {
     this.closeMatches();
     if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
-    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;if(refresh)await this.refreshSessions(undefined,true);
+    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.queryRevision++;if(refresh)await this.refreshSessions(undefined,true);
   }
   startColumnDrag(id:ColumnId,event:PointerEvent):void {
     if (event.button !== 0) return;
@@ -607,66 +743,79 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:null,searchResultId:this.searchResultId,sort:this.sort,offset:this.pageIndex*this.pageLimit,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
-      if (!this.isConnected || revision !== this.queryRevision) return;
-      this.totalMatched = page.totalMatched ?? page.sessions.length;
-      this.pageEnd = Math.min(this.totalMatched,this.pageIndex*this.pageLimit+page.sessions.length);
-      if(this.contentSearchActive&&(force||this.matchRevision!==revision||this.contentMatchCount!==this.totalMatched))await this.refreshSearchMatchIds();
-      if(!this.isConnected||revision!==this.queryRevision)return;
-      if (force || this.followLatest || !this.sessions.length) { this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.displayedMatched = this.totalMatched; this.rebuildRows(page.sessions); }
+      const view = await invoke<TrafficView>('query_traffic_view',{query:{searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      if (!this.isConnected || revision !== this.queryRevision) {this.releaseView(view);return;}
+      if(this.contentSearchActive){this.searchMatchIds=view.ids;this.contentMatchCount=view.ids.length;this.matchRevision=revision;}
+      const existing=this.trafficView,ids=new Set(view.ids);
+      if(force||this.followLatest||!existing||existing.ids.some(id=>!ids.has(id)))this.applyView(view,this.followLatest);
       else {
-        this.pendingRows = page.sessions;
-        const ids = new Set(this.sessions.map((row) => row.id)); this.newTrafficCount = Math.max(this.totalMatched-this.displayedMatched,page.sessions.filter((row) => !ids.has(row.id)).length,0);
-        this.updatesPending = this.newTrafficCount > 0 || page.sessions.some((row,index) => this.sessions[index]?.id !== row.id);
-        const fresh = new Map(page.sessions.map((row) => [row.id,row])); this.rebuildRows(this.sessions.map((row) => fresh.get(row.id) ?? row));
+        this.releaseView(this.pendingView);this.pendingView=view;
+        this.newTrafficCount=view.ids.filter(id=>!this.virtualList.indexes.has(id)).length;
+        this.updatesPending=this.newTrafficCount>0||view.ids.some((id,index)=>existing.ids[index]!==id);
+        this.rowRevision++;this.rowCache.clear();this.cacheRows(view.page.sessions);await this.loadWindow(Math.floor(this.viewportStart/100)*100,true);
+        if(!this.isConnected||revision!==this.queryRevision)return;
+        this.renderViewport();
       }
       this.queryLoaded = true; this.queryError = ''; this.renderSessionState();
       if (force) this.diagnostic = this.sessionText;
       this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
       this.$emit('traffic-refreshed');
-    } catch (error:unknown) { this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
+    } catch (error:unknown) {if(!this.isConnected||revision!==this.queryRevision)return;this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
   }
   async watchSessions():Promise<void> {
     if (this.watching) return; this.watching = true;
     const onEvent = new Channel<SessionHint>(); onEvent.onmessage = (hint) => {
       if (!this.isConnected) return;
-      void this.refreshSessions();
+      if(this.refreshTimer===undefined)this.refreshTimer=window.setTimeout(()=>{this.refreshTimer=undefined;void this.refreshSessions();},200);
       if (this.selectedSessionId && (hint.exchangeId === this.selectedSessionId || hint.lagged)) void this.refreshInspection();
     }; this.sessionUpdates = onEvent;
     try { await invoke<void>('watch_sessions',{onEvent}); this.watchError = ''; await this.refreshSessions(undefined,true); this.renderSessionState(); }
     catch (error:unknown) { this.watching = false; this.watchError = 'Live refresh failed: '+describeError(error); this.renderSessionState(); }
   }
-  sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); } }
+  sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); }this.scheduleViewport(); }
   private updateTrafficSelection():void {
-    for(const row of this.sessions)if(this.trafficSelection.ids.has(row.id))this.selectedTraffic.set(row.id,row);
-    for(const id of this.selectedTraffic.keys())if(!this.trafficSelection.ids.has(id))this.selectedTraffic.delete(id);
-    this.selectedTrafficCount=this.trafficSelection.ids.size;
-    const outside=this.selectedTrafficCount-this.sessions.filter(row=>this.trafficSelection.ids.has(row.id)).length;
-    this.trafficSelectionText=`${this.selectedTrafficCount} selected${outside>0?` · ${outside} on other pages`:''}`;
-    this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
+    this.trafficSelectionRevision++;
     this.rebuildRows(this.sessions);
   }
-  clearTrafficSelection():void {this.trafficSelection.clear();this.selectedTraffic.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}
+  clearTrafficSelection():void {this.trafficSelection.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}
   selectTraffic(session:SessionSummary,event:MouseEvent):void {
-    this.trafficSelection.choose(session.id,this.sessions.map(row=>row.id),event);this.updateTrafficSelection();
-    void this.inspectSession(session,true);
+    this.trafficSelection.choose(session.id,this.virtualList.ids,event);this.updateTrafficSelection();
+    void this.inspectTraffic(session.id,true,()=>this.trafficSelection.focused===session.id);
   }
   selectWithButton(session:SessionSummary,event:MouseEvent):void {event.stopPropagation();this.selectTraffic(session,event);}
   selectWithKeyboard(session:SessionSummary,event:KeyboardEvent):void {
+    this.handleTrafficKey(session.id,event);
+  }
+  private handleTrafficKey(id:string,event:KeyboardEvent):void {
     if(isTextEditing(event))return;
-    if(this.contentSearchActive&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){event.preventDefault();void this.selectAllSearchMatches();return;}
     if(event.key==='Delete') {event.preventDefault();void this.removeSelectedTraffic();return;}
     if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z') {event.preventDefault();void this.undoTrafficRemoval();return;}
-    if(!this.trafficSelection.key(session.id,this.sessions.map(row=>row.id),event))return;
+    if(event.key==='PageUp'||event.key==='PageDown'){
+      const index=this.virtualList.indexes.get(id)??0,direction=event.key==='PageDown'?1:-1;
+      const height=Math.max(1,this.sessionScroller.clientHeight-(this.trafficTable.tHead?.getBoundingClientRect().height??35));
+      const destination=this.virtualList.indexAt(Math.max(0,this.virtualList.offset(index)+direction*height));
+      const nextIndex=direction>0?Math.max(index+1,destination):Math.min(index-1,destination);
+      const next=this.virtualList.ids[Math.max(0,Math.min(this.virtualList.ids.length-1,nextIndex))];
+      event.preventDefault();if(next){if((event.ctrlKey||event.metaKey)&&!event.shiftKey)this.trafficSelection.focused=next;else this.trafficSelection.choose(next,this.virtualList.ids,event);}
+    }else if(!this.trafficSelection.key(id,this.virtualList.ids,event))return;
     this.updateTrafficSelection();this.$flushUpdates();
-    const id=this.trafficSelection.focused;const row=this.sessions.find(row=>row.id===id);
-    if(row){(this.getRootNode() as ShadowRoot).getElementById('session-'+row.id)?.focus();if(this.trafficSelection.ids.has(row.id))void this.inspectSession(row,true);}
+    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a')return;
+    const focused=this.trafficSelection.focused;
+    if(focused){
+      if(this.trafficSelection.ids.has(focused))void this.inspectTraffic(focused,true,()=>this.trafficSelection.focused===focused&&this.trafficSelection.ids.has(focused));
+      else void this.revealCurrent(focused,true).catch(error=>{this.diagnostic=describeError(error);});
+    }
   }
   listKeyboard(event:KeyboardEvent):void {
     if(event.defaultPrevented || isTextEditing(event))return;
-    if(this.contentSearchActive&&(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){event.preventDefault();void this.selectAllSearchMatches();return;}
-    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();void this.undoTrafficRemoval();}
-    else if(event.key==='Delete'){event.preventDefault();void this.removeSelectedTraffic();}
+    const target=event.composedPath()[0];
+    if(!(target instanceof HTMLElement))return;
+    const row=target.closest('tr[data-session-id]');
+    if(target!==this.trafficTable&&(!row||!this.trafficTable.contains(row))){
+      if(this.trafficTable.contains(target))return;
+      if(!['Delete','Escape'].includes(event.key)&&!((event.ctrlKey||event.metaKey)&&['a','z'].includes(event.key.toLowerCase())))return;
+    }
+    this.handleTrafficKey(this.trafficSelection.focused??this.virtualList.ids[0]??'',event);
   }
   positionTrafficMenu(event:MouseEvent):void {
     const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -674,21 +823,21 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.trafficMenuY=Math.max(50,Math.min(event.type==='contextmenu'?event.clientY:rect.bottom+4,window.innerHeight-230))+'px';this.$flushUpdates();
   }
   openTrafficMenu(session:SessionSummary,event:MouseEvent):void {
-    event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectSession(session,true);}
+    event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectTraffic(session.id,false,()=>this.trafficSelection.focused===session.id&&this.trafficSelection.ids.has(session.id));}
     this.positionTrafficMenu(event);this.trafficMenu.showPopover();
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
-  private pushTrafficUndo(action:{ids:string[];rows:SessionSummary[];expiresAt?:number|undefined}):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];this.scheduleTrafficUndoExpiry();}
+  private pushTrafficUndo(action:{ids:string[];expiresAt?:number|undefined}):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];this.scheduleTrafficUndoExpiry();}
   async clearTraffic():Promise<void> {
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null}>('clear_traffic');
-      const removed=new Set(result.ids);this.trafficUndo=[];this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
-      if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,rows:this.sessions.filter(row=>removed.has(row.id)),expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
+      this.trafficUndo=[];this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
+      if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
 
       this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): 'Traffic is already empty.';
-      this.scheduleTrafficUndoExpiry();void this.clearContentSearch(false);this.followLatest=true;this.pageIndex=0;this.renderFollowState();this.clearTrafficSelection();this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.selectedMethodText='—';this.selectedUrlText='Select a request';this.selectedStatusText='No response';this.$emit('selection-changed',null);
-      this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);
+      this.scheduleTrafficUndoExpiry();void this.clearContentSearch(false);this.followLatest=true;this.renderFollowState();this.clearTrafficSelection();this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.selectedMethodText='—';this.selectedUrlText='Select a request';this.selectedStatusText='No response';this.$emit('selection-changed',null);
+      this.queryRevision++;await this.refreshSessions(undefined,true);
     }catch(error:unknown){await this.showError('Traffic could not be cleared',describeError(error));}
     finally{this.removingTraffic=false;}
   }
@@ -703,22 +852,23 @@ export class TrafficWorkspace extends WorkspaceElement {
       const removed=await invoke<string[]>('remove_unselected_traffic_entries',{ids:[...this.trafficSelection.ids]});
       if(!removed.length){this.diagnostic='There are no unselected entries to remove.';return;}
       const removedIds=new Set(removed);
-      this.pushTrafficUndo({ids:removed,rows:this.sessions.filter(row=>removedIds.has(row.id))});this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
+      this.pushTrafficUndo({ids:removed});this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
       if(this.selectedSessionId&&removedIds.has(this.selectedSessionId)){this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);}
-      this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);this.updateTrafficSelection();this.trafficMenu.hidePopover();
+      this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();this.trafficMenu.hidePopover();
     }catch(error:unknown){this.diagnostic='Traffic removal failed: '+describeError(error);}
     finally{this.removingTraffic=false;}
   }
   async removeSelectedTraffic():Promise<void> {
     if(this.removingTraffic || !this.trafficSelection.ids.size)return;this.removingTraffic=true;
-    const ids=[...this.trafficSelection.ids],rows=[...this.selectedTraffic.values()];const index=this.sessions.findIndex(row=>row.id===this.trafficSelection.focused);
+    const ids=[...this.trafficSelection.ids],order=this.virtualList.ids;const index=this.virtualList.indexes.get(this.trafficSelection.focused??'')??0;
     try {
       const removed=await invoke<string[]>('remove_traffic_entries',{ids,restore:false});
-      this.pushTrafficUndo({ids:removed,rows});
+      this.pushTrafficUndo({ids:removed});
       this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
-      this.clearTrafficSelection();this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);
-      const next=this.sessions[Math.max(0,Math.min(index,this.sessions.length-1))];
-      if(next){this.trafficSelection.replace(next.id);this.updateTrafficSelection();await this.inspectSession(next,true);this.$flushUpdates();(this.getRootNode() as ShadowRoot).getElementById('session-'+next.id)?.focus();}
+      this.clearTrafficSelection();this.queryRevision++;await this.refreshSessions(undefined,true);
+      const removedIds=new Set(removed);
+      const next=order.slice(index).find(id=>!removedIds.has(id)&&this.virtualList.indexes.has(id))??order.slice(0,index).reverse().find(id=>!removedIds.has(id)&&this.virtualList.indexes.has(id));
+      if(next){this.trafficSelection.replace(next);this.updateTrafficSelection();await this.inspectTraffic(next,true);}
       else {this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);this.removingTraffic=false;this.$flushUpdates();this.trafficUndoButton.focus();}
       this.trafficMenu.hidePopover();
     }catch(error:unknown){this.diagnostic='Traffic removal failed: '+describeError(error);}
@@ -729,19 +879,41 @@ export class TrafficWorkspace extends WorkspaceElement {
     try {
       const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();if(!this.traceMetadataRows.length)this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);
       this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':'';
-      this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);
+      this.trafficSelection.ids=new Set(restored);
       this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();
-      const id=restored[0];if(id){await this.revealSession(id);this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);this.updateTrafficSelection();}
+      const id=restored.find(id=>this.virtualList.indexes.has(id));if(id){this.trafficSelection.focused=id;this.trafficSelection.anchor=id;await this.inspectTraffic(id,true);this.updateTrafficSelection();}
       this.diagnostic=restored.length===action.ids.length?'Traffic entries restored.':`${restored.length} entries restored; others were evicted after removal.`;
     }catch(error:unknown){this.diagnostic='Traffic Undo failed: '+describeError(error);}
     finally{this.removingTraffic=false;}
   }
   private async inspectSession(session:SessionSummary,retainSelection=false):Promise<void> {
     if(!retainSelection){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
-    const generation = ++this.inspectionGeneration;
-    this.selectedSessionId = session.id; this.selectedDetail = null; this.followLatest = false; this.renderFollowState();
-    this.selectedMethodText = session.method; this.selectedUrlText = session.url ?? session.host+session.path; this.selectedStatusText = session.status === 304 ? '304 Not Modified' : session.status === null ? 'Pending' : String(session.status); this.selectedTone = statusTone(session);
+    const generation=this.beginInspection(session.id,session);
+    await this.loadInspection(session,generation);
+  }
+  private beginInspection(id:string,session?:SessionSummary):number {
+    const generation=++this.inspectionGeneration;
+    this.selectedSessionId=id;this.selectedDetail=null;this.followLatest=false;this.renderFollowState();
+    this.setInspectionSummary(session);
     this.reuseDisabled = true; this.reuseTitle = 'Loading response…'; this.matchedRuleId = ''; this.$emit('selection-changed',null);
+    return generation;
+  }
+  private setInspectionSummary(session?:SessionSummary):void {
+    this.inspectionSummaryId=session?.id??'';
+    this.selectedMethodText=session?.method??'…';this.selectedUrlText=session?.url??'Loading request…';
+    this.selectedStatusText=!session?'Loading…':session.status===304?'304 Not Modified':session.status===null?'Pending':String(session.status);
+    this.selectedTone=session?statusTone(session):'';
+  }
+  private async inspectTraffic(id:string,focus=false,current:()=>boolean=()=>true):Promise<void> {
+    const generation=this.beginInspection(id,this.rowCache.get(id));
+    const valid=()=>generation===this.inspectionGeneration&&this.selectedSessionId===id&&this.isConnected&&current();
+    try {
+      const row=await this.revealCurrent(id,focus,valid);
+      if(!row||!valid())return;
+      this.setInspectionSummary(row);await this.loadInspection(row,generation);
+    }catch(error:unknown){if(valid())this.diagnostic='Inspector unavailable: '+describeError(error);}
+  }
+  private async loadInspection(session:SessionSummary,generation:number):Promise<void> {
     try {
       const detail = await loadSessionDetail(session.id,session.terminal === 'completed'); if (generation !== this.inspectionGeneration || !this.isConnected) return;
       this.applyDetail(detail);
@@ -776,22 +948,17 @@ export class TrafficWorkspace extends WorkspaceElement {
     window.clearTimeout(this.searchTimer);
     let revision = ++this.queryRevision;
     try {
-      const page = await invoke<SessionPage>('query_sessions',{query:{limit:this.pageLimit,sort:this.sort,focusId:id}});
-      if (revision !== this.queryRevision || !this.isConnected) return false;
-      const row = page.sessions.find((session) => session.id === id);
-      if (!row) throw new Error('Source no longer in Traffic.');
+      const view = await invoke<TrafficView>('query_traffic_view',{query:{sort:this.sort,focusId:id}});
+      if (revision !== this.queryRevision || !this.isConnected) {this.releaseView(view);return false;}
       // Discard live queries started with the old filters while the source page was loading.
       revision = ++this.queryRevision;
       const filtered = this.filterCount > 0 || this.searchText.length > 0;
       if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
       this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentSearchStatus='';this.contentSearchLabel='';this.contentMatchCount=0;
       this.filters = []; this.fetchDestinations=[]; this.searchText = ''; this.searchInput.value = '';
-      this.pageIndex = Math.floor((page.focusOffset ?? 0)/this.pageLimit);
-      this.totalMatched = page.totalMatched; this.displayedMatched = page.totalMatched;
-      this.pageEnd = this.pageIndex*this.pageLimit+page.sessions.length;
-      this.followLatest = false; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0;
-      this.rebuildRows(page.sessions); this.queryLoaded = true; this.queryError = '';
+      this.followLatest = false;this.closeMatches();this.applyView(view);this.queryLoaded = true; this.queryError = '';
       this.renderSessionState(); this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
+      const row=await this.revealCurrent(id,true);if(!row)throw new Error('Source no longer in Traffic.');
       await this.inspectSession(row);
       if (revision !== this.queryRevision || this.selectedSessionId !== id) return true;
       const element = (this.getRootNode() as ShadowRoot).getElementById('session-'+id);
@@ -805,7 +972,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
   }
   showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
-  async copyUrl():Promise<void> { try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
+  async copyUrl():Promise<void> {if(!this.selectedSessionId||this.inspectionSummaryId!==this.selectedSessionId){this.diagnostic='The request URL is still loading.';return;}try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
   async replaySelected():Promise<void> {this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;try{const detail=this.selectedDetail?.id===id?this.selectedDetail:await loadSessionDetail(id,false);this.$emit('replay-request',detail);}catch(error:unknown){this.diagnostic='Replay source unavailable: '+describeError(error);}}
 
   async copyRequest(format:RequestCommandFormat):Promise<void> {
@@ -837,15 +1004,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch(error:unknown){this.diagnostic='Headers could not be copied: '+describeError(error);}
     finally{this.commandBusy=false;}
   }
-  async resumeLatest():Promise<void> { this.followLatest = true; this.pageIndex = 0; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
-  showUpdates():void { if (this.pendingRows.length) this.rebuildRows(this.pendingRows); this.displayedMatched = this.totalMatched; this.pendingRows = []; this.updatesPending = false; this.newTrafficCount = 0; this.renderSessionState(); }
-  async navigatePage(delta:number):Promise<void> { this.pageIndex = Math.max(0,this.pageIndex+delta); this.followLatest = false; this.queryRevision++; await this.refreshSessions(undefined,true); }
+  async resumeLatest():Promise<void> { this.followLatest = true; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
+  showUpdates():void {if(this.pendingView)this.applyView(this.pendingView);this.renderSessionState();}
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',draining:'Finishing active requests.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
     const empty = this.filterCount || this.contentSearchActive ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
-    const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges.' : empty);
-    this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
+    const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' traffic entries.' : empty);
+    this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
     this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';
   }
   private renderFollowState():void {
@@ -895,6 +1061,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.clearColumnDrag();
     for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
+    this.rowObserver?.disconnect();window.clearTimeout(this.refreshTimer);if(this.renderFrame!==undefined)cancelAnimationFrame(this.renderFrame);this.releaseView(this.trafficView);this.releaseView(this.pendingView);this.scrollGeneration++;
     if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});
     this.inspectionGeneration++; super.disconnectedCallback();
   }

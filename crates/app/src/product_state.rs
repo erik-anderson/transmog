@@ -63,7 +63,7 @@ pub enum ThemePreference {
 pub struct ProductPreferences {
     /// Color preference.
     pub theme: ThemePreference,
-    /// Default bounded session page size.
+    /// Legacy page preference retained for saved-state compatibility; Traffic is virtualized.
     pub session_page_size: usize,
     /// Whether a proxy start should request current-user host integration.
     pub configure_system_proxy: bool,

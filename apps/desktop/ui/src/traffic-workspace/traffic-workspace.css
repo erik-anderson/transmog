@@ -44,6 +44,12 @@ traffic-workspace { display:contents; }
 .filter-chip { min-height:1.6rem; padding:.2rem .45rem; border-color:var(--line); color:var(--text); background:var(--panel-subtle); font-size:.7rem; }
 .clear-filters { min-height:1.6rem; border:0; padding:.2rem; color:var(--accent-strong); background:transparent; font-size:.7rem; }
 .traffic-table { min-width:0; table-layout:fixed; width:100%; }
+.table-wrap {overflow-anchor:none;scrollbar-gutter:stable;}
+.traffic-table .traffic-spacer td {height:0;padding:0;border:0;}
+.traffic-spacer div {height:attr(data-size type(<length>),0px);}
+.traffic-table tr[data-current] td:first-child {box-shadow:inset 3px 0 var(--accent-strong);}
+.traffic-table tr[data-loading="true"] {color:var(--muted);}
+.traffic-table:focus-visible {outline:2px solid var(--focus);outline-offset:-2px;}
 @supports (width:attr(data-size type(<length>))) {
   .traffic-table { width:attr(data-width type(<length>),100%); }
   .traffic-table col { width:attr(data-width type(<length>),160px); }

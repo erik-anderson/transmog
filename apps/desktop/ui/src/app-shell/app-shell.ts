@@ -67,7 +67,6 @@ export class AppShell extends WebUIElement {
   @attr({ attribute: 'data-theme' }) theme: ProductState['preferences']['theme'] = 'system';
   @observable activeView: ViewName = initialState.activeView as ViewName;
   @observable currentNavigation: Record<string, string> = initialState.currentNavigation;
-  @observable pageSize = initialState.pageSize;
   @observable lifecycleLabel = initialState.lifecycleLabel;
   @observable lifecycleKind = initialState.lifecycleKind;
   @observable listener = initialState.listener;
@@ -120,7 +119,7 @@ export class AppShell extends WebUIElement {
   private saveAgain = false;
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
   protected hydratedCallback():void {
-    if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,pageSize:state.preferences.sessionPageSize,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
+    if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
     else void this.refreshAutoresponses();
   }
   async openMainWindow():Promise<void> {try{await invoke('open_main_window');}catch(error:unknown){this.diagnosticText='Main window could not be opened: '+describeError(error);}}
@@ -162,9 +161,8 @@ export class AppShell extends WebUIElement {
     if(status.hostRestorePending)this.diagnosticText='Host restoration is pending and must be retried before restart.';
     else if(this.diagnosticText==='Host restoration is pending and must be retried before restart.')this.diagnosticText='';
   }
-  onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; pageSize: number; workspace?: WorkspacePreferences}>): void {
+  onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; workspace?: WorkspacePreferences}>): void {
     this.theme = event.detail.theme;
-    this.pageSize = String(event.detail.pageSize);
     if (!this.workspaceLoaded && !this.workspaceTouched) this.workspace = normalizeWorkspace(event.detail.workspace);
     this.workspaceLoaded = true;
   }

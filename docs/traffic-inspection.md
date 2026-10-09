@@ -6,6 +6,11 @@ request and response together in a wide pane or use pane tabs when space is
 limited. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
+Traffic uses one continuous list and a native scrollbar spanning all matching
+entries. Only rows near the viewport are rendered, so large captures remain
+usable. Compact and ordinary rows have consistent heights; wrapped rows retain
+their measured heights and preserve your reading position during layout changes.
+
 ## Headers and sizes
 
 Header views preserve ordering and duplicate fields. Value and field byte sizes,
@@ -69,17 +74,21 @@ Results are a completed snapshot; search again to include later traffic.
 
 **Select all matches after searching** replaces selection with the new matches on
 each successful search. **Select all matches** and Ctrl+A in the result list also
-work across every matching page. Column filters remain applicable. Failed or
+work across the whole matching list, including offscreen entries. New traffic
+does not silently join the selection. Column filters remain applicable. Failed or
 canceled searches preserve the previous results and selections.
 
 **View matches** opens bounded snippets of original decoded evidence, keeping
 accents and showing zero-width regex positions. F3 / Shift+F3 moves between
-matches; entry navigation preserves traffic multiselection. Only a bounded number
+matches; entry navigation preserves traffic multiselection, reveals the current
+request in Traffic and updates its inspector. Closing review focuses that
+request. Only a bounded number
 of occurrences per entry is displayed; refine the query to inspect later matches.
 Changed or removed evidence requires searching again. HTML and script fragments
 remain inert text in this view.
 
-Ctrl+click adds entries, Shift selects ranges, Shift+arrow extends selection and
+Ctrl+click adds entries, Shift selects ranges across the full displayed order,
+even when intermediate rows are offscreen, Shift+arrow extends selection and
 Escape clears it. **Remove selected entries** / Del and **Remove unselected
 entries** operate across the whole workspace, including hidden rows. Undo / Ctrl+Z
 restores them while their underlying evidence is retained. These actions do not
