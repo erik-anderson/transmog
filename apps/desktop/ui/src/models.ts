@@ -295,3 +295,5 @@ export type RequestCommandFormat = 'curl' | 'powershell';
 export interface RequestCommand {text:string;notices:string[];bodyFileRequired:boolean;bodyFileAvailable:boolean;}
 export interface ComposerSource {method:string;url:string;headers:Array<{name:string;value:string}>;body:string;bodyAvailable:boolean;bodyStreamed?:boolean;bodyBytes?:number|null;notices:string[];}
 export interface Notice { title: string; message: string; actionLabel: string | null; action: NoticeAction; }
+
+export interface TracePasswordPrompt {title:string;confirm:boolean;message:string;resolve:(password:string|null)=>void;}

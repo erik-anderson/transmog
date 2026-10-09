@@ -452,6 +452,25 @@ try {
     const settingsScreenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
     await writeFile(screenshotPath.replace(/\.png$/i,'-settings.png'),Buffer.from(settingsScreenshot.data,'base64'));
     await evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`);
+    result.passwordControls=await evaluate(`(() => {
+      const shell=document.querySelector('app-shell');const traffic=shell.traffic;
+      traffic.showSaveTrace();globalThis.__passwordProbe=traffic.promptTracePassword('Encrypt saved trace',true);
+      shell.$flushUpdates();
+      const password=shell.passwordForm.elements.namedItem('password');
+      const confirm=shell.passwordForm.elements.namedItem('confirmPassword');
+      password.value='test-password';confirm.value='different';shell.passwordForm.requestSubmit();shell.$flushUpdates();
+      if(shell.passwordError!=='The passwords do not match.'||password.type!=='password')throw new Error('Password masking or confirmation failed '+JSON.stringify({error:shell.passwordError,type:password.type,confirmDisabled:confirm.disabled,mode:shell.passwordConfirm}));
+      const rect=shell.passwordDialog.getBoundingClientRect();
+      const reachable=[...shell.passwordForm.querySelectorAll('input,button')].filter(element=>!element.disabled&&element.getBoundingClientRect().width).every(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;});
+      if(!reachable)throw new Error('Password controls escaped the viewport');
+      return {masked:true,confirmedMismatch:true,reachable,width:rect.width};
+    })()`);
+    await writeFile(screenshotPath.replace(/\.png$/i,'-password.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+    await writeFile(screenshotPath.replace(/\.png$/i,'-password-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await evaluate(`(async()=>{const shell=document.querySelector('app-shell');const input=shell.passwordForm.elements.namedItem('confirmPassword');input.value='test-password';shell.passwordForm.requestSubmit();if(await globalThis.__passwordProbe!=='test-password')throw new Error('Confirmed password was lost');delete globalThis.__passwordProbe;if(shell.passwordForm.elements.namedItem('password').value)throw new Error('Password was not cleared');const canceled=shell.traffic.promptTracePassword('Open encrypted trace');shell.cancelTracePassword();if(await canceled!==null)throw new Error('Cancel did not resolve the password request');shell.traffic.closeSaveTrace();})()`);
+    await call('Emulation.clearDeviceMetricsOverride');
+
 
   }
   if (automationScreenshotPath !== undefined) {

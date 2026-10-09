@@ -94,11 +94,14 @@ fn app_status(
 }
 
 #[tauri::command]
-fn buffer_status(state: State<'_, DesktopState>) -> Option<transmog_app::BufferStatus> {
-    state
-        .application
+fn buffer_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<transmog_app::BufferStatus>, AppError> {
+    Ok(state
+        .window_application(&window)?
         .body_store()
-        .map(transmog_app::BodyStore::buffer_status)
+        .map(transmog_app::BodyStore::buffer_status))
 }
 
 #[tauri::command]

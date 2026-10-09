@@ -764,5 +764,10 @@
   "previewReportSummary": "",
   "previewReportUrl": "",
   "previewResourceRows": [],
-  "previewRequestRows": []
+  "previewRequestRows": [],
+  "passwordTitle": "Capture password",
+  "passwordConfirm": false,
+  "passwordVisible": false,
+  "passwordError": "",
+  "exportCanEncrypt": true
 }

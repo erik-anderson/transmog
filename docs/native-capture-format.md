@@ -37,3 +37,7 @@ avoids a plaintext temporary file for an encrypted native trace.
 Legacy `.tmcap.gz` remains supported and needs a bounded container expansion;
 new `.tmcap` files already compress their individual frames. Encrypted `.tmcap.gz`
 expansion contains encrypted frames, never a fully decrypted capture.
+
+The desktop’s Save trace defaults to this chunk-compressed `.tmcap` container.
+An outer gzip wrapper is optional and explained as slower to open. Password
+flows ask only when required and never retain passwords in UI preferences.

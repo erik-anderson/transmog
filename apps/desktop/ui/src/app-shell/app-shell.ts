@@ -2,7 +2,7 @@ import initialState from '../initial-state.json';
 import '../autoresponse-switch/autoresponse-switch.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
+import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -19,6 +19,29 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable passwordTitle='Capture password';
+  @observable passwordConfirm=false;
+  @observable passwordVisible=false;
+  @observable passwordError='';
+  passwordDialog!:HTMLDialogElement;
+  passwordForm!:HTMLFormElement;
+  private passwordRequest:TracePasswordPrompt|null=null;
+  onTracePasswordRequest(event:CustomEvent<TracePasswordPrompt>):void {
+    event.stopPropagation();if(this.passwordRequest){event.detail.resolve(null);return;}
+    this.passwordRequest=event.detail;this.passwordTitle=event.detail.title;this.passwordConfirm=event.detail.confirm;this.passwordError=event.detail.message;this.passwordVisible=false;
+    this.passwordForm.reset();this.setPasswordInputType(false);this.passwordDialog.showModal();
+    (this.passwordForm.elements.namedItem('password') as HTMLInputElement).focus();
+  }
+  submitTracePassword(event:Event):void {
+    event.preventDefault();const password=(this.passwordForm.elements.namedItem('password') as HTMLInputElement).value;
+    if(this.passwordConfirm&&password!==(this.passwordForm.elements.namedItem('confirmPassword') as HTMLInputElement).value){this.passwordError='The passwords do not match.';return;}
+    const request=this.passwordRequest;this.passwordRequest=null;this.passwordForm.reset();this.passwordDialog.close();request?.resolve(password);
+  }
+  cancelTracePassword():void {this.passwordDialog.close();}
+  tracePasswordClosed():void {if(this.passwordDialog.open)return;const request=this.passwordRequest;this.passwordRequest=null;this.passwordForm.reset();this.passwordError='';this.passwordVisible=false;request?.resolve(null);}
+  setPasswordVisible(event:Event):void {this.passwordVisible=(event.target as HTMLInputElement).checked;this.setPasswordInputType(this.passwordVisible);}
+  private setPasswordInputType(visible:boolean):void {for(const name of ['password','confirmPassword'])(this.passwordForm.elements.namedItem(name) as HTMLInputElement).type=visible?'text':'password';}
+
   @observable viewerMode = false;
   @attr({ attribute: 'data-theme' }) theme: ProductState['preferences']['theme'] = 'system';
   @observable activeView: ViewName = initialState.activeView as ViewName;

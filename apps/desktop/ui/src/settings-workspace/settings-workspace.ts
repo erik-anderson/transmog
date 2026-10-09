@@ -15,7 +15,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       const status=await invoke<{installedRam:number|null;maxBytes:number|null;storage:string;retainedBytes:number}|null>('buffer_status');
       if(status) {
         const format=(bytes:number)=> (bytes/1073741824).toLocaleString(undefined,{maximumFractionDigits:2})+' GiB';
-        this.bufferSummary=(status.maxBytes===null?'No maximum':format(status.maxBytes)+' maximum')+' · '+(status.storage==='memory'?'Memory storage':'Disk storage')+(status.installedRam===null?' · Installed RAM unavailable; automatic uses 1 GiB.':' · '+format(status.installedRam)+' installed RAM');
+        this.bufferSummary='Current buffer: '+(status.maxBytes===null?'No maximum':format(status.maxBytes)+' maximum')+' · '+(status.storage==='memory'?'Memory storage':'Disk storage')+(status.installedRam===null?' · Installed RAM unavailable; automatic uses 1 GiB.':' · '+format(status.installedRam)+' installed RAM');
       }
     } catch {this.bufferSummary='Buffer status unavailable. Automatic uses half installed RAM; larger or unlimited buffers write to disk.';}
   }

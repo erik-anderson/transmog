@@ -83,6 +83,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "traffic_search_entry"
             | "matching_traffic_ids"
             | "cancel_traffic_search"
+            | "buffer_status"
             | "import_trace"
             | "cancel_trace_import"
             | "trace_metadata_list"

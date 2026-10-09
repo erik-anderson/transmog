@@ -1,4 +1,4 @@
-<template shadowrootmode="open" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
+<template shadowrootmode="open" @trace-password-request="{onTracePasswordRequest(e)}" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
@@ -71,6 +71,18 @@
     <footer class="app-footer" ?hidden="{{!diagnosticText}}">
       <output class="global-diagnostics" aria-live="polite">{{diagnosticText}}</output>
     </footer>
+    <dialog w-ref="{passwordDialog}" class="trace-password-dialog" aria-labelledby="trace-password-title" @close="{tracePasswordClosed()}">
+      <h2 id="trace-password-title">{{passwordTitle}}</h2>
+      <form w-ref="{passwordForm}" @submit="{submitTracePassword(e)}">
+        <label>Password <input name="password" type="password" autocomplete="off" required maxlength="1024"></label>
+        <label ?hidden="{{!passwordConfirm}}">Confirm password <input name="confirmPassword" type="password" autocomplete="off" ?required="{{passwordConfirm}}" ?disabled="{{!passwordConfirm}}" maxlength="1024"></label>
+        <label class="checkbox-label"><input type="checkbox" @change="{setPasswordVisible(e)}"> Show password</label>
+        <p class="field-help">Passwords are kept in memory for this operation and never saved in settings.</p>
+        <p class="field-help" ?hidden="{{!passwordConfirm}}">Keep this password to reopen the capture. Transmog cannot recover it.</p>
+        <p class="field-error" role="status" ?hidden="{{!passwordError}}">{{passwordError}}</p>
+        <footer class="actions"><button type="submit">Continue</button><button type="button" class="secondary" @click="{cancelTracePassword()}">Cancel</button></footer>
+      </form>
+    </dialog>
     <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p class="full-value">{{listener}}</p><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
   </div>
 </template>
