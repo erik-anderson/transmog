@@ -204,20 +204,6 @@ impl TraceRegistry {
         if bytes > request.max_file_bytes {
             return Err(invalid("The trace exceeds the selected input byte limit"));
         }
-        let file = if request
-            .path
-            .to_string_lossy()
-            .to_ascii_lowercase()
-            .ends_with(".tmcap.gz")
-        {
-            expand_native_gzip(file, request, canceled, progress, bytes)?
-        } else {
-            file
-        };
-        let bytes = file
-            .metadata()
-            .map_err(|_| unavailable("Trace source is unavailable"))?
-            .len();
         let reader =
             SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
         let mut random = [0_u8; 8];
@@ -354,77 +340,6 @@ impl TraceRegistry {
             issues: imported.issues,
         })
     }
-}
-
-struct CancellableReader<'a, R> {
-    reader: R,
-    canceled: &'a AtomicBool,
-}
-impl<R: std::io::Read> std::io::Read for CancellableReader<'_, R> {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        if self.canceled.load(Ordering::Acquire) {
-            return Err(std::io::Error::other("Trace import canceled"));
-        }
-        self.reader.read(buffer)
-    }
-}
-
-fn expand_native_gzip(
-    file: File,
-    request: &TraceImportRequest,
-    canceled: &AtomicBool,
-    progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
-    bytes: u64,
-) -> Result<File, AppError> {
-    // Anonymous temporary file disappears with the last saved-body
-    // reader. Decompression is bounded, cancellable and CRC checked;
-    // bodies remain lazy once the native index is built.
-    let mut decoder = flate2::read::MultiGzDecoder::new(CancellableReader {
-        reader: file,
-        canceled,
-    });
-    let mut output = tempfile::tempfile()
-        .map_err(|_| unavailable("Compressed trace cache could not be created"))?;
-    let mut buffer = [0_u8; 16 * 1024];
-    let mut expanded = 0_u64;
-    loop {
-        use std::io::{Read, Seek, Write};
-        if canceled.load(Ordering::Acquire) {
-            return Err(unavailable("Trace import canceled"));
-        }
-        let count = decoder.read(&mut buffer).map_err(|_| {
-            if canceled.load(Ordering::Acquire) {
-                unavailable("Trace import canceled")
-            } else {
-                invalid("Compressed trace is incomplete or failed its checksum")
-            }
-        })?;
-        if count == 0 {
-            break;
-        }
-        expanded = expanded.saturating_add(count as u64);
-        if expanded > request.max_file_bytes {
-            return Err(invalid(
-                "The expanded trace exceeds the selected input byte limit",
-            ));
-        }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|_| unavailable("Compressed trace cache could not be written"))?;
-        if expanded % (1024 * 1024) < count as u64 {
-            progress(TraceImportProgress {
-                operation_id: request.operation_id.clone(),
-                completed: decoder
-                    .get_mut()
-                    .reader
-                    .stream_position()
-                    .unwrap_or(0)
-                    .min(bytes),
-                total: bytes,
-            });
-        }
-    }
-    Ok(output)
 }
 
 struct ImportedBody {
@@ -1562,36 +1477,6 @@ mod tests {
     use std::io::{Cursor, Write};
     use transmog_capture::{CaptureRecord, CaptureWriter};
 
-    #[test]
-    fn compressed_import_can_cancel_while_consuming_empty_members() {
-        use std::io::Read;
-        struct CancelAfterRead<'a> {
-            input: Cursor<Vec<u8>>,
-            canceled: &'a AtomicBool,
-        }
-        impl Read for CancelAfterRead<'_> {
-            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-                let count = self.input.read(bytes)?;
-                self.canceled.store(true, Ordering::Release);
-                Ok(count)
-            }
-        }
-        let member = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast())
-            .finish()
-            .unwrap();
-        let canceled = AtomicBool::new(false);
-        let reader = CancellableReader {
-            reader: CancelAfterRead {
-                input: Cursor::new(member.repeat(1024)),
-                canceled: &canceled,
-            },
-            canceled: &canceled,
-        };
-        let mut decoder = flate2::read::MultiGzDecoder::new(reader);
-        assert!(decoder.read(&mut [0_u8; 1]).is_err());
-        assert!(canceled.load(Ordering::Acquire));
-    }
-
     fn app(root: &std::path::Path) -> Application {
         Application::new(AppConfig {
             body_store: Some(BodyStoreConfig::product_default(root.join("cache"))),
@@ -1870,7 +1755,7 @@ mod tests {
             .import_trace(request(saz_path, "saz"), Arc::new(|_| {}))
             .await
             .unwrap();
-        let path = root.path().join("merged.tmcap.gz");
+        let path = root.path().join("merged.tmcap");
         let saved = workspace
             .save_traffic_trace(
                 path.clone(),
@@ -2462,61 +2347,6 @@ mod tests {
             b"private payload"
         );
         assert!(!root.path().join("cache").exists());
-    }
-
-    #[tokio::test]
-    async fn compressed_native_is_exact_lazy_and_bad_gzip_never_publishes() {
-        use flate2::{Compression, write::GzEncoder};
-        use std::io::Write;
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("trace.tmcap");
-        let gzip = root.path().join("trace.tmcap.gz");
-        native(&path, Some(vec![0, 255, 7]), 3);
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&std::fs::read(path).unwrap()).unwrap();
-        let mut bytes = encoder.finish().unwrap();
-        std::fs::write(&gzip, &bytes).unwrap();
-        let app = app(root.path());
-        app.import_trace(request(gzip.clone(), "compressed"), Arc::new(|_| {}))
-            .await
-            .unwrap();
-        std::fs::remove_file(&gzip).unwrap();
-        let rows = app
-            .query_sessions(SessionQueryInput::default())
-            .unwrap()
-            .sessions;
-        assert_eq!(app.composer_source(&rows[0].id).unwrap().body, "00ff07");
-        let last = bytes.len() - 1;
-        bytes[last] ^= 255;
-        std::fs::write(&gzip, bytes).unwrap();
-        assert!(
-            app.import_trace(request(gzip, "bad-gzip"), Arc::new(|_| {}))
-                .await
-                .is_err()
-        );
-        assert_eq!(app.trace_metadata_list().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn compressed_native_expansion_is_bounded_before_publication() {
-        use flate2::{Compression, write::GzEncoder};
-        use std::io::Write;
-        let root = tempfile::tempdir().unwrap();
-        let gzip = root.path().join("trace.tmcap.gz");
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&vec![0; 128 * 1024]).unwrap();
-        std::fs::write(&gzip, encoder.finish().unwrap()).unwrap();
-        let app = app(root.path());
-        let mut input = request(gzip, "too-large");
-        input.max_file_bytes = 2048;
-        assert!(
-            app.import_trace(input, Arc::new(|_| {}))
-                .await
-                .unwrap_err()
-                .message
-                .contains("expanded trace")
-        );
-        assert!(app.trace_metadata_list().is_empty());
     }
 
     #[tokio::test]

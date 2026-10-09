@@ -374,13 +374,8 @@ fn recover_file_with_password(
     let mut password = password_path.map(passwords::read_file).transpose()?;
     loop {
         let file = File::open(path)?;
-        let input: Box<dyn io::Read> = if path.to_ascii_lowercase().ends_with(".tmcap.gz") {
-            Box::new(flate2::read::MultiGzDecoder::new(file))
-        } else {
-            Box::new(file)
-        };
         match transmog_capture::recover_with_password(
-            input,
+            file,
             CaptureLimits::default(),
             password.as_ref(),
         ) {

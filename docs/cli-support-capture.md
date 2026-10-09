@@ -67,12 +67,6 @@ Existing files are never overwritten. Choose another filename for the next
 capture. Use `.tmcap` for normal recording: TMCap compresses each chunk as it
 arrives and lets the desktop read body payloads on demand.
 
-An optional `.tmcap.gz` wrapper may reduce some traces further, but adds another
-compression pass at stop and requires expansion to a temporary native file before
-opening. This takes extra time and disk space. Wrapping an encrypted trace usually
-provides little additional compression. If wrapping fails, the chunk-compressed
-`.tmcap` remains available.
-
 ## Certificates and interrupted runs
 
 The default root is ephemeral: its private key stays in memory and is never
@@ -118,11 +112,8 @@ material is created. Do not share it with a support contact.
 ## Recover an interrupted capture
 
 If the console or computer closed unexpectedly, keep `support-trace.tmcap`;
-it may contain a recoverable, unsealed prefix. If you chose the optional
-`.tmcap.gz` wrapper, also keep the intermediate `.tmcap` beside it: a gzip file
-interrupted during wrapping may be incomplete, and the native file is retained
-until wrapping finishes successfully. Restore CLI-owned proxy/certificate state
-first:
+it may contain a recoverable, unsealed prefix. Restore CLI-owned proxy/certificate
+state first:
 
 ```powershell
 .\transmog-cli.exe roots cleanup
@@ -206,8 +197,8 @@ exceeds the quota, older active evidence can be dropped without interrupting
 forwarding. The saved trace’s metadata records eviction counts.
 
 `capture inspect` and `capture validate` ask for a password when needed, or
-accept `--password-file <protected-file>` in an unattended run. They also accept
-`.tmcap.gz`. `capture seal` preserves the input’s encryption in the recovered
-copy. `capture export --format saz --encrypt` writes AES-256 encrypted SAZ; use
+accept `--password-file <protected-file>` in an unattended run. `capture seal`
+preserves the input’s encryption in the recovered copy.
+`capture export --format saz --encrypt` writes AES-256 encrypted SAZ; use
 `--source-password-file` for encrypted native input and `--password-file` for
 the encrypted output. JSONL intentionally has no encryption option.

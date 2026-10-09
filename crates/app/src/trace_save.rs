@@ -72,13 +72,11 @@ fn write(
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
     }
-    let name = destination.to_string_lossy().to_ascii_lowercase();
     if !destination
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("tmcap"))
-        && !name.ends_with(".tmcap.gz")
     {
-        return Err(error("Trace filename must end in .tmcap or .tmcap.gz"));
+        return Err(error("Trace filename must end in .tmcap"));
     }
     let store = application
         .body_store
@@ -112,28 +110,6 @@ fn write(
         .as_file()
         .sync_all()
         .map_err(|_| error("Trace could not be flushed"))?;
-    if destination
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
-    {
-        let mut compressed = tempfile::NamedTempFile::new_in(parent)
-            .map_err(|_| error("Compressed trace could not be created"))?;
-        temporary
-            .as_file_mut()
-            .rewind()
-            .map_err(|_| error("Trace could not be reread"))?;
-        let mut gzip =
-            flate2::write::GzEncoder::new(compressed.as_file_mut(), flate2::Compression::default());
-        std::io::copy(temporary.as_file_mut(), &mut gzip)
-            .map_err(|_| error("Trace compression failed"))?;
-        gzip.finish()
-            .map_err(|_| error("Trace compression could not finish"))?;
-        compressed
-            .as_file()
-            .sync_all()
-            .map_err(|_| error("Compressed trace could not be flushed"))?;
-        temporary = compressed;
-    }
     let bytes = temporary
         .as_file()
         .metadata()
@@ -151,7 +127,6 @@ fn write(
         incomplete_bodies: incomplete,
     })
 }
-use std::io::Seek;
 fn write_records(
     output: &mut std::fs::File,
     application: &Application,

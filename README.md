@@ -123,9 +123,8 @@ then press Ctrl+C to stop and save a compressed trace:
 .\transmog-cli.exe record --output .\support-trace.tmcap
 ```
 
-TMCap already compresses individual chunks and opens bodies on demand. Use
-`.tmcap` for normal captures; an optional `.tmcap.gz` wrapper requires full
-expansion before opening and may offer little additional size reduction.
+Save captures as `.tmcap`. TMCap compresses individual chunks as they arrive
+and lets the desktop open body payloads on demand.
 
 The CLI asks to install its public root without relaunching, configures the
 Windows proxy, and removes the root afterward. Its default ephemeral private

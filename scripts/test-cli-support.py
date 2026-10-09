@@ -5,7 +5,6 @@ Each CLI gets a hidden new console; Ctrl+C targets only that console.
 """
 import argparse
 import ctypes
-import gzip
 import http.client
 import http.server
 import json
@@ -73,7 +72,7 @@ def main():
             kernel.FreeConsole()
 
     def capture(name, persistent=False, crash=False, circular=None, encrypted=False):
-        output = fixture / (name + ('.tmcap' if crash else '.tmcap.gz'))
+        output = fixture / (name + '.tmcap')
         log_path = fixture / (name + '.log')
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -102,7 +101,7 @@ def main():
             else:
                 raise AssertionError('CLI did not reach Recording')
             if circular:
-                assert not output.exists() and not output.with_suffix('').exists()
+                assert not output.exists()
                 if circular != 'unlimited':
                     assert not (ledger / 'circular').exists()
             assert 'press Ctrl+C once' in text
@@ -134,8 +133,7 @@ def main():
                 text = log_path.read_text(encoding='utf-8')
                 assert 'Stopping capture: restoring proxy settings' in text
                 assert 'Trace saved:' in text
-                native = fixture / (name + '-decoded.tmcap')
-                native.write_bytes(gzip.decompress(output.read_bytes()))
+                native = output
                 evidence = fixture / (name + '.jsonl')
                 password_args = ['--password-file', str(password_file)] if encrypted else []
                 command('capture', 'export', '--input', str(native), '--format', 'jsonl', '--output', str(evidence), *password_args)

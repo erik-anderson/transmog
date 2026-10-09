@@ -33,8 +33,6 @@ Passwords and derived keys remain in memory with redacted Debug output and are
 wiped when their final owner drops. They never enter preferences or trace metadata.
 Encryption is opt-in. Filenames and file sizes remain visible. Independent pinned
 file cursors support indexed seeks without expanding a plaintext temporary trace.
-An optional outer `.tmcap.gz` wrapper requires container expansion and therefore
-opens more slowly; encrypted expansion still contains ciphertext frames.
 
 The desktop defaults to chunk-compressed `.tmcap`. Password prompts appear only
 when required, and password fields are cleared on close. CLI circular retention

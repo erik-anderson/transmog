@@ -6349,7 +6349,6 @@ version = "0.1.0+0"
 dependencies = [
  "boring",
  "bytes",
- "flate2",
  "rpassword",
  "rustix 1.1.5",
  "serde",
@@ -6378,7 +6377,6 @@ version = "0.1.0+0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "flate2",
  "getrandom 0.4.3",
  "http",
  "percent-encoding",

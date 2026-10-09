@@ -8,7 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$ViewerChecks,
-    [string]$CompressedTracePath,
+    [string]$NativeTracePath,
     [switch]$HostedRunnerDevToolsPolicy
 )
 
@@ -23,8 +23,8 @@ if ($ExecutablePath) {
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
-if ($CompressedTracePath -and -not $ViewerChecks) { throw 'CompressedTracePath requires ViewerChecks.' }
-if ($CompressedTracePath) { $CompressedTracePath = (Resolve-Path -LiteralPath $CompressedTracePath).Path }
+if ($NativeTracePath -and -not $ViewerChecks) { throw 'NativeTracePath requires ViewerChecks.' }
+if ($NativeTracePath) { $NativeTracePath = (Resolve-Path -LiteralPath $NativeTracePath).Path }
 if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
 if (Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($executable)) -ErrorAction SilentlyContinue) { throw 'Close the existing Transmog instance before running isolated desktop validation.' }
 
@@ -187,7 +187,7 @@ try {
             $viewerArguments += @('--profile-root', $probeRoot)
             $viewerArguments += @('--process-id', "$($process.Id)", '--close-helper', (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1'))
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
-            if ($CompressedTracePath) { $viewerArguments += @('--compressed-source', $CompressedTracePath) }
+            if ($NativeTracePath) { $viewerArguments += @('--native-source', $NativeTracePath) }
             & node @viewerArguments
         } else { & npm @smokeArguments }
     } finally {

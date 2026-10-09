@@ -6,8 +6,8 @@ Undo a removal before saving if those entries should be included. The file dialo
 confirms overwriting, and an existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact.
 
-Compression is selected by default for sharing. Use .tmcap.gz for compressed
-native files or .tmcap for native files. Bodies stream from retained storage;
+Save native traces as `.tmcap`. Each chunk is compressed independently, so the
+desktop can read body payloads on demand. Bodies stream from retained storage;
 large captures are not collected into one in-memory buffer. Active, missing or
 incomplete bodies remain explicit and are counted in the save report. Review
 private headers and bodies before sharing.

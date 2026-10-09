@@ -8,7 +8,7 @@ or WebUI.
 
 ## Operating model
 
-Saved SAZ, TMCap and compressed `.tmcap.gz` files can be imported through **Traffic → Import…** or by
+Saved SAZ and TMCap files can be imported through **Traffic → Import…** or by
 dropping them onto the traffic list. Each import keeps its source identity and
 metadata; use **Trace metadata** on a selected imported request, or **Files →
 Trace metadata…** to browse all sources. Network configuration is shown as

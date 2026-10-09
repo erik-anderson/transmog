@@ -83,7 +83,7 @@ statuses, body-limit overflow, entry-limit overflow, and ZIP failures stop the
 conversion rather than producing ambiguous wire text.
 
 Metadata members are bounded to 4 MiB, with the existing aggregate index and ZIP
-budgets enforced before publication. Native/gzip remains the complete persistence
+budgets enforced before publication. Native TMCap remains the complete persistence
 choice for very large captures or all four HTTP boundaries.
 
 Use the headless converter with a new destination path:

@@ -100,11 +100,9 @@ pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
         .skip(1)
         .filter_map(|argument| {
             let path = PathBuf::from(argument);
-            if !argument.to_ascii_lowercase().ends_with(".tmcap.gz")
-                && !path.extension().is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case("saz") || extension.eq_ignore_ascii_case("tmcap")
-                })
-            {
+            if !path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("saz") || extension.eq_ignore_ascii_case("tmcap")
+            }) {
                 return None;
             }
             let path = if path.is_absolute() {
@@ -269,7 +267,7 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
     rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Open saved traffic")
-        .add_filter("Traffic captures", &["saz", "tmcap", "tmcap.gz"])
+        .add_filter("Traffic captures", &["saz", "tmcap"])
         .pick_file()
         .await
         .map(|file| file.path().to_string_lossy().into_owned())

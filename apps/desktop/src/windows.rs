@@ -956,7 +956,6 @@ async fn inspect_body(
 #[tauri::command]
 async fn save_traffic_trace(
     options: TraceSaveOptions,
-    compressed: bool,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Option<TraceSaveResult>, AppError> {
@@ -964,12 +963,8 @@ async fn save_traffic_trace(
     let picker = rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Save traffic trace")
-        .set_file_name(if compressed {
-            "Transmog-trace.tmcap.gz"
-        } else {
-            "Transmog-trace.tmcap"
-        })
-        .add_filter("Traffic traces", &["tmcap.gz", "tmcap"]);
+        .set_file_name("Transmog-trace.tmcap")
+        .add_filter("Traffic traces", &["tmcap"]);
     let Some(file) = picker.save_file().await else {
         return Ok(None);
     };

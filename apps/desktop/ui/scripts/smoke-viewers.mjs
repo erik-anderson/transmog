@@ -34,7 +34,7 @@ function nativeFixture(records, exchangeId) {
 
 const argument=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const port=argument('--port'), source=argument('--source'), executable=argument('--executable'), screenshot=argument('--screenshot');
-const compressedSource=argument('--compressed-source');
+const nativeSource=argument('--native-source');
 const pageSource=argument('--page-source');
 const profileRoot=argument('--profile-root');
 const processId=argument('--process-id'), closeHelper=argument('--close-helper');
@@ -182,8 +182,8 @@ try{
   }finally{replayServer.closeAllConnections();await new Promise(resolve=>replayServer.close(resolve));}
 
   await viewer.evaluate(`${traffic}.showSaveTrace()`);
-  const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked,redact:${traffic}.saveTraceForm.elements.namedItem('redactHeaders').checked})`);
-  assert.ok(saveChoices.open);assert.equal(saveChoices.compressed,false);assert.equal(saveChoices.network,false);assert.equal(saveChoices.redact,false);
+  const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked,redact:${traffic}.saveTraceForm.elements.namedItem('redactHeaders').checked})`);
+  assert.ok(saveChoices.open);assert.equal(saveChoices.network,false);assert.equal(saveChoices.redact,false);
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-save.png'),Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeSaveTrace()`);
   const before=(await targets()).map(target=>target.id);
@@ -191,14 +191,14 @@ try{
   const additional=await waitFor(async()=>{const all=await targets();return all.find(target=>!before.includes(target.id));},'Additional viewer did not open');
   const second=await connect(additional);
   await waitFor(()=>second.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Additional viewer did not load its saved capture');
-  if(compressedSource){
+  if(nativeSource){
     const existing=(await targets()).map(target=>target.id);
-    await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(compressedSource)}]})`);
-    const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Compressed capture viewer did not open');
-    const compressed=await connect(target);
-    await waitFor(()=>compressed.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Compressed capture did not import');
-    const found=await compressed.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='captured';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
-    assert.equal(found,1,'Compressed CLI response body was not searchable');
+    await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(nativeSource)}]})`);
+    const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Native capture viewer did not open');
+    const capture=await connect(target);
+    await waitFor(()=>capture.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Native capture did not import');
+    const found=await capture.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='captured';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
+    assert.equal(found,1,'Native CLI response body was not searchable');
   }
   if(pageSource){
     await second.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
@@ -258,5 +258,5 @@ try{
   const reopened=await connect(reopenedTarget);
   await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===1`),'Reopened main window lost its catalog');
   assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
-  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,compressedCapture:!!compressedSource})+'\n');
+  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource})+'\n');
 }finally{for(const socket of sockets)socket.close();}

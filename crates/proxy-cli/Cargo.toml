@@ -18,7 +18,6 @@ sysinfo.workspace = true
 transmog-network = { version = "=0.1.0", path = "../network" }
 bytes.workspace = true
 boring.workspace = true
-flate2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

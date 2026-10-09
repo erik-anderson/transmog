@@ -128,9 +128,10 @@ the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
 **Save trace** saves every retained entry in the current window, across pages and
-search results, excluding entries removed from Traffic. TMCap compresses individual chunks by default and opens payloads on demand.
-Offer an optional outer gzip wrapper with its slower-open consequence beside it. Preserve original source metadata and request associations
-when saving merged captures. Network configuration from the saving computer is
+search results, excluding entries removed from Traffic. Save native traces as
+`.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
+Preserve original source metadata and request associations when saving merged
+captures. Network configuration from the saving computer is
 an explicit, unchecked option and stays separate from imported source context;
 show collection time, platform and failures in Trace metadata. Offer unchecked export-only sensitive-header redaction without changing retained
 evidence. Explain that URLs, bodies and metadata may still contain private data.

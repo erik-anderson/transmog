@@ -242,7 +242,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(event.payload.type!=='drop'||this.view!=='traffic')return;
         const point=event.payload.position, bounds=this.sessionScroller.getBoundingClientRect(), scale=window.devicePixelRatio;
         if(point.x/scale<bounds.left||point.x/scale>bounds.right||point.y/scale<bounds.top||point.y/scale>bounds.bottom)return;
-        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap|tmcap\.gz)$/i.test(path));
+        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap)$/i.test(path));
         this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));
         void this.processOpenedTraces();
       });
@@ -833,7 +833,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeSaveTrace():void {this.saveTraceDialog.close();}
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
-    try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},compressed:data.get('compress')==='on'});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
+    try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'}});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
     catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);if(!this.saveTraceDialog.open)this.showNotice('Trace save failed',describeError(error),null,null);}}
     finally {this.savingTrace=false;}
   }

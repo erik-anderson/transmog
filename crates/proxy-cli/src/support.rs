@@ -1,10 +1,8 @@
 //! Guided support capture, with durable cleanup identities and streaming compression.
 use crate::roots::{RootLedger, RootTrust, SystemRootTrust, state_directory};
-use flate2::{Compression, write::GzEncoder};
 use std::{
     env,
     error::Error,
-    fs::{self, File, OpenOptions},
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     sync::Arc,
@@ -23,16 +21,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         password: crate::passwords::output(arguments)?,
     };
     let output = output_path(arguments)?;
-    let compressed = output
-        .to_string_lossy()
-        .to_ascii_lowercase()
-        .ends_with(".tmcap.gz");
-    let native = if compressed {
-        output.with_extension("")
-    } else {
-        output.clone()
-    };
-    if output.exists() || native.exists() {
+    if output.exists() {
         return Err(crate::invalid_input(
             "The capture destination already exists; choose a new filename",
         )
@@ -60,7 +49,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     );
     let result = run_capture(
         arguments,
-        &native,
+        &output,
         &ledger,
         &root,
         ca,
@@ -98,18 +87,13 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             "Previous or rotated roots still need cleanup. Run transmog-cli roots cleanup; public recovery records are retained."
         );
     }
-    if result.is_err() && native.is_file() {
+    if result.is_err() && output.is_file() {
         eprintln!(
             "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
-            native.display()
+            output.display()
         );
     }
     result?;
-    if compressed {
-        println!("Compressing the saved trace…");
-        compress_capture(&native, &output)?;
-        fs::remove_file(&native)?;
-    }
     println!("Trace saved: {}", output.display());
     println!("Open it in Transmog to review it, then share this file with your support contact.");
     cleanup?;
@@ -502,14 +486,12 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
         },
         PathBuf::from,
     );
-    let name = path.to_string_lossy().to_ascii_lowercase();
     if !path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("tmcap"))
-        && !name.ends_with(".tmcap.gz")
     {
         return Err(crate::invalid_input(
-            "--output must end in .tmcap (chunk-compressed) or .tmcap.gz (gzip-wrapped)",
+            "--output must end in .tmcap (chunk-compressed)",
         ));
     }
     Ok(if path.is_absolute() {
@@ -654,41 +636,17 @@ pub(crate) fn cleanup_roots(arguments: &[String]) -> Result<(), Box<dyn Error>> 
     println!("CLI root cleanup completed.");
     Ok(())
 }
-pub(crate) fn compress_capture(source: &Path, destination: &Path) -> io::Result<()> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)?;
-    let result = (|| {
-        let mut writer = GzEncoder::new(file, Compression::default());
-        io::copy(&mut File::open(source)?, &mut writer)?;
-        writer.finish()?.sync_all()
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(destination);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
     #[test]
-    fn compression_is_streaming_exact_and_refuses_overwrite() {
-        let directory = tempfile::tempdir().unwrap();
-        let source = directory.path().join("trace.tmcap");
-        let destination = directory.path().join("trace.tmcap.gz");
-        let bytes = vec![42; 1024 * 1024];
-        fs::write(&source, &bytes).unwrap();
-        compress_capture(&source, &destination).unwrap();
-        let mut decoded = Vec::new();
-        flate2::read::MultiGzDecoder::new(File::open(&destination).unwrap())
-            .read_to_end(&mut decoded)
-            .unwrap();
-        assert_eq!(decoded, bytes);
-        assert!(compress_capture(&source, &destination).is_err());
+    fn output_requires_native_extension_and_preserves_relative_paths() {
+        let output = output_path(&["--output".into(), "my trace.TMCAP".into()]).unwrap();
+        assert!(output.is_absolute());
+        assert_eq!(output.file_name().unwrap(), "my trace.TMCAP");
+        assert!(output_path(&["--output".into(), "trace.bin".into()]).is_err());
     }
+
     #[test]
     fn guided_options_reject_ambiguous_or_missing_values() {
         for args in [
@@ -712,7 +670,7 @@ mod tests {
                 "--persistent-root".into(),
                 "--include-network-context".into(),
                 "--output".into(),
-                "my trace.tmcap.gz".into()
+                "my trace.tmcap".into()
             ])
             .is_ok()
         );

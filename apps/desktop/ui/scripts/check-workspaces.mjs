@@ -78,7 +78,7 @@ await page.addInitScript((workspace) => {
         case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;state.releasePagePreview?.();return;
-        case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap.gz',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
+        case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
         case 'trace_metadata_list': return structuredClone(state.traces??[]);
         case 'cancel_trace_import': state.importCanceled=true;return;
         case 'import_trace': {
@@ -1447,7 +1447,6 @@ try {
   await page.evaluate(rows=>{const state=globalThis.__workspaceFixture;state.sessions=rows;delete state.importPassword;state.traces.pop();},passwordRowsBefore);
   await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   const saveTrace=page.locator('.trace-save-dialog[open]');
-  assert.equal(await saveTrace.getByLabel('Add gzip wrapper (.tmcap.gz)',{exact:true}).isChecked(),false);
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isChecked(),false);
   assert.equal(await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).isChecked(),false);
   await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
@@ -1471,7 +1470,7 @@ try {
   assert.equal(await page.locator('.trace-password-dialog input[name="password"]').inputValue(),'');
   await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).uncheck();
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
-  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{password:null,includeNetworkContext:true,redactSensitiveHeaders:true},compressed:false});
+  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{password:null,includeNetworkContext:true,redactSensitiveHeaders:true}});
   await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
   await page.locator('.trace-save-dialog[open]').getByRole('button',{name:'Save as…',exact:true}).click();

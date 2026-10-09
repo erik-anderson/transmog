@@ -35,8 +35,8 @@ checkout contains independent updater work and is preserved.
    ephemeral keys, a separately protected multi-root ownership ledger and
    recovery, explicit persistent reuse, persistent redaction preferences,
    force stop with cleanup, and streaming compressed native captures. Bounded,
-   cancellable gzip imports keep body reads lazy. CLI, facade and host tests,
-   browser checks, a real console capture, and native compressed-viewer checks
+   cancellable native imports keep body reads lazy. CLI, facade and host tests,
+   browser checks, a real console capture, and native viewer checks
    pass. The support guide covers start, reproduce, stop, review and sharing.
 10. `329c175`: optional current-user SAZ registration, owned-path uninstall and update
     preservation. Standalone CLI release build/signing, four-part Windows
@@ -55,7 +55,7 @@ checkout contains independent updater work and is preserved.
     browser UX and native WebView2 checks pass. Reviewed populated and compact
     layouts; improved legacy import presentation to put saved timers first.
 
-12. `be7193c`: source-aware streaming native/gzip Save trace in main and saved viewers, with
+12. `be7193c`: source-aware streaming native Save trace in main and saved viewers, with
     original source metadata, request identifiers, heads/timers and terminal times.
     Optional bounded network configuration in desktop recording/saving and CLI,
     with platform, UTC collection time and failures shown in Trace metadata.
@@ -77,8 +77,7 @@ checkout contains independent updater work and is preserved.
 
 14. Final workflow review: copied commands preserve recorded HTTP versions and
     scope proxy credentials correctly. PowerShell explains its proxy-authentication
-    limit. Compressed import cancellation also interrupts runs of empty gzip
-    members. Preview profiles retry cleanup after WebView2 releases locks. Native
+    limit. Preview profiles retry cleanup after WebView2 releases locks. Native
     probes close actual desktop windows, verify profile removal, and reopen the
     main window while preserving its catalog and independent saved viewers.
     The interoperability harness supports shared Cargo output and explicitly
@@ -113,7 +112,7 @@ builds run sequentially to avoid transient missing generated assets.
 ## Product boundaries
 
 Captured-page preview initially supports Windows. Timings and transport metrics
-report measured evidence, with unsupported points left unavailable. Native/gzip
+report measured evidence, with unsupported points left unavailable. Native TMCap
 and extended SAZ preserve merged source associations; compatibility SAZ retains
 the client view with explicit normalization and evidence limits. Copy actions never execute generated commands. Saved-capture
 viewers own independent catalogs; replay is an explicit Composer action.
@@ -238,7 +237,7 @@ production signing and clean-machine release checks remain release gates.
     layout and keyboard/focus reviews cover source choices and diagnostics.
 
 24. Export-only redaction removes sensitive header values and preserved raw header
-    text from native, gzip, JSONL and SAZ copies while preserving source files and
+    text from native, JSONL and SAZ copies while preserving source files and
     retained evidence. Presence and original sizes remain in native/extended
     evidence. Network context records collector/version, machine, collection
     purpose and time; the metadata view distinguishes original and save-time
@@ -264,8 +263,8 @@ production signing and clean-machine release checks remain release gates.
     including explicit roots cleanup. Older pending roots retry at completion
     without repeating the current root’s canceled prompt. Public certificate
     context joins capture metadata. Twelve CLI tests and strict Clippy pass.
-    Real hidden-console tests verify Ctrl+C, sealed gzip, memory-only ephemeral
-    keys, persistent reuse, forced interruption and native prefix recovery, with
+    Real hidden-console tests verify Ctrl+C, sealed native captures, memory-only
+    ephemeral keys, persistent reuse, forced interruption and native prefix recovery, with
     isolated profiles and loopback traffic. The guide includes signature/publisher
     checks and ready-to-copy recovery commands.
 
@@ -298,7 +297,7 @@ production signing and clean-machine release checks remain release gates.
   source metadata, streamed binary replay, captured-page variants, script choice,
   empty misses, IPC/network denial and owned-window/profile cleanup. Reviewed
   populated, wide and compact screenshots for the new workflows.
-- Real CLI console checks pass for Ctrl+C, sealed gzip output, sensitive-header
+- Real CLI console checks pass for Ctrl+C, sealed native output, sensitive-header
   defaults, memory-only ephemeral keys, persistent reuse, forced interruption
   and recovery. Root lifecycle unit tests cover canceled cleanup, expiry rotation
   and legacy migration. The support guide includes publisher/signature checks
@@ -338,9 +337,9 @@ Phase 30 completed: v4 compressed frames, optional AES-256-GCM with Argon2id and
 
 Phase 31 completed: password-aware ZIP import (ZipCrypto and WinZip AES variants), opt-in AES-256 file-member export, typed password errors and encrypted native source export. Independent native 7-Zip authenticates/decrypts both export profiles and matches every member; Transmog imports 7-Zip ZipCrypto binary data. The originally requested .NET test was replaced at the user’s direction; no .NET test dependency is shipped. Validation: SAZ/application regression tests, encrypted application save/import, strict Clippy and scripts/test-saz-interop.ps1.
 
-Phase 32 completed: shared masked transient password dialog, confirmed encryption choices for Save trace / recording / native and SAZ exports, typed password retry and Cancel for imports and inspection, chunk-compressed default saves with optional outer gzip. Production browser flow checks and real WebView2 wide/compact masking, confirmation, cancellation, focus and screenshot review passed. Native review found and fixed dynamic input type masking.
+Phase 32 completed: shared masked transient password dialog, confirmed encryption choices for Save trace / recording / native and SAZ exports, typed password retry and Cancel for imports and inspection, chunk-compressed native saves. Production browser flow checks and real WebView2 wide/compact masking, confirmation, cancellation, focus and screenshot review passed. Native review found and fixed dynamic input type masking.
 
-Phase 33 completed: CLI streaming records compress/encrypt on arrival; optional exchange-group circular retention uses half installed RAM automatically, custom byte/unit limits and unlimited disk. Memory circular creates no trace/cache file before stop; disk circular stores compressed ciphertext when encrypted. Passwords use masked console input or an explicitly protected file, never argv text or preferences; native recovery preserves encryption. Default CLI output is now chunk-compressed .tmcap, with legacy gzip still supported. Validation: capture/CLI tests and strict Clippy; owned hidden-console Ctrl+C tests verify encrypted streaming, memory/disk circular output, persistent root reuse and crash recovery without changing real host proxy or trust.
+Phase 33 completed: CLI streaming records compress/encrypt on arrival; optional exchange-group circular retention uses half installed RAM automatically, custom byte/unit limits and unlimited disk. Memory circular creates no trace/cache file before stop; disk circular stores compressed ciphertext when encrypted. Passwords use masked console input or an explicitly protected file, never argv text or preferences; native recovery preserves encryption. Default CLI output is now chunk-compressed .tmcap. Validation: capture/CLI tests and strict Clippy; owned hidden-console Ctrl+C tests verify encrypted streaming, memory/disk circular output, persistent root reuse and crash recovery without changing real host proxy or trust.
 
 Phase 34 completed: explicit embedding body-store limits survive application
 initialization and preference saves. Desktop recording honors the saved body
@@ -372,7 +371,7 @@ Native payloads use indexed seeks into independently compressed/authenticated
 frames rather than mapping the entire file; bodies are decoded on demand.
 Password-protected native files do not expand to a plaintext temporary trace.
 SAZ import supports the pinned ZIP library's ZipCrypto and WinZip AES schemes;
-AES-256 is the encrypted export choice. Legacy native/gzip traces remain readable.
+AES-256 is the encrypted export choice.
 
 Automatic buffer size is half installed RAM. Custom sizes at or below that
 threshold retain new bodies in memory; larger or unlimited buffers use disk.
@@ -413,8 +412,8 @@ release environment; no signed release or publication was performed locally.
     migration and missing lifecycle acceptance, the curl-windows command alias,
     and the older combined-header search gate. Current root ownership records
     remain strict and fail without trust-store mutation when unsupported. SAZ
-    interoperability, HTTP semantics, recovery of interrupted current data and
-    explicit gzip wrappers remain supported current features.
+    interoperability, HTTP semantics and recovery of interrupted current data
+    remain supported current features.
 
     Replay executors now explicitly implement file dispatch, without the older
     adapter default. The CLI's non-viewer catalog retains only active metadata
@@ -439,3 +438,14 @@ Metadata indexing retains its separate resource bounds. Individual expanded chun
 are bounded to eight MiB and larger bodies are split automatically; a single
 oversized metadata record reports a capture error rather than silently truncating.
 SAZ encryption support remains as approved. Production signing was not performed.
+
+40. Native capture workflows use `.tmcap` consistently in Save trace, recording,
+    import, recovery, file routing and drag-and-drop. Saving streams independently
+    compressed chunks and imports seek directly to body payloads in the original
+    file. File dialogs and CLI output validation offer one native extension;
+    AES-256 password protection remains optional. Source, scripts and documentation
+    use the same workflow. Removed unused direct codec dependencies from the app
+    and CLI. Qualification passes 471 workspace tests, strict workspace Clippy,
+    production browser flows, real CLI Ctrl+C/encrypted/circular/crash recovery
+    checks and native main/viewer WebView2 flows. Reviewed populated viewer and
+    wide/compact Save trace/password layouts.
