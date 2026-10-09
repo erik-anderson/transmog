@@ -44,16 +44,23 @@ branding, so reviewed Beta assets can become Stable without another build/signin
 The build runs the full locked repository gate, browser workspace
 tests, and 30-minute WebView soak before credentials exist. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The
-signing job checks that catalog before restoring the three binaries and UI assets;
+build also validates matching full PDBs for all four released executables and
+retains them in a versioned public symbols ZIP. The archive includes the source
+commit and debug identifiers and receives release checksums and provenance.
+The signing job checks that catalog before restoring the app, two bundled helpers,
+standalone CLI and UI assets;
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
 
 Browser workspace checks run first so UI failures do not wait for Rust compilation.
 The repository-wide Clippy/tests then run before optimized compilation. That full gate
-replaces the packaging wrapper's narrower test pass. Tauri forwards the three
-shipped package selections to one Cargo release build, and sidecars are staged
+replaces the packaging wrapper's narrower test pass. Tauri forwards all four
+package selections to one Cargo release build, and sidecars are staged
 later during bundling. Clippy/development and release artifacts remain separate;
 this avoids redundant test/package passes without removing the quality checks.
+The CLI is signed and published separately, with version, checksum, signature
+and provenance checks. The installer qualification gate confirms it is excluded
+from the app install directory.
 
 The hosted WebView check isolates product data and temporarily sets loopback
 DevTools arguments for the desktop executable through machine policy. WebView2
@@ -156,12 +163,11 @@ After the workflow is on the default branch, open GitHub **Actions > Windows
 unsigned installer > Run workflow** and select the revision to build. Leave
 **Reuse dependency downloads** disabled for the first cold build.
 
-The workflow installs Node 24.21.0 and the Rust version from
-`rust-toolchain.toml`. `scripts/setup-windows-ci.ps1` downloads LLVM 22.1.4,
-CMake 4.4.4, Ninja 1.13.2, and NASM 3.02 from their official release sites and
-verifies pinned SHA-256 hashes before extraction. Visual Studio C++ tools and
-the Windows 11 SDK 10.0.26100 come from the runner image. Dependency lockfiles
-and the separately hash-pinned V8 archive remain authoritative.
+The workflow selects Node and uses the Rust version from `rust-toolchain.toml`.
+[`setup-windows-ci.ps1`](../scripts/setup-windows-ci.ps1) owns LLVM, CMake, Ninja
+and NASM download pins and verifies SHA-256 before extraction. Visual Studio C++
+tools and the Windows SDK come from the runner image. The checked-in workflow,
+dependency lockfiles and separately hash-pinned V8 archive own exact versions.
 
 `scripts/ci-windows-installer.ps1` installs UI dependencies with `npm ci` and
 calls the existing unsigned development packaging gate. That gate checks the
@@ -188,40 +194,6 @@ allowance; increasing it is not required for this workflow.
 
 The optional caches are for this unsigned workflow. The signed release workflow
 uses fresh tools and downloads instead.
-
-## Initial hosted verification
-
-The [first successful signed draft run](https://github.com/erik-anderson/transmog/actions/runs/37644656152)
-passed on 2026-10-07 at commit `c4f2abb`. All six jobs passed: build, protected
-signing, installer qualification, negative identity test, provenance attestation,
-and draft publication. The build took 60 minutes 30 seconds, including the
-30-minute native WebView soak. Signing and the remaining jobs took about four
-minutes after environment approval.
-
-The 24,537,904-byte `Transmog_0.1.0_x64-setup.exe` has a valid Authenticode
-signature for `Erik Anderson` and an RFC 3161 timestamp. Its SHA-256 is
-`b09a216f905c87b583c220eee4dbdb891a63fe6294d8970603eecfe9e3bd7615`.
-Independent download verification matched all eleven draft asset digests.
-The hosted Windows Server 2025 installer test verified the three installed
-executables and uninstaller, maintenance, removal, and unchanged proxy/root
-certificate state. Other-profile signing returned HTTP 403; Azure rejected the
-unprotected OIDC subject with error 700213. The Sigstore bundle was verified
-against the repository, workflow, `main`, and source commit, and covers the final
-signed installer, release manifest, and SBOM file. The release remains a draft;
-the clean Windows 11 checklist is still deferred by the maintainer.
-
-The [first cold run](https://github.com/erik-anderson/transmog/actions/runs/37586689686)
-passed on 2026-10-07 at commit `b52c2f8`, with dependency caching disabled.
-The full job took 21 minutes 56 seconds; the measured build phases took
-1,291.72 seconds. The packaging gate passed 73 tests with one existing ignored
-test. The downloaded 23.12 MiB NSIS installer was confirmed unsigned, and its
-SHA-256 matched both the uploaded checksum file and build report.
-
-Cargo targets occupied 10.80 GiB after the build. This supports caching source
-downloads while keeping compiled targets out of the repository's included
-10 GiB cache allowance. Cached-run timing has not yet been measured. Installer
-and report downloads are retained for seven days on GitHub; the run history
-remains the reference for this baseline.
 
 ## Deferred workflows
 

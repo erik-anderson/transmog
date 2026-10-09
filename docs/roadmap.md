@@ -11,25 +11,24 @@ are checked in.
 ## Desktop and traffic workspace
 
 - Add measured list virtualization when retained traffic volume demonstrates
-  that the current bounded, paginated list needs it. Preserve live-tail,
+  that the current paginated list needs it. Preserve live-tail,
   pinned-selection, keyboard, and accessibility behavior.
-- Add a durable indexed capture library and project-level organization above
-  the finite live-session catalog and existing persisted automation, scripts,
-  response assets, and product preferences.
+- Add a searchable capture library and project-level organization across saved
+  captures, persisted automation, scripts, response assets and preferences.
 - Add bounded import/export and conflict handling for automation collections.
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
-- Build a user-facing command-line application workflow over `transmog-app` for
-  unattended capture, automation, and native streaming export. The existing
-  CLI remains the lower-level proxy and capture utility.
+- Extend headless tooling for persisted automation and script-workspace
+  management. Guided support recording, circular capture, native streaming
+  output and password-protected export already exist in the CLI.
 
 ## Capture and inspection fidelity
 
 - Add native streaming WebSocket message/control records. The current runtime
   exposes bounded terminal WebSocket evidence but does not persist a complete
   message stream in TMCap.
-- Define durable project and capture-index migrations separately from the
-  experimental live control protocol.
+- Define durable project formats and their support policy alongside the project
+  model, separately from the experimental live control protocol.
 - Expand safe previews or semantic viewers only after a format-specific parser,
   sandbox, CSP, resource-limit, and hostile-corpus review.
 

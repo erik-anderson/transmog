@@ -61,6 +61,11 @@ pub enum ServiceStatus {
         /// Bound listener address.
         local_addr: SocketAddr,
     },
+    /// Host settings were restored; active work is finishing without a deadline.
+    Draining {
+        /// Existing listener, retained so this transition can be reversed.
+        local_addr: SocketAddr,
+    },
     /// Graceful shutdown and bounded drain are in progress.
     Stopping {
         /// Bound listener address.
@@ -105,6 +110,9 @@ pub enum ServiceError {
 }
 
 struct RunTask {
+    force_stopped: Arc<AtomicBool>,
+    drain_generation: Option<u64>,
+    host_plan: Option<HostIntegrationPlan>,
     generation: u64,
     local_addr: SocketAddr,
     shutdown: ExchangeCancellation,
@@ -114,6 +122,7 @@ struct RunTask {
 }
 
 struct Lifecycle {
+    runtime_abort: Option<(tokio::task::AbortHandle, Arc<AtomicBool>)>,
     status: ServiceStatus,
     next_generation: u64,
     task: Option<RunTask>,
@@ -178,6 +187,7 @@ impl ApplicationSessionService {
                 controller,
                 observer_queue_capacity: config.observer_queue_capacity,
                 lifecycle: Mutex::new(Lifecycle {
+                    runtime_abort: None,
                     status: ServiceStatus::Stopped,
                     next_generation: 0,
                     task: None,
@@ -350,6 +360,24 @@ impl ApplicationSessionService {
     /// Returns a runtime or capture failure after owned cleanup is attempted.
     pub async fn stop(&self) -> Result<(), ServiceError> {
         let _operation = self.inner.operation.lock().await;
+        self.stop_locked().await
+    }
+
+    /// Explicitly terminates unfinished runtime work, then seals the available
+    /// capture prefix and restores host settings. Intended for a user's force
+    /// stop action, not normal desktop Off.
+    ///
+    /// # Errors
+    /// Returns capture or host restoration failures after cleanup is attempted.
+    pub async fn stop_now(&self) -> Result<(), ServiceError> {
+        if let Some((abort, forced)) = &self.lock_lifecycle().runtime_abort {
+            forced.store(true, Ordering::Release);
+            abort.abort();
+        }
+        self.stop().await
+    }
+
+    async fn stop_locked(&self) -> Result<(), ServiceError> {
         let (task, pending_restore, existing_failure) = {
             let mut lifecycle = self.lock_lifecycle();
             let existing_failure = match &lifecycle.status {
@@ -370,9 +398,17 @@ impl ApplicationSessionService {
         };
 
         let (runtime_result, host) = if let Some(task) = task {
-            let RunTask { handle, host, .. } = task;
+            let RunTask {
+                handle,
+                host,
+                force_stopped,
+                ..
+            } = task;
             let result = match handle.await {
                 Ok(result) => result,
+                Err(error) if error.is_cancelled() && force_stopped.load(Ordering::Acquire) => {
+                    Ok(())
+                }
                 Err(error) => Err(format!("runtime task join failed: {error}")),
             };
             (result, host.or(pending_restore))
@@ -408,6 +444,7 @@ impl ApplicationSessionService {
             .and_then(|()| capture_result.map_err(ServiceError::Capture))
             .and(host_result);
         let mut lifecycle = self.lock_lifecycle();
+        lifecycle.runtime_abort = None;
         lifecycle.status = match &result {
             Ok(()) => ServiceStatus::Stopped,
             Err(error) => ServiceStatus::Failed {
@@ -420,6 +457,125 @@ impl ApplicationSessionService {
             },
         };
         result
+    }
+
+    /// Restores host configuration, then lets admitted work finish. Returns
+    /// promptly; the current run owns the eventual shutdown and capture seal.
+    ///
+    /// # Errors
+    /// Returns an exact host-restore failure while keeping the runtime usable.
+    pub async fn begin_drain(&self) -> Result<ServiceStatus, ServiceError> {
+        let _operation = self.inner.operation.lock().await;
+        let prepared = {
+            let mut lifecycle = self.lock_lifecycle();
+            if matches!(lifecycle.status, ServiceStatus::Draining { .. }) {
+                return Ok(lifecycle.status.clone());
+            }
+            let control = lifecycle.task.as_ref().and_then(|task| {
+                task.control
+                    .clone()
+                    .map(|control| (control, task.local_addr))
+            });
+            control.map(|(control, local_addr)| {
+                let pending = lifecycle.pending_restore.take();
+                let host = lifecycle
+                    .task
+                    .as_mut()
+                    .and_then(|task| task.host.take())
+                    .or(pending);
+                (control, local_addr, host)
+            })
+        };
+        let Some((control, local_addr, host)) = prepared else {
+            self.stop_locked().await?;
+            return Ok(self.status());
+        };
+        if let Some(host) = host
+            && let Err((transaction, message)) = restore_transaction(host).await
+        {
+            self.lock_lifecycle().pending_restore = transaction;
+            return Err(ServiceError::HostRestore(message));
+        }
+        let generation = control.begin_drain();
+        {
+            let mut lifecycle = self.lock_lifecycle();
+            if let Some(task) = lifecycle.task.as_mut() {
+                task.drain_generation = Some(generation);
+            }
+            lifecycle.status = ServiceStatus::Draining { local_addr };
+        }
+        let inner = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            if !control.wait_for_drain(generation).await {
+                return;
+            }
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            let service = ApplicationSessionService { inner };
+            let _operation = service.inner.operation.lock().await;
+            let current = service
+                .lock_lifecycle()
+                .task
+                .as_ref()
+                .is_some_and(|task| task.drain_generation == Some(generation));
+            if current && control.finish_drain(generation) {
+                let _ = service.stop_locked().await;
+            }
+        });
+        Ok(self.status())
+    }
+
+    /// Re-enables a still-pending drain with the same listener and run. A
+    /// completed drain returns false so the caller can start a fresh run.
+    ///
+    /// # Errors
+    /// Returns host apply/recovery errors without discarding active work.
+    pub async fn resume_drain(&self) -> Result<bool, ServiceError> {
+        let _operation = self.inner.operation.lock().await;
+        if self.has_pending_host_restore() {
+            return Err(ServiceError::HostRestorePending);
+        }
+        let Some((control, generation, endpoint, plan)) = ({
+            let lifecycle = self.lock_lifecycle();
+            lifecycle.task.as_ref().and_then(|task| {
+                task.drain_generation
+                    .zip(task.control.clone())
+                    .map(|(generation, control)| {
+                        (control, generation, task.local_addr, task.host_plan.clone())
+                    })
+            })
+        }) else {
+            return Ok(false);
+        };
+        let host = if let Some(plan) = plan {
+            Some(
+                tokio::task::spawn_blocking(move || HostTransaction::apply(plan, endpoint))
+                    .await
+                    .map_err(|_| ServiceError::HostApply("host apply worker failed".into()))?
+                    .map_err(|error| ServiceError::HostApply(error.message))?,
+            )
+        } else {
+            None
+        };
+        if !control.resume_drain(generation) {
+            if let Some(host) = host
+                && let Err((transaction, message)) = restore_transaction(host).await
+            {
+                self.lock_lifecycle().pending_restore = transaction;
+                return Err(ServiceError::HostRestore(message));
+            }
+            return Ok(false);
+        }
+        let mut lifecycle = self.lock_lifecycle();
+        if let Some(task) = lifecycle.task.as_mut() {
+            task.drain_generation = None;
+            task.host = host;
+        }
+        lifecycle.status = ServiceStatus::Running {
+            local_addr: endpoint,
+        };
+        Ok(true)
     }
 
     /// Whether an exact host restore token remains pending after failure.
@@ -472,7 +628,9 @@ impl ApplicationSessionService {
             }
             if matches!(
                 lifecycle.status,
-                ServiceStatus::Running { .. } | ServiceStatus::Stopping { .. }
+                ServiceStatus::Running { .. }
+                    | ServiceStatus::Draining { .. }
+                    | ServiceStatus::Stopping { .. }
             ) {
                 return Err(ServiceError::AlreadyRunning);
             }
@@ -537,7 +695,12 @@ impl ApplicationSessionService {
         });
         let mut lifecycle = self.lock_lifecycle();
         lifecycle.status = ServiceStatus::Running { local_addr };
+        let force_stopped = Arc::new(AtomicBool::new(false));
+        lifecycle.runtime_abort = Some((handle.abort_handle(), force_stopped.clone()));
         lifecycle.task = Some(RunTask {
+            force_stopped,
+            drain_generation: None,
+            host_plan: host.as_ref().map(HostTransaction::plan),
             generation,
             local_addr,
             shutdown,
@@ -688,6 +851,47 @@ mod tests {
             address: "127.0.0.1:43210".parse().unwrap(),
             immediate_failure: failure.map(str::to_owned),
         })
+    }
+
+    #[tokio::test]
+    async fn explicit_force_stop_unblocks_a_shutdown_already_waiting_for_the_runner() {
+        struct StalledRunner;
+        impl SessionRunner for StalledRunner {
+            fn local_addr(&self) -> SocketAddr {
+                "127.0.0.1:43211".parse().unwrap()
+            }
+            fn control(&self) -> Option<ProxyControl> {
+                None
+            }
+            fn run(self: Box<Self>, _: ExchangeCancellation) -> RunnerFuture {
+                Box::pin(std::future::pending())
+            }
+        }
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        service
+            .start_runner_with_host(
+                Box::new(StalledRunner),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let stopping = {
+            let service = service.clone();
+            tokio::spawn(async move { service.stop().await })
+        };
+        while !matches!(service.status(), ServiceStatus::Stopping { .. }) {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::timeout(Duration::from_secs(1), service.stop_now())
+            .await
+            .unwrap()
+            .unwrap();
+        stopping.await.unwrap().unwrap();
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_eq!(host.restored.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -850,5 +1054,97 @@ mod tests {
             .unwrap();
         drop(service);
         assert_eq!(*host.restored.lock().unwrap(), [42]);
+    }
+
+    #[tokio::test]
+    async fn drain_restores_first_keeps_a_stream_alive_and_resume_invalidates_old_shutdown() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use transmog_runtime::ProxyConfig;
+        use transmog_tls::{ProxyCa, SystemTrustSource, TrustSnapshot};
+        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            let mut header = Vec::new();
+            let mut byte = [0];
+            while !header.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).await.unwrap();
+                header.push(byte[0]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nA")
+                .await
+                .unwrap();
+            ready_tx.send(()).unwrap();
+            finish_rx.await.unwrap();
+            socket.write_all(b"BCD").await.unwrap();
+        });
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        let server = ProxyServer::bind(
+            ProxyConfig::default(),
+            ProxyCa::generate("Drain test", 2).unwrap(),
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap()),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let endpoint = service
+            .start_with_host(
+                server,
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let _idle = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+        let client = tokio::spawn(async move {
+            let mut socket = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+            socket.write_all(format!("GET http://{origin_addr}/ HTTP/1.1\r\nHost: {origin_addr}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            let mut response = Vec::new();
+            socket.read_to_end(&mut response).await.unwrap();
+            response
+        });
+        ready_rx.await.unwrap();
+        assert!(matches!(
+            service.begin_drain().await.unwrap(),
+            ServiceStatus::Draining { .. }
+        ));
+        assert_eq!(
+            host.restored.lock().unwrap().len(),
+            1,
+            "Host restoration waited for the response"
+        );
+        assert!(service.proxy_control().unwrap().activity().requests > 0);
+        assert!(service.resume_drain().await.unwrap());
+        assert_eq!(host.applied.lock().unwrap().len(), 2);
+        assert!(matches!(service.status(), ServiceStatus::Running { .. }));
+        assert!(matches!(
+            service.begin_drain().await.unwrap(),
+            ServiceStatus::Draining { .. }
+        ));
+        assert_eq!(host.restored.lock().unwrap().len(), 2);
+        finish_tx.send(()).unwrap();
+        origin_task.await.unwrap();
+        let response = client.await.unwrap();
+        assert!(
+            response.ends_with(b"ABCD"),
+            "An in-flight response was truncated"
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while service.status() != ServiceStatus::Stopped {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("An idle connected client blocked shutdown");
+        assert_eq!(
+            host.restored.lock().unwrap().len(),
+            2,
+            "Old drain restored host state a second time"
+        );
     }
 }

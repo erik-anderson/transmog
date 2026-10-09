@@ -8,16 +8,22 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+sysinfo.workspace = true
+url = "=2.5.8"
+transmog-network = { version = "=0.1.0", path = "../network" }
 bytes.workspace = true
 base64.workspace = true
 getrandom.workspace = true
 http.workspace = true
 percent-encoding.workspace = true
+regex.workspace = true
+unicode-normalization.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+time.workspace = true
 tokio.workspace = true
 zip.workspace = true
 transmog-content = { version = "=0.1.0", path = "../proxy-content" }

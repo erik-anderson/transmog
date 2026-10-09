@@ -4,24 +4,32 @@
 //!
 //! This crate is the application boundary shared by the desktop shell and
 //! future command-line frontends. It deliberately has no Tauri, `WebUI`,
-//! `WebView`, or operating-system dependency.
+//! `WebView` dependency. Portable system information resolves memory budgets.
 
 mod artifacts;
 mod automation;
 mod autoresponse_batch;
 mod body_store;
 mod breakpoints;
+mod captured_page;
+mod captured_page_report;
 mod composer;
 mod diagnostics;
+mod export_privacy;
 mod inspector;
 mod lifecycle;
 mod preview;
 mod product_state;
+mod request_actions;
 mod response_assets;
 mod response_file;
 mod response_filename;
 mod scripts;
+mod search;
 mod sessions;
+mod trace_body;
+mod trace_save;
+mod traces;
 mod version;
 mod workspace;
 
@@ -38,13 +46,20 @@ pub use automation::{
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
-    BodyStoreError, DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
+    BodyStoreError, BufferLimit, BufferStatus, BufferStorage, DEFAULT_BODY_READ_BYTES,
+    RetentionMode, StoredBodyMetadata,
 };
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
 };
+pub use captured_page::{CapturedPage, CapturedResource};
+pub use captured_page_report::{
+    CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport, CapturedPageScope,
+    CapturedPreviewRequest, CapturedResourceDecision,
+};
 pub use composer::{
-    ComposerHeader, ComposerRequest, ComposerResult, ComposerSnapshot, SystemReplayExecutor,
+    ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,
+    ComposerSnapshot, SystemReplayExecutor,
 };
 pub use diagnostics::{
     DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
@@ -52,25 +67,32 @@ pub use diagnostics::{
 };
 pub use inspector::{
     AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
-    HeaderView, SessionDetail,
+    HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
 pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
 pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
     ThemePreference, WindowState,
 };
+pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
     ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
+pub use search::{
+    TrafficSearchEntry, TrafficSearchMatch, TrafficSearchMode, TrafficSearchProgress,
+    TrafficSearchRequest, TrafficSearchResult,
+};
 use serde::Serialize;
 pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
 };
 use thiserror::Error;
+pub use trace_save::{TraceSaveOptions, TraceSaveResult};
+pub use traces::{TraceImportProgress, TraceImportRequest, TraceImportResult, TraceMetadataView};
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
@@ -83,6 +105,10 @@ pub use workspace::{ColumnPreference, TrafficColumn, TrafficLayout, WorkspacePre
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ErrorCategory {
+    /// Encrypted input needs a transient password.
+    PasswordRequired,
+    /// The supplied input password was rejected.
+    InvalidPassword,
     /// Caller input failed validation.
     InvalidInput,
     /// Requested operation conflicts with current application state.
@@ -125,6 +151,27 @@ impl AppError {
     }
 }
 
+impl From<transmog_capture::CaptureError> for AppError {
+    fn from(error: transmog_capture::CaptureError) -> Self {
+        let category = match error {
+            transmog_capture::CaptureError::PasswordRequired => ErrorCategory::PasswordRequired,
+            transmog_capture::CaptureError::InvalidPassword => ErrorCategory::InvalidPassword,
+            _ => ErrorCategory::InvalidInput,
+        };
+        Self::new(category, error.to_string(), false)
+    }
+}
+impl From<transmog_saz::SazError> for AppError {
+    fn from(error: transmog_saz::SazError) -> Self {
+        let category = match error {
+            transmog_saz::SazError::PasswordRequired => ErrorCategory::PasswordRequired,
+            transmog_saz::SazError::InvalidPassword => ErrorCategory::InvalidPassword,
+            _ => ErrorCategory::InvalidInput,
+        };
+        Self::new(category, error.to_string(), false)
+    }
+}
+
 impl From<ServiceError> for AppError {
     fn from(error: ServiceError) -> Self {
         let (category, retryable) = match error {
@@ -151,6 +198,8 @@ pub enum AppLifecycle {
     Stopped,
     /// The proxy listener is active.
     Running,
+    /// Host proxy settings are restored while admitted work finishes.
+    Draining,
     /// Graceful shutdown is in progress.
     Stopping,
     /// The last proxy run failed.
@@ -225,10 +274,14 @@ pub struct Application {
     product_state: product_state::ProductStateManager,
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
+    buffer_preferences: bool,
+    entry_preferences: bool,
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
     scripts: scripts::ScriptRegistry,
     previews: preview::PreviewService,
+    traces: traces::TraceRegistry,
+    searches: search::SearchRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -247,6 +300,12 @@ impl Application {
     ///
     /// Returns a bounded application error if the owned service cannot start.
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let (product_state, warning) =
+            product_state::ProductStateManager::load(config.product_state_path);
+        let apply_buffer_preferences = config
+            .body_store
+            .as_ref()
+            .is_some_and(|config| config.use_product_preferences);
         let body_store = config
             .body_store
             .map(BodyStore::new)
@@ -265,6 +324,7 @@ impl Application {
         )?;
         let previews = preview::PreviewService::new(config.preview_worker_executable);
         let build_id = Arc::clone(&config.service.control_build_id);
+        let entry_preferences = config.service.sessions.max_sessions.is_none();
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
         diagnostics.record(
@@ -273,13 +333,28 @@ impl Application {
             "startup",
             "Transmog application initialized",
         );
-        let (product_state, warning) =
-            product_state::ProductStateManager::load(config.product_state_path);
         service.set_redact_sensitive_headers(
             product_state.snapshot().privacy.redact_sensitive_headers,
         );
+        if entry_preferences {
+            service.catalog().set_live_entry_limit(
+                product_state
+                    .snapshot()
+                    .privacy
+                    .max_live_entries
+                    .and_then(std::num::NonZeroUsize::new),
+            );
+        }
         if let Some(store) = &body_store {
             let privacy = product_state.snapshot().privacy;
+            if apply_buffer_preferences {
+                store
+                    .set_buffer_limit(privacy.buffer_limit)
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                    })?;
+            }
+            store.set_request_body_limit(privacy.request_body_limit);
             store.set_privacy(
                 privacy.retain_request_bodies,
                 privacy.retain_response_bodies,
@@ -310,10 +385,14 @@ impl Application {
             product_state,
             diagnostics,
             body_store,
+            buffer_preferences: apply_buffer_preferences,
+            entry_preferences,
             automation,
             response_assets,
             scripts,
             previews,
+            traces: traces::TraceRegistry::default(),
+            searches: search::SearchRegistry::default(),
         })
     }
 
@@ -339,12 +418,40 @@ impl Application {
     /// Returns a bounded validation or persistence error. A persistence error
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
+        let state = product_state::validate(state)?;
+        if self.buffer_preferences
+            && let Some(store) = &self.body_store
+        {
+            store
+                .prepare_buffer_limit(state.privacy.buffer_limit)
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })?;
+        }
         let result = self.product_state.save(state);
         if let Ok(state) = &result {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
         }
+        if let Ok(state) = &result
+            && self.entry_preferences
+        {
+            self.service.catalog().set_live_entry_limit(
+                state
+                    .privacy
+                    .max_live_entries
+                    .and_then(std::num::NonZeroUsize::new),
+            );
+        }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
+            if self.buffer_preferences {
+                store
+                    .set_buffer_limit(state.privacy.buffer_limit)
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                    })?;
+            }
+            store.set_request_body_limit(state.privacy.request_body_limit);
             store.set_privacy(
                 state.privacy.retain_request_bodies,
                 state.privacy.retain_response_bodies,
@@ -715,6 +822,21 @@ impl Application {
                 summary: "Proxy listening".to_owned(),
                 host_restore_pending: pending,
             },
+            ServiceStatus::Draining { local_addr } => {
+                let active = self.service.proxy_control().map_or(0, |control| {
+                    let activity = control.activity();
+                    activity.requests + activity.transports
+                });
+                AppStatus {
+                    lifecycle: AppLifecycle::Draining,
+                    listener: Some(local_addr.to_string()),
+                    summary: format!(
+                        "Finishing {active} active request/connection{}",
+                        if active == 1 { "" } else { "s" }
+                    ),
+                    host_restore_pending: pending,
+                }
+            }
             ServiceStatus::Stopping { local_addr } => AppStatus {
                 lifecycle: AppLifecycle::Stopping,
                 listener: Some(local_addr.to_string()),
@@ -761,6 +883,24 @@ impl Application {
         result
     }
 
+    /// Turns proxy routing off before draining existing work without a deadline.
+    ///
+    /// # Errors
+    /// Returns host restoration failures while keeping admitted work usable.
+    pub async fn stop_proxy(&self) -> Result<AppStatus, AppError> {
+        self.service.begin_drain().await.map_err(AppError::from)?;
+        Ok(self.status())
+    }
+
+    /// Resumes an existing pending drain without creating a second listener.
+    ///
+    /// # Errors
+    /// Returns exact host configuration recovery/application failures.
+    pub async fn resume_proxy(&self) -> Result<AppStatus, AppError> {
+        self.service.resume_drain().await.map_err(AppError::from)?;
+        Ok(self.status())
+    }
+
     /// Binds and starts the product proxy using validated local CA material.
     ///
     /// The optional host adapter is caller-owned so this crate remains
@@ -773,6 +913,9 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
+        if self.service.resume_drain().await.map_err(AppError::from)? {
+            return Ok(self.status());
+        }
         let result = lifecycle::start_proxy(
             &self.service,
             Arc::clone(&self.runtime_ids),
@@ -829,7 +972,61 @@ impl Application {
     /// # Errors
     /// Returns invalid filters, page sizes, cursors, or token-generation failures.
     pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
-        sessions::query_sessions(&self.service, &self.cursors, query)
+        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        sessions::query_sessions_with_traces(
+            &self.service,
+            &self.cursors,
+            query,
+            &self.traces,
+            matching.as_deref(),
+        )
+    }
+
+    /// Returns every entry matching the current filters and search snapshot.
+    ///
+    /// # Errors
+    /// Returns invalid filters or an expired search handle.
+    pub fn matching_traffic_ids(&self, query: &SessionQueryInput) -> Result<Vec<String>, AppError> {
+        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
+    }
+
+    /// Searches captured evidence without changing traffic or selections.
+    ///
+    /// # Errors
+    /// Returns invalid expressions, bounded search failures or cancellation.
+    pub async fn search_traffic(
+        &self,
+        request: TrafficSearchRequest,
+        progress: Arc<dyn Fn(TrafficSearchProgress) + Send + Sync>,
+    ) -> Result<TrafficSearchResult, AppError> {
+        self.searches
+            .search(
+                request,
+                self.service.clone(),
+                self.body_store.clone(),
+                progress,
+            )
+            .await
+    }
+
+    /// Returns bounded highlighted original-text locations for one saved result.
+    ///
+    /// # Errors
+    /// Returns expired search, missing entry, invalid identity or decoder failures.
+    pub async fn traffic_search_entry(
+        &self,
+        search_id: &str,
+        id: &str,
+    ) -> Result<TrafficSearchEntry, AppError> {
+        self.searches
+            .entry(search_id, id, self.service.clone(), self.body_store.clone())
+            .await
+    }
+
+    /// Cancels one window's current search without publishing partial results.
+    pub fn cancel_traffic_search(&self, operation_id: &str) {
+        self.searches.cancel(operation_id);
     }
 
     /// Removes selected rows from Traffic, retaining bounded Undo evidence.
@@ -841,10 +1038,10 @@ impl Application {
         ids: &[String],
         restore: bool,
     ) -> Result<Vec<String>, AppError> {
-        if ids.len() > 10_000 {
+        if ids.len() > 200_000 {
             return Err(AppError::new(
                 ErrorCategory::Limit,
-                "Select at most 10000 traffic entries.",
+                "Select at most 200000 traffic entries.",
                 false,
             ));
         }
@@ -858,6 +1055,34 @@ impl Application {
             self.service.catalog().dismiss(&ids)
         };
         Ok(changed.iter().map(|id| format!("{:032x}", id.0)).collect())
+    }
+
+    /// Removes all unselected entries across the whole workspace, with Undo.
+    ///
+    /// # Errors
+    /// Rejects oversized or malformed selections before changing the catalog.
+    pub fn remove_unselected_traffic_entries(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        if ids.len() > 200_000 {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "Selection exceeds the entry limit",
+                false,
+            ));
+        }
+        let selected = ids
+            .iter()
+            .map(|id| response_assets::parse_exchange_id(id))
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        Ok(self
+            .service
+            .catalog()
+            .dismiss_unselected(&selected)
+            .iter()
+            .map(|id| format!("{:032x}", id.0))
+            .collect())
     }
 
     /// Opens a bounded hint-only subscription for presentation refreshes.
@@ -874,7 +1099,188 @@ impl Application {
     /// Returns an invalid identifier, unavailable/evicted session, or body
     /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
-        inspector::session_detail(&self.service, self.body_store.as_ref(), id)
+        let mut detail = inspector::session_detail(&self.service, self.body_store.as_ref(), id)?;
+        if let Some(entry) = self.traces.entry(id) {
+            let native = entry.raw_headers.is_none();
+            detail.trace_id = Some(entry.trace_id);
+            detail.original_id = Some(entry.original_id);
+            detail.saved_evidence = entry.timings;
+            detail.diagnostics.extend(entry.diagnostics);
+            if !entry.protocol_known || native {
+                for head in detail
+                    .requests
+                    .iter_mut()
+                    .chain(detail.responses.iter_mut())
+                {
+                    if !detail
+                        .performance
+                        .protocols
+                        .iter()
+                        .any(|item| item.boundary == head.boundary)
+                    {
+                        head.protocol = "Unavailable".into();
+                    }
+                }
+            }
+        }
+        Ok(detail)
+    }
+
+    /// Produces clipboard text without starting a process or sending traffic.
+    ///
+    /// # Errors
+    /// Returns invalid selection, non-text header or unavailable body errors.
+    pub fn request_command(
+        &self,
+        id: &str,
+        format: RequestCommandFormat,
+    ) -> Result<RequestCommand, AppError> {
+        let mut command =
+            request_actions::command(&self.service, self.body_store.as_ref(), id, format)?;
+        if self
+            .traces
+            .entry(id)
+            .is_some_and(|entry| !entry.protocol_known)
+        {
+            command.notices.push(
+                "The HTTP version was not recorded in this trace; the command uses HTTP/1.1."
+                    .into(),
+            );
+        }
+        Ok(command)
+    }
+
+    /// Reads a bounded page with measurements from the complete header block.
+    ///
+    /// # Errors
+    /// Returns an invalid selection or unavailable message stage.
+    pub fn inspect_headers(
+        &self,
+        id: &str,
+        boundary: &str,
+        offset: usize,
+        largest_first: bool,
+    ) -> Result<inspector::HeaderPage, AppError> {
+        inspector::header_page(&self.service, id, boundary, offset, largest_first)
+    }
+
+    /// Copies complete original headers for the selected message stage.
+    ///
+    /// # Errors
+    /// Returns unavailable evidence or non-text header values.
+    pub fn copy_message_headers(&self, id: &str, boundary: &str) -> Result<String, AppError> {
+        inspector::copy_message_headers(&self.service, id, boundary)
+    }
+
+    /// Copies full request and response heads separated by two blank lines.
+    ///
+    /// # Errors
+    /// Returns invalid selection or non-text header errors.
+    pub fn copy_all_headers(&self, id: &str) -> Result<String, AppError> {
+        if let Some(entry) = self.traces.entry(id)
+            && let Some(headers) = entry.raw_headers
+        {
+            return Ok(headers);
+        }
+        request_actions::copy_all_headers(&self.service, id)
+    }
+
+    /// Imports saved evidence into this window's Traffic catalog atomically.
+    ///
+    /// # Errors
+    /// Returns invalid files, bounded import failures, collisions or cancellation.
+    pub async fn import_trace(
+        &self,
+        request: TraceImportRequest,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
+        let store = self.body_store.clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Saved trace body storage is not configured",
+                false,
+            )
+        })?;
+        self.traces
+            .import(request, self.service.clone(), store, progress)
+            .await
+    }
+
+    /// Cancels an in-progress saved-file import before catalog publication.
+    pub fn cancel_trace_import(&self, operation_id: &str) {
+        self.traces.cancel(operation_id);
+    }
+
+    /// Freezes retained responses for an isolated captured HTML preview.
+    ///
+    /// # Errors
+    /// Returns unavailable HTML, bounded decoding or storage failures.
+    pub async fn prepare_captured_page(
+        &self,
+        id: String,
+        canceled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<CapturedPage, AppError> {
+        captured_page::prepare(self.clone(), id, CapturedPageOptions::default(), canceled).await
+    }
+
+    /// Freezes response variants within an explicit captured resource scope.
+    ///
+    /// # Errors
+    /// Returns unavailable HTML, request signatures, decoding or storage failures.
+    pub async fn prepare_captured_page_with_options(
+        &self,
+        id: String,
+        options: CapturedPageOptions,
+        canceled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<CapturedPage, AppError> {
+        captured_page::prepare(self.clone(), id, options, canceled).await
+    }
+
+    /// Saves every retained Traffic entry with its original trace association.
+    ///
+    /// # Errors
+    /// Returns bounded storage, metadata collection, or output failures.
+    pub async fn save_traffic_trace(
+        &self,
+        destination: PathBuf,
+        options: TraceSaveOptions,
+    ) -> Result<TraceSaveResult, AppError> {
+        trace_save::save(self.clone(), destination, options).await
+    }
+
+    /// Lists source metadata for every trace in this window's saved workspace.
+    pub fn trace_metadata_list(&self) -> Vec<TraceMetadataView> {
+        self.traces.list()
+    }
+
+    /// Resolves one saved source's context, including its original network data.
+    ///
+    /// # Errors
+    /// Returns an unavailable error for a stale or unknown trace identity.
+    pub fn trace_metadata(&self, id: &str) -> Result<TraceMetadataView, AppError> {
+        self.traces.metadata(id).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Trace metadata is unavailable",
+                false,
+            )
+        })
+    }
+
+    /// Protects complete encoded request bytes while a native save dialog opens.
+    ///
+    /// # Errors
+    /// Returns invalid selection or missing/incomplete body errors.
+    pub fn prepare_request_file(&self, id: &str) -> Result<RequestFile, AppError> {
+        request_actions::prepare_file(&self.service, self.body_store.as_ref(), id)
+    }
+
+    /// Loads original headers and complete encoded bytes into an editable draft.
+    ///
+    /// # Errors
+    /// Returns invalid selection or non-text header errors.
+    pub fn composer_source(&self, id: &str) -> Result<ComposerSource, AppError> {
+        request_actions::composer_source(&self.service, self.body_store.as_ref(), id)
     }
 
     /// Prepares a complete original response for an explicitly requested save.
@@ -997,7 +1403,79 @@ impl Application {
         &self,
         request: ComposerRequest,
     ) -> Result<ComposerResult, AppError> {
-        self.composer.execute(&self.service, request).await
+        if request.body_source.is_some() {
+            composer::validate_stream_input(&request)?;
+        }
+        if let Some(id) = &request.source_entry_id {
+            inspector::parse_session_id(id)?;
+        }
+        let source = request.source_entry_id.as_ref().map(|id| {
+            let trace = self.traces.entry(id);
+            ComposerOrigin {
+                trace_name: trace
+                    .as_ref()
+                    .and_then(|entry| self.traces.metadata(&entry.trace_id))
+                    .map(|metadata| metadata.name),
+                entry_id: id.clone(),
+                trace_id: trace.as_ref().map(|entry| entry.trace_id.clone()),
+                original_id: trace.map(|entry| entry.original_id),
+            }
+        });
+        let file = match &request.body_source {
+            Some(ComposerBodySource::Captured { entry_id }) => Some(
+                self.prepare_request_file(entry_id)?
+                    .into_replay_file()
+                    .await?,
+            ),
+            Some(ComposerBodySource::File { path }) => {
+                let path = std::path::PathBuf::from(path);
+                Some(
+                    tokio::task::spawn_blocking(move || {
+                        if !path.is_absolute() {
+                            return Err(AppError::new(
+                                ErrorCategory::InvalidInput,
+                                "Choose an absolute body file path",
+                                false,
+                            ));
+                        }
+                        let file = std::fs::File::open(path).map_err(|_| {
+                            AppError::new(
+                                ErrorCategory::Unavailable,
+                                "Replay body file could not be opened",
+                                true,
+                            )
+                        })?;
+                        let metadata = file.metadata().map_err(|_| {
+                            AppError::new(
+                                ErrorCategory::Unavailable,
+                                "Replay body file metadata is unavailable",
+                                true,
+                            )
+                        })?;
+                        if !metadata.is_file() {
+                            return Err(AppError::new(
+                                ErrorCategory::InvalidInput,
+                                "Replay body must be a regular file",
+                                false,
+                            ));
+                        }
+                        Ok((file, metadata.len()))
+                    })
+                    .await
+                    .map_err(|_| {
+                        AppError::new(
+                            ErrorCategory::Unavailable,
+                            "Replay body file worker failed",
+                            true,
+                        )
+                    })??,
+                )
+            }
+            None => None,
+        };
+        self.composer
+            .execute(&self.service, request, file, source)
+            .await
     }
 
     /// Returns a bounded newest-first replay history without credential values.
@@ -1013,7 +1491,12 @@ impl Application {
         &self,
         request: CaptureStartRequest,
     ) -> Result<CaptureReadModel, AppError> {
-        artifacts::start_capture(&self.service, request).await
+        artifacts::start_capture(
+            &self.service,
+            request,
+            self.product_state().privacy.request_body_limit,
+        )
+        .await
     }
 
     /// Seals and stops the active native capture.
@@ -1053,6 +1536,60 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_entry_preference_persists_and_is_applied_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("preferences");
+        let make_app = || {
+            Application::new(AppConfig {
+                product_state_path: Some(path.clone()),
+                ..AppConfig::default()
+            })
+            .unwrap()
+        };
+        let app = make_app();
+        assert!(app.service.catalog().live_entry_limit().is_none());
+        let mut state = app.product_state();
+        state.privacy.max_live_entries = Some(2);
+        app.save_product_state(state).unwrap();
+        assert_eq!(app.service.catalog().live_entry_limit().unwrap().get(), 2);
+        let reloaded = make_app();
+        assert_eq!(
+            reloaded.service.catalog().live_entry_limit().unwrap().get(),
+            2
+        );
+        let mut state = reloaded.product_state();
+        state.privacy.max_live_entries = None;
+        reloaded.save_product_state(state).unwrap();
+        assert!(reloaded.service.catalog().live_entry_limit().is_none());
+    }
+
+    #[test]
+    fn embedding_buffer_limit_is_not_replaced_by_product_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = BodyStoreConfig::product_default(root.path().join("cache"));
+        config.use_product_preferences = false;
+        config.max_bytes = 1024;
+        config.max_body_bytes = 1024;
+        let app = Application::new(AppConfig {
+            body_store: Some(config),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        assert_eq!(
+            app.body_store().unwrap().buffer_status().max_bytes,
+            Some(1024)
+        );
+        let mut preferences = app.product_state();
+        preferences.preferences.theme = ThemePreference::Dark;
+        app.save_product_state(preferences).unwrap();
+        assert_eq!(
+            app.body_store().unwrap().buffer_status().max_bytes,
+            Some(1024)
+        );
+        assert!(!root.path().join("cache").exists());
+    }
 
     #[test]
     fn default_application_is_stopped_and_ui_neutral() {

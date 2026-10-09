@@ -3,11 +3,18 @@ use transmog_app::ExportFormat;
 
 #[tauri::command]
 pub(crate) async fn pick_capture_path(
+    window: tauri::WebviewWindow,
     kind: String,
     format: Option<ExportFormat>,
 ) -> Result<Option<String>, String> {
-    let dialog = rfd::AsyncFileDialog::new();
+    let dialog = rfd::AsyncFileDialog::new().set_parent(&window);
     let selected = match kind.as_str() {
+        "composer-body" => {
+            dialog
+                .set_title("Choose a request body file")
+                .pick_file()
+                .await
+        }
         "source" => {
             dialog
                 .set_title("Choose a TMCap capture")

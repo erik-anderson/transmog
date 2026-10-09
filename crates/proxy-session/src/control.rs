@@ -491,6 +491,7 @@ async fn request_decision(
     input: BreakpointInput,
     context: &transmog_core::intercept::HookContext,
 ) -> Result<DecisionAction, String> {
+    let _timing = context.measure_work("pause", "Breakpoint decision");
     let cancellation = RequestCancellation::new();
     tokio::select! {
         result = producer.request(input, &cancellation) => result.map_err(|_| {
@@ -613,7 +614,8 @@ fn event_kind(kind: &ObserverEventKind) -> Option<EventKind> {
         ObserverEventKind::Failed(failure) => Some(EventKind::Failed {
             category: failure_kind_name(&failure.kind).to_owned(),
         }),
-        ObserverEventKind::HookInitializationSkipped(_)
+        ObserverEventKind::Performance(_)
+        | ObserverEventKind::HookInitializationSkipped(_)
         | ObserverEventKind::RequestHeadFinalized(_)
         | ObserverEventKind::BodyTrailers(_)
         | ObserverEventKind::RouteSelected { .. }

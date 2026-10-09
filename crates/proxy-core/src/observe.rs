@@ -192,6 +192,8 @@ pub struct ObservedRouteAttempt {
 /// Immutable observer lifecycle payload.
 #[derive(Clone, Debug)]
 pub enum ObserverEventKind {
+    /// Bounded measured timing, protocol and transport evidence.
+    Performance(crate::performance::PerformanceEvidence),
     /// An exchange and its isolated extension store were created.
     ExchangeStarted {
         /// Immutable exchange metadata.

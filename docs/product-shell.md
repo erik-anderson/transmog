@@ -1,10 +1,11 @@
-# Transmog product shell
+# Transmog desktop
 
-The Windows desktop shell is a thin Tauri adapter over `transmog-app`. The same
-application facade is suitable for a future CLI: it owns proxy lifecycle,
-bounded session queries, safe inspectors, breakpoints, replay, capture, import,
-export, product state, and privacy-safe diagnostics without depending on Tauri
-or WebUI.
+The Windows desktop is a Tauri/WebView2 adapter over `transmog-app`. WebUI
+workspaces own presentation; the application facade owns traffic, proxy
+lifecycle, capture, replay, persistence and diagnostics. Headless clients can
+use the same facade without Tauri or WebUI. See [architecture](architecture.md)
+for the dependency boundaries and [the desktop guide](../apps/desktop/README.md)
+for build commands.
 
 ## Software updates
 
@@ -16,124 +17,101 @@ Offline startup stays quiet; a manual check reports a useful failure.
 
 Downloads show progress and can be cancelled. Installation follows signature and
 version verification, draft resolution, capture sealing, proxy shutdown, and
-Windows host restoration. A deferred update installs when the user quits Transmog
+Windows host restoration. Close saved traffic viewer windows before installing
+so their drafts can be resolved. A deferred update installs when the user quits Transmog
 and does not reopen it. Crashes and operating-system shutdown do not launch an
 installer. A failed safe handoff keeps the app open with recovery feedback.
 
-## Operating model
+## Start and stop
 
-- **Set up HTTPS interception** creates a durable PEM CA and matching private
-  key when needed, then explicitly asks the user to approve current-user trust.
-  CA generation is create-new and never overwrites either file. Start verifies
-  the files, recorded SHA-256 identity, and current trust state before binding.
-- Desktop Start always journals the exact current-user Windows proxy registry
-  values, starts an automatic bounded native capture, binds the listener, and
-  then applies the loopback proxy. Stop and normal/OS-requested exit restore the
-  exact prior values. The durable journal is recovered on next launch after a
-  hard termination.
-- Certificate trust installation/removal remains an explicit exact-SHA-256
-  operation and can display an OS consent dialog. The setup action warns before
-  triggering that dialog; unattended builds and tests never install trust.
-- The traffic list queries bounded pages (100 by default, at most 200) over
-  filtered and sorted retained metadata, and watches live automatically. It
-  follows the latest row until the user scrolls away or selects a request;
-  capture continues while that view is pinned.
-- Traffic rows show the best-effort local caller process name and PID captured
-  at connection accept time. Non-loopback peers show as remote and unresolved
-  loopback callers remain explicitly unknown.
-- Completed retained client responses can seed auto-responses directly from
-  the Traffic inspector or multiselection review. The Automation
-  workspace exposes a dense priority list and editable properties, with bulk
-  actions, reversible deletion, duplicate warnings and a network-free matcher
-  tester. The first enabled match wins; exact addresses, guided URL patterns
-  and bounded regex are supported. A shared Traffic/Automation pause switch
-  controls rule hooks without modifying rule states. Saved responses remain
-  editable independently of the original Traffic entry. Winning traffic is
-  marked `AUTO` and names the rule and immutable asset that served it. See
-  [automation.md](automation.md) for matching and interaction details.
-- The primary desktop canvas is a fixed-viewport traffic workspace: an
-  internally scrolling request list remains visible above a persistent split
-  request/response inspector. Tool views use the left rail and scroll only
-  inside the application viewport; the document root never scrolls.
-- The `system` theme follows the host light/dark preference live. Explicit
-  light and dark choices override it and keep Monaco aligned with the shell.
-- Response-body retention is enabled by default with a bounded one-GiB circular
-  store and can be disabled. Text, binary, missing,
-  truncated, redacted, and lossy evidence are distinct inspector states.
-- Interactive breakpoints use one same-build controller. Closing the window,
-  disabling breakpoints, timing out, or losing the controller fails unresolved
-  decisions closed.
-- Composer replay requires explicit acknowledgement for non-idempotent methods
-  and credential-bearing fields and uses the canonical Rust HTTP/TLS stack.
-- Native `.tmcap` files are the streaming source of truth. The desktop captures
-  automatically while its proxy is running and can export a create-new, sealed
-  TMCap snapshot without stopping the live source. JSONL export streams records
-  sequentially. SAZ must be finalized and cannot preserve every native boundary
-  or hook record, so each result includes a fidelity disclosure.
-- Raster previews are decoded and normalized to PNG in an AppContainer helper,
-  then displayed only through an opaque `<img>` URL. SVG stays SVG for fidelity
-  but is also loaded only as an image from a no-store, `nosniff`, sandboxed CSP
-  response that blocks scripts and external resources.
-- Windows launches the script sandbox bootstrap, preview bootstrap, and
-  PowerShell host helpers without creating visible console windows.
-- Product state is schema-versioned, bounded, and committed as atomic
-  generations. Corrupt newest state falls back to a prior valid generation or
-  safe defaults. Persistence failure never blocks proxy shutdown.
-- Structured diagnostics are bounded and redacted before memory or disk. A
-  support bundle excludes traffic bodies, header values, credentials, keys,
-  and paths by default, and reports the native WebView runtime version.
+On first use, **Set up now** in the HTTPS setup banner, or **Settings → Connection
+→ Set up HTTPS interception**, creates the desktop's CA and asks for approval to
+trust its public certificate. Start verifies its recorded identity and trust
+state before binding. Certificate installation and exact-root removal can
+require Windows consent; private-key files belong to the desktop's user data.
 
-## Working in the desktop
+**Start proxy** binds the listener and applies its endpoint to the current user's
+Windows proxy settings. Traffic enters the configured body buffer; starting the
+proxy does not implicitly create a trace file. Recording is a separate action.
 
-Traffic keeps selection actions above the scrolling list. Table settings holds
-column visibility, the inspector layout choice, and workspace reset. A selected
-request exposes its full URL and copy action in a popover. The inspector shows
-request and response together when space permits and switches between them in a
-narrow pane. Detailed body retention information stays in a disclosure.
+**Stop proxy** restores the prior proxy settings first, then shows **Finishing
+requests** while admitted requests, TLS handshakes and upgraded connections
+finish. Idle clients do not delay shutdown. **Start proxy** during this state
+resumes the same listener without disrupting active work. Closing the app uses
+its shutdown flow; a journal restores interrupted host configuration on the next
+launch after a hard termination. Setup and recovery actions are in Settings →
+Connection. Certificate paths and exact removal are in Advanced.
 
-Automation separates auto-responses, header overrides, and scripts. Rule
-properties and batch review share the available space with the dense rule list;
-narrow windows switch between the list and selected properties. Batch review
-keeps skipped responses visible and preserves inclusion choices when refreshed.
-Scripts distinguish draft, saved, validated, tested, and active revisions. Their
-sandbox tester accepts a URL, method, headers, and body without sending traffic.
+## Live traffic and saved viewers
 
-Breakpoints shows a live queue and one selected editor. The navigation badge
-reports waiting requests even in other workspaces. Each request displays its
-remaining decision time; expired requests cannot be continued. Replacement
-drafts survive switching between waiting requests, and rejected edits remain
-available for correction.
+Traffic follows new exchanges until the user selects an entry or scrolls back.
+Capture continues while the view is pinned. Filtering and sorting operate on all
+retained metadata before pagination. Column visibility, inspector arrangement
+and pane sizes are saved preferences.
 
-Composer opens from **Edit and replay** in Traffic. Request and response sit
-beside each other in wide windows and use pane tabs in smaller ones. Loading
-another request asks before replacing an edited draft. Sending leaves edits
-available while the response arrives; failures keep the draft ready to retry.
-Response headers, body, and execution details have separate views. Risk and
-credential acknowledgements appear only when applicable.
+Select a request to inspect its request and response together, or switch between
+them in a narrow pane. The context menu and selection actions provide command
+copying, timing reports, replay and reversible removal. See
+[traffic inspection](traffic-inspection.md) for search, selection, header sizes
+and request-copy behavior, and [request timings](request-timings.md) for how to
+interpret latency and shared transport measurements.
 
-Captures groups recording, inspection/recovery, and export into separate tasks
-with native file pickers and readable result summaries. Recording controls
-reflect the live state. Interrupted-file inspection reports the valid prefix
-and can prepare a new recovered export; it leaves the source intact.
+**Import…** loads SAZ or TMCap files into the current window. Dropping files onto
+the traffic list always imports them there. Each entry retains its source trace,
+with **Trace metadata** leading to the original machine's network context and
+capture metadata. Imported bodies are read on demand from pinned source files;
+they are independent of live buffer eviction.
 
-Settings separates preferences, connection, and support. Preferences have
-explicit Save and Revert actions, with Ctrl+S to save. Connection presents the
-current readiness and applicable recovery action; certificate paths and exact
-certificate removal stay in Advanced. Support shows a readable diagnostic
-summary before technical details, and including recent paths requires the saved
-privacy preference. The header status menu links directly to Connection.
-Routine workspace output stays near the action that produced it.
+**Files → Open in a separate viewer…** opens saved captures in an independent
+**Capture viewer** with Traffic and Composer. **Open main window** reaches the
+proxy experience. Proxy, certificate, recording, breakpoint and automation
+commands are restricted to the main window in both the UI and backend. Launching
+with a capture path opens a viewer when no main window exists; otherwise the app
+asks whether to import into the main session or open a separate viewer. Closing
+a viewer does not stop the main window's proxy.
 
-## File safety
+**Save trace…** saves retained traffic across pages and searches, with optional
+password encryption, export-only header redaction and network context. Streaming
+recording, recovery and native/JSONL/SAZ export are in Captures. See
+[trace saving](trace-saving.md), [native capture encoding](native-capture-format.md)
+and [SAZ compatibility](saz-compatibility.md) for file behavior. The separate
+[CLI support recorder](cli-support-capture.md) is published outside the installer.
 
-Captures, generated CAs, JSONL, and SAZ use create-new semantics. Existing
-destinations are not replaced. Imports are subject to explicit file, record,
-and record-size bounds; interrupted native files recover only their checksummed
-valid prefix.
+## Editing and replay
 
-Build and Windows prerequisites are documented in [building.md](building.md).
-Product-state and support behavior is documented in
-[product-state-and-support.md](product-state-and-support.md). Current gaps and
-deliberately deferred platform work are maintained only in the
-[roadmap](roadmap.md). Windows release qualification and eventual Linux/macOS
-qualification remain separate platform gates.
+**Edit and replay** opens Composer from live or imported traffic. Edited drafts
+survive navigation; replacing a draft asks for a decision. Sending requires
+acknowledgement for non-idempotent methods and credential-bearing fields. Replay
+uses the canonical verifying HTTP adapters even when the proxy is stopped.
+Large captured or replacement-file bodies stream outside the WebView editor.
+Response previews disclose display truncation; replay history keeps the source
+association. See [traffic inspection](traffic-inspection.md#edit-and-replay).
+
+Breakpoints presents one selected editor beside the waiting-request queue.
+Remaining decision time stays visible, replacement drafts survive selection
+changes and expired requests cannot be continued. Losing the controller,
+disabling breakpoints or timing out fails unresolved decisions closed.
+
+Automation separates auto-responses, header overrides and scripts. Captured
+responses are the primary path to reusable auto-responses. Property edits remain
+drafts until saved; active rule/script revisions and pause state are distinct.
+See [automation](automation.md) for matching, ordering and sandbox behavior.
+
+## Data and presentation boundaries
+
+The shell uses a fixed viewport with scrolling inside each workspace. The system
+theme follows Windows light/dark preferences; explicit themes also update Monaco.
+Editors and secondary workspaces load on demand. Product state and diagnostics
+are separate from captured traffic; failures saving either cannot block proxy
+restoration. See [product state and support](product-state-and-support.md) for
+retention preferences, diagnostics and support bundles.
+
+Captured text stays inert in the workbench. Raster decoding uses a sandboxed
+helper and images use an isolated resource origin. **Preview page…** is an
+explicit Windows-only flow with its own browser profile, warning and script
+choice; it serves captured resources while blocking uncaptured network access.
+See [safe previews](safe-previews.md) and [captured-page preview](captured-page-preview.md).
+
+Current support boundaries are in [limitations](limitations.md), future work in
+[the roadmap](roadmap.md), and interaction conventions in
+[UX design principles](ux-principles.md).

@@ -83,8 +83,8 @@ matching, and case sensitivity. Expressions compile once under finite bounds.
 The persisted autoresponse gate controls registrations for newly admitted
 requests without changing any rule's enabled state, revision, response or
 priority. Pausing leaves other native automation active. Existing exchanges
-retain their original hook snapshot. Older workspaces default to the gate
-being on. Validation and activation reject stale generations.
+retain their original hook snapshot. New workspaces start with the gate on.
+Validation and activation reject stale generations.
 The same On/Paused control appears in Automation and Traffic.
 
 Guaranteed shadowing diagnostics compare equivalent matching behavior in

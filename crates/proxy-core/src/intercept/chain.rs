@@ -486,6 +486,10 @@ impl ExchangeChain {
                 context: self.context.clone(),
                 head: head.clone(),
             };
+            let _timing = self.context.measure_work(
+                "hook",
+                &format!("Request headers · {}", entry.identity.name),
+            );
             let action = self
                 .runner
                 .request_head(Arc::clone(&entry.interceptor), event, &self.context)
@@ -579,6 +583,10 @@ impl ExchangeChain {
                 context: self.context.clone(),
                 head: head.clone(),
             };
+            let _timing = self.context.measure_work(
+                "hook",
+                &format!("Request body planning · {}", entry.identity.name),
+            );
             let action = self
                 .runner
                 .request_body(Arc::clone(&entry.interceptor), event, &self.context)
@@ -595,7 +603,11 @@ impl ExchangeChain {
                     true,
                 );
             }
-            plans.push(action.0);
+            plans.push(
+                action
+                    .0
+                    .with_measurement_label("Request body", &entry.identity.name),
+            );
         }
         Ok(plans)
     }
@@ -612,12 +624,10 @@ impl ExchangeChain {
         limits: BodyPipelineLimits,
     ) -> Result<BodyPipeline, BodyPipelineError> {
         let plans = self.request_body_plans(head).await?;
-        Ok(BodyPipeline::from_plans(
-            plans,
-            self.context.clone(),
-            self.runner.clone(),
-            limits,
-        )?)
+        Ok(
+            BodyPipeline::from_plans(plans, self.context.clone(), self.runner.clone(), limits)?
+                .with_measurement_scope("Request body"),
+        )
     }
 
     /// Applies response-head callbacks in reverse entered order.
@@ -642,6 +652,10 @@ impl ExchangeChain {
                 head: head.clone(),
                 local_response,
             };
+            let _timing = self.context.measure_work(
+                "hook",
+                &format!("Response headers · {}", entry.identity.name),
+            );
             let action = self
                 .runner
                 .response_head(Arc::clone(&entry.interceptor), event, &self.context)
@@ -711,6 +725,10 @@ impl ExchangeChain {
                 response_head: response_head.clone(),
                 local_response,
             };
+            let _timing = self.context.measure_work(
+                "hook",
+                &format!("Response body planning · {}", entry.identity.name),
+            );
             let action = self
                 .runner
                 .response_body(Arc::clone(&entry.interceptor), event, &self.context)
@@ -727,7 +745,11 @@ impl ExchangeChain {
                     true,
                 );
             }
-            plans.push(action.0);
+            plans.push(
+                action
+                    .0
+                    .with_measurement_label("Response body", &entry.identity.name),
+            );
         }
         Ok(plans)
     }
@@ -748,12 +770,10 @@ impl ExchangeChain {
         let plans = self
             .response_body_plans(request_head, response_head, local_response)
             .await?;
-        Ok(BodyPipeline::from_plans(
-            plans,
-            self.context.clone(),
-            self.runner.clone(),
-            limits,
-        )?)
+        Ok(
+            BodyPipeline::from_plans(plans, self.context.clone(), self.runner.clone(), limits)?
+                .with_measurement_scope("Response body"),
+        )
     }
 
     /// Delivers successful terminal cleanup exactly once in reverse order.
@@ -845,6 +865,7 @@ impl CallbackGate {
         &self,
         context: &HookContext,
     ) -> Result<OwnedSemaphorePermit, HookExecutionError> {
+        let _timing = context.measure_work("permit", "Hook concurrency wait");
         tokio::select! {
             permit = Arc::clone(&self.permits).acquire_owned() => {
                 permit.map_err(|_| HookExecutionError::ShuttingDown)
@@ -1773,6 +1794,11 @@ mod tests {
             limits(Duration::from_secs(30), 1),
         );
         let mut chain = factory.create_exchange(metadata(1)).unwrap();
+        let performance = crate::performance::PerformanceRecorder::new(
+            SystemTime::now(),
+            std::time::Instant::now(),
+        );
+        chain.context().extensions().insert(performance.clone());
         let boundary = tokio::spawn(async move { chain.request_head(request_head()).await });
         entered.notified().await;
         boundary.abort();
@@ -1784,5 +1810,11 @@ mod tests {
         })
         .await
         .expect("hook task retained exchange state after boundary future was dropped");
+        let measured = performance.snapshot();
+        assert!(measured.valid());
+        assert!(measured.work.iter().any(|work| work.kind == "hook"
+            && work.label.contains("drop-tracking")
+            && work.calls == 1
+            && work.busy_nanos > 0));
     }
 }

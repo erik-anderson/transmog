@@ -383,3 +383,5 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 
 .status-tools { min-height:0; padding:.1rem .4rem; line-height:1.2; color:var(--muted); background:transparent; }
 .table-popover.proxy-status-popover { inset:3.5rem 1rem auto auto; margin:0; min-width:15rem; max-width:calc(100vw - 2rem); max-height:calc(100dvh - 4.5rem); }
+
+.trace-password-dialog {box-sizing:border-box;width:min(28rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto;padding:1rem;border:1px solid var(--line);border-radius:.45rem;color:var(--text);background:var(--panel);}.trace-password-dialog h2 {font-size:1rem;margin:0 0 .75rem;}.trace-password-dialog form {display:grid;gap:.6rem;}.trace-password-dialog::backdrop {background:rgb(0 0 0 / .25);}

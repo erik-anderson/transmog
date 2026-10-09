@@ -78,7 +78,6 @@ pub struct WorkspacePreferences {
     /// Response headers/body split percentage.
     pub response_body_split: u8,
     /// Percentage allocated to the autoresponse rule list beside its properties.
-    #[serde(default = "default_autoresponse_split")]
     pub autoresponse_split: u8,
     /// Wrap table cell contents.
     pub wrap_cells: bool,
@@ -86,10 +85,6 @@ pub struct WorkspacePreferences {
     pub compact_rows: bool,
     /// Ordered column presentation preferences.
     pub columns: Vec<ColumnPreference>,
-}
-
-fn default_autoresponse_split() -> u8 {
-    45
 }
 
 impl Default for WorkspacePreferences {

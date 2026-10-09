@@ -214,16 +214,18 @@ jobs:
         run: |
           . ./scripts/windows-release-common.ps1
           Assert-SignedRelease -ReleaseRoot artifacts/windows-signed -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID | Out-Host
-      - name: Attest the final signed installer and release metadata
+      - name: Attest the final signed installer, standalone CLI and release metadata
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             artifacts/windows-signed/*-setup.exe
+            artifacts/windows-signed/transmog-cli.exe
             artifacts/windows-signed/release-manifest.json
             artifacts/windows-signed/sbom.cdx.json
             artifacts/windows-signed/latest.json
             artifacts/windows-signed/*-setup.exe.sig
+            artifacts/windows-signed/*_windows-x64-symbols.zip
           create-storage-record: false
       - name: Retain and verify the Sigstore bundle
         env:
@@ -235,6 +237,11 @@ jobs:
           $installer = Get-ChildItem artifacts/windows-signed/*-setup.exe
           gh attestation verify $installer.FullName --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw 'Attestation verification failed.' }
+          gh attestation verify artifacts/windows-signed/transmog-cli.exe --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Standalone CLI attestation verification failed.' }
+          $symbols = Get-ChildItem artifacts/windows-signed/*_windows-x64-symbols.zip
+          gh attestation verify $symbols.FullName --repo erik-anderson/transmog --bundle artifacts/attestation/provenance.sigstore.json --signer-workflow erik-anderson/transmog/.github/workflows/windows-release.yml --source-ref $env:GITHUB_REF --source-digest $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Release PDB archive attestation verification failed.' }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-release-attestation-${{ github.run_attempt }}

@@ -66,7 +66,7 @@ export function cellText(row: SessionSummary, column: ColumnId): string {
     case 'path': return row.path;
     case 'url': return row.url ?? row.host+row.path;
     case 'protocol': return row.protocol === 'Http1' ? 'HTTP/1.1' : row.protocol === 'Http2' ? 'HTTP/2' : row.protocol;
-    case 'duration': return row.durationMs+' ms';
+    case 'duration': return row.durationMs == null ? '—' : row.durationMs+' ms';
     case 'response-bytes': return formatBytes(row.responseBytes);
     case 'request-bytes': return formatBytes(row.requestBytes);
     case 'state': return row.terminal === 'active' ? 'In progress' : row.terminal === 'completed' ? 'Completed' : 'Failed';

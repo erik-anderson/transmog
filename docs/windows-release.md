@@ -5,6 +5,40 @@ current-user NSIS installer that uses the Evergreen WebView2 runtime already
 present on the supported Windows host. The app does not bundle a browser or
 WebView runtime, require administrator installation, or fetch runtime UI assets.
 
+Each release also builds, signs, timestamps and publishes `transmog-cli.exe` as
+a separate asset. It has the same semantic version and is covered by
+release checksums, signature evidence and provenance. Qualification verifies its
+version command and confirms that the app installer contains no CLI executable.
+Local packaging returns both the installer and the standalone CLI paths.
+
+The interactive installer offers **Register Transmog to open .saz files**. This
+adds a current-user Open with/default-app registration and establishes a default
+only when none exists. Windows' existing default remains authoritative; users
+can select Transmog through Open with or default-app settings. Silent installs
+preserve the saved registration choice; `/SAZ=1` or `/SAZ=0` sets it explicitly.
+Updates preserve registration, and uninstall removes only registrations owned by
+that installation's exact command path.
+
+## Crash investigation symbols
+
+Every hosted release publishes `Transmog_<version>_windows-x64-symbols.zip` as a
+public GitHub Release asset. It contains full PDBs for the desktop executable,
+script host, preview worker, and standalone CLI. The build verifies each PDB's
+GUID and age against its executable before signing, then preserves the archive
+through the same-run artifact checks, release checksums, and provenance
+attestation. A missing or altered archive blocks release publication.
+
+`symbols-manifest.json` inside the archive records the source commit, run ID,
+version, target, debug identifiers, and hashes of the PDBs and unsigned binaries.
+To investigate a crash dump, download the symbols for that exact release,
+extract them, and add that directory to WinDbg's symbol search path. The debugger
+uses the PDB identifier and age to find the matching symbols. Rebuilding the same
+source can produce different identifiers, so keep the original release archive.
+The public release assets persist beyond the workflow's short-lived artifacts.
+
+The optimized release profile keeps full debug information and does not strip
+symbols. PDBs are distributed separately from the app installer and CLI executable.
+
 ## Manual GitHub release process
 
 The normal release path is **commit a version → manually build a signed draft →
@@ -53,9 +87,9 @@ decisions. No push or tag automatically starts a release build.
    ```
 
    The workflow builds the selected branch's commit at dispatch. Later pushes to
-   that branch do not change the run. The first successful build took about an hour,
-   including a 30-minute WebView soak; signing and qualification then took a few
-   minutes after approval. The separate **Windows unsigned installer** workflow
+   that branch do not change the run. Build and qualification progress is visible
+   in the run; the release build includes a 30-minute WebView soak.
+   The separate **Windows unsigned installer** workflow
    is available for development builds that do not need signing or a release.
 
 4. When the build passes, open the run's **Review deployments** prompt and approve
@@ -321,9 +355,9 @@ content-coding paths. Certificate validation remains enabled.
 
 ## Clean-machine release checklist
 
-The maintainer has deferred this checklist for the initial pipeline integration.
-Hosted Windows Server installer and WebView checks do not establish clean Windows
-11 qualification. Draft release evidence records that limitation.
+Hosted Windows Server installer and WebView checks do not establish clean
+Windows 11 qualification. Run this checklist for a release candidate and record
+its outcome, including any explicit maintainer deferral, with the release evidence.
 
 Use a disposable, fully updated Windows 11 VM with no Transmog state:
 

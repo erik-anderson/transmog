@@ -6,13 +6,16 @@ $evidenceRoot = Join-Path $fixture 'evidence'
 New-Item -ItemType Directory -Force $releaseRoot, $evidenceRoot | Out-Null
 $installerName = 'Transmog_0.1.0_x64-setup.exe'
 'fixture, never executable' | Set-Content -LiteralPath (Join-Path $releaseRoot $installerName)
+'standalone CLI fixture' | Set-Content -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')
+'symbols archive fixture' | Set-Content -LiteralPath (Join-Path $releaseRoot 'Transmog_0.1.0_windows-x64-symbols.zip')
+$cliHash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')).Hash
 $hash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $installerName)).Hash
 'fixture signature' | Set-Content -LiteralPath (Join-Path $releaseRoot "$installerName.sig")
 [ordered]@{ version = '0.1.0'; platforms = @{ 'windows-x86_64-nsis' = @{ url = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/$installerName"; signature = 'fixture signature' } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'latest.json')
 $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash } })
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Files = $files } |
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Cli = 'transmog-cli.exe'; Symbols = 'Transmog_0.1.0_windows-x64-symbols.zip'; Files = $files } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; CliRuntimeVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'installer-test.json')
 [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; UnprotectedJobAuthenticationDenied = $true } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'identity-permission-test.json')
@@ -78,7 +81,7 @@ try {
             $env:GITHUB_REF = "refs/heads/$($candidate.SourceBranch)"
             $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }
             & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot
-            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 7) { throw 'Wrong release track flags or asset count.' }
+            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 9) { throw 'Wrong release track flags or asset count.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }

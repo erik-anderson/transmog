@@ -19,6 +19,8 @@ const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsaf
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellView {
+    /// Saved-capture window without live proxy controls.
+    pub viewer_mode: bool,
     /// HTML document language.
     pub language: &'static str,
     /// Window and document title.
@@ -40,10 +42,12 @@ impl From<&AppStatus> for ShellView {
         let (lifecycle_label, lifecycle_kind) = match status.lifecycle {
             AppLifecycle::Stopped => ("Stopped", "stopped"),
             AppLifecycle::Running => ("Running", "running"),
+            AppLifecycle::Draining => ("Finishing requests", "draining"),
             AppLifecycle::Stopping => ("Stopping", "stopping"),
             AppLifecycle::Failed => ("Needs attention", "failed"),
         };
         Self {
+            viewer_mode: false,
             language: "en",
             page_title: "Transmog",
             heading: "Inspect traffic without losing the thread",

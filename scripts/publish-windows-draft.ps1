@@ -7,7 +7,7 @@ $identityTest = Get-Content -Raw -LiteralPath (Join-Path $EvidenceRoot 'identity
 foreach ($evidence in @($installerTest, $identityTest)) {
     if ($evidence.Commit -cne $env:GITHUB_SHA -or $evidence.RunId -cne $env:GITHUB_RUN_ID) { throw 'Qualification evidence is from a different run.' }
 }
-if (-not $installerTest.InstallVerified -or -not $installerTest.UninstallVerified -or -not $installerTest.UpdaterSignatureVerified -or -not $identityTest.UnprotectedJobAuthenticationDenied) { throw 'Release gate evidence did not pass.' }
+if (-not $installerTest.InstallVerified -or -not $installerTest.UninstallVerified -or -not $installerTest.CliRuntimeVerified -or -not $installerTest.UpdaterSignatureVerified -or -not $identityTest.UnprotectedJobAuthenticationDenied) { throw 'Release gate evidence did not pass.' }
 if (-not (Test-Path -LiteralPath (Join-Path $EvidenceRoot 'provenance.sigstore.json') -PathType Leaf)) { throw 'Missing verified provenance bundle.' }
 $expectedInstallerHash = ($manifest.Files | Where-Object Name -CEQ $manifest.Installer).Sha256
 if ($installerTest.InstallerSha256 -cne $expectedInstallerHash) { throw 'Qualification used a different installer.' }
@@ -30,7 +30,7 @@ $existing = @($releases | Where-Object tag_name -CEQ $tag)
 if ($existing.Count -gt 1 -or ($existing.Count -eq 1 -and -not $existing[0].draft)) { throw "Refusing to overwrite a published or ambiguous release: $tag" }
 $body = @{
     tag_name = $tag; target_commitish = $env:GITHUB_SHA; name = "Transmog $tag" + $(if ($manifest.ReleaseType -cne 'Stable') { " $($manifest.ReleaseType)" }); draft = $true; prerelease = ($manifest.ReleaseType -cne 'Stable')
-    body = "Signed Windows x64 NSIS installer. Publisher: $($manifest.Publisher).`n`nBuild, Authenticode/timestamp checks, hosted installer smoke test, Azure permission denial tests, and provenance verification passed in [run $env:GITHUB_RUN_ID](https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID). Source commit: $env:GITHUB_SHA.`n`nThe clean Windows 11 release checklist is deferred by the maintainer.`n`nBefore publishing, add release notes, review this installer, and choose whether this is a prerelease."
+    body = "Signed Windows x64 NSIS installer and standalone transmog-cli.exe. Publisher: $($manifest.Publisher).`n`nBuild, Authenticode/timestamp checks, hosted installer smoke test, Azure permission denial tests, and provenance verification passed in [run $env:GITHUB_RUN_ID](https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID). Source commit: $env:GITHUB_SHA.`n`nThe clean Windows 11 release checklist is deferred by the maintainer.`n`nBefore publishing, add release notes, review this installer, and choose whether this is a prerelease."
 } | ConvertTo-Json
 if ($existing.Count -eq 1) {
     $release = Invoke-RestMethod -Method Patch -Uri "$api/releases/$($existing[0].id)" -Headers $headers -ContentType 'application/json' -Body $body

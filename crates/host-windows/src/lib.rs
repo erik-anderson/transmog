@@ -348,6 +348,16 @@ impl OwnedCertificateRegistry {
 pub struct CurrentUserKeyProtection;
 
 impl CurrentUserKeyProtection {
+    /// Protects an app-owned directory before creating private material inside
+    /// it. Child files and directories inherit access for only the current user.
+    ///
+    /// # Errors
+    /// Returns an OS path or ACL failure.
+    pub fn protect_directory(&self, directory: &Path) -> Result<(), WindowsHostError> {
+        let payload = serde_json::json!({ "path": directory });
+        run_script(DIRECTORY_PROTECTION_SCRIPT, Some(&payload.to_string())).map(|_| ())
+    }
+
     /// Removes inherited access and grants full control only to the current
     /// user for one existing private-key file.
     ///
@@ -528,6 +538,19 @@ $acl.SetAccessRuleProtection($true, $false)
 $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.AccessControlType]::Allow)
 $acl.AddAccessRule($rule)
 [System.IO.File]::SetAccessControl($path, $acl)
+";
+
+const DIRECTORY_PROTECTION_SCRIPT: &str = r"
+$i = $env:TRANSMOG_INPUT | ConvertFrom-Json
+$path = [System.IO.Path]::GetFullPath([string]$i.path)
+if (-not [System.IO.Directory]::Exists($path)) { throw 'owned directory does not exist' }
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
+$acl.SetAccessRuleProtection($true, $false)
+$inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new($identity, [System.Security.AccessControl.FileSystemRights]::FullControl, $inherit, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
+$acl.AddAccessRule($rule)
+[System.IO.Directory]::SetAccessControl($path, $acl)
 ";
 
 #[cfg(test)]

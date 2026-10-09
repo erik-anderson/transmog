@@ -30,7 +30,8 @@ policy, certificate resolver, and WebSocket hooks.
 
 ## Embedding flow
 
-1. Create an `ApplicationSessionService` with finite `ServiceConfig` limits.
+1. Create an `ApplicationSessionService` with the chosen `ServiceConfig`
+   retention, per-entry and queue limits.
 2. Build the application's `ProxyComponents` as usual.
 3. Call `prepare_components` exactly once. It appends the service observer and
    the stable `transmog.session.interactive-control` hook; it does not
@@ -55,29 +56,33 @@ failure instead of making it best effort.
 
 ## Live catalog and subscriptions
 
-The catalog stores immutable snapshots in admission order under a configured
-session-count limit. A new exchange evicts the oldest terminal session. It
-never silently removes an active exchange; admission is rejected and counted
-when all retained entries are active.
+The catalog stores immutable snapshots in admission order. There is no live-entry
+count cap by default. An optional maximum evicts the oldest completed live entries;
+active requests may temporarily exceed it and imported entries are preserved.
+Changing the maximum applies immediately. Per-entry samples and details, query
+pages and subscription queues retain their separate bounds. See
+[the catalog model](../crates/proxy-session/src/catalog.rs) for configuration.
 
 Each snapshot may contain:
 
-- immutable original metadata and redacted boundary heads;
+- immutable original metadata and boundary heads under the selected privacy policy;
 - per-boundary observed byte counts and a bounded retained prefix;
 - terminal trailers, optional-hook diagnostics, attributed hook effects,
   route selection, and bounded route attempts;
 - completed or failed HTTP outcome and optional terminal WebSocket evidence.
 
-Observer redaction happens below the service. Authorization, proxy
-authorization, cookies, and set-cookie values therefore cannot enter the
-catalog through the runtime observer path. Body retention is opt-in through a
-finite per-session limit.
+The service defaults to redacting sensitive header values before catalog and
+capture publication. `set_redact_sensitive_headers` selects the caller's policy;
+the desktop and guided CLI use persistent preferences and collect sensitive
+headers by default. Runtime registrations separately select sensitive-header and
+body interest. Catalog body samples are opt-in with a per-session limit; product
+body storage sits above this metadata catalog.
 
 Queries use stable admission order, deterministic filters, a capped page size,
 and an opaque continuation cursor. The bounded broadcast is only a change hint.
 A slow subscriber receives `Lagged(count)` and must page authoritative state;
-subscriber lag, observer sequence gaps, stale events, rejected admission,
-eviction, bounded-detail loss, and WebSocket evidence lag are monotonic and
+subscriber lag, observer sequence gaps, stale events, eviction,
+bounded-detail loss and WebSocket evidence lag are monotonic and
 visible.
 
 ## Dynamic capture
@@ -87,8 +92,8 @@ create-new file semantics and never overwrites an artifact. Stopping appends the
 native seal and flushes. Starting twice and stopping while idle are typed.
 
 The service observer never performs file I/O. It updates the catalog and tries
-to enqueue the already-redacted event. Queue saturation, quota exhaustion, and
-writer errors move capture to a visible failed state without changing proxy
+to enqueue the privacy-filtered event. Queue saturation, configured quota exhaustion
+and writer errors move capture to a visible failed state without changing proxy
 traffic or corrupting catalog state. The native append format retains a
 recoverable valid prefix after interruption. Capture policy independently
 controls body-sample retention.
@@ -120,8 +125,10 @@ oversized headers or bodies, non-idempotent methods without explicit risk
 acknowledgement, and credential-bearing headers without explicit confirmation.
 The service never copies ambient credentials into a replay.
 
-Execution goes through a caller-supplied `ReplayExecutor`. An application
-should implement it over the same route policy and upstream stack used for
+Execution goes through a caller-supplied `ReplayExecutor`, which explicitly
+implements both owned-body and file-stream dispatch or reports that streaming
+is unavailable. Product file bodies stay outside the bounded in-memory request
+editor. Implement this over the same route policy and upstream stack used for
 normal traffic. The service does not create a second network stack. Execution
 is contained by cancellation, timeout, panic/task failure, and finite response
 header/body validation.
@@ -134,6 +141,13 @@ already-bound endpoint and returns an opaque restore token containing the exact
 prior state. Apply completes before the runtime is published and must roll back
 its own partial work on error.
 
+For the desktop's reversible off transition, `begin_drain` restores host state
+first and lets admitted work finish without a deadline. `resume_drain` reapplies
+host configuration and invalidates that pending shutdown while preserving the
+same run. Explicit `stop` uses the runtime's bounded shutdown and seals capture.
+The [service implementation](../crates/proxy-session/src/service.rs) owns transition
+serialization and restoration failures.
+
 The service retains the token and calls `restore` on normal stop. Restore must
 be safe to retry. If it fails, the same token is retained, restart is blocked,
 and `retry_host_restore` retries exact restoration. The armed token also has a
@@ -143,8 +157,7 @@ shipped by this crate, and no process-global singleton is assumed.
 ## Deliberate exclusions
 
 The service is not a capture database, saved-rule store, project model, stable
-IPC server, authentication vault, or UI state container. Its catalog is finite
-live state, subscriptions are lossy hints, native capture is the streaming
-durable record, and SAZ remains a finalized compatibility export. Durable
-indexing, project persistence, command-line option design, and product UX
-belong in layers above it.
+IPC server, authentication vault or UI state container. Its catalog is live
+metadata with configurable retention, subscriptions are lossy hints and native
+capture is the durable record. Saved-file indexing, project organization,
+command-line policy and product UX belong above it.

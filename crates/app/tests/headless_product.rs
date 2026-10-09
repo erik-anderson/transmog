@@ -72,6 +72,8 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let listener = start(&application, &environment).await;
     application
         .start_capture(CaptureStartRequest {
+            password: None,
+            include_network_context: false,
             path: workspace.capture.clone(),
             max_file_bytes: 64 * 1024 * 1024,
             retain_body_samples: true,
@@ -302,6 +304,9 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     application.stop_capture().await.unwrap();
     let json = application
         .export_capture(ExportRequest {
+            password: None,
+            source_password: None,
+            redact_sensitive_headers: false,
             source: workspace.capture.clone(),
             destination: workspace.json_export.clone(),
             format: ExportFormat::JsonLines,
@@ -311,6 +316,9 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
         .unwrap();
     let saz = application
         .export_capture(ExportRequest {
+            password: None,
+            source_password: None,
+            redact_sensitive_headers: false,
             source: workspace.capture.clone(),
             destination: workspace.saz_export.clone(),
             format: ExportFormat::SazStrict,
@@ -689,6 +697,8 @@ impl TestWorkspace {
             product_state_path: Some(self.root.join("product-state")),
             diagnostics_log_path: Some(self.root.join("diagnostics.jsonl")),
             body_store: Some(BodyStoreConfig {
+                storage: transmog_app::BufferStorage::Memory,
+                use_product_preferences: false,
                 root: self.root.join("body-cache"),
                 mode: RetentionMode::Circular,
                 max_bytes: BODY_STORE_BYTES,

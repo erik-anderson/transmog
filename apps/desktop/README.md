@@ -48,4 +48,6 @@ cover WebView2, accessibility, display scaling, and application lifecycle.
 Development guidance is in [ui/AGENTS.md](ui/AGENTS.md).
 
 Use [the Windows release guide](../../docs/windows-release.md) for packaging and
-[the CI guide](../../ci/README.md) for the manual unsigned installer workflow.
+[the CI guide](../../ci/README.md) for signed draft releases and the manual unsigned
+installer workflow. Current desktop behavior is described in
+[the product guide](../../docs/product-shell.md).

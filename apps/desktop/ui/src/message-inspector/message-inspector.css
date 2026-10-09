@@ -38,3 +38,5 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 
 .headers-table .header-size { width:6rem; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
 .headers-view .inspector-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; text-align:left; }
+
+.header-pages {display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem;padding:.4rem .5rem;font-size:.73rem;}.authentication-details {font-size:.72rem;position:relative;}.authentication-details summary {cursor:pointer;}.authentication-details p {margin:.2rem;white-space:normal;}

@@ -8,6 +8,20 @@ import { describeError } from '../utilities.js';
 export class SettingsWorkspace extends WorkspaceElement {
   checkUpdates(): void { this.$emit('check-updates'); }
   @attr view = 'traffic';
+  @observable bufferMode='automatic';
+  @observable entryLimitEnabled=false;
+  updateEntryLimit():void {this.entryLimitEnabled=(this.settingsForm.elements.namedItem('limitEntries') as HTMLInputElement).checked;}
+  @observable bufferSummary='Automatic uses half of installed RAM and keeps bodies in memory.';
+  updateBufferMode():void {this.bufferMode=(this.settingsForm.elements.namedItem('bufferMode') as HTMLSelectElement).value;}
+  private async refreshBufferStatus():Promise<void> {
+    try {
+      const status=await invoke<{installedRam:number|null;maxBytes:number|null;storage:string;retainedBytes:number}|null>('buffer_status');
+      if(status) {
+        const format=(bytes:number)=> (bytes/1073741824).toLocaleString(undefined,{maximumFractionDigits:2})+' GiB';
+        this.bufferSummary='Current buffer: '+(status.maxBytes===null?'No maximum':format(status.maxBytes)+' maximum')+' · '+(status.storage==='memory'?'Memory storage':'Disk storage')+(status.installedRam===null?' · Installed RAM unavailable; automatic uses 1 GiB.':' · '+format(status.installedRam)+' installed RAM');
+      }
+    } catch {this.bufferSummary='Buffer status unavailable. Automatic uses half installed RAM; larger or unlimited buffers write to disk.';}
+  }
   @observable settingsSection='preferences';
   @observable settingsDirty=false;
   @observable settingsBusy=false;
@@ -40,9 +54,26 @@ export class SettingsWorkspace extends WorkspaceElement {
   settingsForm!: HTMLFormElement;
   supportForm!: HTMLFormElement;
   ready!: Promise<void>;
+  private drainTimer: number | undefined;
+  private statusRevision = 0;
 
   protected hydratedCallback(): void { this.ready = this.initializeShell(); }
-  private renderAppStatus(status: AppStatus): void { this.hostRecoveryPending=status.hostRestorePending;this.proxyLifecycle = status.lifecycle; this.$emit('status-changed', status); }
+  private renderAppStatus(status: AppStatus): void {
+    this.statusRevision++;
+    this.hostRecoveryPending = status.hostRestorePending;
+    this.proxyLifecycle = status.lifecycle;
+    this.$emit('status-changed', status);
+    window.clearTimeout(this.drainTimer);
+    if (status.lifecycle === 'draining' || status.lifecycle === 'stopping') {
+      this.drainTimer = window.setTimeout(() => {
+        if (this.isConnected) void this.refreshStatus();
+      }, 750);
+    }
+  }
+  disconnectedCallback(): void {
+    window.clearTimeout(this.drainTimer);
+    super.disconnectedCallback();
+  }
   private applyTheme(theme: ProductState['preferences']['theme'], workspace?: WorkspacePreferences): void {
     this.$emit('preferences-changed', { theme, pageSize: Number((this.settingsForm.elements.namedItem('pageSize') as HTMLInputElement).value), workspace });
   }
@@ -60,6 +91,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.caSha256 = bootstrap.ownedCaSha256 ?? '';
       this.diagnosticsPathText = bootstrap.diagnosticsPath;
       this.populateSettings(productState);
+      void this.refreshBufferStatus();
       this.applyTheme(productState.preferences.theme, productState.workspace);
       this.renderAppStatus(status);
       this.updateCertificateState(bootstrap);
@@ -109,6 +141,8 @@ export class SettingsWorkspace extends WorkspaceElement {
   async stopProxy(): Promise<void> { await this.runProxyChange('stopping', () => this.stopProxyNow()); }
   private async runProxyChange(kind: string, operation: () => Promise<void>): Promise<void> {
     if (this.proxyPending) return;
+    this.statusRevision++;
+    window.clearTimeout(this.drainTimer);
     this.proxyPending = kind;
     this.$emit('proxy-operation',kind);
     try { await operation(); await this.refreshStatus(); }
@@ -117,8 +151,17 @@ export class SettingsWorkspace extends WorkspaceElement {
 
   private async startProxyNow(event?: Event): Promise<void> {
     event?.preventDefault();
+
     const data = new FormData(this.proxyForm);
     try {
+      if (this.proxyLifecycle === 'draining') {
+        const resumed = await invoke<AppStatus>('resume_application');
+        this.renderAppStatus(resumed);
+        if (resumed.lifecycle === 'running') {
+          this.setProxyOutput('Proxy resumed. Existing requests and connections remain active.', 'success');
+          return;
+        }
+      }
       const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
       this.updateCertificateState(bootstrap);
       if (bootstrap.hostRestorePending) {
@@ -325,7 +368,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     try {
       const status = await invoke<AppStatus>('stop_application');
       this.renderAppStatus(status);
-      this.setProxyOutput('Proxy stopped and any current-user Windows proxy changes were restored.', 'success');
+      this.setProxyOutput(status.lifecycle==='draining'?'Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener.':'Proxy stopped and any current-user Windows proxy changes were restored.', status.lifecycle==='draining'?'progress':'success');
     } catch (error: unknown) {
       const message = `Stop failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
@@ -349,16 +392,17 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async loadSettings():Promise<void> {if(this.settingsBusy)return;this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');this.populateSettings(state);this.applyTheme(state.preferences.theme,state.workspace);this.settingsText='Changes reverted.';}catch(error:unknown){this.settingsError='Settings could not be loaded: '+describeError(error);}finally{this.settingsBusy=false;}}
-  async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.sessionPageSize=Number(data.get('pageSize'));state.preferences.configureSystemProxy=true;state.privacy.retainRequestBodies=data.get('requestBodies')==='on';state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);this.settingsText='Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
+  async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.sessionPageSize=Number(data.get('pageSize'));state.preferences.configureSystemProxy=true;state.privacy.bufferLimit=this.bufferMode==='custom'?{mode:'custom',bytes:Math.round(Number(data.get('bufferSize'))*1073741824)}:{mode:this.bufferMode==='unlimited'?'unlimited':'automatic'};const entryLimit=data.get('limitEntries')==='on'?Number(data.get('maxEntries')):null;if(entryLimit!==null&&(!Number.isSafeInteger(entryLimit)||entryLimit<1))throw new Error('Choose a positive whole number of live entries.');state.privacy.maxLiveEntries=entryLimit;state.privacy.retainRequestBodies=data.get('requestBodies')==='on';state.privacy.requestBodyLimit=data.get('requestBodyLimit')==='unlimited'?null:25000000;state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);await this.refreshBufferStatus();this.settingsText='Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
 
   async refreshDiagnostics():Promise<void> {await this.runSupport(async()=>{try {const report=await invoke<{applicationVersion:string;runtime:{operatingSystem:string;architecture:string;webviewVersion:string|null};events:Array<{level:string}>;privacyNotice:string}>('diagnostics_report');this.supportFacts=[{label:'Transmog version',value:report.applicationVersion},{label:'Operating system',value:report.runtime.operatingSystem},{label:'Architecture',value:report.runtime.architecture},{label:'WebView2',value:report.runtime.webviewVersion??'Unavailable'},{label:'Recent events',value:String(report.events.length)},{label:'Warnings / errors',value:String(report.events.filter(event=>event.level!=='info').length)},{label:'Privacy',value:report.privacyNotice}];this.supportDetails=JSON.stringify(report,null,2);this.supportText='Diagnostics refreshed.';}catch(error:unknown){this.supportText='Diagnostics unavailable: '+describeError(error);}});}
   async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination:String(data.get('destination')??''),includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);}});}
   async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.renderAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
 
   async refreshStatus(): Promise<string | null> {
+    const revision = this.statusRevision;
     try {
       const status = await invoke<AppStatus>('app_status');
-      this.renderAppStatus(status);
+      if (revision === this.statusRevision) this.renderAppStatus(status);
       return null;
     } catch (error: unknown) {
       const message = `Status unavailable: ${describeError(error)}`;
@@ -370,10 +414,17 @@ export class SettingsWorkspace extends WorkspaceElement {
   private populateSettings(state: ProductState): void {
     this.settingsDirty=false;this.supportPathsAllowed=state.privacy.includePathsInSupportBundles;
     const elements = this.settingsForm.elements;
+    this.bufferMode=state.privacy.bufferLimit.mode;
+    this.entryLimitEnabled=state.privacy.maxLiveEntries!==null;
+    (elements.namedItem('limitEntries') as HTMLInputElement).checked=this.entryLimitEnabled;
+    (elements.namedItem('maxEntries') as HTMLInputElement).value=String(state.privacy.maxLiveEntries??10000);
+    (elements.namedItem('bufferMode') as HTMLSelectElement).value=this.bufferMode;
+    (elements.namedItem('bufferSize') as HTMLInputElement).value=String(state.privacy.bufferLimit.mode==='custom'?state.privacy.bufferLimit.bytes/1073741824:1);
     (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
     (elements.namedItem('pageSize') as HTMLInputElement).value = String(state.preferences.sessionPageSize);
-    (elements.namedItem('requestBodies') as HTMLInputElement).checked = state.privacy.retainRequestBodies ?? true;
-    (elements.namedItem('redactHeaders') as HTMLInputElement).checked = state.privacy.redactSensitiveHeaders ?? false;
+    (elements.namedItem('requestBodies') as HTMLInputElement).checked = state.privacy.retainRequestBodies;
+    (elements.namedItem('requestBodyLimit') as HTMLSelectElement).value=state.privacy.requestBodyLimit===null?'unlimited':'25000000';
+    (elements.namedItem('redactHeaders') as HTMLInputElement).checked = state.privacy.redactSensitiveHeaders;
     (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
     (elements.namedItem('captureBodies') as HTMLInputElement).checked = state.privacy.retainBodySamples;
     (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;

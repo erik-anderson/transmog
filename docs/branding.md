@@ -21,10 +21,11 @@ Developer-facing identifiers follow their ecosystem conventions:
   under the single user-visible `%LOCALAPPDATA%\Transmog` folder. The package
   identifier must not be used as an application-data folder name.
 
-Native captures use the `.tmcap` extension and `TMCAP01` preamble. Extended SAZ
-exports use `transmog/manifest.json` and the `transmog-saz-extension-v1` format
-marker. Pre-Transmog development formats are intentionally unsupported.
+Native captures use the `.tmcap` extension; their encoding is described in
+[the native format guide](native-capture-format.md). Extended SAZ naming and
+interoperability are described in [SAZ compatibility](saz-compatibility.md).
+The desktop and CLI have separate state directories: CLI root ownership and
+preferences live under `%LOCALAPPDATA%\Transmog-cli`.
 
-The source repository retains its existing GitHub URL until the remote
-repository is renamed. Package metadata must continue to point at a real URL;
-the URL is not a user-visible product name.
+Package metadata links to the project's actual repository URL. A repository URL
+is not a user-visible product name.

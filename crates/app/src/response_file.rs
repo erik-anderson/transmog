@@ -52,12 +52,18 @@ impl ResponseFile {
     /// Returns bounded read, coding, byte-limit, or filesystem failures.
     pub async fn save_to(self, destination: PathBuf) -> Result<ResponseFileResult, AppError> {
         let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || runtime.block_on(self.write_to(&destination)))
-            .await
-            .map_err(|_| unavailable("Response save worker failed"))?
+        tokio::task::spawn_blocking(move || {
+            runtime.block_on(self.write_to(&destination, MAX_FILE_BYTES))
+        })
+        .await
+        .map_err(|_| unavailable("Response save worker failed"))?
     }
 
-    async fn write_to(mut self, destination: &Path) -> Result<ResponseFileResult, AppError> {
+    pub(crate) async fn write_to(
+        mut self,
+        destination: &Path,
+        limit: u64,
+    ) -> Result<ResponseFileResult, AppError> {
         if !destination.is_absolute() || destination.file_name().is_none() {
             return Err(AppError::new(
                 ErrorCategory::InvalidInput,
@@ -70,7 +76,7 @@ impl ResponseFile {
             .ok_or_else(|| unavailable("Response destination is unavailable"))?;
         let mut output = tempfile::NamedTempFile::new_in(parent)
             .map_err(|_| unavailable("Response file could not be created"))?;
-        let mut decoders = response_decoders(&self.metadata)?;
+        let mut decoders = response_decoders(&self.metadata, limit)?;
         let (mut encoded_bytes, mut decoded_bytes) = (0_u64, 0_u64);
         let mut buffer = [0_u8; 16 * 1024];
         loop {
@@ -82,12 +88,13 @@ impl ResponseFile {
                 break;
             }
             encoded_bytes = encoded_bytes.saturating_add(count as u64);
-            if encoded_bytes > self.metadata.retained_bytes || encoded_bytes > MAX_FILE_BYTES {
+            if encoded_bytes > self.metadata.retained_bytes || encoded_bytes > limit {
                 return Err(unavailable("Retained response length changed"));
             }
             write_frames(
                 &mut output,
                 &mut decoded_bytes,
+                limit,
                 decode_frames(
                     &mut decoders,
                     vec![BodyFrame::Data(Bytes::copy_from_slice(&buffer[..count]))],
@@ -95,7 +102,7 @@ impl ResponseFile {
                 .await?,
             )?;
         }
-        if encoded_bytes != self.metadata.retained_bytes {
+        if self.metadata.length_known && encoded_bytes != self.metadata.retained_bytes {
             return Err(unavailable("Retained response is incomplete"));
         }
         for index in 0..decoders.len() {
@@ -106,6 +113,7 @@ impl ResponseFile {
             write_frames(
                 &mut output,
                 &mut decoded_bytes,
+                limit,
                 decode_frames(&mut decoders[index + 1..], frames).await?,
             )?;
         }
@@ -208,11 +216,14 @@ pub(crate) fn prepare(
     })
 }
 
-fn response_decoders(metadata: &StoredBodyMetadata) -> Result<Vec<ContentDecoder>, AppError> {
+fn response_decoders(
+    metadata: &StoredBodyMetadata,
+    limit: u64,
+) -> Result<Vec<ContentDecoder>, AppError> {
     if metadata.content_codings.is_empty() || metadata.retained_bytes == 0 {
         return Ok(Vec::new());
     }
-    let bound = NonZeroUsize::new(usize::try_from(MAX_FILE_BYTES).expect("file limit fits usize"))
+    let bound = NonZeroUsize::new(usize::try_from(limit).expect("file limit fits usize"))
         .expect("nonzero file limit");
     let defaults = ContentLimits::default();
     let limits = ContentLimits::new(
@@ -259,15 +270,16 @@ async fn decode_frames(
 fn write_frames(
     output: &mut impl Write,
     count: &mut u64,
+    limit: u64,
     frames: Vec<BodyFrame>,
 ) -> Result<(), AppError> {
     for frame in frames {
         if let BodyFrame::Data(bytes) = frame {
             *count = count.saturating_add(bytes.len() as u64);
-            if *count > MAX_FILE_BYTES {
+            if *count > limit {
                 return Err(AppError::new(
                     ErrorCategory::Limit,
-                    "Decoded response exceeds the one-GiB file limit",
+                    "Decoded response exceeds the file size limit",
                     false,
                 ));
             }
@@ -303,9 +315,11 @@ mod tests {
 
     fn metadata(length: usize, codings: Vec<String>) -> StoredBodyMetadata {
         StoredBodyMetadata {
+            length_known: true,
             exchange_id: format!("{:032x}", 1),
             boundary: "client-response",
             observed_bytes: length as u64,
+            wire_body_bytes: Some(length as u64),
             retained_bytes: length as u64,
             availability: BodyAvailability::Complete,
             media_type: Some("image/webp".to_owned()),

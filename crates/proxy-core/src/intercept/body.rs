@@ -211,6 +211,7 @@ impl BodyPlan {
 pub struct BodyPlanSelection {
     plan: BodyPlan,
     representation: BodyRepresentation,
+    measurement_label: Option<std::sync::Arc<str>>,
 }
 
 impl BodyPlanSelection {
@@ -219,6 +220,7 @@ impl BodyPlanSelection {
         Self {
             plan,
             representation,
+            measurement_label: None,
         }
     }
 
@@ -237,8 +239,18 @@ impl BodyPlanSelection {
         &self.plan
     }
 
-    pub(crate) fn into_parts(self) -> (BodyPlan, BodyRepresentation) {
-        (self.plan, self.representation)
+    pub(crate) fn with_measurement_label(
+        mut self,
+        direction: &str,
+        label: &std::sync::Arc<str>,
+    ) -> Self {
+        if !matches!(self.plan, BodyPlan::PassThrough) {
+            self.measurement_label = Some(std::sync::Arc::from(format!("{direction} · {label}")));
+        }
+        self
+    }
+    pub(crate) fn into_parts(self) -> (BodyPlan, BodyRepresentation, Option<std::sync::Arc<str>>) {
+        (self.plan, self.representation, self.measurement_label)
     }
 }
 
@@ -248,6 +260,7 @@ impl std::fmt::Debug for BodyPlanSelection {
             .debug_struct("BodyPlanSelection")
             .field("plan", &self.plan)
             .field("representation", &self.representation)
+            .field("measurement_label", &self.measurement_label)
             .finish()
     }
 }
@@ -390,6 +403,7 @@ impl std::fmt::Debug for BodyStageKind {
 
 #[derive(Debug)]
 struct BodyStage {
+    measurement_label: Option<std::sync::Arc<str>>,
     kind: BodyStageKind,
     representation: BodyRepresentation,
     output_sequence: FrameSequence,
@@ -405,6 +419,7 @@ pub struct BodyPipeline {
     stages: Vec<BodyStage>,
     input_sequence: FrameSequence,
     context: HookContext,
+    measurement_scope: &'static str,
     gate: CallbackGate,
     limits: BodyPipelineLimits,
     representation: BodyRepresentation,
@@ -426,7 +441,7 @@ impl BodyPipeline {
         let mut source_body_visible = true;
         let mut stages = Vec::new();
         for selection in plans {
-            let (plan, selected_representation) = selection.into_parts();
+            let (plan, selected_representation, measurement_label) = selection.into_parts();
             plan.validates_representation(selected_representation)?;
             representation = representation.combine(selected_representation)?;
             modifies_body |= !matches!(plan, BodyPlan::PassThrough);
@@ -449,6 +464,7 @@ impl BodyPipeline {
                 };
                 BodyStage {
                     kind,
+                    measurement_label,
                     representation: selected_representation,
                     output_sequence: FrameSequence::default(),
                 }
@@ -459,6 +475,7 @@ impl BodyPipeline {
             stages,
             input_sequence: FrameSequence::default(),
             context,
+            measurement_scope: "Body",
             gate,
             limits,
             representation,
@@ -466,6 +483,21 @@ impl BodyPipeline {
             modifies_body,
             finished: false,
         })
+    }
+
+    /// Measures a content-codec operation on this pipeline's exchange clock.
+    pub fn measure_work(
+        &self,
+        kind: &'static str,
+        label: &str,
+    ) -> Option<crate::performance::WorkTimer> {
+        self.context
+            .measure_work(kind, &format!("{} · {label}", self.measurement_scope))
+    }
+
+    pub(super) fn with_measurement_scope(mut self, scope: &'static str) -> Self {
+        self.measurement_scope = scope;
+        self
     }
 
     /// Aggregated representation required by all active stages.
@@ -602,6 +634,13 @@ impl BodyPipeline {
         index: usize,
         frame: BodyFrame,
     ) -> Result<Vec<BodyFrame>, BodyPipelineError> {
+        let _timing = self.context.measure_work(
+            "transform",
+            self.stages[index]
+                .measurement_label
+                .as_deref()
+                .unwrap_or("Body transformation"),
+        );
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let mut owned = filter
@@ -634,6 +673,13 @@ impl BodyPipeline {
     }
 
     async fn finish_stage(&mut self, index: usize) -> Result<Vec<BodyFrame>, BodyPipelineError> {
+        let _timing = self.context.measure_work(
+            "transform",
+            self.stages[index]
+                .measurement_label
+                .as_deref()
+                .unwrap_or("Body transformation"),
+        );
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let Some(mut owned) = filter.take() else {

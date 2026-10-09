@@ -244,11 +244,21 @@ impl ContentBodyPipeline {
         self.ensure_active()?;
         self.terminal = true;
 
-        let decoded = self.decoders.finish().await?;
+        let decoded = {
+            let _timing = (!self.decoders.is_empty())
+                .then(|| self.body.measure_work("decode", "Content decoding"))
+                .flatten();
+            self.decoders.finish().await?
+        };
         let mut output = self.process_hook_input(decoded, true).await?;
         let body_output = self.body.finish().await?;
         output.extend(self.process_hook_output(body_output).await?);
-        let encoded = self.encoders.finish().await?;
+        let encoded = {
+            let _timing = (!self.encoders.0.is_empty())
+                .then(|| self.body.measure_work("encode", "Content encoding"))
+                .flatten();
+            self.encoders.finish().await?
+        };
         output.extend(self.record_output(encoded)?);
         Ok(output)
     }
@@ -261,7 +271,10 @@ impl ContentBodyPipeline {
             self.process_hook_input(vec![frame], self.decoded_source_frames)
                 .await
         } else {
-            let decoded = self.decoders.process(frame).await?;
+            let decoded = {
+                let _timing = self.body.measure_work("decode", "Content decoding");
+                self.decoders.process(frame).await?
+            };
             self.process_hook_input(decoded, true).await
         }
     }
@@ -293,7 +306,12 @@ impl ContentBodyPipeline {
                 self.repair_trailers(frame);
             }
         }
-        let encoded = self.encoders.process(frames).await?;
+        let encoded = {
+            let _timing = (!self.encoders.0.is_empty())
+                .then(|| self.body.measure_work("encode", "Content encoding"))
+                .flatten();
+            self.encoders.process(frames).await?
+        };
         self.record_output(encoded)
     }
 

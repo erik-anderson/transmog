@@ -1,9 +1,14 @@
 #![allow(clippy::needless_pass_by_value)] // Tauri commands deserialize owned IPC arguments.
 
+#[path = "captured_preview.rs"]
+mod captured_preview;
+#[path = "window_workspaces.rs"]
+mod workspaces;
+
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -23,13 +28,14 @@ use transmog_app::{
     AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
     BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, DiagnosticLevel,
-    DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
-    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, ResponseAsset,
-    ResponseAssetEdit, ResponseAssetInspection, ResponseFileResult, RuntimeDiagnostics,
-    ScriptAction, ScriptCandidate, ScriptDraft, ScriptInvocation, ScriptStatus, SessionDetail,
-    SessionHint, SessionPage, SessionQueryInput, SessionResponseAsset, SupportBundleRequest,
-    SupportBundleResult, SystemReplayExecutor, WindowState, WorkspacePreferences,
+    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, ComposerSource,
+    DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
+    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, RequestCommand,
+    RequestCommandFormat, ResponseAsset, ResponseAssetEdit, ResponseAssetInspection,
+    ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
+    ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
+    SessionResponseAsset, SupportBundleRequest, SupportBundleResult, SystemReplayExecutor,
+    TraceSaveOptions, TraceSaveResult, WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -38,11 +44,12 @@ use transmog_host_windows::{
 };
 
 const UI_HOST: &str = "transmog-ui.localhost";
-const AUTOMATIC_CAPTURE_BYTES: u64 = 1024 * 1024 * 1024;
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
 struct DesktopState {
+    workspaces: Arc<workspaces::WindowWorkspaces>,
+    webview_data_path: PathBuf,
     application: Application,
     host: Arc<WindowsProxyIntegration>,
     owned_certificate: OwnedCertificateRegistry,
@@ -50,9 +57,7 @@ struct DesktopState {
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     diagnostics_path: PathBuf,
-    capture_root: PathBuf,
     export_root: PathBuf,
-    live_capture_path: Arc<Mutex<Option<PathBuf>>>,
     closing: Arc<AtomicBool>,
 }
 
@@ -116,6 +121,17 @@ async fn install_update(
     let result = async {
         updates.ensure_ready()?;
         let _lifecycle = state.certificate_operation.lock().await;
+        if !state
+            .workspaces
+            .viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+        {
+            return Err(
+                "Close saved traffic viewer windows before installing the update.".to_owned(),
+            );
+        }
         if let Some(window) = app.get_webview_window("main") {
             persist_window_state(&state.application, &window.as_ref().window());
         }
@@ -147,6 +163,8 @@ async fn install_update(
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)] // Independent file, trust, and recovery observations for IPC.
 struct DesktopBootstrap {
+    viewer_mode: bool,
+    windows: bool,
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     ca_files_present: bool,
@@ -157,15 +175,41 @@ struct DesktopBootstrap {
     diagnostics_path: PathBuf,
 }
 
-#[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
-fn app_status(state: State<'_, DesktopState>) -> AppStatus {
-    state.application.status()
+impl DesktopState {
+    fn window_application(&self, window: &tauri::WebviewWindow) -> Result<Application, AppError> {
+        self.workspaces
+            .application(&self.application, window.label())
+    }
 }
 
 #[tauri::command]
-fn product_state(state: State<'_, DesktopState>) -> ProductState {
-    state.application.product_state()
+#[allow(clippy::needless_pass_by_value)]
+fn app_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<AppStatus, AppError> {
+    let application = state.window_application(&window)?;
+    Ok(application.status())
+}
+
+#[tauri::command]
+fn buffer_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<transmog_app::BufferStatus>, AppError> {
+    Ok(state
+        .window_application(&window)?
+        .body_store()
+        .map(transmog_app::BodyStore::buffer_status))
+}
+
+#[tauri::command]
+fn product_state(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<ProductState, AppError> {
+    let application = state.window_application(&window)?;
+    Ok(application.product_state())
 }
 
 #[tauri::command]
@@ -179,13 +223,18 @@ fn save_product_state(
 #[tauri::command]
 fn save_workspace_preferences(
     preferences: WorkspacePreferences,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<WorkspacePreferences, AppError> {
-    state.application.save_workspace_preferences(preferences)
+    let application = state.window_application(&window)?;
+    application.save_workspace_preferences(preferences)
 }
 
 #[tauri::command]
-fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap, String> {
+fn desktop_bootstrap(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<DesktopBootstrap, String> {
     let owned_ca_sha256 = state
         .owned_certificate
         .owned_thumbprint()
@@ -197,6 +246,8 @@ fn desktop_bootstrap(state: State<'_, DesktopState>) -> Result<DesktopBootstrap,
         .map_err(|error| error.to_string())?
         .unwrap_or(false);
     Ok(DesktopBootstrap {
+        viewer_mode: window.label() != "main",
+        windows: true,
         ca_certificate_path: state.ca_certificate_path.clone(),
         ca_private_key_path: state.ca_private_key_path.clone(),
         ca_files_present: state.ca_certificate_path.is_file()
@@ -235,9 +286,80 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 fn remove_traffic_entries(
     ids: Vec<String>,
     restore: bool,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<String>, AppError> {
-    state.application.remove_traffic_entries(&ids, restore)
+    let application = state.window_application(&window)?;
+    application.remove_traffic_entries(&ids, restore)
+}
+
+#[tauri::command]
+fn remove_unselected_traffic_entries(
+    ids: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state
+        .window_application(&window)?
+        .remove_unselected_traffic_entries(&ids)
+}
+
+#[tauri::command]
+async fn search_traffic(
+    request: transmog_app::TrafficSearchRequest,
+    on_progress: Channel<transmog_app::TrafficSearchProgress>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficSearchResult, AppError> {
+    let application = state.window_application(&window)?;
+    let cancel = application.clone();
+    application
+        .search_traffic(
+            request,
+            Arc::new(move |progress| {
+                let operation = progress.operation_id.clone();
+                if on_progress.send(progress).is_err() {
+                    cancel.cancel_traffic_search(&operation);
+                }
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+async fn traffic_search_entry(
+    search_id: String,
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficSearchEntry, AppError> {
+    state
+        .window_application(&window)?
+        .traffic_search_entry(&search_id, &id)
+        .await
+}
+
+#[tauri::command]
+fn matching_traffic_ids(
+    query: SessionQueryInput,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state
+        .window_application(&window)?
+        .matching_traffic_ids(&query)
+}
+
+#[tauri::command]
+fn cancel_traffic_search(
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .cancel_traffic_search(&operation_id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -430,8 +552,12 @@ async fn prepare_update_handoff(state: State<'_, DesktopState>) -> Result<AppSta
 
 #[tauri::command]
 async fn stop_application(state: State<'_, DesktopState>) -> Result<AppStatus, AppError> {
-    state.application.shutdown().await?;
-    Ok(state.application.status())
+    state.application.stop_proxy().await
+}
+
+#[tauri::command]
+async fn resume_application(state: State<'_, DesktopState>) -> Result<AppStatus, AppError> {
+    state.application.resume_proxy().await
 }
 
 #[tauri::command]
@@ -473,49 +599,14 @@ async fn start_proxy(
         DiagnosticLevel::Info,
         "desktop",
         "proxy-start-requested",
-        "proxy start requested with automatic capture and current-user Windows proxy integration",
+        "proxy start requested with current-user Windows proxy integration",
     );
-    std::fs::create_dir_all(&state.capture_root)
-        .map_err(|error| format!("automatic capture directory is unavailable: {error}"))?;
-    let (capture_path, capture_started) = match state.application.capture_status() {
-        CaptureReadModel::Active { path, .. } => (path, false),
-        CaptureReadModel::Shutdown => {
-            return Err("capture service is unavailable until Transmog restarts".to_owned());
-        }
-        CaptureReadModel::Idle
-        | CaptureReadModel::Sealed { .. }
-        | CaptureReadModel::Failed { .. } => {
-            let path = unique_artifact_path(&state.capture_root, "live", "tmcap");
-            state
-                .application
-                .start_capture(CaptureStartRequest {
-                    path: path.clone(),
-                    max_file_bytes: AUTOMATIC_CAPTURE_BYTES,
-                    retain_body_samples: state
-                        .application
-                        .product_state()
-                        .privacy
-                        .retain_body_samples,
-                })
-                .await
-                .map_err(|error| error.to_string())?;
-            (path, true)
-        }
-    };
-    *state
-        .live_capture_path
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(capture_path);
     let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
-    match state.application.start_proxy(request, host).await {
-        Ok(status) => Ok(status),
-        Err(error) => {
-            if capture_started {
-                let _ = state.application.stop_capture().await;
-            }
-            Err(error.to_string())
-        }
-    }
+    state
+        .application
+        .start_proxy(request, host)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -780,22 +871,210 @@ fn remove_managed_ca_files(
 #[tauri::command]
 fn query_sessions(
     query: SessionQueryInput,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<SessionPage, AppError> {
-    state.application.query_sessions(query)
+    let application = state.window_application(&window)?;
+    application.query_sessions(query)
 }
 
 #[tauri::command]
-fn session_detail(id: String, state: State<'_, DesktopState>) -> Result<SessionDetail, AppError> {
-    state.application.session_detail(&id)
+fn session_detail(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<SessionDetail, AppError> {
+    let application = state.window_application(&window)?;
+    application.session_detail(&id)
+}
+
+#[tauri::command]
+async fn request_command(
+    id: String,
+    format: RequestCommandFormat,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<RequestCommand, AppError> {
+    let application = state.window_application(&window)?;
+    let app = application.clone();
+    tokio::task::spawn_blocking(move || app.request_command(&id, format))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+async fn inspect_headers(
+    id: String,
+    boundary: String,
+    offset: usize,
+    largest_first: bool,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::HeaderPage, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || {
+        application.inspect_headers(&id, &boundary, offset, largest_first)
+    })
+    .await
+    .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+async fn copy_message_headers(
+    id: String,
+    boundary: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.copy_message_headers(&id, &boundary))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+fn copy_all_headers(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    let application = state.window_application(&window)?;
+    application.copy_all_headers(&id)
+}
+
+#[tauri::command]
+async fn composer_source(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<ComposerSource, AppError> {
+    let application = state.window_application(&window)?;
+    let app = application.clone();
+    tokio::task::spawn_blocking(move || app.composer_source(&id))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
+async fn save_request_body(
+    id: String,
+    format: RequestCommandFormat,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<RequestCommand>, AppError> {
+    let application = state.window_application(&window)?;
+    let app = application.clone();
+    let file = tokio::task::spawn_blocking(move || app.prepare_request_file(&id))
+        .await
+        .map_err(|_| request_action_error())??;
+    let Some(destination) = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save complete request body as")
+        .set_file_name("request-body.bin")
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path_text = destination.path().to_str().ok_or_else(|| AppError {
+        category: transmog_app::ErrorCategory::InvalidInput,
+        message: "Choose a request body path that can be represented in a command".into(),
+        retryable: false,
+    })?;
+    let command = file.command(format, path_text)?;
+    file.save_to(destination.path().to_owned()).await?;
+    Ok(Some(command))
+}
+
+fn request_action_error() -> AppError {
+    AppError {
+        category: transmog_app::ErrorCategory::Unavailable,
+        message: "Request action worker failed".into(),
+        retryable: true,
+    }
+}
+
+#[tauri::command]
+async fn import_trace(
+    request: transmog_app::TraceImportRequest,
+    on_progress: Channel<transmog_app::TraceImportProgress>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TraceImportResult, AppError> {
+    let application = state.window_application(&window)?;
+    let cancel_application = application.clone();
+    application
+        .import_trace(
+            request,
+            Arc::new(move |progress| {
+                let operation = progress.operation_id.clone();
+                if on_progress.send(progress).is_err() {
+                    cancel_application.cancel_trace_import(&operation);
+                }
+            }),
+        )
+        .await
+}
+
+#[tauri::command]
+fn cancel_trace_import(
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .cancel_trace_import(&operation_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn trace_metadata_list(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<transmog_app::TraceMetadataView>, AppError> {
+    Ok(state.window_application(&window)?.trace_metadata_list())
+}
+
+#[tauri::command]
+fn trace_metadata(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TraceMetadataView, AppError> {
+    state.window_application(&window)?.trace_metadata(&id)
 }
 
 #[tauri::command]
 async fn inspect_body(
     request: BodyInspectionRequest,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<BodyInspection, AppError> {
-    state.application.inspect_body(request).await
+    let application = state.window_application(&window)?;
+    application.inspect_body(request).await
+}
+
+#[tauri::command]
+async fn save_traffic_trace(
+    options: TraceSaveOptions,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<TraceSaveResult>, AppError> {
+    let application = state.window_application(&window)?;
+    let picker = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save traffic trace")
+        .set_file_name("Transmog-trace.tmcap")
+        .add_filter("Traffic traces", &["tmcap"]);
+    let Some(file) = picker.save_file().await else {
+        return Ok(None);
+    };
+    let result = application
+        .save_traffic_trace(file.path().to_owned(), options)
+        .await?;
+    application.remember_artifact(result.destination.clone(), ArtifactKind::NativeCapture);
+    Ok(Some(result))
 }
 
 #[tauri::command]
@@ -805,7 +1084,8 @@ async fn save_response_body(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Option<ResponseFileResult>, AppError> {
-    let application = state.application.clone();
+    let application = state.window_application(&window)?;
+    let application = application.clone();
     let prepared = tokio::task::spawn_blocking(move || {
         application.prepare_response_file(&session_id, &boundary)
     })
@@ -831,17 +1111,29 @@ async fn save_response_body(
 #[tauri::command]
 fn watch_sessions(
     on_event: Channel<SessionHint>,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<(), AppError> {
-    state.application.record_diagnostic(
+    let application = state.window_application(&window)?;
+    application.record_diagnostic(
         DiagnosticLevel::Info,
         "desktop",
         "session-watch-requested",
         "live session refresh requested",
     );
-    let mut updates = state.application.subscribe_session_updates()?;
+    let mut updates = application.subscribe_session_updates()?;
     tauri::async_runtime::spawn(async move {
-        while let Ok(mut hint) = updates.recv().await {
+        loop {
+            let update = tokio::select! {
+                update = updates.recv() => update,
+                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                    if window.is_visible().is_err() { break; }
+                    continue;
+                }
+            };
+            let Ok(mut hint) = update else {
+                break;
+            };
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(75);
             loop {
                 tokio::select! {
@@ -861,7 +1153,7 @@ fn watch_sessions(
             }
         }
     });
-    state.application.record_diagnostic(
+    application.record_diagnostic(
         DiagnosticLevel::Info,
         "desktop",
         "session-watch-started",
@@ -900,14 +1192,20 @@ async fn disable_breakpoints(state: State<'_, DesktopState>) -> Result<Breakpoin
 #[tauri::command]
 async fn execute_composer(
     request: ComposerRequest,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<ComposerResult, AppError> {
-    state.application.execute_composer(request).await
+    let application = state.window_application(&window)?;
+    application.execute_composer(request).await
 }
 
 #[tauri::command]
-fn composer_history(state: State<'_, DesktopState>) -> Vec<ComposerSnapshot> {
-    state.application.composer_history()
+fn composer_history(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<ComposerSnapshot>, AppError> {
+    let application = state.window_application(&window)?;
+    Ok(application.composer_history())
 }
 
 #[tauri::command]
@@ -964,29 +1262,31 @@ async fn export_capture(
 
 #[tauri::command]
 async fn export_live_capture(state: State<'_, DesktopState>) -> Result<ExportResult, String> {
-    let source = state
-        .live_capture_path
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-        .ok_or_else(|| "Start the proxy before exporting its traffic.".to_owned())?;
     std::fs::create_dir_all(&state.export_root)
         .map_err(|error| format!("capture export directory is unavailable: {error}"))?;
     let destination = unique_artifact_path(&state.export_root, "Transmog-capture", "tmcap");
     let result = state
         .application
-        .export_capture(ExportRequest {
-            source,
-            destination: destination.clone(),
-            format: ExportFormat::Native,
-            max_source_bytes: 4 * 1024 * 1024 * 1024,
-        })
+        .save_traffic_trace(
+            destination.clone(),
+            transmog_app::TraceSaveOptions::default(),
+        )
         .await
         .map_err(|error| error.to_string())?;
     state
         .application
-        .remember_artifact(destination, ArtifactKind::NativeCapture);
-    Ok(result)
+        .remember_artifact(destination.clone(), ArtifactKind::NativeCapture);
+    Ok(ExportResult {
+        destination,
+        records: result.entries,
+        bytes: result.bytes,
+        source_sealed: true,
+        source_truncated_tail: false,
+        fidelity: format!(
+            "Saved retained Traffic; {} incomplete body boundaries",
+            result.incomplete_bodies
+        ),
+    })
 }
 
 fn unique_artifact_path(root: &std::path::Path, prefix: &str, extension: &str) -> PathBuf {
@@ -1048,8 +1348,6 @@ pub fn run() {
     let ca_private_key_path = state_root.join("interception-ca.key");
     let diagnostics_path = state_root.join("diagnostics.jsonl");
     let webview_data_path = state_root.join("WebView2");
-    let protocol_application = application.clone();
-    let preview_application = application.clone();
     let close_application = application.clone();
     let close_started = Arc::new(AtomicBool::new(false));
     let close_guard = Arc::clone(&close_started);
@@ -1059,19 +1357,22 @@ pub fn run() {
 
     let exit_host = Arc::clone(&host);
     let exit_application = application.clone();
+    let arguments = std::env::args().collect::<Vec<_>>();
+    let initial_files =
+        workspaces::opened_files(&arguments, &std::env::current_dir().unwrap_or_default());
+    let setup_profile = webview_data_path.clone();
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(
-            |app, _arguments, _cwd| {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
-                }
-            },
-        ))
+        .plugin(tauri_plugin_single_instance::init(|app, arguments, cwd| {
+            workspaces::activate_files(
+                app,
+                workspaces::opened_files(&arguments, std::path::Path::new(&cwd)),
+            );
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates)
         .manage(DesktopState {
+            workspaces: Arc::new(workspaces::WindowWorkspaces::default()),
+            webview_data_path,
             application: application.clone(),
             host: Arc::clone(&host),
             owned_certificate,
@@ -1079,13 +1380,22 @@ pub fn run() {
             ca_certificate_path,
             ca_private_key_path,
             diagnostics_path,
-            capture_root: state_root.join("captures"),
             export_root: state_root.join("exports"),
-            live_capture_path: Arc::new(Mutex::new(None)),
             closing: close_started,
         })
-        .register_uri_scheme_protocol("transmog-ui", move |_context, request: Request<Vec<u8>>| {
-            let view = ShellView::from(&protocol_application.status());
+        .register_uri_scheme_protocol("transmog-ui", move |context, request: Request<Vec<u8>>| {
+            let state = context.app_handle().state::<DesktopState>();
+            let application = state
+                .workspaces
+                .application(&state.application, context.webview_label());
+            let Ok(application) = application else {
+                return Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .expect("fixed response");
+            };
+            let mut view = ShellView::from(&application.status());
+            view.viewer_mode = context.webview_label() != "main";
             into_tauri_response(renderer.respond(
                 request.method().as_str(),
                 request.uri().path(),
@@ -1094,80 +1404,159 @@ pub fn run() {
         })
         .register_uri_scheme_protocol(
             "transmog-preview",
-            move |_context, request: Request<Vec<u8>>| {
-                preview_response(&preview_application, &request)
+            move |context, request: Request<Vec<u8>>| {
+                let state = context.app_handle().state::<DesktopState>();
+                let Ok(application) = state
+                    .workspaces
+                    .application(&state.application, context.webview_label())
+                else {
+                    return Response::builder()
+                        .status(404)
+                        .body(Vec::new())
+                        .expect("fixed response");
+                };
+                preview_response(&application, &request)
             },
         )
-        .invoke_handler(tauri::generate_handler![
-            app_status,
-            product_state,
-            save_product_state,
-            save_workspace_preferences,
-            desktop_bootstrap,
-            record_frontend_diagnostic,
-            automation_status,
-            remove_traffic_entries,
-            set_autoresponses_enabled,
-            test_autoresponse_match,
-            validate_automation,
-            activate_automation,
-            script_status,
-            script_declarations,
-            save_script,
-            validate_script,
-            test_script,
-            activate_script,
-            disable_script,
-            response_assets,
-            inspect_response_asset,
-            edit_response_asset,
-            create_autoresponse_batch,
-            pick_response_body,
-            crate::file_dialogs::pick_capture_path,
-            crate::file_dialogs::pick_support_path,
-            create_response_asset,
-            import_response_asset,
-            create_response_asset_from_session,
-            diagnostics_report,
-            create_support_bundle,
-            prepare_update_handoff,
-            update_status,
-            check_updates,
-            download_update,
-            cancel_update,
-            remind_update,
-            watch_update_close,
-            install_update,
-            start_proxy,
-            stop_application,
-            retry_host_restore,
-            recover_windows_proxy,
-            certificate_is_trusted,
-            install_certificate,
-            remove_certificate,
-            create_ca,
-            reset_ca,
-            query_sessions,
-            session_detail,
-            inspect_body,
-            save_response_body,
-            watch_sessions,
-            enable_breakpoints,
-            breakpoint_status,
-            decide_breakpoint,
-            disable_breakpoints,
-            execute_composer,
-            composer_history,
-            start_capture,
-            stop_capture,
-            capture_status,
-            import_capture,
-            export_capture,
-            export_live_capture
-        ])
-        .setup(move |app| Ok(create_main_window(app, initial_window, webview_data_path)?))
+        .invoke_handler({
+            let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                workspaces::open_trace_viewer,
+                workspaces::open_main_window,
+                captured_preview::open_captured_page,
+                captured_preview::captured_page_report,
+                captured_preview::cancel_captured_page,
+                workspaces::take_opened_traces,
+                workspaces::pick_trace_path,
+                import_trace,
+                cancel_trace_import,
+                trace_metadata_list,
+                trace_metadata,
+                app_status,
+                buffer_status,
+                product_state,
+                save_product_state,
+                save_workspace_preferences,
+                desktop_bootstrap,
+                record_frontend_diagnostic,
+                automation_status,
+                remove_traffic_entries,
+                remove_unselected_traffic_entries,
+                search_traffic,
+                traffic_search_entry,
+                matching_traffic_ids,
+                cancel_traffic_search,
+                set_autoresponses_enabled,
+                test_autoresponse_match,
+                validate_automation,
+                activate_automation,
+                script_status,
+                script_declarations,
+                save_script,
+                validate_script,
+                test_script,
+                activate_script,
+                disable_script,
+                response_assets,
+                inspect_response_asset,
+                edit_response_asset,
+                create_autoresponse_batch,
+                pick_response_body,
+                crate::file_dialogs::pick_capture_path,
+                crate::file_dialogs::pick_support_path,
+                create_response_asset,
+                import_response_asset,
+                create_response_asset_from_session,
+                diagnostics_report,
+                create_support_bundle,
+                prepare_update_handoff,
+                update_status,
+                check_updates,
+                download_update,
+                cancel_update,
+                remind_update,
+                watch_update_close,
+                install_update,
+                start_proxy,
+                stop_application,
+                resume_application,
+                retry_host_restore,
+                recover_windows_proxy,
+                certificate_is_trusted,
+                install_certificate,
+                remove_certificate,
+                create_ca,
+                reset_ca,
+                query_sessions,
+                session_detail,
+                inspect_headers,
+                copy_message_headers,
+                request_command,
+                copy_all_headers,
+                composer_source,
+                save_request_body,
+                inspect_body,
+                save_response_body,
+                save_traffic_trace,
+                watch_sessions,
+                enable_breakpoints,
+                breakpoint_status,
+                decide_breakpoint,
+                disable_breakpoints,
+                execute_composer,
+                composer_history,
+                start_capture,
+                stop_capture,
+                capture_status,
+                import_capture,
+                export_capture,
+                export_live_capture
+            ];
+            move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+                let window = invoke.message.webview_ref();
+                let state = window.state::<DesktopState>();
+                let label = window.label();
+                let allowed = state
+                    .workspaces
+                    .application(&state.application, label)
+                    .is_ok()
+                    && (label == "main"
+                        || workspaces::viewer_command_allowed(invoke.message.command()));
+                if allowed {
+                    dispatch(invoke)
+                } else {
+                    invoke
+                        .resolver
+                        .reject("This action is available only in the main proxy window.");
+                    true
+                }
+            }
+        })
+        .setup(move |app| {
+            if initial_files.is_empty() {
+                create_main_window(app.handle(), initial_window, setup_profile)?;
+            } else {
+                workspaces::create_viewer(app.handle(), initial_files)
+                    .map_err(|error| std::io::Error::other(error.message))?;
+            }
+            Ok(())
+        })
         .on_window_event(move |window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if window.label() == "main" {
+                    close_guard.store(false, Ordering::Release);
+                } else {
+                    window
+                        .state::<DesktopState>()
+                        .workspaces
+                        .viewers
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(window.label());
+                }
+            }
+            if window.label() == "main"
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
                 api.prevent_close();
                 if close_guard.load(Ordering::Acquire) || close_updates.request_scheduled_close() {
                     return;
@@ -1382,7 +1771,7 @@ fn is_owned_preference_generation(name: &str) -> bool {
 }
 
 fn create_main_window(
-    app: &tauri::App,
+    app: &tauri::AppHandle,
     initial: WindowState,
     webview_data_path: PathBuf,
 ) -> tauri::Result<()> {

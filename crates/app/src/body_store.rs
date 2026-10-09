@@ -7,13 +7,13 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use transmog_core::{
@@ -45,18 +45,94 @@ pub enum RetentionMode {
     Circular,
 }
 
+/// Location of live retained body bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BufferStorage {
+    /// Do not create body-cache files.
+    Memory,
+    /// Retain body bytes in application-owned files.
+    Disk,
+}
+
+/// Persisted aggregate buffer limit. Automatic uses half of installed RAM.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "kebab-case")]
+pub enum BufferLimit {
+    /// Half installed RAM, retained entirely in memory.
+    #[default]
+    Automatic,
+    /// An explicit byte budget; budgets over half installed RAM use disk.
+    Custom {
+        /// Aggregate byte budget.
+        bytes: u64,
+    },
+    /// No aggregate byte cap, using disk storage.
+    Unlimited,
+}
+
+/// Resolved live buffer configuration and usage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferStatus {
+    /// Installed physical RAM, when the platform reports it.
+    pub installed_ram: Option<u64>,
+    /// Aggregate limit; None means no maximum.
+    pub max_bytes: Option<u64>,
+    /// Where new body boundaries are stored.
+    pub storage: BufferStorage,
+    /// Retained live body bytes, excluding imported file references.
+    pub retained_bytes: u64,
+}
+
+impl BufferLimit {
+    /// Resolve the policy against installed RAM; unavailable RAM uses a conservative fallback.
+    pub fn resolve(self, installed_ram: Option<u64>) -> BufferStatus {
+        let half = installed_ram
+            .filter(|bytes| *bytes > 1)
+            .map_or(DEFAULT_BODY_STORE_BYTES, |bytes| bytes / 2);
+        let max_bytes = match self {
+            Self::Automatic => Some(half),
+            Self::Custom { bytes } => Some(bytes),
+            Self::Unlimited => None,
+        };
+        BufferStatus {
+            installed_ram,
+            max_bytes,
+            storage: if max_bytes.is_some_and(|bytes| bytes <= half) {
+                BufferStorage::Memory
+            } else {
+                BufferStorage::Disk
+            },
+            retained_bytes: 0,
+        }
+    }
+}
+
+/// Installed RAM reported without enumerating processes or files.
+pub fn installed_ram() -> Option<u64> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    (system.total_memory() > 0).then(|| system.total_memory())
+}
+
 /// Validated body-store construction settings.
 #[derive(Clone, Debug)]
 pub struct BodyStoreConfig {
     /// Application-owned directory containing only ephemeral body-cache files.
     pub root: PathBuf,
+    /// Apply persisted product buffer choices when an application creates this store.
+    /// Explicit embedding configurations can keep their construction quota instead.
+    pub use_product_preferences: bool,
     /// Initial retention behavior.
     pub mode: RetentionMode,
+    /// Storage location for new bodies.
+    pub storage: BufferStorage,
     /// Aggregate retained-byte quota.
     pub max_bytes: u64,
     /// Per-boundary retained-byte quota.
     pub max_body_bytes: u64,
-    /// Finite queue between the observer callback and disk worker.
+    /// Finite queue between the observer callback and storage worker.
     pub queue_capacity: NonZeroUsize,
     /// Maximum bytes accepted in one range read.
     pub max_read_bytes: usize,
@@ -65,13 +141,18 @@ pub struct BodyStoreConfig {
 }
 
 impl BodyStoreConfig {
-    /// Creates the product default: a one-GiB circular response cache.
+    /// Creates a memory-only circular cache using half installed RAM.
     pub fn product_default(root: PathBuf) -> Self {
         Self {
             root,
+            use_product_preferences: true,
             mode: RetentionMode::Circular,
-            max_bytes: DEFAULT_BODY_STORE_BYTES,
-            max_body_bytes: DEFAULT_BODY_STORE_BYTES,
+            storage: BufferStorage::Memory,
+            max_bytes: BufferLimit::Automatic
+                .resolve(installed_ram())
+                .max_bytes
+                .unwrap_or(DEFAULT_BODY_STORE_BYTES),
+            max_body_bytes: u64::MAX,
             queue_capacity: NonZeroUsize::new(2_048).unwrap_or(NonZeroUsize::MIN),
             max_read_bytes: MAX_BODY_READ_BYTES,
             retain_requests: true,
@@ -103,13 +184,17 @@ pub enum BodyAvailability {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredBodyMetadata {
+    /// Whether byte counts exclude any deferred HTTP transfer framing.
+    pub length_known: bool,
     /// Stable exchange identifier.
     pub exchange_id: String,
     /// Explicit observation boundary.
     pub boundary: &'static str,
     /// Total bytes reported by the runtime observer.
     pub observed_bytes: u64,
-    /// Bytes currently retained on disk.
+    /// Complete observed entity bytes, still content-encoded; excludes HTTP framing and TLS.
+    pub wire_body_bytes: Option<u64>,
+    /// Bytes currently retained in memory or the body cache.
     pub retained_bytes: u64,
     /// Current availability state.
     pub availability: BodyAvailability,
@@ -140,7 +225,7 @@ pub struct BodyRange {
 
 /// File-backed read lease that prevents circular eviction until dropped.
 pub struct BodyReadLease {
-    file: std::fs::File,
+    reader: Box<dyn Read + Send>,
     key: BodyKey,
     inner: Arc<BodyStoreInner>,
     metadata: StoredBodyMetadata,
@@ -164,7 +249,7 @@ impl BodyReadLease {
 
 impl Read for BodyReadLease {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.file.read(buffer)
+        self.reader.read(buffer)
     }
 }
 
@@ -186,11 +271,11 @@ impl Drop for BodyReadLease {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BodyStoreCounters {
-    /// Bytes represented by live cache files.
+    /// Bytes represented by live retained bodies.
     pub retained_bytes: u64,
     /// Terminal blobs removed by circular eviction.
     pub evicted_bodies: u64,
-    /// Observer events rejected by the finite disk queue.
+    /// Observer events rejected by the finite storage queue.
     pub dropped_events: u64,
     /// Filesystem operations that failed.
     pub storage_failures: u64,
@@ -217,7 +302,7 @@ pub enum BodyStoreError {
     /// The retained file disappeared or could not be read.
     #[error("retained body bytes are unavailable")]
     ReadUnavailable,
-    /// The disk worker is no longer available.
+    /// The storage worker is no longer available.
     #[error("body-store worker is unavailable")]
     WorkerUnavailable,
 }
@@ -272,7 +357,10 @@ impl Hash for BodyKey {
 
 #[derive(Debug)]
 struct StoredBody {
+    source: Option<Arc<dyn SavedBodySource>>,
+    source_size_deferred: bool,
     path: Option<PathBuf>,
+    memory: Option<Vec<bytes::Bytes>>,
     observed_bytes: u64,
     retained_bytes: u64,
     availability: BodyAvailability,
@@ -288,9 +376,12 @@ struct StoredBody {
 }
 
 impl StoredBody {
-    fn new(availability: BodyAvailability) -> Self {
+    fn new(availability: BodyAvailability, storage: BufferStorage) -> Self {
         Self {
+            source: None,
+            source_size_deferred: false,
             path: None,
+            memory: (storage == BufferStorage::Memory).then(Vec::new),
             observed_bytes: 0,
             retained_bytes: 0,
             availability,
@@ -308,10 +399,29 @@ impl StoredBody {
 
     fn metadata(&self, key: BodyKey) -> StoredBodyMetadata {
         StoredBodyMetadata {
+            length_known: self
+                .source
+                .as_ref()
+                .is_none_or(|source| source.length().is_some()),
             exchange_id: format!("{:032x}", key.exchange_id.0),
             boundary: key.boundary.name(),
-            observed_bytes: self.observed_bytes,
-            retained_bytes: self.retained_bytes,
+            observed_bytes: if self.source_size_deferred {
+                self.source
+                    .as_ref()
+                    .and_then(|source| source.length())
+                    .unwrap_or(self.observed_bytes)
+            } else {
+                self.observed_bytes
+            },
+            wire_body_bytes: (self.terminal
+                && self.availability != BodyAvailability::Lost
+                && !self.source_size_deferred)
+                .then_some(self.observed_bytes),
+            retained_bytes: self
+                .source
+                .as_ref()
+                .and_then(|source| source.length())
+                .unwrap_or(self.retained_bytes),
             availability: self.availability,
             media_type: self.media_type.clone(),
             charset: self.charset.clone(),
@@ -322,9 +432,48 @@ impl StoredBody {
     }
 }
 
+struct MemoryBodyReader {
+    chunks: std::vec::IntoIter<bytes::Bytes>,
+    current: bytes::Bytes,
+    offset: usize,
+}
+impl MemoryBodyReader {
+    fn new(chunks: Vec<bytes::Bytes>) -> Self {
+        Self {
+            chunks: chunks.into_iter(),
+            current: bytes::Bytes::new(),
+            offset: 0,
+        }
+    }
+}
+impl Read for MemoryBodyReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        while self.offset == self.current.len() {
+            let Some(chunk) = self.chunks.next() else {
+                return Ok(0);
+            };
+            self.current = chunk;
+            self.offset = 0;
+        }
+        let take = buffer.len().min(self.current.len() - self.offset);
+        buffer[..take].copy_from_slice(&self.current[self.offset..self.offset + take]);
+        self.offset += take;
+        Ok(take)
+    }
+}
+
+pub(crate) trait SavedBodySource: Send + Sync + std::fmt::Debug {
+    fn open(&self) -> std::io::Result<Box<dyn Read + Send>>;
+    fn length(&self) -> Option<u64>;
+}
+
 #[derive(Debug)]
 struct StoreState {
     mode: RetentionMode,
+    buffer: BufferStatus,
     exchange_modes: HashMap<ExchangeId, ExchangeRetention>,
     records: HashMap<BodyKey, StoredBody>,
     terminal_order: VecDeque<BodyKey>,
@@ -338,6 +487,7 @@ struct ExchangeRetention {
     mode: RetentionMode,
     requests: bool,
     responses: bool,
+    request_limit: u64,
 }
 
 impl ExchangeRetention {
@@ -363,6 +513,7 @@ enum WorkerCommand {
 struct BodyStoreInner {
     redact_sensitive: AtomicBool,
     retain_requests: AtomicBool,
+    request_limit: AtomicU64,
     retain_responses: AtomicBool,
     config: BodyStoreConfig,
     state: Mutex<StoreState>,
@@ -393,8 +544,40 @@ impl std::fmt::Debug for BodyStore {
 }
 
 impl BodyStore {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_saved(
+        &self,
+        id: ExchangeId,
+        boundary: ExchangeBoundary,
+        headers: &HeaderBlock,
+        response: Option<ResponseHead>,
+        source: Arc<dyn SavedBodySource>,
+        bytes: u64,
+        complete: bool,
+    ) {
+        let mut state = self.lock_state();
+        let key = BodyKey {
+            exchange_id: id,
+            boundary: BoundaryKey::from_boundary(boundary),
+        };
+        observe_headers(&self.inner, &mut state, id, boundary, headers);
+        let record = state.records.get_mut(&key).expect("registered head");
+        record.source_size_deferred = source.length().is_none();
+        record.source = Some(source);
+        record.response_head = response;
+        record.observed_bytes = bytes;
+        record.retained_bytes = bytes;
+        record.terminal = true;
+        record.availability = if complete {
+            BodyAvailability::Complete
+        } else {
+            BodyAvailability::Lost
+        };
+        record.reason =
+            (!complete).then(|| "The saved trace did not retain a complete body".into());
+    }
     /// Creates the cache, removes stale temporary files, and starts its bounded
-    /// disk worker.
+    /// storage worker.
     ///
     /// # Errors
     ///
@@ -402,21 +585,31 @@ impl BodyStore {
     pub fn new(config: BodyStoreConfig) -> Result<Self, BodyStoreError> {
         if config.max_bytes == 0
             || config.max_body_bytes == 0
-            || config.max_body_bytes > config.max_bytes
             || config.max_read_bytes == 0
             || config.max_read_bytes > MAX_BODY_READ_BYTES
         {
             return Err(BodyStoreError::InvalidLimits);
         }
-        fs::create_dir_all(&config.root).map_err(|_| BodyStoreError::DirectoryUnavailable)?;
-        cleanup_owned_files(&config.root)?;
+        if config.storage == BufferStorage::Disk {
+            fs::create_dir_all(&config.root).map_err(|_| BodyStoreError::DirectoryUnavailable)?;
+        }
+        if config.root.exists() {
+            cleanup_owned_files(&config.root)?;
+        }
         let (sender, receiver) = mpsc::sync_channel(config.queue_capacity.get());
         let inner = Arc::new(BodyStoreInner {
             redact_sensitive: AtomicBool::new(false),
             retain_requests: AtomicBool::new(config.retain_requests),
+            request_limit: AtomicU64::new(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES),
             retain_responses: AtomicBool::new(true),
             state: Mutex::new(StoreState {
                 mode: config.mode,
+                buffer: BufferStatus {
+                    installed_ram: installed_ram(),
+                    max_bytes: (config.max_bytes != u64::MAX).then_some(config.max_bytes),
+                    storage: config.storage,
+                    retained_bytes: 0,
+                },
                 exchange_modes: HashMap::new(),
                 records: HashMap::new(),
                 terminal_order: VecDeque::new(),
@@ -464,6 +657,50 @@ impl BodyStore {
         self.lock_state().mode = mode;
     }
 
+    /// Changes the aggregate policy for future boundaries without spilling existing memory bodies.
+    /// Existing leased or active bodies are protected from eviction.
+    ///
+    /// # Errors
+    /// Returns a directory error before selecting disk storage.
+    pub(crate) fn prepare_buffer_limit(
+        &self,
+        limit: BufferLimit,
+    ) -> Result<BufferStatus, BodyStoreError> {
+        if matches!(limit, BufferLimit::Custom { bytes: 0 }) {
+            return Err(BodyStoreError::InvalidLimits);
+        }
+        let buffer = limit.resolve(self.lock_state().buffer.installed_ram);
+        if buffer.storage == BufferStorage::Disk {
+            fs::create_dir_all(&self.inner.config.root)
+                .map_err(|_| BodyStoreError::DirectoryUnavailable)?;
+        }
+        Ok(buffer)
+    }
+
+    /// Changes the aggregate limit for new bodies; active reads remain protected.
+    ///
+    /// # Errors
+    /// Returns invalid limits or a disk directory failure before changing the cache.
+    pub fn set_buffer_limit(&self, limit: BufferLimit) -> Result<BufferStatus, BodyStoreError> {
+        let buffer = self.prepare_buffer_limit(limit)?;
+        let mut state = self.lock_state();
+        state.buffer = buffer;
+        enforce_quota(&self.inner, &mut state);
+        Ok(BufferStatus {
+            retained_bytes: state.counters.retained_bytes,
+            ..state.buffer
+        })
+    }
+
+    /// Current aggregate storage policy and live byte count.
+    pub fn buffer_status(&self) -> BufferStatus {
+        let state = self.lock_state();
+        BufferStatus {
+            retained_bytes: state.counters.retained_bytes,
+            ..state.buffer
+        }
+    }
+
     /// Applies saved privacy choices to subsequently observed traffic.
     pub fn set_privacy(&self, requests: bool, responses: bool, redact: bool) {
         self.inner
@@ -473,6 +710,13 @@ impl BodyStore {
             .retain_responses
             .store(responses, Ordering::Release);
         self.inner.redact_sensitive.store(redact, Ordering::Release);
+    }
+
+    /// Changes the per-request cap for subsequent exchanges; None is Unlimited.
+    pub fn set_request_body_limit(&self, limit: Option<u64>) {
+        self.inner
+            .request_limit
+            .store(limit.unwrap_or(0), Ordering::Release);
     }
 
     /// Returns aggregate retained-byte and loss counters.
@@ -502,8 +746,8 @@ impl BodyStore {
 
     /// Returns one protected exact response head retained for asset creation.
     ///
-    /// Sensitive fields are intentionally available only at this application
-    /// boundary and are never included in inspector or session DTOs.
+    /// Values follow the persisted application redaction choice; display DTOs
+    /// are bounded separately from this complete head.
     pub(crate) fn response_head(
         &self,
         exchange_id: ExchangeId,
@@ -537,7 +781,7 @@ impl BodyStore {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
         };
-        let (path, retained_bytes, availability) = {
+        let (path, source, memory, retained_bytes, availability) = {
             let mut state = self.lock_state();
             let record = state
                 .records
@@ -546,13 +790,54 @@ impl BodyStore {
             if offset >= record.retained_bytes && !(offset == 0 && record.retained_bytes == 0) {
                 return Err(BodyStoreError::InvalidOffset);
             }
-            let path = record.path.clone().ok_or(BodyStoreError::ReadUnavailable)?;
+            let path = record.path.clone();
+            let source = record.source.clone();
             record.leases = record.leases.saturating_add(1);
-            (path, record.retained_bytes, record.availability)
+            (
+                path,
+                source,
+                record.memory.clone(),
+                record.retained_bytes,
+                record.availability,
+            )
         };
-        let result = read_file_range(&path, offset, length).map(|bytes| BodyRange {
+        let result = if let Some(source) = &source {
+            source
+                .open()
+                .and_then(|mut reader| {
+                    let skipped =
+                        std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())?;
+                    if skipped != offset {
+                        return Err(std::io::ErrorKind::UnexpectedEof.into());
+                    }
+                    let mut bytes = Vec::new();
+                    // One additional read observes the ZIP checksum/EOF when this
+                    // range reaches the end, rather than hiding it behind Take.
+                    reader.take(length as u64 + 1).read_to_end(&mut bytes)?;
+                    bytes.truncate(length);
+                    Ok(bytes)
+                })
+                .map_err(|_| BodyStoreError::ReadUnavailable)
+        } else if let Some(chunks) = memory {
+            let mut reader = MemoryBodyReader::new(chunks);
+            std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())
+                .and_then(|_| {
+                    let mut bytes = Vec::new();
+                    reader.take(length as u64).read_to_end(&mut bytes)?;
+                    Ok(bytes)
+                })
+                .map_err(|_| BodyStoreError::ReadUnavailable)
+        } else {
+            path.as_ref()
+                .ok_or(BodyStoreError::ReadUnavailable)
+                .and_then(|path| read_file_range(path, offset, length))
+        };
+        let result = result.map(|bytes| BodyRange {
             offset,
-            retained_bytes,
+            retained_bytes: source
+                .as_ref()
+                .and_then(|source| source.length())
+                .unwrap_or(retained_bytes),
             bytes,
             availability,
         });
@@ -578,7 +863,7 @@ impl BodyStore {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
         };
-        let (path, metadata) = {
+        let (path, source, memory, metadata) = {
             let mut state = self.lock_state();
             let record = state
                 .records
@@ -587,13 +872,25 @@ impl BodyStore {
             if record.availability != BodyAvailability::Complete || !record.terminal {
                 return Err(BodyStoreError::ReadUnavailable);
             }
-            let path = record.path.clone().ok_or(BodyStoreError::ReadUnavailable)?;
+            let path = record.path.clone();
+            let source = record.source.clone();
             record.leases = record.leases.saturating_add(1);
-            (path, record.metadata(key))
+            (path, source, record.memory.clone(), record.metadata(key))
         };
-        if let Ok(file) = std::fs::File::open(path) {
+        let reader = if let Some(source) = source {
+            source.open()
+        } else if let Some(chunks) = memory {
+            Ok(Box::new(MemoryBodyReader::new(chunks)) as Box<dyn Read + Send>)
+        } else if metadata.retained_bytes == 0 {
+            Ok(Box::new(std::io::empty()) as Box<dyn Read + Send>)
+        } else {
+            path.ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+                .and_then(std::fs::File::open)
+                .map(|file| Box::new(file) as Box<dyn Read + Send>)
+        };
+        if let Ok(reader) = reader {
             Ok(BodyReadLease {
-                file,
+                reader,
                 key,
                 inner: Arc::clone(&self.inner),
                 metadata,
@@ -608,7 +905,7 @@ impl BodyStore {
     }
 
     /// Waits until all observer events accepted before this call have reached
-    /// the disk worker.
+    /// the storage worker.
     ///
     /// # Errors
     ///
@@ -636,7 +933,9 @@ impl BodyStore {
         let keys = state
             .records
             .iter()
-            .filter_map(|(key, record)| (record.terminal && record.leases == 0).then_some(*key))
+            .filter_map(|(key, record)| {
+                (record.terminal && record.leases == 0 && record.source.is_none()).then_some(*key)
+            })
             .collect::<Vec<_>>();
         for key in &keys {
             if let Some(record) = state.records.remove(key) {
@@ -720,12 +1019,22 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
             let retention = ExchangeRetention {
                 mode: state.mode,
                 requests: inner.retain_requests.load(Ordering::Acquire),
+                request_limit: inner.request_limit.load(Ordering::Acquire),
                 responses: inner.retain_responses.load(Ordering::Acquire),
             };
             state.exchange_modes.insert(event.exchange_id, retention);
         }
         ObserverEventKind::ResponseHeadObserved { boundary, head } => {
             observe_head(inner, &mut state, event.exchange_id, boundary, &head);
+        }
+        ObserverEventKind::RequestHeadObserved { boundary, head } => {
+            observe_headers(
+                inner,
+                &mut state,
+                event.exchange_id,
+                boundary,
+                &head.headers,
+            );
         }
         ObserverEventKind::ResponseHeadFinalized(head) => observe_head(
             inner,
@@ -774,6 +1083,7 @@ fn exchange_mode(
         .unwrap_or(ExchangeRetention {
             mode: state.mode,
             requests: inner.retain_requests.load(Ordering::Acquire),
+            request_limit: inner.request_limit.load(Ordering::Acquire),
             responses: inner.retain_responses.load(Ordering::Acquire),
         })
         .for_direction(direction)
@@ -786,20 +1096,38 @@ fn observe_head(
     boundary: ExchangeBoundary,
     head: &ResponseHead,
 ) {
+    observe_headers(inner, state, exchange_id, boundary, &head.headers);
+    if let Some(record) = state.records.get_mut(&BodyKey {
+        exchange_id,
+        boundary: BoundaryKey::from_boundary(boundary),
+    }) {
+        record.response_head = Some(head.clone());
+    }
+}
+
+fn observe_headers(
+    inner: &BodyStoreInner,
+    state: &mut StoreState,
+    exchange_id: ExchangeId,
+    boundary: ExchangeBoundary,
+    headers: &HeaderBlock,
+) {
     let key = BodyKey {
         exchange_id,
         boundary: BoundaryKey::from_boundary(boundary),
     };
     let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
+    let storage = state.buffer.storage;
     let record = state.records.entry(key).or_insert_with(|| {
-        StoredBody::new(if mode == RetentionMode::Off {
-            BodyAvailability::Disabled
-        } else {
-            BodyAvailability::Capturing
-        })
+        StoredBody::new(
+            if mode == RetentionMode::Off {
+                BodyAvailability::Disabled
+            } else {
+                BodyAvailability::Capturing
+            },
+            storage,
+        )
     });
-    record.response_head = Some(head.clone());
-    let headers = &head.headers;
     let content_type = header_text(headers, "content-type");
     if let Some(content_type) = content_type {
         let mut parts = content_type.split(';');
@@ -825,13 +1153,27 @@ fn observe_chunk(
         boundary: BoundaryKey::from_boundary(chunk.boundary),
     };
     let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
+    let request_limit = state.exchange_modes.get(&exchange_id).map_or_else(
+        || inner.request_limit.load(Ordering::Acquire),
+        |retention| retention.request_limit,
+    );
+    let boundary_limit = if key.boundary.direction() == BodyDirection::Request && request_limit > 0
+    {
+        inner.config.max_body_bytes.min(request_limit)
+    } else {
+        inner.config.max_body_bytes
+    };
     let lossy = state.lossy_exchanges.contains(&exchange_id);
+    let storage = state.buffer.storage;
     let record = state.records.entry(key).or_insert_with(|| {
-        StoredBody::new(if mode == RetentionMode::Off {
-            BodyAvailability::Disabled
-        } else {
-            BodyAvailability::Capturing
-        })
+        StoredBody::new(
+            if mode == RetentionMode::Off {
+                BodyAvailability::Disabled
+            } else {
+                BodyAvailability::Capturing
+            },
+            storage,
+        )
     });
     record.observed_bytes = record
         .observed_bytes
@@ -857,10 +1199,7 @@ fn observe_chunk(
     if sample.is_empty() {
         return;
     }
-    let per_body_remaining = inner
-        .config
-        .max_body_bytes
-        .saturating_sub(record.retained_bytes);
+    let per_body_remaining = boundary_limit.saturating_sub(record.retained_bytes);
     let desired = u64::try_from(sample.len())
         .unwrap_or(u64::MAX)
         .min(per_body_remaining);
@@ -870,9 +1209,10 @@ fn observe_chunk(
         return;
     }
     make_capacity(inner, state, desired, Some(key), mode);
-    let aggregate_remaining = inner
-        .config
+    let aggregate_remaining = state
+        .buffer
         .max_bytes
+        .unwrap_or(u64::MAX)
         .saturating_sub(state.counters.retained_bytes);
     let take = usize::try_from(desired.min(aggregate_remaining)).unwrap_or(sample.len());
     if take == 0 {
@@ -885,20 +1225,13 @@ fn observe_chunk(
         record.reason = Some("aggregate retention quota reached".to_owned());
         return;
     }
-    let path = partial_path(&inner.config.root, key);
-    let write_result = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut file| file.write_all(&sample[..take]));
     let record = state.records.get_mut(&key).expect("record exists");
-    if write_result.is_err() {
+    if append_body(record, &inner.config.root, key, &sample[..take]).is_err() {
         record.availability = BodyAvailability::Lost;
         record.reason = Some("body cache write failed".to_owned());
         state.counters.storage_failures = state.counters.storage_failures.saturating_add(1);
         return;
     }
-    record.path = Some(path);
     record.retained_bytes = record
         .retained_bytes
         .saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
@@ -913,8 +1246,29 @@ fn observe_chunk(
     }
 }
 
+fn append_body(
+    record: &mut StoredBody,
+    root: &Path,
+    key: BodyKey,
+    bytes: &[u8],
+) -> std::io::Result<()> {
+    if let Some(chunks) = &mut record.memory {
+        // Own exactly these bytes: a short retained prefix must not pin a larger source sample.
+        chunks.push(bytes::Bytes::copy_from_slice(bytes));
+    } else {
+        let path = partial_path(root, key);
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)?
+            .write_all(bytes)?;
+        record.path = Some(path);
+    }
+    Ok(())
+}
+
 fn make_capacity(
-    inner: &BodyStoreInner,
+    _inner: &BodyStoreInner,
     state: &mut StoreState,
     desired: u64,
     protected: Option<BodyKey>,
@@ -923,7 +1277,9 @@ fn make_capacity(
     if mode != RetentionMode::Circular {
         return;
     }
-    while state.counters.retained_bytes.saturating_add(desired) > inner.config.max_bytes {
+    while state.counters.retained_bytes.saturating_add(desired)
+        > state.buffer.max_bytes.unwrap_or(u64::MAX)
+    {
         let Some(candidate) = state.terminal_order.iter().copied().find(|key| {
             Some(*key) != protected
                 && state
@@ -942,6 +1298,7 @@ fn make_capacity(
                 .counters
                 .retained_bytes
                 .saturating_sub(record.retained_bytes);
+            record.memory = None;
             record.retained_bytes = 0;
             record.availability = BodyAvailability::Evicted;
             record.reason = Some("evicted by circular response-body quota".to_owned());
@@ -1009,10 +1366,11 @@ fn mark_dropped_event(inner: &BodyStoreInner, event: &ObserverEvent) {
             exchange_id: event.exchange_id,
             boundary: BoundaryKey::from_boundary(chunk.boundary),
         };
+        let storage = state.buffer.storage;
         let record = state
             .records
             .entry(key)
-            .or_insert_with(|| StoredBody::new(BodyAvailability::Lost));
+            .or_insert_with(|| StoredBody::new(BodyAvailability::Lost, storage));
         record.observed_bytes = record
             .observed_bytes
             .saturating_add(u64::try_from(chunk.byte_count).unwrap_or(u64::MAX));
@@ -1123,6 +1481,8 @@ mod tests {
     fn config(root: PathBuf, max_bytes: u64) -> BodyStoreConfig {
         BodyStoreConfig {
             root,
+            storage: BufferStorage::Disk,
+            use_product_preferences: false,
             mode: RetentionMode::Circular,
             max_bytes,
             max_body_bytes: max_bytes,
@@ -1238,6 +1598,135 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    #[test]
+    fn memory_buffer_never_creates_files_and_leases_protect_chunks() {
+        let root = root("memory-only").join("must-not-exist");
+        let mut settings = config(root.clone(), 8);
+        settings.storage = BufferStorage::Memory;
+        let store = BodyStore::new(settings).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 1),
+                chunk(1, 2, b"secret"),
+                completed(1, 3),
+            ],
+        );
+        assert!(!root.exists());
+        let mut lease = store
+            .open_complete(ExchangeId(1), ExchangeBoundary::UpstreamResponse)
+            .unwrap();
+        let mut text = String::new();
+        lease.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "secret");
+        assert_eq!(
+            store
+                .read_range(ExchangeId(1), ExchangeBoundary::UpstreamResponse, 2, 3)
+                .unwrap()
+                .bytes,
+            b"cre"
+        );
+        push(
+            &store,
+            [
+                started(2),
+                head(2, 1),
+                chunk(2, 2, b"newest"),
+                completed(2, 3),
+            ],
+        );
+        assert_eq!(
+            store.metadata(ExchangeId(1))[0].availability,
+            BodyAvailability::Complete
+        );
+        drop(lease);
+        push(
+            &store,
+            [
+                started(3),
+                head(3, 1),
+                chunk(3, 2, b"newest"),
+                completed(3, 3),
+            ],
+        );
+        assert_eq!(
+            store.metadata(ExchangeId(1))[0].availability,
+            BodyAvailability::Evicted
+        );
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn buffer_policy_uses_installed_ram_and_only_large_limits_write_disk() {
+        assert_eq!(
+            BufferLimit::Automatic.resolve(Some(32_000)).max_bytes,
+            Some(16_000)
+        );
+        assert_eq!(
+            BufferLimit::Custom { bytes: 16_000 }
+                .resolve(Some(32_000))
+                .storage,
+            BufferStorage::Memory
+        );
+        assert_eq!(
+            BufferLimit::Custom { bytes: 16_001 }
+                .resolve(Some(32_000))
+                .storage,
+            BufferStorage::Disk
+        );
+        assert_eq!(BufferLimit::Unlimited.resolve(Some(32_000)).max_bytes, None);
+        assert_eq!(
+            BufferLimit::Unlimited.resolve(Some(32_000)).storage,
+            BufferStorage::Disk
+        );
+    }
+
+    #[test]
+    fn request_limit_snapshots_and_unlimited_keeps_the_aggregate_budget() {
+        let root = root("request-cap");
+        let store = BodyStore::new(config(root.clone(), 64)).unwrap();
+        store.set_privacy(true, true, false);
+        store.set_request_body_limit(Some(16));
+        push(&store, [started(1)]);
+        store.set_request_body_limit(None);
+        let request_chunk = |id, sequence, len| {
+            event(
+                id,
+                sequence,
+                ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: len,
+                    sample: Some(Bytes::from(vec![b'x'; len])),
+                    truncated: false,
+                }),
+            )
+        };
+        push(&store, [request_chunk(1, 2, 32), completed(1, 3)]);
+        let first = store.metadata(ExchangeId(1));
+        assert_eq!(first[0].observed_bytes, 32);
+        assert_eq!(first[0].retained_bytes, 16);
+        assert_eq!(first[0].availability, BodyAvailability::Truncated);
+        push(
+            &store,
+            [started(2), request_chunk(2, 2, 48), completed(2, 3)],
+        );
+        let second = store.metadata(ExchangeId(2));
+        assert_eq!(second[0].retained_bytes, 48);
+        assert_eq!(second[0].availability, BodyAvailability::Complete);
+        push(
+            &store,
+            [started(3), request_chunk(3, 2, 80), completed(3, 3)],
+        );
+        let third = store.metadata(ExchangeId(3));
+        assert_eq!(third[0].observed_bytes, 80);
+        assert_eq!(third[0].retained_bytes, 64);
+        assert_eq!(third[0].availability, BodyAvailability::Truncated);
+        assert!(store.counters().retained_bytes <= 64);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

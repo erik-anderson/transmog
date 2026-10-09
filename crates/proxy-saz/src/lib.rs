@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 
-//! Session Archive Zip export adapter over sealed or recovered native captures.
+//! Bounded Session Archive Zip import and export adapters.
 //!
 //! Strict mode emits only the conventional OPC content-types member, an explicit
 //! `raw/` directory, and three `raw/<id>_{c,s,m}` files per complete HTTP exchange.
@@ -18,7 +18,19 @@ use transmog_capture::{
     CaptureExporter, CaptureRecordKind, CapturedHeader, ExportReport, RecoveredCapture,
 };
 use transmog_core::observe::ExchangeBoundary;
-use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+use zip::{
+    CompressionMethod, ZipWriter,
+    write::{FileOptions, SimpleFileOptions},
+};
+
+mod evidence;
+mod import;
+mod metadata;
+pub use evidence::SessionEvidence;
+pub use import::{
+    ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
+    SazIndex, SazIssue,
+};
 
 const CONTENT_TYPES: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
@@ -90,6 +102,7 @@ pub struct SazExporter<W> {
     mode: SazMode,
     limits: SazLimits,
     report: Option<SazReport>,
+    password: Option<transmog_capture::CapturePassword>,
 }
 
 impl<W: Write + Seek> SazExporter<W> {
@@ -104,6 +117,31 @@ impl<W: Write + Seek> SazExporter<W> {
             mode,
             limits: limits.validate()?,
             report: None,
+            password: None,
+        })
+    }
+
+    /// Opt in to AES-256 encryption of every file member in the new archive.
+    ///
+    /// # Errors
+    /// Rejects empty passwords before writing any archive bytes.
+    pub fn encrypted(
+        mut self,
+        password: transmog_capture::CapturePassword,
+    ) -> Result<Self, SazError> {
+        if password.bytes().is_empty() {
+            return Err(SazError::InvalidPassword);
+        }
+        self.password = Some(password);
+        Ok(self)
+    }
+
+    fn file_options(&self) -> FileOptions<'_, ()> {
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .large_file(true);
+        self.password.as_ref().map_or(options, |password| {
+            options.with_aes_encryption_bytes(zip::AesMode::Aes256, password.bytes())
         })
     }
 
@@ -136,9 +174,7 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
         let starting_position = output.stream_position()?;
         let mut sessions = collect_sessions(capture, self.limits)?;
         let mut writer = ZipWriter::new(output);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Stored)
-            .large_file(true);
+        let options = self.file_options();
         write_member(
             &mut writer,
             "[Content_Types].xml",
@@ -147,49 +183,54 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
         )?;
         // Fiddler validates this directory entry before scanning request files;
         // file names with a raw/ prefix do not satisfy that archive check.
-        writer.add_directory("raw/", options)?;
+        writer.add_directory("raw/", SimpleFileOptions::default())?;
         let mut report = SazReport {
             entries: 2,
             ..SazReport::default()
         };
+        report.entries += write_trace_context(
+            &mut writer,
+            capture,
+            options,
+            self.limits.max_entries.saturating_sub(report.entries),
+        )?;
+        if self.mode == SazMode::Extended {
+            report.entries += evidence::write_sources(
+                &mut writer,
+                capture,
+                options,
+                self.limits.max_entries.saturating_sub(report.entries),
+            )?;
+        }
         let mut manifest = Vec::new();
         for (exchange_id, session) in &mut sessions {
-            let (Some(request), Some(response)) = (&session.request, &session.response) else {
+            if session.request.is_none() || session.response.is_none() {
                 report.skipped_incomplete = report.skipped_incomplete.saturating_add(1);
                 continue;
-            };
+            }
             if report.sessions >= self.limits.max_sessions {
                 return Err(SazError::SessionLimitExceeded);
             }
             let session_id = report.sessions.saturating_add(1);
-            let names = [
-                format!("raw/{session_id}_c.txt"),
-                format!("raw/{session_id}_s.txt"),
-                format!("raw/{session_id}_m.xml"),
-            ];
-            if report.entries.saturating_add(names.len()) > self.limits.max_entries {
-                return Err(SazError::EntryLimitExceeded);
-            }
-            let incomplete = session.request_body_incomplete
-                || session.response_body_incomplete
-                || session.loss
-                || session.terminal != TerminalState::Completed;
-            let request_wire = render_request(request, &session.request_body)?;
-            let response_wire = render_response(response, &session.response_body)?;
-            let metadata = render_metadata(
+            let incomplete = write_http_session(
+                &mut writer,
                 session_id,
-                session.request_body_incomplete
-                    || session.loss
-                    || session.terminal == TerminalState::Open,
-                session.response_body_incomplete
-                    || session.loss
-                    || session.terminal != TerminalState::Completed,
-            );
-            write_member(&mut writer, &names[0], &request_wire, options)?;
-            write_member(&mut writer, &names[1], &response_wire, options)?;
-            write_member(&mut writer, &names[2], metadata.as_bytes(), options)?;
+                session,
+                options,
+                self.limits.max_entries.saturating_sub(report.entries),
+            )?;
             report.sessions = report.sessions.saturating_add(1);
             report.entries = report.entries.saturating_add(3);
+            if self.mode == SazMode::Extended {
+                report.entries += evidence::write_session(
+                    &mut writer,
+                    session,
+                    *exchange_id,
+                    session_id,
+                    options,
+                    self.limits.max_entries.saturating_sub(report.entries),
+                )?;
+            }
             report.incomplete_bodies = report
                 .incomplete_bodies
                 .saturating_add(usize::from(incomplete));
@@ -209,6 +250,9 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
                 source_truncated_tail: capture.truncated_tail,
                 sessions: &manifest,
             })?;
+            if manifest.len() > 4 * 1024 * 1024 {
+                return Err(SazError::MetadataLimitExceeded);
+            }
             write_member(&mut writer, "transmog/manifest.json", &manifest, options)?;
             report.entries = report.entries.saturating_add(1);
         }
@@ -226,6 +270,8 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
 
 #[derive(Default)]
 struct Session {
+    evidence: SessionEvidence,
+    started_unix_nanos: Option<u128>,
     request: Option<CapturedRequest>,
     response: Option<CapturedResponse>,
     request_body: Vec<u8>,
@@ -284,6 +330,28 @@ fn collect_sessions(
         }
         let session = sessions.entry(record.exchange_id).or_default();
         match &record.kind {
+            CaptureRecordKind::ExchangeStarted {
+                client_addr,
+                started_unix_nanos,
+                ..
+            } => {
+                session.evidence.client_addr = Some(client_addr.clone());
+                session.started_unix_nanos = Some(*started_unix_nanos);
+            }
+            CaptureRecordKind::Performance(performance) => {
+                session.evidence.performance.merge(performance);
+            }
+            CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
+                session.evidence.provenance = Some(payload.clone());
+            }
+            CaptureRecordKind::Trailers {
+                boundary: ExchangeBoundary::ClientRequest,
+                headers,
+            } => session.evidence.request_trailers.clone_from(headers),
+            CaptureRecordKind::Trailers {
+                boundary: ExchangeBoundary::ClientResponse,
+                headers,
+            } => session.evidence.response_trailers.clone_from(headers),
             CaptureRecordKind::RequestHead {
                 boundary: ExchangeBoundary::ClientRequest,
                 method,
@@ -348,33 +416,38 @@ fn collect_sessions(
     Ok(sessions)
 }
 
-fn render_request(request: &CapturedRequest, body: &[u8]) -> Result<Vec<u8>, SazError> {
+fn render_request(
+    request: &CapturedRequest,
+    body: &[u8],
+    trailers: &[CapturedHeader],
+    protocol: &str,
+) -> Result<Vec<u8>, SazError> {
     validate_line_component(request.method.as_bytes())?;
     validate_line_component(request.target.as_bytes())?;
     let mut output = Vec::new();
     output.extend_from_slice(request.method.as_bytes());
     output.push(b' ');
     output.extend_from_slice(request.target.as_bytes());
-    output.extend_from_slice(b" HTTP/1.1\r\n");
-    render_headers(&mut output, &request.headers)?;
-    output.extend_from_slice(b"\r\n");
-    output.extend_from_slice(body);
+    output.extend_from_slice(format!(" {protocol}\r\n").as_bytes());
+    render_entity(&mut output, &request.headers, body, trailers)?;
     Ok(output)
 }
 
-fn render_response(response: &CapturedResponse, body: &[u8]) -> Result<Vec<u8>, SazError> {
+fn render_response(
+    response: &CapturedResponse,
+    body: &[u8],
+    trailers: &[CapturedHeader],
+    protocol: &str,
+    reason: &str,
+) -> Result<Vec<u8>, SazError> {
     if !(100..=999).contains(&response.status) {
         return Err(SazError::UnsafeWireField);
     }
-    let mut output = format!(
-        "HTTP/1.1 {} {}\r\n",
-        response.status,
-        reason_phrase(response.status)
-    )
-    .into_bytes();
-    render_headers(&mut output, &response.headers)?;
-    output.extend_from_slice(b"\r\n");
-    output.extend_from_slice(body);
+    let mut output = format!("{protocol} {} {reason}\r\n", response.status).into_bytes();
+    if reason.contains(['\r', '\n']) {
+        return Err(SazError::UnsafeWireField);
+    }
+    render_entity(&mut output, &response.headers, body, trailers)?;
     Ok(output)
 }
 
@@ -405,21 +478,48 @@ fn validate_line_component(value: &[u8]) -> Result<(), SazError> {
     Ok(())
 }
 
-fn render_metadata(
-    session_id: usize,
-    request_incomplete: bool,
-    response_incomplete: bool,
-) -> String {
-    let mut flags = String::new();
-    if request_incomplete {
-        flags.push_str("<SessionFlag N=\"log-drop-request-body\" V=\"true\" />");
+fn render_entity(
+    output: &mut Vec<u8>,
+    headers: &[CapturedHeader],
+    body: &[u8],
+    trailers: &[CapturedHeader],
+) -> Result<(), SazError> {
+    // Native segments contain entity bytes, never HTTP chunk framing. Normalize
+    // framing only when captured Transfer-Encoding or actual trailers require it.
+    let framed = !trailers.is_empty()
+        || headers
+            .iter()
+            .any(|field| field.name.eq_ignore_ascii_case(b"transfer-encoding"));
+    if !framed {
+        render_headers(output, headers)?;
+        output.extend_from_slice(b"\r\n");
+        output.extend_from_slice(body);
+        return Ok(());
     }
-    if response_incomplete {
-        flags.push_str("<SessionFlag N=\"log-drop-response-body\" V=\"true\" />");
+    let fields = headers
+        .iter()
+        .filter(|field| {
+            ![
+                b"transfer-encoding".as_slice(),
+                b"content-length",
+                b"trailer",
+            ]
+            .iter()
+            .any(|name| field.name.eq_ignore_ascii_case(name))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    render_headers(output, &fields)?;
+    output.extend_from_slice(b"Transfer-Encoding: chunked\r\n\r\n");
+    if !body.is_empty() {
+        output.extend_from_slice(format!("{:X}\r\n", body.len()).as_bytes());
+        output.extend_from_slice(body);
+        output.extend_from_slice(b"\r\n");
     }
-    format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{session_id}\" BitFlags=\"0\"><SessionTimers/><SessionFlags>{flags}</SessionFlags></Session>"
-    )
+    output.extend_from_slice(b"0\r\n");
+    render_headers(output, trailers)?;
+    output.extend_from_slice(b"\r\n");
+    Ok(())
 }
 
 const fn reason_phrase(status: u16) -> &'static str {
@@ -455,11 +555,85 @@ const fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
+fn write_http_session<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    id: usize,
+    session: &Session,
+    options: FileOptions<'_, ()>,
+    remaining: usize,
+) -> Result<bool, SazError> {
+    if remaining < 3 {
+        return Err(SazError::EntryLimitExceeded);
+    }
+    let request = session.request.as_ref().ok_or(SazError::InvalidArchive)?;
+    let response = session.response.as_ref().ok_or(SazError::InvalidArchive)?;
+    let request_incomplete =
+        session.request_body_incomplete || session.loss || session.terminal == TerminalState::Open;
+    let response_incomplete = session.response_body_incomplete
+        || session.loss
+        || session.terminal != TerminalState::Completed;
+    let request_wire = render_request(
+        request,
+        &session.request_body,
+        &session.evidence.request_trailers,
+        &metadata::protocol(session, "client-request"),
+    )?;
+    let response_wire = render_response(
+        response,
+        &session.response_body,
+        &session.evidence.response_trailers,
+        &metadata::protocol(session, "client-response"),
+        metadata::reason(session).unwrap_or_else(|| reason_phrase(response.status)),
+    )?;
+    let metadata = metadata::render(session, id, request_incomplete, response_incomplete);
+    write_member(writer, &format!("raw/{id}_c.txt"), &request_wire, options)?;
+    write_member(writer, &format!("raw/{id}_s.txt"), &response_wire, options)?;
+    write_member(
+        writer,
+        &format!("raw/{id}_m.xml"),
+        metadata.as_bytes(),
+        options,
+    )?;
+    Ok(request_incomplete || response_incomplete)
+}
+
+fn write_trace_context<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    capture: &RecoveredCapture,
+    options: FileOptions<'_, ()>,
+    remaining: usize,
+) -> Result<usize, SazError> {
+    let metadata = capture
+        .records
+        .iter()
+        .rev()
+        .find_map(|record| match &record.kind {
+            CaptureRecordKind::Unknown { kind, payload }
+                if record.exchange_id == 0 && kind == "trace-metadata" =>
+            {
+                Some(payload)
+            }
+            _ => None,
+        });
+    let Some(metadata) = metadata else {
+        return Ok(0);
+    };
+    if remaining == 0 {
+        return Err(SazError::EntryLimitExceeded);
+    }
+    let bytes = serde_json::to_vec(metadata)?;
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(SazError::MetadataLimitExceeded);
+    }
+    write_member(writer, "transmog/trace-metadata.json", &bytes, options)?;
+    Ok(1)
+}
+
 fn write_member<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     name: &str,
     bytes: &[u8],
-    options: SimpleFileOptions,
+    options: FileOptions<'_, ()>,
 ) -> Result<(), SazError> {
     writer.start_file(name, options)?;
     writer.write_all(bytes)?;
@@ -469,6 +643,27 @@ fn write_member<W: Write + Seek>(
 /// SAZ conversion failure.
 #[derive(Debug, Error)]
 pub enum SazError {
+    /// Encrypted archive requires a transient password.
+    #[error("This SAZ archive requires a password")]
+    PasswordRequired,
+    /// Supplied password was rejected by the ZIP encryption reader.
+    #[error("The SAZ password is incorrect")]
+    InvalidPassword,
+    /// Archive member names collide or escape the archive namespace.
+    #[error("SAZ contains an unsafe or duplicate member name")]
+    UnsafeMember,
+    /// Archive content uses an unsupported compression or encryption method.
+    #[error("SAZ member compression or encryption is unsupported")]
+    UnsupportedMember,
+    /// Malformed HTTP framing or session metadata.
+    #[error("SAZ contains malformed HTTP or metadata")]
+    InvalidArchive,
+    /// A finite import byte or metadata bound was exceeded.
+    #[error("SAZ import resource limit exceeded")]
+    ImportLimitExceeded,
+    /// Caller canceled the bounded import.
+    #[error("SAZ import canceled")]
+    Canceled,
     /// Limits were zero or inconsistent.
     #[error("SAZ limits are invalid")]
     InvalidLimits,
@@ -484,6 +679,9 @@ pub enum SazError {
     /// ZIP member count exceeded its finite bound.
     #[error("SAZ entry limit exceeded")]
     EntryLimitExceeded,
+    /// Capture context exceeds the bounded importer-compatible metadata size.
+    #[error("SAZ trace metadata exceeds its four MiB limit")]
+    MetadataLimitExceeded,
     /// Retained body bytes exceeded the per-direction bound.
     #[error("SAZ body limit exceeded")]
     BodyLimitExceeded,
@@ -508,6 +706,135 @@ mod tests {
     use transmog_capture::CaptureRecord;
 
     use super::*;
+
+    #[test]
+    fn encrypted_saz_round_trips_and_produces_interop_fixtures() {
+        let password = transmog_capture::CapturePassword::new("Transmog-interop-password".into());
+        let capture = capture(true, true);
+        for (name, mode) in [("strict", SazMode::Strict), ("extended", SazMode::Extended)] {
+            let mut exporter =
+                SazExporter::new(Cursor::new(Vec::new()), mode, SazLimits::default())
+                    .unwrap()
+                    .encrypted(password.clone())
+                    .unwrap();
+            exporter.export(&capture).unwrap();
+            let bytes = exporter.into_inner().unwrap().into_inner();
+            assert!(matches!(
+                SazArchive::open(Cursor::new(bytes.clone()), SazImportLimits::default()),
+                Err(SazError::PasswordRequired)
+            ));
+            let mut wrong = SazArchive::with_password(
+                Cursor::new(bytes.clone()),
+                SazImportLimits::default(),
+                Some(transmog_capture::CapturePassword::new("incorrect".into())),
+            )
+            .unwrap();
+            assert!(matches!(
+                wrong.index(|_, _| {}, || false),
+                Err(SazError::InvalidPassword)
+            ));
+            let mut archive = SazArchive::with_password(
+                Cursor::new(bytes.clone()),
+                SazImportLimits::default(),
+                Some(password.clone()),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(index.sessions.len(), 1);
+            let mut body = Vec::new();
+            archive
+                .copy_body(
+                    &index.sessions[0].request.as_ref().unwrap().body,
+                    &mut body,
+                    || false,
+                )
+                .unwrap();
+            assert_eq!(body, b"req");
+            if let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") {
+                let root = std::path::PathBuf::from(directory);
+                std::fs::write(root.join(format!("{name}-encrypted.saz")), bytes).unwrap();
+                std::fs::write(
+                    root.join(format!("{name}-plain.saz")),
+                    export(mode, &capture).0,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn external_zipcrypto_imports_exact_binary_without_extraction() {
+        let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") else {
+            return;
+        };
+        let bytes =
+            std::fs::read(std::path::PathBuf::from(directory).join("external-zipcrypto.saz"))
+                .unwrap();
+        let mut archive = SazArchive::with_password(
+            Cursor::new(bytes),
+            SazImportLimits::default(),
+            Some(transmog_capture::CapturePassword::new(
+                "Transmog-interop-password".into(),
+            )),
+        )
+        .unwrap();
+        let index = archive.index(|_, _| {}, || false).unwrap();
+        let mut body = Vec::new();
+        archive
+            .copy_body(
+                &index.sessions[0].request.as_ref().unwrap().body,
+                &mut body,
+                || false,
+            )
+            .unwrap();
+        assert_eq!(body.len(), 262_144);
+        assert!(
+            body.iter()
+                .enumerate()
+                .all(|(index, byte)| usize::from(*byte) == index % 256)
+        );
+    }
+
+    #[test]
+    fn aes_128_192_and_256_archives_import_without_extraction() {
+        for mode in [
+            zip::AesMode::Aes128,
+            zip::AesMode::Aes192,
+            zip::AesMode::Aes256,
+        ] {
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            writer
+                .start_file(
+                    "raw/1_c.txt",
+                    SimpleFileOptions::default()
+                        .compression_method(CompressionMethod::Deflated)
+                        .with_aes_encryption(mode, "password"),
+                )
+                .unwrap();
+            writer
+                .write_all(
+                    b"POST https://example.test/upload HTTP/1.1\r\nContent-Length: 3\r\n\r\nreq",
+                )
+                .unwrap();
+            let bytes = writer.finish().unwrap().into_inner();
+            let mut archive = SazArchive::with_password(
+                Cursor::new(bytes),
+                SazImportLimits::default(),
+                Some(transmog_capture::CapturePassword::new("password".into())),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            let mut body = Vec::new();
+            archive
+                .copy_body(
+                    &index.sessions[0].request.as_ref().unwrap().body,
+                    &mut body,
+                    || false,
+                )
+                .unwrap();
+            assert_eq!(body, b"req");
+        }
+    }
 
     fn capture(include_response: bool, include_body: bool) -> RecoveredCapture {
         let headers = vec![
@@ -612,6 +939,133 @@ mod tests {
     }
 
     #[test]
+    fn original_optional_trace_context_survives_both_saz_profiles() {
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let mut source = capture(true, true);
+            let context = serde_json::json!({"networkContext":{"platform":"fixture","output":"original adapter context"}});
+            source.records.insert(
+                0,
+                CaptureRecord {
+                    sequence: 0,
+                    exchange_id: 0,
+                    kind: CaptureRecordKind::Unknown {
+                        kind: "trace-metadata".into(),
+                        payload: context.clone(),
+                    },
+                },
+            );
+            let (bytes, _) = export(mode, &source);
+            let mut archive =
+                crate::SazArchive::open(Cursor::new(bytes), crate::SazImportLimits::default())
+                    .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(index.trace_metadata, Some(context));
+        }
+    }
+
+    #[test]
+    fn extended_evidence_timers_protocol_reason_and_trailers_round_trip() {
+        use transmog_core::performance::{
+            Milestone, PerformanceEvidence, ProtocolObservation, TimingPoint,
+        };
+        let mut source = capture(true, true);
+        let performance = PerformanceEvidence {
+            points: vec![
+                TimingPoint {
+                    milestone: Milestone::RequestHeaders,
+                    unix_millis: 1_800_000_000_000,
+                    offset_micros: 0,
+                },
+                TimingPoint {
+                    milestone: Milestone::ExchangeDone,
+                    unix_millis: 1_800_000_000_015,
+                    offset_micros: 15500,
+                },
+            ],
+            protocols: vec![
+                ProtocolObservation {
+                    boundary: "client-request".into(),
+                    version: "HTTP/2".into(),
+                    reason: None,
+                },
+                ProtocolObservation {
+                    boundary: "client-response".into(),
+                    version: "HTTP/1.0".into(),
+                    reason: Some("Custom & reason".into()),
+                },
+            ],
+            ..PerformanceEvidence::default()
+        };
+        let trailer = CapturedHeader {
+            name: b"X-Checksum".to_vec(),
+            value: Some(b"original".to_vec()),
+            original_value_bytes: Some(8),
+        };
+        source.records.extend([
+            CaptureRecord {
+                exchange_id: 42,
+                sequence: 6,
+                kind: CaptureRecordKind::Performance(performance.clone()),
+            },
+            CaptureRecord {
+                exchange_id: 42,
+                sequence: 7,
+                kind: CaptureRecordKind::Trailers {
+                    boundary: ExchangeBoundary::ClientResponse,
+                    headers: vec![trailer.clone()],
+                },
+            },
+        ]);
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let (bytes, _) = export(mode, &source);
+            let mut archive =
+                SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            let session = &index.sessions[0];
+            assert_eq!(
+                session.metadata.flags["x-transmog-original-request-protocol"],
+                "HTTP/2"
+            );
+            assert_eq!(
+                session.metadata.timers["ClientDoneResponse"]
+                    .rsplit('.')
+                    .next(),
+                Some("015Z")
+            );
+            assert_eq!(
+                session.response.as_ref().unwrap().start_line,
+                "HTTP/1.0 200 Custom & reason"
+            );
+            let mut body = Vec::new();
+            let (length, trailers) = archive
+                .copy_body_with_trailers(
+                    &session.response.as_ref().unwrap().body,
+                    &mut body,
+                    || false,
+                )
+                .unwrap();
+            assert_eq!((length, body), (3, b"res".to_vec()));
+            assert_eq!(
+                trailers.values("X-Checksum").next(),
+                Some(b"original".as_slice())
+            );
+            if mode == SazMode::Extended {
+                let evidence = session.evidence.as_ref().unwrap();
+                assert_eq!(evidence.performance, performance);
+                assert_eq!(evidence.response_trailers, vec![trailer.clone()]);
+                assert!(
+                    evidence
+                        .request_headers
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .any(|field| field.name == b"authorization" && field.value.is_none())
+                );
+            }
+        }
+    }
+
+    #[test]
     fn strict_archive_has_conventional_triplet_and_wire_bytes() {
         let source = capture(true, true);
         let (bytes, report) = export(SazMode::Strict, &source);
@@ -656,7 +1110,8 @@ mod tests {
                 assert_eq!(report.entries, archive.len());
                 assert_eq!(
                     report.entries,
-                    2 + 3 * report.sessions + usize::from(mode == SazMode::Extended)
+                    2 + 3 * report.sessions
+                        + usize::from(mode == SazMode::Extended) * (1 + report.sessions)
                 );
             }
         }

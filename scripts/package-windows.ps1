@@ -52,14 +52,14 @@ try {
 }
 
 if (-not $SkipTests) {
-    $cargoArguments = @('test', '--locked', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
+    $cargoArguments = @('test', '--locked', '-p', 'transmog', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
     if ($Offline) { $cargoArguments += '--offline' }
     & cargo @cargoArguments
     if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
 }
 
 if (-not $BuildOnly) {
-    $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+    $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
     if ($Offline) { $hostBuildArguments += '--offline' }
     & cargo @hostBuildArguments
     if ($LASTEXITCODE -ne 0) { throw "Script host release build failed with exit code $LASTEXITCODE" }
@@ -67,17 +67,26 @@ if (-not $BuildOnly) {
 }
 
 $binaryDirectory = Join-Path $desktopRoot 'binaries'
+$standaloneCli = Join-Path $repositoryRoot 'target\release\transmog-cli.exe'
+if (-not $BuildOnly -and -not (Test-Path -LiteralPath $standaloneCli -PathType Leaf)) { throw 'The standalone CLI release executable is missing.' }
 $bundledHost = Join-Path $binaryDirectory 'transmog-script-host-x86_64-pc-windows-msvc.exe'
 $bundledPreview = Join-Path $binaryDirectory 'transmog-preview-worker-x86_64-pc-windows-msvc.exe'
 if (-not $BuildOnly) { New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null }
 if ($SigningMetadataPath) {
     $SigningMetadataPath = (Resolve-Path -LiteralPath $SigningMetadataPath).Path
     $SigningClientDll = (Resolve-Path -LiteralPath $SigningClientDll).Path
-    foreach ($helperName in @('transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+    foreach ($helperName in @('transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         & (Join-Path $PSScriptRoot 'sign-windows-file.ps1') -FilePath (Join-Path $repositoryRoot "target\release\$helperName") -MetadataPath $SigningMetadataPath -ClientDll $SigningClientDll -ExpectedPublisher $ExpectedPublisher | Out-Host
     }
 }
 if (-not $BuildOnly) {
+    if (-not $UnsignedDevelopment -and -not $SigningMetadataPath) {
+        . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
+        & (Resolve-WindowsSignTool) sign /sha1 $SigningCertificateThumbprint /s My /fd SHA256 /tr $TimestampUrl /td SHA256 $standaloneCli | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Standalone CLI signing failed.' }
+        $cliSignature = Get-AuthenticodeSignature -LiteralPath $standaloneCli
+        if ($cliSignature.Status -ne 'Valid' -or $cliSignature.SignerCertificate.Thumbprint -ine $SigningCertificateThumbprint -or -not $cliSignature.TimeStamperCertificate) { throw 'Standalone CLI signature verification failed.' }
+    }
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-script-host.exe') -Destination $bundledHost -Force
     Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-preview-worker.exe') -Destination $bundledPreview -Force
 }
@@ -114,9 +123,9 @@ $tauriArguments += @('--config', $overridePath)
 if (-not $BundleOnly) {
     $tauriArguments += @('--', '--locked')
     if ($BuildOnly) {
-        # One Cargo release graph builds all three shipped binaries. Sidecars are
+        # One Cargo release graph builds the app, bundled helpers and standalone CLI. Sidecars are
         # staged only when bundling, after these outputs exist.
-        $tauriArguments += @('-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+        $tauriArguments += @('-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker', '-p', 'transmog')
     }
 }
 
@@ -136,6 +145,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri packaging failed with exit code $LASTEXITCODE"
     }
+    if (-not $BuildOnly -and $UnsignedDevelopment) { & (Join-Path $PSScriptRoot 'test-saz-association.ps1') }
 } finally {
     $env:CARGO_NET_OFFLINE = $priorCargoOffline
     $env:TEMP = $priorTemp
@@ -169,9 +179,14 @@ if (-not $UnsignedDevelopment -and $signature.Status -ne 'Valid') {
     throw "Installer signature is not valid: $($signature.Status)"
 }
 
+if (-not $UnsignedDevelopment -and (Get-AuthenticodeSignature -LiteralPath $standaloneCli).Status -ne 'Valid') { throw 'Standalone CLI signature is not valid.' }
+$cliArtifact = Join-Path $artifactRoot 'transmog-cli.exe'
+Copy-Item -LiteralPath $standaloneCli -Destination $cliArtifact -Force
+
 $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName
 [pscustomobject]@{
     Installer = $installer.FullName
+    Cli = $cliArtifact
     Bytes = $installer.Length
     Sha256 = $hash.Hash
     Signature = $signature.Status

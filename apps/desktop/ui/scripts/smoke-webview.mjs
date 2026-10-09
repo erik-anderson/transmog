@@ -372,6 +372,21 @@ try {
 
   result.hexViewer = await smokeHexViewer(evaluate, call);
 
+  result.drainFeedback = await evaluate(`(async () => {
+    const shell = document.querySelector('app-shell');
+    const settings = shell.shadowRoot.querySelector('settings-workspace');
+    const before = await window.__TAURI_INTERNALS__.invoke('app_status');
+    try {
+      settings.renderAppStatus({...before, lifecycle: 'draining', summary: 'Finishing 2 active requests'});
+      settings.$flushUpdates(); shell.$flushUpdates();
+      const toggle = shell.shadowRoot.querySelector('proxy-toggle'); toggle.$flushUpdates();
+      const button = toggle.querySelector('button');
+      if (button.disabled || button.textContent.trim() !== 'Start proxy') throw new Error('Cannot resume from drain');
+      if (!shell.shadowRoot.querySelector('.listener-status').textContent.includes('Finishing 2 active requests')) throw new Error('Drain progress is missing');
+      return {resumeEnabled: true, activeWorkExplained: true};
+    } finally {settings.renderAppStatus(before); settings.$flushUpdates(); shell.$flushUpdates();}
+  })()`);
+
   result.stoppedProxyBreakpoints = await evaluate(`(async () => {
     const shell = document.querySelector('app-shell');
     const root = shell.shadowRoot;
@@ -410,10 +425,76 @@ try {
     return { cycles: 2, lifecycle: after.lifecycle, listener: after.listener };
   })()`);
 
+
+  result.recordingDefaults=await evaluate(`(async()=>{
+    const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="captures"]').click();
+    await customElements.whenDefined('capture-workspace');
+    const workspace=shell.shadowRoot.querySelector('capture-workspace');await workspace.loadRecordingDefaults();
+    const preference=await window.__TAURI_INTERNALS__.invoke('product_state');
+    const input=workspace.captureForm.elements.namedItem('bodies');
+    if(input.checked!==preference.privacy.retainBodySamples)throw new Error('Recording did not honor saved body defaults');
+    if(workspace.captureForm.elements.namedItem('quotaAmount')!==null)throw new Error('Recording still exposes an implicit quota');
+    const before=input.checked;const touched=workspace.bodyChoiceTouched;
+    try {input.checked=!before;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.checked!==!before)throw new Error('Recording defaults overwrote a draft');}
+    finally {input.checked=before;workspace.bodyChoiceTouched=touched;}
+    shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
+    return {savedDefault:true,draftPreserved:true};
+  })()`);
   if (screenshotPath !== undefined) {
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
     result.screenshot = screenshotPath;
+    result.bufferControls = await evaluate(`(async () => {
+      const shell=document.querySelector('app-shell');
+      shell.shadowRoot.querySelector('a[data-view="settings"]').click();
+      const settings=shell.shadowRoot.querySelector('settings-workspace');
+      settings.showSettingsSection('preferences');settings.$flushUpdates();
+      const entryChoice=settings.settingsForm.elements.namedItem('limitEntries');
+      const entryMaximum=settings.settingsForm.elements.namedItem('maxEntries');
+      const originalEntryChoice=entryChoice.checked;
+      entryChoice.checked=true;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      entryMaximum.scrollIntoView({block:'center'});entryMaximum.focus();
+      const entryRect=entryMaximum.getBoundingClientRect();
+      if(entryMaximum.disabled||settings.getRootNode().activeElement!==entryMaximum||settings.getRootNode().elementFromPoint(entryRect.x+entryRect.width/2,entryRect.y+entryRect.height/2)!==entryMaximum)throw new Error('Live-entry control was not reachable');
+      entryChoice.checked=originalEntryChoice;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      const select=settings.settingsForm.elements.namedItem('bufferMode');
+      const size=settings.settingsForm.elements.namedItem('bufferSize');
+      const original=select.value;
+      select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      size.scrollIntoView({block:'center'});
+      const rect=size.getBoundingClientRect();
+      const reachable=settings.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===size;
+      const status=await window.__TAURI_INTERNALS__.invoke('buffer_status');
+      if(!reachable||status.storage!=='memory'||status.maxBytes!==Math.floor(status.installedRam/2))throw new Error('Memory buffer configuration or reachability failed');
+      size.focus();if(settings.getRootNode().activeElement!==size)throw new Error('Buffer input focus failed');
+      select.value=original;select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      await settings.loadSettings();
+      settings.querySelector('.settings-content').scrollTop=0;
+      return {reachable,storage:status.storage,maxBytes:status.maxBytes,installedRam:status.installedRam};
+    })()`);
+    const settingsScreenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+    await writeFile(screenshotPath.replace(/\.png$/i,'-settings.png'),Buffer.from(settingsScreenshot.data,'base64'));
+    await evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`);
+    result.passwordControls=await evaluate(`(() => {
+      const shell=document.querySelector('app-shell');const traffic=shell.traffic;
+      traffic.showSaveTrace();globalThis.__passwordProbe=traffic.promptTracePassword('Encrypt saved trace',true);
+      shell.$flushUpdates();
+      const password=shell.passwordForm.elements.namedItem('password');
+      const confirm=shell.passwordForm.elements.namedItem('confirmPassword');
+      password.value='test-password';confirm.value='different';shell.passwordForm.requestSubmit();shell.$flushUpdates();
+      if(shell.passwordError!=='The passwords do not match.'||password.type!=='password')throw new Error('Password masking or confirmation failed '+JSON.stringify({error:shell.passwordError,type:password.type,confirmDisabled:confirm.disabled,mode:shell.passwordConfirm}));
+      const rect=shell.passwordDialog.getBoundingClientRect();
+      const reachable=[...shell.passwordForm.querySelectorAll('input,button')].filter(element=>!element.disabled&&element.getBoundingClientRect().width).every(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;});
+      if(!reachable)throw new Error('Password controls escaped the viewport');
+      return {masked:true,confirmedMismatch:true,reachable,width:rect.width};
+    })()`);
+    await writeFile(screenshotPath.replace(/\.png$/i,'-password.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+    await writeFile(screenshotPath.replace(/\.png$/i,'-password-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await evaluate(`(async()=>{const shell=document.querySelector('app-shell');const input=shell.passwordForm.elements.namedItem('confirmPassword');input.value='test-password';shell.passwordForm.requestSubmit();if(await globalThis.__passwordProbe!=='test-password')throw new Error('Confirmed password was lost');delete globalThis.__passwordProbe;if(shell.passwordForm.elements.namedItem('password').value)throw new Error('Password was not cleared');const canceled=shell.traffic.promptTracePassword('Open encrypted trace');shell.cancelTracePassword();if(await canceled!==null)throw new Error('Cancel did not resolve the password request');shell.traffic.closeSaveTrace();})()`);
+    await call('Emulation.clearDeviceMetricsOverride');
+
+
   }
   if (automationScreenshotPath !== undefined) {
     const automationLayout = await evaluate(`(() => {
@@ -494,6 +575,7 @@ try {
       heading.textContent = 'Inspect localized traffic safely — '.repeat(8);
       const presentedControls=[...root.querySelectorAll('.app-view[data-active] button, .topbar button, .app-footer button')]
         .filter(button=>!button.closest('[hidden]')
+          && !(button.closest('dialog') && !button.closest('dialog').open)
           && !(button.closest('message-inspector') && getComputedStyle(button.closest('message-inspector')).display==='none')
           && !(button.closest('[popover]') && !button.closest('[popover]').matches(':popover-open')));
       return {

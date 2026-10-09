@@ -9,6 +9,8 @@ pub struct HeaderField {
     value: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     redacted_value_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    redacted: bool,
 }
 
 impl HeaderField {
@@ -30,6 +32,7 @@ impl HeaderField {
             name,
             value,
             redacted_value_bytes: None,
+            redacted: false,
         })
     }
 
@@ -45,7 +48,7 @@ impl HeaderField {
 
     /// Whether observation policy removed this field's value.
     pub const fn is_redacted(&self) -> bool {
-        self.redacted_value_bytes.is_some()
+        self.redacted || self.redacted_value_bytes.is_some()
     }
 
     /// Original value length, including values removed by observation policy.
@@ -55,8 +58,32 @@ impl HeaderField {
 
     /// Removes a value while retaining its name, position, and byte length.
     pub fn redact_value(&mut self) {
-        self.redacted_value_bytes = Some(self.value_bytes());
+        self.redacted_value_bytes = self.original_value_bytes();
         self.value.clear();
+        self.redacted = true;
+    }
+
+    /// Restores redacted saved evidence without manufacturing an unknown size.
+    ///
+    /// # Errors
+    /// Returns invalid header-name syntax.
+    pub fn from_redacted(
+        name: impl Into<Vec<u8>>,
+        value_bytes: Option<usize>,
+    ) -> Result<Self, HeaderError> {
+        let mut field = Self::try_new(name, Vec::new())?;
+        field.redacted = true;
+        field.redacted_value_bytes = value_bytes;
+        Ok(field)
+    }
+
+    /// Original value size, or unknown for older redacted saved evidence.
+    pub fn original_value_bytes(&self) -> Option<usize> {
+        if self.is_redacted() {
+            self.redacted_value_bytes
+        } else {
+            Some(self.value.len())
+        }
     }
 
     /// Tests a field name using ASCII case-insensitive comparison.

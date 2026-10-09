@@ -16,9 +16,11 @@ can still contain mistakes or compromised dependencies.
    contract. Product configuration remains outside the core. Each admitted
    exchange receives an immutable registration snapshot, and every rule or
    script keeps its own stable interceptor identity.
-2. Response bodies are retained by a product-layer store. The default is a
-   one-GiB circular cache for response boundaries; request bodies remain off by
-   default. Metadata survives body loss, truncation, and eviction.
+2. Request and response bodies are retained by a product-layer circular store,
+   separate from the session metadata catalog. Retention and memory/disk policy
+   are explicit product preferences. Metadata survives body loss, truncation and
+   eviction. Current defaults belong in
+   [the retention guide](../product-state-and-support.md).
 3. Built-in rules are the preferred path for common conditions and mutations.
    Scripts use the same validated action vocabulary for advanced decisions.
 4. JavaScript runs in a dedicated `transmog-script-host` process, normally one
@@ -47,7 +49,7 @@ can still contain mistakes or compromised dependencies.
 
 ## Consequences
 
-- Headless applications and a future CLI can reuse the workspace and script
+- Headless applications can reuse the workspace and script
   supervisor without Tauri, WebUI, or Monaco.
 - Dynamic rules can change without restarting the listener while in-flight
   exchanges remain deterministic.
@@ -58,11 +60,9 @@ can still contain mistakes or compromised dependencies.
 - The V8 binary and Monaco assets increase build and package size and therefore
   require exact pins, reproducible caching, license evidence, and offline build
   tests.
-- `deno_core` is exactly pinned to 0.412.0 and V8 to 150.4.0. The reviewed
-  Windows V8 archive has an independently checked SHA-256 and a cache-priming
-  script for offline release builds. A custom product startup snapshot is not
-  used yet: the measured host initialization is already small relative to one
-  process per active script, while each user module is necessarily dynamic.
+- The V8 dependency is exactly pinned, its Windows archive is checked by SHA-256
+  and downloads can be primed before offline builds. Current dependency versions
+  and manifest ownership belong in [the dependency map](../dependencies.md).
 
 ## Rejected alternatives
 

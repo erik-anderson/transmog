@@ -32,7 +32,8 @@ the same value. The desktop traffic table presents it in the **Caller** column.
   exchange model.
 
 Non-loopback clients are classified as `remote` without enumerating host
-processes. This both communicates the useful fact and avoids implying that a
+processes. Their source IP is also preserved in request metadata and shown in the
+inspector; loopback clients do not display that extra field. This both communicates the useful fact and avoids implying that a
 remote PID would be meaningful on the proxy host.
 
 ## Reliability and security
@@ -48,6 +49,5 @@ All operating-system scans are bounded. The runtime also contains resolver
 panics and substitutes `local-unknown` (or `remote` for a non-loopback peer), so
 a custom resolver cannot take down the accept loop.
 
-Caller identity was added in TMCap format revision 2. The native streaming
-capture format therefore preserves the connection snapshot for later
-inspection and conversion.
+[Native TMCap](native-capture-format.md) preserves the connection identity and
+source IP for later inspection and conversion.

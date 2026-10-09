@@ -46,6 +46,7 @@ export async function smokeHexViewer(evaluate, call) {
     const key = async (key, code, modifiers=0) => {
       await call('Input.dispatchKeyEvent',{type:'keyDown',key,windowsVirtualKeyCode:code,modifiers});
       await call('Input.dispatchKeyEvent',{type:'keyUp',key,windowsVirtualKeyCode:code,modifiers});
+      await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
     };
     await key('c',67,2);
     assert.equal(await evaluate('globalThis.__hexSmoke.copied'),'AUcBVwFbAWU=');
@@ -60,7 +61,12 @@ export async function smokeHexViewer(evaluate, call) {
     const active = await evaluate('globalThis.__hexSmoke.viewer.getRootNode().activeElement.textContent');
     assert.equal(active.trim(),'Hex');
     await key('Escape',27); await key('Escape',27);
-    assert.equal(await evaluate('globalThis.__hexSmoke.viewer.viewport===globalThis.__hexSmoke.viewer.getRootNode().activeElement'),true);
+    assert.equal(await evaluate(`(async () => {
+      const viewer=globalThis.__hexSmoke.viewer,deadline=performance.now()+1000;
+      while(viewer.viewport!==viewer.getRootNode().activeElement && performance.now()<deadline)
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+      return viewer.viewport===viewer.getRootNode().activeElement;
+    })()`),true);
     return {mouseSelection:true,mirroredHighlight:true,keyboardSelection:true,copy:true,submenu:true};
   } finally {
     await evaluate(`(() => {

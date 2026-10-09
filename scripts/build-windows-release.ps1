@@ -21,6 +21,7 @@ try {
         & cargo fmt --all -- --check
         & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         & cargo test --workspace --all-features --locked
+        & (Join-Path $PSScriptRoot 'test-saz-interop.ps1')
         & cargo deny check
         & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
         & (Join-Path $PSScriptRoot 'check-crypto-graph.ps1')
@@ -32,13 +33,15 @@ try {
             ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }
         if (@($buildResult).Count -ne 1) { throw 'The release build did not produce one build result.' }
     } finally { Write-Host '::endgroup::' }
+    . (Join-Path $PSScriptRoot 'windows-release-symbols.ps1')
+    New-WindowsReleaseSymbolArchive -BuildDirectory $buildResult.BuildDirectory -Version $buildResult.Version -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -OutputPath (Join-Path $payloadRoot "evidence/Transmog_$($buildResult.Version)_windows-x64-symbols.zip")
     Write-Host '::group::Release WebView validation and 30-minute soak'
     try {
         $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 -HostedRunnerDevToolsPolicy |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
     } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM
-    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe')) {
+    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $sourceBinary = Join-Path $buildResult.BuildDirectory $binary
         if ((Get-AuthenticodeSignature -LiteralPath $sourceBinary).Status -ne 'NotSigned') { throw "Build output is unexpectedly signed: $binary" }
         Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $payloadRoot "target\release\$binary") -Force

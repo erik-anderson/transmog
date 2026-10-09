@@ -6,8 +6,11 @@ use transmog_core::intercept::HookLimits;
 
 use thiserror::Error;
 
+mod activity;
 mod provider;
 mod proxy;
+
+pub use activity::ProxyActivity;
 
 pub use provider::{
     AtomicRuntimeIdGenerator, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind, SystemRuntimeClock,
@@ -33,6 +36,8 @@ pub struct ListenerConfig {
 pub struct RuntimeLimits {
     /// Maximum request-body bytes accepted by streaming and buffered adapters.
     pub max_request_body_bytes: usize,
+    /// Maximum request bytes materialized by non-streaming adapters.
+    pub max_buffered_request_body_bytes: usize,
     /// Maximum response-body bytes accepted by streaming and buffered adapters.
     pub max_response_body_bytes: usize,
     /// Maximum bytes accepted from an application-owned streaming local response.
@@ -71,6 +76,7 @@ impl Default for RuntimeLimits {
     fn default() -> Self {
         Self {
             max_request_body_bytes: 4 * 1024 * 1024,
+            max_buffered_request_body_bytes: 32 * 1024 * 1024,
             max_response_body_bytes: 16 * 1024 * 1024,
             max_local_response_body_bytes: 1024 * 1024 * 1024,
             body_channel_capacity: 8,

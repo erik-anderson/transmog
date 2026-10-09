@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Headless application and live-session service for Transmog"
 
 [dependencies]
+serde_json.workspace = true
 bytes.workspace = true
 http.workspace = true
 transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
@@ -20,3 +21,6 @@ tokio.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }

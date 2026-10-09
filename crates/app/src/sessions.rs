@@ -96,6 +96,9 @@ impl CursorRegistry {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionQueryInput {
+    /// Opaque completed content-search snapshot handle.
+    #[serde(default)]
+    pub search_result_id: Option<String>,
     /// Opaque continuation token returned by the prior page.
     pub cursor: Option<String>,
     /// Return the newest matching bounded window without pagination.
@@ -145,7 +148,9 @@ pub struct SessionSummary {
     /// Last response status, if observed.
     pub status: Option<u16>,
     /// Milliseconds from start to terminal observation or the page snapshot.
-    pub duration_ms: u64,
+    pub duration_ms: Option<u64>,
+    /// Original saved trace namespace, when this row was imported.
+    pub trace_id: Option<String>,
     /// Request body bytes observed at all explicit boundaries.
     pub request_bytes: u64,
     /// Response body bytes observed at all explicit boundaries.
@@ -263,10 +268,27 @@ impl SessionUpdateSubscription {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn query_sessions(
     service: &ApplicationSessionService,
     registry: &Arc<Mutex<CursorRegistry>>,
     input: SessionQueryInput,
+) -> Result<SessionPage, AppError> {
+    query_sessions_with_traces(
+        service,
+        registry,
+        input,
+        &crate::traces::TraceRegistry::default(),
+        None,
+    )
+}
+
+pub(crate) fn query_sessions_with_traces(
+    service: &ApplicationSessionService,
+    registry: &Arc<Mutex<CursorRegistry>>,
+    input: SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<SessionPage, AppError> {
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
@@ -275,8 +297,9 @@ pub(crate) fn query_sessions(
         || !input.filters.is_empty()
         || input.offset.is_some()
         || input.focus_id.is_some()
+        || matching.is_some()
     {
-        return query_sorted(service, &input);
+        return query_sorted(service, &input, traces, matching);
     }
     if input.latest && input.cursor.is_some() {
         return Err(AppError::new(
@@ -332,7 +355,7 @@ pub(crate) fn query_sessions(
     let sessions: Vec<_> = page
         .sessions
         .iter()
-        .map(|snapshot| summarize(snapshot, now, capturing))
+        .map(|snapshot| summarize_with_trace(snapshot, now, capturing, traces))
         .collect();
     let next_cursor = page
         .next
@@ -370,13 +393,18 @@ pub(crate) fn subscribe(
 fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> SessionSummary {
     let target = snapshot.metadata.original_target.as_target();
     let request = snapshot.request_heads.last().map(|head| &head.head);
-    let end = snapshot.terminal_at.unwrap_or(now);
-    let duration_ms = u64::try_from(
-        end.duration_since(snapshot.metadata.started_at)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(u64::MAX);
+    let end = snapshot
+        .terminal_at
+        .or_else(|| (!snapshot.imported).then_some(now));
+    let duration_ms = end
+        .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
+        .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+    let duration_ms = snapshot
+        .performance
+        .elapsed_micros()
+        .map(|micros| micros / 1_000)
+        .or(duration_ms);
     let (request_bytes, response_bytes) =
         snapshot
             .bodies
@@ -404,6 +432,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         None => "active",
     };
     SessionSummary {
+        trace_id: None,
         url: format!(
             "{}://{}{}{}",
             target.scheme,
@@ -446,14 +475,18 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
             || target.path.clone(),
             |query| format!("{}?{query}", target.path),
         ),
-        protocol: format!("{:?}", snapshot.metadata.ingress_version),
+        protocol: crate::inspector::message_protocol(
+            &snapshot.performance,
+            "client-request",
+            snapshot.metadata.ingress_version,
+        ),
         status: snapshot.response_heads.last().map(|head| head.head.status),
         duration_ms,
         request_bytes,
         response_bytes,
         terminal,
         loss: snapshot.sequence_loss > 0,
-        capturing,
+        capturing: capturing && !snapshot.imported,
         auto_response: auto_response_match(snapshot),
     }
 }
@@ -462,7 +495,7 @@ fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
     match column {
         TrafficColumn::Status => row.status.map(u64::from),
         TrafficColumn::Pid => row.caller.process_id.map(u64::from),
-        TrafficColumn::Duration => Some(row.duration_ms),
+        TrafficColumn::Duration => row.duration_ms,
         TrafficColumn::ResponseBytes => Some(row.response_bytes),
         TrafficColumn::RequestBytes => Some(row.request_bytes),
         TrafficColumn::StartedAt => Some(row.started_at),
@@ -504,9 +537,30 @@ fn text_value(row: &SessionSummary, column: TrafficColumn) -> String {
     }
 }
 
+fn summarize_with_trace(
+    snapshot: &SessionSnapshot,
+    now: SystemTime,
+    capturing: bool,
+    traces: &crate::traces::TraceRegistry,
+) -> SessionSummary {
+    let mut row = summarize(snapshot, now, capturing);
+    if let Some(entry) = traces.entry(&row.id) {
+        row.trace_id = Some(entry.trace_id);
+        if !entry.protocol_known {
+            row.protocol = "Unavailable".into();
+        }
+        if !entry.target_known {
+            row.url = "Unavailable".into();
+        }
+    }
+    row
+}
+
 fn query_sorted(
     service: &ApplicationSessionService,
     input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<SessionPage, AppError> {
     if input.cursor.is_some() || input.filters.len() > 14 {
         return Err(AppError::new(
@@ -540,27 +594,11 @@ fn query_sorted(
     let now = SystemTime::now();
     let rows = service
         .catalog()
-        .project_retained(|snapshot| summarize(snapshot, now, capturing));
+        .project_retained(|snapshot| summarize_with_trace(snapshot, now, capturing, traces));
     let retained_count = rows.len();
     let mut rows: Vec<_> = rows
         .into_iter()
-        .filter(|row| {
-            input
-                .method
-                .as_ref()
-                .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
-                && input
-                    .host
-                    .as_ref()
-                    .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
-                && input
-                    .terminal
-                    .is_none_or(|terminal| (row.terminal != "active") == terminal)
-                && search
-                    .as_deref()
-                    .is_none_or(|search| matches_search(row, search))
-                && filters.iter().all(|filter| filter.matches(row))
-        })
+        .filter(|row| matches_query_row(row, input, matching, search.as_deref(), &filters))
         .collect();
     if let Some(sort) = &input.sort {
         sort_rows(&mut rows, sort);
@@ -597,6 +635,63 @@ fn query_sorted(
         retained_count,
         focus_offset,
     })
+}
+
+fn matches_query_row(
+    row: &SessionSummary,
+    input: &SessionQueryInput,
+    matching: Option<&std::collections::HashSet<String>>,
+    search: Option<&str>,
+    filters: &[PreparedFilter],
+) -> bool {
+    matching.is_none_or(|matching| matching.contains(&row.id))
+        && input
+            .method
+            .as_ref()
+            .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
+        && input
+            .host
+            .as_ref()
+            .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
+        && input
+            .terminal
+            .is_none_or(|terminal| (row.terminal != "active") == terminal)
+        && search.is_none_or(|search| matches_search(row, search))
+        && filters.iter().all(|filter| filter.matches(row))
+}
+
+pub(crate) fn matching_ids(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+    matching: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<String>, AppError> {
+    validate_filter(input.method.as_deref())?;
+    validate_filter(input.host.as_deref())?;
+    validate_filter(input.search.as_deref())?;
+    if input.filters.len() > 14 {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "At most 14 column filters are supported",
+            false,
+        ));
+    }
+    let filters = input
+        .filters
+        .iter()
+        .map(PreparedFilter::new)
+        .collect::<Result<Vec<_>, _>>()?;
+    let search = input.search.as_ref().map(|value| value.to_lowercase());
+    let now = SystemTime::now();
+    Ok(service
+        .catalog()
+        .project_retained(|snapshot| {
+            let row = summarize_with_trace(snapshot, now, false, traces);
+            matches_query_row(&row, input, matching, search.as_deref(), &filters).then_some(row.id)
+        })
+        .into_iter()
+        .flatten()
+        .collect())
 }
 
 struct PreparedFilter {

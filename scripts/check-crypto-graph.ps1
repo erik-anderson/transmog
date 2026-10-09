@@ -3,7 +3,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 # Evaluate actual target graphs: unfiltered metadata can combine a Windows-only
 # owner with a dependency's mobile-only edges into an impossible runtime path.
 foreach ($graphTarget in @('x86_64-pc-windows-msvc','x86_64-unknown-linux-gnu','aarch64-apple-darwin')) {
-    $metadata = cargo metadata --format-version 1 --locked --filter-platform $graphTarget | ConvertFrom-Json
+    $metadata = cargo metadata --format-version 1 --locked --filter-platform $graphTarget | ConvertFrom-Json -AsHashtable
     $packagesById = @{}
     $nodesById = @{}
     foreach ($package in $metadata.packages) { $packagesById[$package.id] = $package }
@@ -26,7 +26,7 @@ foreach ($graphTarget in @('x86_64-pc-windows-msvc','x86_64-unknown-linux-gnu','
     $foundForbidden = $packages | Where-Object { $forbidden -contains $_.name }
     if ($foundForbidden) { throw "Forbidden production TLS crates on $graphTarget : $(($foundForbidden.name | Sort-Object -Unique) -join ', ')" }
     foreach ($name in @('boring', 'boring-sys')) {
-        $versions = @($packages | Where-Object name -eq $name | Select-Object -ExpandProperty version -Unique)
+        $versions = @($packages | Where-Object { $_.name -eq $name } | ForEach-Object { $_.version } | Sort-Object -Unique)
         if ($versions.Count -ne 1) { throw "Expected exactly one $name version on $graphTarget; found: $($versions -join ', ')" }
     }
     Write-Host "$graphTarget : proxy/replay graphs contain one BoringSSL family; the desktop updater is the only isolated HTTPS-client exception."

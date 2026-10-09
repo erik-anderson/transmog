@@ -3,7 +3,7 @@ import '../autoresponse-switch/autoresponse-switch.js';
 import '../app-updates/app-updates.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences } from '../models.js';
+import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -21,6 +21,30 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable passwordTitle='Capture password';
+  @observable passwordConfirm=false;
+  @observable passwordVisible=false;
+  @observable passwordError='';
+  passwordDialog!:HTMLDialogElement;
+  passwordForm!:HTMLFormElement;
+  private passwordRequest:TracePasswordPrompt|null=null;
+  onTracePasswordRequest(event:CustomEvent<TracePasswordPrompt>):void {
+    event.stopPropagation();if(this.passwordRequest){event.detail.resolve(null);return;}
+    this.passwordRequest=event.detail;this.passwordTitle=event.detail.title;this.passwordConfirm=event.detail.confirm;this.passwordError=event.detail.message;this.passwordVisible=false;
+    this.passwordForm.reset();this.setPasswordInputType(false);this.passwordDialog.showModal();
+    (this.passwordForm.elements.namedItem('password') as HTMLInputElement).focus();
+  }
+  submitTracePassword(event:Event):void {
+    event.preventDefault();const password=(this.passwordForm.elements.namedItem('password') as HTMLInputElement).value;
+    if(this.passwordConfirm&&password!==(this.passwordForm.elements.namedItem('confirmPassword') as HTMLInputElement).value){this.passwordError='The passwords do not match.';return;}
+    const request=this.passwordRequest;this.passwordRequest=null;this.passwordForm.reset();this.passwordDialog.close();request?.resolve(password);
+  }
+  cancelTracePassword():void {this.passwordDialog.close();}
+  tracePasswordClosed():void {if(this.passwordDialog.open)return;const request=this.passwordRequest;this.passwordRequest=null;this.passwordForm.reset();this.passwordError='';this.passwordVisible=false;request?.resolve(null);}
+  setPasswordVisible(event:Event):void {this.passwordVisible=(event.target as HTMLInputElement).checked;this.setPasswordInputType(this.passwordVisible);}
+  private setPasswordInputType(visible:boolean):void {for(const name of ['password','confirmPassword'])(this.passwordForm.elements.namedItem(name) as HTMLInputElement).type=visible?'text':'password';}
+
+  @observable viewerMode = false;
   @attr({ attribute: 'data-theme' }) theme: ProductState['preferences']['theme'] = 'system';
   @observable activeView: ViewName = initialState.activeView as ViewName;
   @observable currentNavigation: Record<string, string> = initialState.currentNavigation;
@@ -76,7 +100,11 @@ export class AppShell extends WebUIElement {
   private saving = false;
   private saveAgain = false;
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
-  protected hydratedCallback():void {void this.refreshAutoresponses();}
+  protected hydratedCallback():void {
+    if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,pageSize:state.preferences.sessionPageSize,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
+    else void this.refreshAutoresponses();
+  }
+  async openMainWindow():Promise<void> {try{await invoke('open_main_window');}catch(error:unknown){this.diagnosticText='Main window could not be opened: '+describeError(error);}}
   onAutomationState(event:CustomEvent<AutomationStatus>):void {
     if(!this.autoresponseState || event.detail.generation>=this.autoresponseState.generation)this.autoresponseState=event.detail;
   }
@@ -109,7 +137,7 @@ export class AppShell extends WebUIElement {
   }
   onStatus(event: CustomEvent<AppStatus>): void { this.applyStatus(event.detail); }
   private applyStatus(status: AppStatus): void {
-    this.lifecycleLabel = lifecycleLabel(status.lifecycle);
+    this.lifecycleLabel = status.lifecycle==='draining'?status.summary:lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;
     this.listener = status.listener ?? 'Not listening';
     if(status.hostRestorePending)this.diagnosticText='Host restoration is pending and must be retried before restart.';
@@ -164,6 +192,7 @@ export class AppShell extends WebUIElement {
   }
 
   private async activateView(view: ViewName): Promise<boolean> {
+    if(this.viewerMode&&view!=='traffic'&&view!=='composer')return false;
     const generation = ++this.navigationGeneration;
     try {
       if (view in loaders) await loaders[view as keyof typeof loaders]();

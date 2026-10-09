@@ -25,9 +25,28 @@ use transmog_core::{
 use transmog_network::HappyEyeballsConfig;
 use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
-use crate::{HttpsOriginConnector, HyperEgressMode, build_https_connector_with_happy_eyeballs};
+use crate::{
+    HyperEgressMode,
+    metrics::{ConnectionObservation, MeasuredHttpsConnector},
+};
+use transmog_core::performance::{Milestone, PerformanceRecorder, ProtocolObservation};
 
-type OriginClient = Client<HttpsOriginConnector, CanonicalHttpBody>;
+#[derive(Clone)]
+struct ResponseObservation {
+    connection: ConnectionObservation,
+    shared: bool,
+    performance: PerformanceRecorder,
+}
+impl Drop for ResponseObservation {
+    fn drop(&mut self) {
+        self.performance.transport(
+            self.connection
+                .snapshot(self.shared, Some(&self.performance)),
+        );
+    }
+}
+
+type OriginClient = Client<MeasuredHttpsConnector, CanonicalHttpBody>;
 
 /// Pooled Hyper origin client with distinct ALPN pools for forced H1 and H2.
 #[derive(Clone)]
@@ -35,6 +54,7 @@ pub struct HyperOriginClient {
     h1: OriginClient,
     h2: OriginClient,
     auto: OriginClient,
+    performance: Option<PerformanceRecorder>,
 }
 
 /// Result of an HTTP/1.1 upgrade attempt.
@@ -63,6 +83,96 @@ impl std::fmt::Debug for HyperUpgradeResponse {
 }
 
 impl HyperOriginClient {
+    /// Shares an exchange-local recorder while keeping the same physical pools.
+    #[must_use]
+    pub fn with_performance(mut self, performance: Option<PerformanceRecorder>) -> Self {
+        self.performance = performance;
+        self
+    }
+
+    async fn request(
+        &self,
+        mut outgoing: Request<CanonicalHttpBody>,
+        mode: HyperEgressMode,
+    ) -> Result<http::Response<Incoming>, HyperOriginError> {
+        let client = match mode {
+            HyperEgressMode::Http1Only => &self.h1,
+            HyperEgressMode::Http2Only => &self.h2,
+            HyperEgressMode::Auto => &self.auto,
+        };
+        let mut captured = hyper_util::client::legacy::connect::capture_connection(&mut outgoing);
+        let response = client.request(outgoing);
+        tokio::pin!(response);
+        let mut assigned = None;
+        let early = tokio::select! {
+            result = &mut response => Some(result),
+            connected = captured.wait_for_connection_metadata() => {
+                if let Some(connected) = connected.as_ref() {
+                    let mut extras = http::Extensions::new();
+                    connected.get_extras(&mut extras);
+                    if let Some(connection) = extras.get::<ConnectionObservation>() {
+                        let shared = connection.claim();
+                        assigned = Some((connection.clone(), shared));
+                        if let Some(performance) = &self.performance {
+                            performance.transport(connection.snapshot(shared,Some(performance)));
+                            performance.mark(Milestone::UpstreamConnected);
+                            performance.protocol(ProtocolObservation {boundary: "upstream-request".into(), version: if connected.is_negotiated_h2() || mode == HyperEgressMode::Http2Only {"HTTP/2"} else {"HTTP/1.1"}.into(), reason: None});
+                        }
+                    }
+                }
+                None
+            }
+        };
+        let result = match early {
+            Some(result) => result,
+            None => response.await,
+        };
+        if let Err(error) = &result
+            && let Some(performance) = &self.performance
+            && let Some(observation) = crate::metrics::failed_observation(error, performance)
+        {
+            performance.transport(observation);
+        }
+        let mut response = result?;
+        let connection = assigned.or_else(|| {
+            response
+                .extensions()
+                .get::<ConnectionObservation>()
+                .map(|connection| (connection.clone(), connection.claim()))
+        });
+        if let Some(performance) = &self.performance {
+            if let Some((connection, shared)) = connection {
+                response.extensions_mut().insert(ResponseObservation {
+                    connection: connection.clone(),
+                    shared,
+                    performance: performance.clone(),
+                });
+                // The actual response protocol also identifies the protocol used by Hyper for this exchange.
+                performance.protocol(ProtocolObservation {
+                    boundary: "upstream-request".into(),
+                    version: if response.version() == Version::HTTP_2 {
+                        "HTTP/2"
+                    } else {
+                        "HTTP/1.1"
+                    }
+                    .into(),
+                    reason: None,
+                });
+                performance.transport(connection.snapshot(shared, Some(performance)));
+            }
+            performance.mark(Milestone::ResponseHeaders);
+            performance.protocol(ProtocolObservation {
+                boundary: "upstream-response".into(),
+                version: format!("{:?}", response.version()),
+                reason: response
+                    .extensions()
+                    .get::<hyper::ext::ReasonPhrase>()
+                    .map(|reason| String::from_utf8_lossy(reason.as_bytes()).into_owned()),
+            });
+        }
+        Ok(response)
+    }
+
     /// Builds all Hyper pools from one immutable TLS policy generation.
     ///
     /// # Errors
@@ -83,26 +193,29 @@ impl HyperOriginClient {
         factory: &UpstreamTlsContextFactory,
         happy_eyeballs: HappyEyeballsConfig,
     ) -> Result<Self, HyperOriginError> {
-        let h1 =
-            Client::builder(TokioExecutor::new()).build(build_https_connector_with_happy_eyeballs(
-                factory,
-                HyperEgressMode::Http1Only,
-                happy_eyeballs,
-            )?);
+        let h1 = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
+            factory,
+            HyperEgressMode::Http1Only,
+            happy_eyeballs,
+        )?);
         let mut h2_builder = Client::builder(TokioExecutor::new());
         h2_builder.http2_only(true);
-        let h2 = h2_builder.build(build_https_connector_with_happy_eyeballs(
+        let h2 = h2_builder.build(crate::metrics::connector(
             factory,
             HyperEgressMode::Http2Only,
             happy_eyeballs,
         )?);
-        let auto =
-            Client::builder(TokioExecutor::new()).build(build_https_connector_with_happy_eyeballs(
-                factory,
-                HyperEgressMode::Auto,
-                happy_eyeballs,
-            )?);
-        Ok(Self { h1, h2, auto })
+        let auto = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
+            factory,
+            HyperEgressMode::Auto,
+            happy_eyeballs,
+        )?);
+        Ok(Self {
+            h1,
+            h2,
+            auto,
+            performance: None,
+        })
     }
 
     /// Sends one explicitly bounded canonical exchange through Hyper.
@@ -159,20 +272,23 @@ impl HyperOriginClient {
         let mut outgoing = Request::builder()
             .method(request.head.method.as_str())
             .uri(uri)
-            .body(CanonicalHttpBody::new(request.body)?)?;
+            .body(CanonicalHttpBody::new(request.body)?.observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
 
-        let client = match mode {
-            HyperEgressMode::Http1Only => &self.h1,
-            HyperEgressMode::Http2Only => &self.h2,
-            HyperEgressMode::Auto => &self.auto,
-        };
-        let mut response = client.request(outgoing).await?;
+        let mut response = self.request(outgoing, mode).await?;
         let source_version = protocol_version(response.version())?;
         let status = response.status().as_u16();
         let headers = block_from_headers(response.headers())?;
-        let body =
-            collect_incoming(response.body_mut(), max_response_bytes, body_idle_timeout).await?;
+        let body = collect_incoming(
+            response.body_mut(),
+            max_response_bytes,
+            body_idle_timeout,
+            self.performance.as_ref(),
+        )
+        .await?;
+        if let Some(performance) = &self.performance {
+            performance.mark(Milestone::UpstreamResponseDone);
+        }
         Ok(CanonicalResponse {
             head: ResponseHead {
                 status,
@@ -239,15 +355,10 @@ impl HyperOriginClient {
         let mut outgoing = Request::builder()
             .method(request.head.method.as_str())
             .uri(uri)
-            .body(CanonicalHttpBody::streaming(request.body))?;
+            .body(CanonicalHttpBody::streaming(request.body).observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
 
-        let client = match mode {
-            HyperEgressMode::Http1Only => &self.h1,
-            HyperEgressMode::Http2Only => &self.h2,
-            HyperEgressMode::Auto => &self.auto,
-        };
-        let response = client.request(outgoing).await?;
+        let response = self.request(outgoing, mode).await?;
         let source_version = protocol_version(response.version())?;
         let head = ResponseHead {
             status: response.status().as_u16(),
@@ -255,11 +366,14 @@ impl HyperOriginClient {
             source_version,
         };
         let (sender, body) = BodyStream::channel(body_channel_capacity);
+        let observation = response.extensions().get::<ResponseObservation>().cloned();
         tokio::spawn(stream_incoming(
             response.into_body(),
             sender,
             max_response_bytes,
             body_idle_timeout,
+            self.performance.clone(),
+            observation,
         ));
         Ok(StreamingResponse { head, body })
     }
@@ -313,10 +427,10 @@ impl HyperOriginClient {
             .method(request.method.as_str())
             .uri(uri)
             .version(Version::HTTP_11)
-            .body(CanonicalHttpBody::new(Vec::new())?)?;
+            .body(CanonicalHttpBody::new(Vec::new())?.observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
 
-        let mut response = self.h1.request(outgoing).await?;
+        let mut response = self.request(outgoing, HyperEgressMode::Http1Only).await?;
         let source_version = protocol_version(response.version())?;
         let head = ResponseHead {
             status: response.status().as_u16(),
@@ -330,11 +444,14 @@ impl HyperOriginClient {
             });
         }
         let (sender, body) = BodyStream::channel(body_channel_capacity);
+        let observation = response.extensions().get::<ResponseObservation>().cloned();
         tokio::spawn(stream_incoming(
             response.into_body(),
             sender,
             max_response_bytes,
             body_idle_timeout,
+            self.performance.clone(),
+            observation,
         ));
         Ok(HyperUpgradeResponse::Rejected(StreamingResponse {
             head,
@@ -345,6 +462,7 @@ impl HyperOriginClient {
 
 #[derive(Debug)]
 struct CanonicalHttpBody {
+    performance: Option<PerformanceRecorder>,
     inner: CanonicalHttpBodyInner,
 }
 
@@ -355,6 +473,10 @@ enum CanonicalHttpBodyInner {
 }
 
 impl CanonicalHttpBody {
+    fn observed(mut self, performance: Option<PerformanceRecorder>) -> Self {
+        self.performance = performance;
+        self
+    }
     fn new(frames: Vec<BodyFrame>) -> Result<Self, HyperOriginError> {
         let mut output = VecDeque::with_capacity(frames.len());
         for frame in frames {
@@ -364,12 +486,14 @@ impl CanonicalHttpBody {
             });
         }
         Ok(Self {
+            performance: None,
             inner: CanonicalHttpBodyInner::Buffered(output),
         })
     }
 
     fn streaming(body: BodyStream) -> Self {
         Self {
+            performance: None,
             inner: CanonicalHttpBodyInner::Streaming(body),
         }
     }
@@ -383,7 +507,7 @@ impl Body for CanonicalHttpBody {
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match &mut self.inner {
+        let result = match &mut self.inner {
             CanonicalHttpBodyInner::Buffered(frames) => Poll::Ready(frames.pop_front().map(Ok)),
             CanonicalHttpBodyInner::Streaming(body) => match body.poll_recv(context) {
                 Poll::Ready(Some(Ok(frame))) => Poll::Ready(Some(
@@ -394,14 +518,25 @@ impl Body for CanonicalHttpBody {
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             },
+        };
+        if (matches!(&result, Poll::Ready(None))
+            || matches!(&result, Poll::Ready(Some(Ok(_)))) && self.is_end_stream())
+            && let Some(performance) = &self.performance
+        {
+            performance.mark(Milestone::UpstreamRequestConsumed);
         }
+        result
     }
 
     fn is_end_stream(&self) -> bool {
-        matches!(
+        let empty = matches!(
             &self.inner,
             CanonicalHttpBodyInner::Buffered(frames) if frames.is_empty()
-        )
+        );
+        if empty && let Some(performance) = &self.performance {
+            performance.mark(Milestone::UpstreamRequestConsumed);
+        }
+        empty
     }
 }
 
@@ -417,12 +552,19 @@ async fn stream_incoming(
     sender: transmog_core::BodyStreamSender,
     limit: usize,
     body_idle_timeout: Duration,
+    performance: Option<PerformanceRecorder>,
+    _observation: Option<ResponseObservation>,
 ) {
     let mut received = 0_usize;
     loop {
         let frame = match timeout(body_idle_timeout, body.frame()).await {
             Ok(Some(frame)) => frame,
-            Ok(None) => return,
+            Ok(None) => {
+                if let Some(performance) = &performance {
+                    performance.mark(Milestone::UpstreamResponseDone);
+                }
+                return;
+            }
             Err(_) => {
                 let _ = sender.send(Err(BodyStreamError::IdleTimeout)).await;
                 return;
@@ -469,6 +611,11 @@ async fn stream_incoming(
                 return;
             }
         };
+        if matches!(&canonical,BodyFrame::Data(data) if !data.is_empty())
+            && let Some(performance) = &performance
+        {
+            performance.mark(Milestone::UpstreamResponseFirstBody);
+        }
         if sender.send(Ok(canonical)).await.is_err() {
             return;
         }
@@ -479,6 +626,7 @@ async fn collect_incoming(
     body: &mut Incoming,
     limit: usize,
     body_idle_timeout: Duration,
+    performance: Option<&PerformanceRecorder>,
 ) -> Result<Vec<BodyFrame>, HyperOriginError> {
     let mut frames = Vec::new();
     let mut received = 0_usize;
@@ -490,6 +638,11 @@ async fn collect_incoming(
         };
         let frame = match frame.into_data() {
             Ok(data) => {
+                if !data.is_empty()
+                    && let Some(performance) = performance
+                {
+                    performance.mark(Milestone::UpstreamResponseFirstBody);
+                }
                 received = received
                     .checked_add(data.len())
                     .ok_or(HyperOriginError::ResponseBodyTooLarge { limit })?;
@@ -583,4 +736,107 @@ pub enum HyperOriginError {
     /// The origin left its response body idle past the configured deadline.
     #[error("origin response body exceeded its idle timeout")]
     BodyIdleTimeout,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::{Instant, SystemTime};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use transmog_tls::{SystemTrustSource, TrustSnapshot, UpstreamTlsPolicy};
+    #[tokio::test]
+    async fn pooled_requests_share_connection_counters_and_preserve_actual_http_minor_version() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            for _ in 0..2 {
+                let mut head = Vec::new();
+                loop {
+                    head.push(stream.read_u8().await.unwrap());
+                    if head.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                stream
+                    .write_all(b"HTTP/1.1 200 Custom reason\r\nContent-Length: 4\r\n\r\n")
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                stream.write_all(b"data").await.unwrap();
+            }
+        });
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap());
+        let client = HyperOriginClient::new(&UpstreamTlsContextFactory::new(
+            trust,
+            UpstreamTlsPolicy::default(),
+        ))
+        .unwrap();
+        let mut samples = Vec::new();
+        for _ in 0..2 {
+            let performance = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+            let response = client
+                .clone()
+                .with_performance(Some(performance.clone()))
+                .execute(
+                    CanonicalRequest {
+                        head: RequestHead {
+                            method: "GET".into(),
+                            target: transmog_core::Target {
+                                scheme: "http".into(),
+                                authority: address.to_string(),
+                                host: "127.0.0.1".into(),
+                                port: address.port(),
+                                path: "/".into(),
+                                query: None,
+                            },
+                            headers: HeaderBlock::new(),
+                            source_version: HttpLegVersion::Http1,
+                        },
+                        body: vec![],
+                    },
+                    HyperEgressMode::Http1Only,
+                    1024,
+                    Duration::from_secs(1),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.body,
+                vec![BodyFrame::Data(Bytes::from_static(b"data"))]
+            );
+            let sample = performance.snapshot();
+            assert!(sample.valid());
+            assert!(
+                sample
+                    .points
+                    .iter()
+                    .any(|point| point.milestone == Milestone::UpstreamResponseDone)
+            );
+            let protocol = sample
+                .protocols
+                .iter()
+                .find(|item| item.boundary == "upstream-response")
+                .unwrap();
+            assert_eq!(protocol.version, "HTTP/1.1");
+            assert_eq!(protocol.reason.as_deref(), Some("Custom reason"));
+            samples.push(sample);
+        }
+        assert_eq!(
+            samples[0].transports[0].connection_id,
+            samples[1].transports[0].connection_id
+        );
+        assert!(!samples[0].transports[0].shared);
+        assert!(samples[1].transports[0].shared);
+        assert_eq!(samples[1].transports[0].tcp_micros, Some(0));
+        assert!(
+            samples[1].transports[0]
+                .setup_timings
+                .iter()
+                .all(|timing| timing.ended_offset_micros < 0 && timing.request_wait_micros == 0)
+        );
+        assert!(samples[1].transports[0].bytes_read > samples[0].transports[0].bytes_read);
+        origin.await.unwrap();
+    }
 }

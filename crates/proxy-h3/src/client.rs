@@ -3,6 +3,7 @@ use std::{
     net::SocketAddr,
     num::NonZeroUsize,
     sync::Arc,
+    time::Instant,
 };
 
 use boring::{hash::MessageDigest, rand::rand_bytes, x509::X509};
@@ -25,6 +26,11 @@ use transmog_network::{
 use transmog_tls::UpstreamTlsContextFactory;
 
 use crate::{H3ConfigError, H3TransportLimits, build_quiche_config};
+
+use transmog_core::performance::{
+    ConnectionSetupTime, Milestone, PerformanceRecorder, ProtocolObservation, QuicObservation,
+    TransportObservation, TransportOutcome,
+};
 
 const MAX_DATAGRAM_SIZE: usize = 1_350;
 const MAX_UDP_PACKET_SIZE: usize = 65_535;
@@ -63,6 +69,7 @@ pub struct H3StreamingResponse {
 /// Direct Tokio driver over quiche using the shared `BoringSSL` context.
 #[derive(Clone, Debug)]
 pub struct H3OriginClient {
+    performance: Option<PerformanceRecorder>,
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
     happy_eyeballs: HappyEyeballsConfig,
@@ -70,6 +77,13 @@ pub struct H3OriginClient {
 }
 
 impl H3OriginClient {
+    /// Associates measurements with an exchange while sharing the original QUIC pool.
+    #[must_use]
+    pub fn with_performance(mut self, performance: Option<PerformanceRecorder>) -> Self {
+        self.performance = performance;
+        self
+    }
+
     /// Creates an HTTP/3 client tied to one immutable trust generation.
     pub fn new(tls: UpstreamTlsContextFactory, limits: H3TransportLimits) -> Self {
         Self::with_happy_eyeballs(tls, limits, HappyEyeballsConfig::default())
@@ -86,6 +100,7 @@ impl H3OriginClient {
             limits,
             happy_eyeballs,
             pool: Arc::new(Mutex::new(HashMap::new())),
+            performance: None,
         }
     }
 
@@ -154,6 +169,7 @@ impl H3OriginClient {
         self.submit(
             &key,
             DriverCommand {
+                performance: self.performance.clone(),
                 request: prepared,
                 response: ResponseTarget::Streaming {
                     head_completion: Some(head_completion),
@@ -187,6 +203,7 @@ impl H3OriginClient {
         self.submit(
             &key,
             DriverCommand {
+                performance: self.performance.clone(),
                 request: prepared,
                 response: ResponseTarget::Buffered {
                     accumulator: ResponseAccumulator::new(max_response_bytes),
@@ -268,11 +285,14 @@ struct PoolKey {
 }
 
 struct DriverCommand {
+    performance: Option<PerformanceRecorder>,
     request: PreparedRequest,
     response: ResponseTarget,
 }
 
 struct ActiveRequest {
+    performance: Option<PerformanceRecorder>,
+    transport: TransportObservation,
     body: ActiveRequestBody,
     response: ResponseTarget,
 }
@@ -344,6 +364,9 @@ struct H3ConnectionDriver {
     peer_addr: SocketAddr,
     connection: quiche::Connection,
     h3_config: quiche::h3::Config,
+    transport: TransportObservation,
+    setup_timings: Vec<ConnectionSetupTime>,
+    uses: u64,
 }
 
 impl H3ConnectionDriver {
@@ -354,7 +377,11 @@ impl H3ConnectionDriver {
         limits: H3TransportLimits,
         happy_eyeballs: HappyEyeballsConfig,
     ) -> Result<Self, H3OriginError> {
+        let dns_begin = Instant::now();
         let candidates = resolve_candidates(&host, peer_port, happy_eyeballs).await?;
+        let dns_done = Instant::now();
+        let dns_micros =
+            u64::try_from(dns_done.duration_since(dns_begin).as_micros()).unwrap_or(u64::MAX);
         if candidates.is_empty() {
             return Err(H3OriginError::DnsNoAddresses(host));
         }
@@ -363,7 +390,20 @@ impl H3ConnectionDriver {
         })
         .await
         {
-            Ok((driver, _)) => Ok(driver),
+            Ok((mut driver, _)) => {
+                if host.parse::<std::net::IpAddr>().is_err() {
+                    driver.transport.dns_micros = Some(dns_micros);
+                    driver.setup_timings.insert(
+                        0,
+                        ConnectionSetupTime {
+                            phase: "dns",
+                            began: dns_begin,
+                            ended: dns_done,
+                        },
+                    );
+                }
+                Ok(driver)
+            }
             Err(HappyEyeballsError::NoCandidates) => Err(H3OriginError::DnsNoAddresses(host)),
             Err(HappyEyeballsError::AttemptsFailed(error)) => Err(error),
         }
@@ -375,6 +415,7 @@ impl H3ConnectionDriver {
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
     ) -> Result<Self, H3OriginError> {
+        let setup_begin = Instant::now();
         let bind_addr = if peer_addr.is_ipv4() {
             "0.0.0.0:0"
         } else {
@@ -406,18 +447,37 @@ impl H3ConnectionDriver {
                 peer_addr,
                 connection,
                 h3_config: quiche::h3::Config::new()?,
+                transport: TransportObservation {
+                    leg: "upstream".into(),
+                    connection_id: format!("quic-{}", hex_lower(source_connection_id.as_ref())),
+                    peer: Some(peer_addr.to_string()),
+                    local: Some(local_addr.to_string()),
+                    outcome: TransportOutcome::Connected,
+                    alpn: Some("h3".into()),
+                    tls_version: Some("TLSv1.3".into()),
+                    ..TransportObservation::default()
+                },
+                setup_timings: Vec::new(),
+                uses: 0,
             }
-            .establish(),
+            .establish(setup_begin),
         )
         .await
     }
 
-    async fn establish(mut self) -> Result<Self, H3OriginError> {
+    async fn establish(mut self, setup_begin: Instant) -> Result<Self, H3OriginError> {
         let mut recv_buffer = vec![0_u8; MAX_UDP_PACKET_SIZE];
         let mut send_buffer = vec![0_u8; MAX_DATAGRAM_SIZE];
         flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         loop {
             if self.connection.is_established() {
+                self.setup_timings.push(ConnectionSetupTime {
+                    phase: "quic",
+                    began: setup_begin,
+                    ended: Instant::now(),
+                });
+                self.transport.tls_micros =
+                    Some(u64::try_from(setup_begin.elapsed().as_micros()).unwrap_or(u64::MAX));
                 return Ok(self);
             }
             if self.connection.is_closed() {
@@ -492,7 +552,15 @@ impl H3ConnectionDriver {
             }
 
             if let Some(http3) = http3.as_mut() {
-                dispatch_pending(http3, &mut self.connection, pending, active)?;
+                dispatch_pending(
+                    http3,
+                    &mut self.connection,
+                    pending,
+                    active,
+                    &self.transport,
+                    &self.setup_timings,
+                    &mut self.uses,
+                )?;
                 progress_active_requests(http3, &mut self.connection, active);
                 flush_streaming_outputs(&mut self.connection, active);
                 poll_responses(
@@ -564,6 +632,9 @@ fn dispatch_pending(
     connection: &mut quiche::Connection,
     pending: &mut VecDeque<DriverCommand>,
     active: &mut HashMap<u64, ActiveRequest>,
+    physical: &TransportObservation,
+    setup_timings: &[ConnectionSetupTime],
+    uses: &mut u64,
 ) -> Result<(), H3OriginError> {
     while let Some(command) = pending.pop_front() {
         if command.response.is_cancelled() {
@@ -578,9 +649,27 @@ fn dispatch_pending(
             }
             Err(error) => return Err(error.into()),
         };
+        let mut transport = physical.clone();
+        transport.shared = *uses > 0;
+        *uses = uses.saturating_add(1);
+        if let Some(performance) = &command.performance {
+            performance.mark(Milestone::UpstreamConnected);
+            performance.protocol(ProtocolObservation {
+                boundary: "upstream-request".into(),
+                version: "HTTP/3".into(),
+                reason: None,
+            });
+            performance.project_connection_setup(&mut transport, setup_timings);
+            performance.transport(quic_observation(connection, &transport));
+            if finished {
+                performance.mark(Milestone::UpstreamRequestConsumed);
+            }
+        }
         active.insert(
             stream_id,
             ActiveRequest {
+                performance: command.performance,
+                transport,
                 body: command.request.body.into_active(finished),
                 response: command.response,
             },
@@ -602,6 +691,19 @@ fn progress_active_requests(
         }
         if let Err(error) = progress_request_body(http3, connection, stream_id, &mut request.body) {
             failed.push((stream_id, Some(error)));
+        }
+        if let Some(performance) = &request.performance {
+            performance.transport(quic_observation(connection, &request.transport));
+            if matches!(
+                &request.body,
+                ActiveRequestBody::Buffered { finished: true, .. }
+                    | ActiveRequestBody::Streaming {
+                        output_finished: true,
+                        ..
+                    }
+            ) {
+                performance.mark(Milestone::UpstreamRequestConsumed);
+            }
         }
     }
     for (stream_id, error) in failed {
@@ -626,6 +728,18 @@ fn poll_responses(
     loop {
         match http3.poll(connection) {
             Ok((stream_id, quiche::h3::Event::Headers { list, .. })) => {
+                if let Some(request) = active.get(&stream_id)
+                    && response_head(&list)?.is_some()
+                    && let Some(performance) = &request.performance
+                {
+                    performance.mark(Milestone::ResponseHeaders);
+                    performance.protocol(ProtocolObservation {
+                        boundary: "upstream-response".into(),
+                        version: "HTTP/3".into(),
+                        reason: None,
+                    });
+                    performance.transport(quic_observation(connection, &request.transport));
+                }
                 let result = active
                     .get_mut(&stream_id)
                     .map(|request| request.response.headers(&list, connection, peer_addr, tls));
@@ -636,6 +750,13 @@ fn poll_responses(
             Ok((stream_id, quiche::h3::Event::Data)) => loop {
                 match http3.recv_body(connection, stream_id, recv_buffer) {
                     Ok(read) => {
+                        if read > 0
+                            && let Some(performance) = active
+                                .get(&stream_id)
+                                .and_then(|request| request.performance.as_ref())
+                        {
+                            performance.mark(Milestone::UpstreamResponseFirstBody);
+                        }
                         let result = active
                             .get_mut(&stream_id)
                             .map(|request| request.response.data(&recv_buffer[..read]));
@@ -649,6 +770,12 @@ fn poll_responses(
                 }
             },
             Ok((stream_id, quiche::h3::Event::Finished)) => {
+                if let Some(request) = active.get(&stream_id)
+                    && let Some(performance) = &request.performance
+                {
+                    performance.mark(Milestone::UpstreamResponseDone);
+                    performance.transport(quic_observation(connection, &request.transport));
+                }
                 let is_buffered = active.get(&stream_id).is_some_and(|request| {
                     matches!(&request.response, ResponseTarget::Buffered { .. })
                 });
@@ -1281,6 +1408,28 @@ pub enum H3OriginError {
     },
 }
 
+fn quic_observation(
+    connection: &quiche::Connection,
+    base: &TransportObservation,
+) -> TransportObservation {
+    let mut observation = base.clone();
+    let stats = connection.stats();
+    let path = connection.path_stats().find(|path| path.active);
+    observation.bytes_read = Some(stats.recv_bytes);
+    observation.bytes_written = Some(stats.sent_bytes);
+    observation.quic = Some(QuicObservation {
+        rtt_micros: path
+            .as_ref()
+            .map(|path| u64::try_from(path.rtt.as_micros()).unwrap_or(u64::MAX)),
+        congestion_window: path.map(|path| path.cwnd as u64),
+        packets_sent: stats.sent as u64,
+        packets_received: stats.recv as u64,
+        packets_lost: stats.lost as u64,
+        retransmitted_bytes: stats.stream_retrans_bytes,
+    });
+    observation
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -1764,7 +1913,9 @@ mod tests {
             },
         );
 
-        let slow_client = client.clone();
+        let first_metrics = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
+        let second_metrics = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
+        let slow_client = client.clone().with_performance(Some(first_metrics.clone()));
         let slow = tokio::spawn(async move {
             slow_client
                 .execute(h3_request(origin, "/slow"), origin.port(), 1024)
@@ -1772,7 +1923,10 @@ mod tests {
         });
         let fast = timeout(
             std::time::Duration::from_secs(1),
-            client.execute(h3_request(origin, "/fast"), origin.port(), 1024),
+            client
+                .clone()
+                .with_performance(Some(second_metrics.clone()))
+                .execute(h3_request(origin, "/fast"), origin.port(), 1024),
         )
         .await
         .expect("fast H3 stream was blocked by the concurrent slow stream")
@@ -1793,6 +1947,44 @@ mod tests {
             vec![BodyFrame::Data(Bytes::from_static(b"slow"))]
         );
         assert_eq!(slow.telemetry.peer_addr, fast.telemetry.peer_addr);
+        let first = first_metrics.snapshot();
+        let second = second_metrics.snapshot();
+        assert_eq!(
+            first.transports[0].connection_id,
+            second.transports[0].connection_id
+        );
+        assert_ne!(first.transports[0].shared, second.transports[0].shared);
+        for sample in [&first, &second] {
+            assert!(sample.valid());
+            let connection = &sample.transports[0];
+            assert!(connection.tls_micros.is_some());
+            assert!(
+                connection
+                    .setup_timings
+                    .iter()
+                    .any(|timing| timing.phase == "quic")
+            );
+            for timing in &connection.setup_timings {
+                assert!(
+                    timing.request_wait_micros
+                        <= timing
+                            .ended_offset_micros
+                            .saturating_sub(timing.began_offset_micros)
+                            .cast_unsigned()
+                );
+            }
+            let quic = connection.quic.as_ref().unwrap();
+            assert!(quic.packets_sent > 0);
+            assert!(quic.packets_received > 0);
+            assert!(quic.rtt_micros.is_some());
+            assert!(
+                sample
+                    .points
+                    .iter()
+                    .any(|point| point.milestone == Milestone::UpstreamResponseDone)
+            );
+        }
+
         server.finish().await;
     }
 

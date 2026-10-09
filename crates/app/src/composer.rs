@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -8,8 +9,8 @@ use bytes::Bytes;
 use http::Uri;
 use serde::{Deserialize, Serialize};
 use transmog_core::{
-    BodyFrame, CanonicalRequest, HeaderBlock, HeaderField, HttpLegVersion, RequestHead, Target,
-    intercept::ExchangeCancellation,
+    BodyFrame, BodyStream, BodyStreamError, CanonicalRequest, HeaderBlock, HeaderField,
+    HttpLegVersion, RequestHead, StreamingRequest, Target, intercept::ExchangeCancellation,
 };
 use transmog_http::{HyperEgressMode, HyperOriginClient};
 use transmog_session::{
@@ -22,6 +23,37 @@ use transmog_tls::{
 };
 
 use crate::{AppError, ErrorCategory, ProxyRoute};
+
+/// Source association preserved even when the replay draft is edited.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerOrigin {
+    /// Workspace traffic entry from which the draft originated.
+    pub entry_id: String,
+    /// Original loaded trace, when known.
+    pub trace_id: Option<String>,
+    /// Friendly source trace filename, without its parent path.
+    pub trace_name: Option<String>,
+    /// Original trace-local entry identifier, when known.
+    pub original_id: Option<String>,
+}
+
+/// A body that streams without entering the `WebView` text editor.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ComposerBodySource {
+    /// Complete encoded bytes from the selected retained traffic entry.
+    Captured {
+        /// Workspace entry identifier.
+        #[serde(rename = "entryId")]
+        entry_id: String,
+    },
+    /// User-selected replacement file, read from one opened handle.
+    File {
+        /// Absolute local path explicitly supplied by the user.
+        path: String,
+    },
+}
 
 const MAX_HISTORY: usize = 100;
 const MAX_BODY_INPUT_CHARS: usize = 8 * 1024 * 1024;
@@ -50,6 +82,12 @@ pub struct ComposerRequest {
     /// UTF-8 request body or whitespace-tolerant hexadecimal bytes.
     #[serde(default)]
     pub body: String,
+    /// Optional streamed body; mutually exclusive with inline body bytes.
+    #[serde(default)]
+    pub body_source: Option<ComposerBodySource>,
+    /// Traffic entry that originally supplied the draft; retained after edits.
+    #[serde(default)]
+    pub source_entry_id: Option<String>,
     /// Whether `body` is hexadecimal rather than UTF-8.
     #[serde(default)]
     pub body_is_hex: bool,
@@ -75,6 +113,8 @@ pub struct ComposerSnapshot {
     pub status: Option<u16>,
     /// Stable attribution for audit/display.
     pub attribution: &'static str,
+    /// Original captured request association, if this draft came from traffic.
+    pub source: Option<ComposerOrigin>,
 }
 
 /// Bounded composer response.
@@ -95,6 +135,8 @@ pub struct ComposerResult {
     pub truncated: bool,
     /// Stable replay attribution.
     pub attribution: &'static str,
+    /// Original captured request association, retained after edits.
+    pub source: Option<ComposerOrigin>,
 }
 
 struct History {
@@ -123,7 +165,16 @@ impl ComposerManager {
         &self,
         service: &ApplicationSessionService,
         input: ComposerRequest,
+        file: Option<(std::fs::File, u64)>,
+        source: Option<ComposerOrigin>,
     ) -> Result<ComposerResult, AppError> {
+        if input.body_source.is_some() != file.is_some() {
+            return Err(AppError::new(
+                ErrorCategory::Unavailable,
+                "A complete streamed request body is required",
+                true,
+            ));
+        }
         let executor = self.executor.clone().ok_or_else(|| {
             AppError::new(
                 ErrorCategory::Unavailable,
@@ -131,7 +182,19 @@ impl ComposerManager {
                 false,
             )
         })?;
-        let (request, target) = build_request(&input)?;
+        let (mut request, target) = build_request(&input)?;
+        let executor: Arc<dyn ReplayExecutor> = if let Some((file, length)) = file {
+            request.headers.remove_all("content-length");
+            request.headers.push(
+                HeaderField::try_new("Content-Length", length.to_string()).expect("decimal length"),
+            );
+            Arc::new(FileReplayExecutor {
+                inner: executor,
+                file: Mutex::new(Some((file, length))),
+            })
+        } else {
+            executor
+        };
         let method = request.method.clone();
         let cancellation = ExchangeCancellation::new();
         let response = service
@@ -158,7 +221,7 @@ impl ComposerManager {
                     category == ErrorCategory::Unavailable,
                 )
             })?;
-        let id = self.record(method, target, Some(response.status));
+        let id = self.record(method, target, Some(response.status), source.clone());
         let headers = response
             .headers
             .iter()
@@ -175,8 +238,14 @@ impl ComposerManager {
             headers,
             body,
             body_is_hex,
-            truncated: false,
+            truncated: if body_is_hex {
+                response.body.len() > 64 * 1024
+            } else {
+                std::str::from_utf8(&response.body)
+                    .is_ok_and(|text| text.chars().count() > 64 * 1024)
+            },
             attribution: "transmog.app.composer-replay",
+            source,
         })
     }
 
@@ -190,7 +259,13 @@ impl ComposerManager {
             .collect()
     }
 
-    fn record(&self, method: String, target: String, status: Option<u16>) -> u64 {
+    fn record(
+        &self,
+        method: String,
+        target: String,
+        status: Option<u16>,
+        source: Option<ComposerOrigin>,
+    ) -> u64 {
         let mut history = self
             .history
             .lock()
@@ -202,10 +277,54 @@ impl ComposerManager {
             method,
             target,
             status,
+            source,
             attribution: "transmog.app.composer-replay",
         });
         history.items.truncate(MAX_HISTORY);
         id
+    }
+}
+
+struct ReplayProducer(tokio::task::JoinHandle<()>, ExchangeCancellation);
+impl Drop for ReplayProducer {
+    fn drop(&mut self) {
+        self.1.cancel();
+        self.0.abort();
+    }
+}
+
+struct FileReplayExecutor {
+    inner: Arc<dyn ReplayExecutor>,
+    file: Mutex<Option<(std::fs::File, u64)>>,
+}
+impl ReplayExecutor for FileReplayExecutor {
+    fn execute_file(
+        &self,
+        request: ValidatedReplayRequest,
+        file: std::fs::File,
+        length: u64,
+        cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_> {
+        self.inner.execute_file(request, file, length, cancellation)
+    }
+    fn execute(
+        &self,
+        request: ValidatedReplayRequest,
+        cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_> {
+        let file = self
+            .file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        match file {
+            Some((file, length)) => self.inner.execute_file(request, file, length, cancellation),
+            None => Box::pin(async {
+                Err(ReplayExecutionError::new(
+                    "replay file was already consumed",
+                ))
+            }),
+        }
     }
 }
 
@@ -254,6 +373,91 @@ impl SystemReplayExecutor {
 }
 
 impl ReplayExecutor for SystemReplayExecutor {
+    fn execute_file(
+        &self,
+        request: ValidatedReplayRequest,
+        file: std::fs::File,
+        length: u64,
+        cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_> {
+        let client = self.client.clone();
+        let mode = self.mode;
+        Box::pin(async move {
+            if cancellation.is_cancelled() {
+                return Err(ReplayExecutionError::new("replay cancelled"));
+            }
+            if file
+                .metadata()
+                .map_err(|_| ReplayExecutionError::new("replay body metadata unavailable"))?
+                .len()
+                != length
+            {
+                return Err(ReplayExecutionError::new(
+                    "replay body changed before sending",
+                ));
+            }
+            let head = RequestHead {
+                method: request.method().into(),
+                target: request.target().clone(),
+                headers: request.headers().clone(),
+                source_version: HttpLegVersion::Http1,
+            };
+            let (sender, body) = BodyStream::channel(NonZeroUsize::new(2).expect("nonzero"));
+            let producer_cancel = cancellation.clone();
+            let producer = tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut file = tokio::fs::File::from_std(file);
+                let mut sent = 0_u64;
+                loop {
+                    let mut bytes = vec![0; 64 * 1024];
+                    let read = tokio::select! {()=producer_cancel.cancelled()=>return,read=file.read(&mut bytes)=>read};
+                    let frame = match read {
+                        Ok(0) if sent == length => return,
+                        Ok(count) if count > 0 && sent.saturating_add(count as u64) <= length => {
+                            sent += count as u64;
+                            bytes.truncate(count);
+                            Ok(BodyFrame::Data(Bytes::from(bytes)))
+                        }
+                        _ => Err(BodyStreamError::Failed(
+                            "Replay body could not be read completely or changed during sending"
+                                .into(),
+                        )),
+                    };
+                    let failed = frame.is_err();
+                    if tokio::select! {()=producer_cancel.cancelled()=>true,result=sender.send(frame)=>result.is_err()}
+                        || failed
+                    {
+                        return;
+                    }
+                }
+            });
+            let _producer = ReplayProducer(producer, cancellation);
+            let mut response = client
+                .execute_streaming(
+                    StreamingRequest { head, body },
+                    mode,
+                    ReplayLimits::default().max_response_body_bytes,
+                    NonZeroUsize::new(2).expect("nonzero"),
+                    Duration::from_secs(10),
+                )
+                .await
+                .map_err(|_| ReplayExecutionError::new("canonical upstream file replay failed"))?;
+            let mut bytes = Vec::new();
+            while let Some(frame) = response.body.recv().await {
+                if let BodyFrame::Data(data) =
+                    frame.map_err(|_| ReplayExecutionError::new("replay response body failed"))?
+                {
+                    bytes.extend_from_slice(&data);
+                }
+            }
+            Ok(ReplayResponse {
+                status: response.head.status,
+                headers: response.head.headers,
+                body: Bytes::from(bytes),
+            })
+        })
+    }
+
     fn execute(
         &self,
         request: ValidatedReplayRequest,
@@ -302,7 +506,22 @@ impl ReplayExecutor for SystemReplayExecutor {
     }
 }
 
+pub(crate) fn validate_stream_input(input: &ComposerRequest) -> Result<(), AppError> {
+    build_request(input)?
+        .0
+        .validate(ReplayLimits::default())
+        .map(|_| ())
+        .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))
+}
+
 fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), AppError> {
+    if input.body_source.is_some() && !input.body.is_empty() {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Choose either a streamed body or an inline body",
+            false,
+        ));
+    }
     if input.url.chars().count() > 8 * 1024 || input.body.chars().count() > MAX_BODY_INPUT_CHARS {
         return Err(AppError::new(
             ErrorCategory::Limit,
@@ -310,7 +529,56 @@ fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), App
             false,
         ));
     }
-    let uri: Uri = input.url.parse().map_err(|_| {
+    let (target, label) = composer_target(&input.url)?;
+    let mut headers = HeaderBlock::new();
+    for header in &input.headers {
+        headers.push(
+            HeaderField::try_new(header.name.as_bytes(), header.value.as_bytes()).map_err(
+                |_| {
+                    AppError::new(
+                        ErrorCategory::InvalidInput,
+                        "composer contains an invalid header",
+                        false,
+                    )
+                },
+            )?,
+        );
+    }
+    let body = if input.body_is_hex {
+        parse_hex(&input.body)?
+    } else {
+        input.body.as_bytes().to_vec()
+    };
+    // The draft owns complete bytes; never reuse captured chunk framing or a
+    // Content-Length that predates the user's edits. Preserve content coding.
+    headers.remove_all("content-length");
+    headers.remove_all("transfer-encoding");
+    headers.push(
+        HeaderField::try_new("Content-Length", body.len().to_string()).expect("decimal length"),
+    );
+    Ok((
+        ReplayRequest {
+            method: input.method.clone(),
+            target,
+            headers,
+            body: Bytes::from(body),
+            risk: if input.acknowledge_non_idempotent {
+                ReplayRisk::AcknowledgeNonIdempotent
+            } else {
+                ReplayRisk::RejectNonIdempotent
+            },
+            credentials: if input.acknowledge_credentials {
+                ReplayCredentialPolicy::ExplicitlyProvided
+            } else {
+                ReplayCredentialPolicy::Reject
+            },
+        },
+        label,
+    ))
+}
+
+fn composer_target(value: &str) -> Result<(Target, String), AppError> {
+    let uri: Uri = value.parse().map_err(|_| {
         AppError::new(
             ErrorCategory::InvalidInput,
             "composer URL must be an absolute HTTP or HTTPS URL",
@@ -356,44 +624,7 @@ fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), App
         path: path.to_owned(),
         query: query.map(str::to_owned),
     };
-    let mut headers = HeaderBlock::new();
-    for header in &input.headers {
-        headers.push(
-            HeaderField::try_new(header.name.as_bytes(), header.value.as_bytes()).map_err(
-                |_| {
-                    AppError::new(
-                        ErrorCategory::InvalidInput,
-                        "composer contains an invalid header",
-                        false,
-                    )
-                },
-            )?,
-        );
-    }
-    let body = if input.body_is_hex {
-        parse_hex(&input.body)?
-    } else {
-        input.body.as_bytes().to_vec()
-    };
-    Ok((
-        ReplayRequest {
-            method: input.method.clone(),
-            target,
-            headers,
-            body: Bytes::from(body),
-            risk: if input.acknowledge_non_idempotent {
-                ReplayRisk::AcknowledgeNonIdempotent
-            } else {
-                ReplayRisk::RejectNonIdempotent
-            },
-            credentials: if input.acknowledge_credentials {
-                ReplayCredentialPolicy::ExplicitlyProvided
-            } else {
-                ReplayCredentialPolicy::Reject
-            },
-        },
-        format!("{scheme}://{authority}{path_and_query}"),
-    ))
+    Ok((target, format!("{scheme}://{authority}{path_and_query}")))
 }
 
 fn parse_hex(value: &str) -> Result<Vec<u8>, AppError> {
@@ -453,6 +684,19 @@ mod tests {
     struct EchoExecutor;
 
     impl ReplayExecutor for EchoExecutor {
+        fn execute_file(
+            &self,
+            _request: ValidatedReplayRequest,
+            _file: std::fs::File,
+            _length: u64,
+            _cancellation: ExchangeCancellation,
+        ) -> BoxReplayFuture<'_> {
+            Box::pin(async {
+                Err(ReplayExecutionError::new(
+                    "this test executor does not support file bodies",
+                ))
+            })
+        }
         fn execute(
             &self,
             request: ValidatedReplayRequest,
@@ -482,18 +726,164 @@ mod tests {
                 value: "secret".to_owned(),
             }],
             body: "hello".to_owned(),
+            body_source: None,
+            source_entry_id: None,
             body_is_hex: false,
             acknowledge_non_idempotent: false,
             acknowledge_credentials: false,
         };
-        assert!(manager.execute(&service, request.clone()).await.is_err());
+        assert!(
+            manager
+                .execute(&service, request.clone(), None, None)
+                .await
+                .is_err()
+        );
         request.acknowledge_non_idempotent = true;
-        assert!(manager.execute(&service, request.clone()).await.is_err());
+        assert!(
+            manager
+                .execute(&service, request.clone(), None, None)
+                .await
+                .is_err()
+        );
         request.acknowledge_credentials = true;
-        let result = manager.execute(&service, request).await.unwrap();
+        let result = manager
+            .execute(&service, request, None, None)
+            .await
+            .unwrap();
         assert_eq!(result.status, 201);
         assert_eq!(result.body, "hello");
         assert_eq!(manager.history().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn file_replay_streams_large_binary_body_and_preserves_source_after_edits() {
+        use std::io::{Seek, Write};
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let length = 8 * 1024 * 1024 + 193;
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            let head = String::from_utf8(head).unwrap();
+            assert!(head.starts_with("POST /edited HTTP/1.1"));
+            let declared = head
+                .lines()
+                .find_map(|line| {
+                    line.split_once(':')
+                        .filter(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                        .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            assert_eq!(declared, length);
+            assert!(
+                head.to_ascii_lowercase()
+                    .contains("authorization: bearer explicit")
+            );
+            let mut read = 0;
+            let mut chunk = vec![0; 32768];
+            while read < length {
+                let count = socket.read(&mut chunk).await.unwrap();
+                assert!(count > 0);
+                for (index, byte) in chunk[..count].iter().enumerate() {
+                    assert_eq!(*byte, u8::try_from((read + index) % 251).unwrap());
+                }
+                read += count;
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+        let mut file = tempfile::tempfile().unwrap();
+        let chunk = (0..65536)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect::<Vec<_>>();
+        // Write the position-dependent pattern without retaining the whole body.
+        for offset in (0..length).step_by(chunk.len()) {
+            let chunk = (offset..(offset + 65536).min(length))
+                .map(|index| u8::try_from(index % 251).unwrap())
+                .collect::<Vec<_>>();
+            file.write_all(&chunk).unwrap();
+        }
+        file.rewind().unwrap();
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let manager = ComposerManager::new(Some(Arc::new(
+            SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+        )));
+        let origin = ComposerOrigin {
+            entry_id: "00000000000000000000000000000001".into(),
+            trace_id: Some("trace-original".into()),
+            trace_name: Some("original.tmcap".into()),
+            original_id: Some("17".into()),
+        };
+        let input = ComposerRequest {
+            method: "POST".into(),
+            url: format!("http://{address}/edited"),
+            headers: vec![ComposerHeader {
+                name: "Authorization".into(),
+                value: "Bearer explicit".into(),
+            }],
+            body: String::new(),
+            body_is_hex: false,
+            body_source: Some(ComposerBodySource::Captured {
+                entry_id: origin.entry_id.clone(),
+            }),
+            source_entry_id: Some(origin.entry_id.clone()),
+            acknowledge_non_idempotent: true,
+            acknowledge_credentials: true,
+        };
+        let result = manager
+            .execute(
+                &service,
+                input,
+                Some((file, u64::try_from(length).unwrap())),
+                Some(origin.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.body, "ok");
+        assert_eq!(result.source, Some(origin.clone()));
+        assert_eq!(manager.history()[0].source, Some(origin));
+        assert!(manager.history()[0].target.ends_with("/edited"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unsupported_executor_rejects_file_body_instead_of_sending_empty_bytes() {
+        use std::io::{Seek, Write};
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(b"body").unwrap();
+        file.rewind().unwrap();
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let manager = ComposerManager::new(Some(Arc::new(EchoExecutor)));
+        let input = ComposerRequest {
+            method: "PUT".into(),
+            url: "https://example.invalid/".into(),
+            headers: vec![],
+            body: String::new(),
+            body_is_hex: false,
+            body_source: Some(ComposerBodySource::File {
+                path: "unused".into(),
+            }),
+            source_entry_id: None,
+            acknowledge_non_idempotent: false,
+            acknowledge_credentials: false,
+        };
+        let error = manager
+            .execute(&service, input, Some((file, 4)), None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("does not support file bodies"));
+        assert!(manager.history().is_empty());
     }
 
     #[test]
@@ -505,10 +895,51 @@ mod tests {
             url: "relative".to_owned(),
             headers: vec![],
             body: String::new(),
+            body_source: None,
+            source_entry_id: None,
             body_is_hex: false,
             acknowledge_non_idempotent: false,
             acknowledge_credentials: false,
         };
         assert!(build_request(&input).is_err());
+    }
+
+    #[test]
+    fn edited_encoded_request_repairs_framing_and_preserves_content_coding() {
+        let input = ComposerRequest {
+            method: "POST".into(),
+            url: "https://example.invalid/".into(),
+            headers: vec![
+                ComposerHeader {
+                    name: "Content-Length".into(),
+                    value: "999".into(),
+                },
+                ComposerHeader {
+                    name: "Transfer-Encoding".into(),
+                    value: "chunked".into(),
+                },
+                ComposerHeader {
+                    name: "Content-Encoding".into(),
+                    value: "gzip".into(),
+                },
+            ],
+            body: "00 ff 3c".into(),
+            body_source: None,
+            source_entry_id: None,
+            body_is_hex: true,
+            acknowledge_non_idempotent: true,
+            acknowledge_credentials: false,
+        };
+        let (request, _) = build_request(&input).unwrap();
+        assert_eq!(request.body.as_ref(), [0, 255, 60]);
+        assert_eq!(
+            request.headers.values("content-length").collect::<Vec<_>>(),
+            [b"3".as_slice()]
+        );
+        assert!(request.headers.values("transfer-encoding").next().is_none());
+        assert_eq!(
+            request.headers.values("content-encoding").next(),
+            Some(b"gzip".as_slice())
+        );
     }
 }
