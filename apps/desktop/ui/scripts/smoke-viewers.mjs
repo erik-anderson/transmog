@@ -123,8 +123,10 @@ try{
   await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-waterfall')`),'Native timing fixture did not import');
   const timingId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-waterfall');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   await viewer.evaluate(`${traffic}.showTimings()`);
-  await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingWaterfall.length>=3`),'Native timing waterfall was not restored');
-  const chart=await viewer.evaluate(`(()=>{const workspace=${traffic};const bars=Array.from(workspace.timingDialog.querySelectorAll('.waterfall-bar'));return {rows:workspace.timingWaterfall.length,svg:bars.every(node=>node.namespaceURI==='http://www.w3.org/2000/svg'),painted:bars.every(node=>node.getBoundingClientRect().width>0),report:workspace.timingReportText.includes('native support script'),footer:workspace.timingDialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight};})()`);
+  await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingWaterfall.length+${traffic}.timingMinor.length>=3`),'Native timing waterfall was not restored');
+  assert.equal(await viewer.evaluate(`Array.from(${traffic}.timingDialog.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent.includes('Proxy operations under 1 ms'))?.open`),false);
+  await viewer.evaluate(`Array.from(${traffic}.timingDialog.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent.includes('Proxy operations under 1 ms')).open=true`);
+  const chart=await viewer.evaluate(`(()=>{const workspace=${traffic};const bars=Array.from(workspace.timingDialog.querySelectorAll('.waterfall-bar'));return {rows:workspace.timingWaterfall.length+workspace.timingMinor.length,svg:bars.every(node=>node.namespaceURI==='http://www.w3.org/2000/svg'),painted:bars.every(node=>node.getBoundingClientRect().width>0),report:workspace.timingReportText.includes('native support script'),footer:workspace.timingDialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight};})()`);
   assert.ok(chart.rows>=3&&chart.svg&&chart.painted&&chart.report&&chart.footer,'Native timing waterfall failed to render or left its actions unreachable: '+JSON.stringify(chart));
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-waterfall.png'),Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`(()=>{const dialog=${traffic}.timingDialog;const section=Array.from(dialog.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent==='Proxy ↔ upstream');section.open=true;const label=Array.from(section.querySelectorAll('dt')).find(node=>node.textContent==='TCP estimated round trip');label.scrollIntoView({block:'center'});})()`);
@@ -196,9 +198,24 @@ try{
     await main.evaluate(`window.__TAURI_INTERNALS__.invoke('open_trace_viewer',{paths:[${JSON.stringify(nativeSource)}]})`);
     const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Native capture viewer did not open');
     const capture=await connect(target);
-    await waitFor(()=>capture.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Native capture did not import');
-    const found=await capture.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='captured';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
-    assert.equal(found,1,'Native CLI response body was not searchable');
+    await waitFor(()=>capture.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length>=1 && !${traffic}.importingTrace`),'Native capture did not import');
+    const htmlId=await capture.evaluate(`(()=>{const rows=${traffic}.sessions.filter(row=>row.status===200&&row.contentType?.includes('text/html'));rows.sort((a,b)=>(b.responseBytes??0)-(a.responseBytes??0));return rows[0]?.id;})()`);
+    if(htmlId){
+      const beforePreview=(await targets()).map(row=>row.id);
+      const label=await capture.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(htmlId)},enableScripts:false,options:{scope:'original-trace'},operationId:'external-page-probe'})`);
+      const previewTarget=await waitFor(async()=>{const all=await targets();return all.find(row=>!beforePreview.includes(row.id));},'Saved HTML preview did not open');
+      const preview=await connect(previewTarget);
+      await waitFor(()=>preview.evaluate("document.readyState==='complete' && document.body?.innerText.length>0"),'Saved HTML preview did not render');
+      const report=await capture.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(label)}})`);
+      const sheets=await preview.evaluate("Array.from(document.querySelectorAll('link[rel=stylesheet]')).map(link=>({url:link.href,loaded:!!link.sheet}))");
+      for(const sheet of sheets){if(report.resources?.some(row=>row.url===sheet.url&&row.bytes!==null))assert.ok(sheet.loaded,'Captured stylesheet did not load');}
+      await preview.call('Page.reload',{ignoreCache:true});
+      await waitFor(()=>preview.evaluate("document.readyState==='complete' && document.body?.innerText.length>0"),'Saved HTML reload did not render');
+      for(const sheet of sheets.filter(row=>row.loaded))assert.ok(await preview.evaluate(`Array.from(document.querySelectorAll('link[rel=stylesheet]')).some(link=>link.href===${JSON.stringify(sheet.url)}&&!!link.sheet)`),'Saved stylesheet did not survive reload');
+      if(screenshot){const image=await preview.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-external-page.png'),Buffer.from(image.data,'base64'));}
+      await closeNative('Captured page preview — Transmog');
+      process.stdout.write('Saved HTML preview, captured stylesheets and reload verified.\n');
+    }
   }
   if(pageSource){
     await second.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
@@ -217,6 +234,9 @@ try{
     const disabledState=await disabled.evaluate(`({script:globalThis.capturedScriptRan===true,color:getComputedStyle(document.getElementById('captured-heading')).color,image:document.getElementById('captured-image').naturalWidth})`);
     if(disabledState.color!=='rgb(0, 128, 0)')process.stderr.write(JSON.stringify(await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${traffic}.previewReportLabel})`))+'\n');
     assert.equal(disabledState.script,false);assert.equal(disabledState.color,'rgb(0, 128, 0)');assert.equal(disabledState.image,20);
+    assert.equal(await disabled.evaluate('navigator.userAgent'),'Placeholder/1');
+    await disabled.call('Page.reload',{ignoreCache:true});
+    await waitFor(()=>disabled.evaluate("document.readyState==='complete' && document.getElementById('captured-heading') && getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 128, 0)'"),'Captured preview reload did not restore HTML and styles');
     const oldEnabled=(await targets()).map(target=>target.id);
     const enabledLabel=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(htmlId)},enableScripts:true,options:{scope:'all-loaded'},operationId:'native-enabled-probe'})`);
     const enabledTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>!oldEnabled.includes(target.id)&&target.url.includes('/captured-page'));},'Script-enabled preview did not navigate');
@@ -256,7 +276,7 @@ try{
   await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
   const reopenedTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>target.url.includes('transmog-ui')&&!beforeReopen.includes(target.id));},'Main window did not reopen from the viewer');
   const reopened=await connect(reopenedTarget);
-  await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===1`),'Reopened main window lost its catalog');
+  await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===0`),'Reopened main window retained ephemeral traffic');
   assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
   process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource})+'\n');
 }finally{for(const socket of sockets)socket.close();}

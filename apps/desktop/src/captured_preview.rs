@@ -172,10 +172,13 @@ pub(super) async fn open_captured_page(
     }
     let (ready, prepared) = tokio::sync::oneshot::channel();
     let original_url = owner.page.url.clone();
+    let user_agent = owner.page.user_agent.clone();
     let lookup_owner = owner.clone();
+    let failed_window = browser.clone();
     if browser.with_webview(move|native|{
         let lookup:transmog_webview_preview_windows::Lookup=Arc::new(move|request|lookup_owner.page.resolve(&request.method,&request.url,request.headers.as_deref(),request.body_sha256.as_deref(),request.document).map(|resource|transmog_webview_preview_windows::CapturedResponse{status:resource.status,reason:resource.reason,headers:resource.headers,body_path:resource.body_path}));
-        let result=transmog_webview_preview_windows::attach(&native.controller(),&native.environment(),lookup,enable_scripts,&original_url);
+        let navigation_failed:Arc<dyn Fn()+Send+Sync>=Arc::new(move||{let window=failed_window.clone();tauri::async_runtime::spawn(async move{let _=window.destroy();});});
+        let result=transmog_webview_preview_windows::attach(&native.controller(),&native.environment(),lookup,enable_scripts,&original_url,user_agent.as_deref(),navigation_failed);
         let _=ready.send(result.map_err(|_|error("Captured preview needs a WebView2 runtime with complete resource interception. Update the runtime and try again.")));
     }).is_err(){let _=browser.destroy();return Err(error("Captured preview initialization failed"));}
     match tokio::time::timeout(Duration::from_secs(10), prepared).await {

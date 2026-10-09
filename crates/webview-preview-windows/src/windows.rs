@@ -1,16 +1,19 @@
 use std::{path::PathBuf, sync::Arc};
 use webview2_com::{
-    BasicAuthenticationRequestedEventHandler, DownloadStartingEventHandler,
+    AcceleratorKeyPressedEventHandler, BasicAuthenticationRequestedEventHandler,
+    DownloadStartingEventHandler,
     Microsoft::Web::WebView2::Win32::{
-        COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL, ICoreWebView2_4, ICoreWebView2_10,
         ICoreWebView2_22, ICoreWebView2Controller, ICoreWebView2Environment,
-        ICoreWebView2Settings4, ICoreWebView2Settings5, ICoreWebView2WebResourceRequest,
-        ICoreWebView2WebResourceRequestedEventArgs, ICoreWebView2WebResourceResponse,
+        ICoreWebView2Settings2, ICoreWebView2Settings4, ICoreWebView2Settings5,
+        ICoreWebView2WebResourceRequest, ICoreWebView2WebResourceRequestedEventArgs,
+        ICoreWebView2WebResourceResponse,
     },
-    NewWindowRequestedEventHandler, PermissionRequestedEventHandler,
-    WebResourceRequestedEventHandler, take_pwstr,
+    NavigationCompletedEventHandler, NewWindowRequestedEventHandler,
+    PermissionRequestedEventHandler, WebResourceRequestedEventHandler, take_pwstr,
 };
 use windows::{
     Win32::{
@@ -62,12 +65,15 @@ const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// # Errors
 /// Returns wrong UI-thread, unavailable runtime, policy or interception failures.
+#[allow(clippy::too_many_lines)]
 pub fn attach(
     controller: &ICoreWebView2Controller,
     environment: &ICoreWebView2Environment,
     lookup: Lookup,
     scripts: bool,
     url: &str,
+    user_agent: Option<&str>,
+    navigation_failed: Arc<dyn Fn() + Send + Sync>,
 ) -> Result<()> {
     // SAFETY: The caller owns these COM references. ParentWindow writes into an
     // initialized HWND slot; the Win32 query only reads that valid window handle.
@@ -87,12 +93,17 @@ pub fn attach(
     unsafe {
         let core = controller.CoreWebView2()?;
         let settings = core.Settings()?;
+        if let Some(user_agent) = user_agent {
+            settings
+                .cast::<ICoreWebView2Settings2>()?
+                .SetUserAgent(&HSTRING::from(user_agent))?;
+        }
         settings.SetIsScriptEnabled(scripts)?;
         settings.SetIsWebMessageEnabled(false)?;
         settings.SetAreHostObjectsAllowed(false)?;
         settings.SetAreDefaultScriptDialogsEnabled(false)?;
-        settings.SetAreDefaultContextMenusEnabled(false)?;
-        settings.SetAreDevToolsEnabled(cfg!(debug_assertions))?;
+        settings.SetAreDefaultContextMenusEnabled(true)?;
+        settings.SetAreDevToolsEnabled(true)?;
         settings
             .cast::<ICoreWebView2Settings4>()?
             .SetIsPasswordAutosaveEnabled(false)?;
@@ -100,6 +111,40 @@ pub fn attach(
             .cast::<ICoreWebView2Settings5>()?
             .SetIsGeneralAutofillEnabled(false)?;
         let mut token = 0;
+        let reload = core.clone();
+        controller.add_AcceleratorKeyPressed(
+            &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                if let Some(args) = args {
+                    let mut key = 0;
+                    let mut kind = COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN;
+                    args.VirtualKey(&raw mut key)?;
+                    args.KeyEventKind(&raw mut kind)?;
+                    if key == 0x74 && kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN {
+                        args.SetHandled(true)?;
+                        reload.Reload()?;
+                    }
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        core.add_NavigationCompleted(
+            &NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+                if let Some(args) = args {
+                    let mut success = windows::core::BOOL::default();
+                    let mut status = COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+                    args.IsSuccess(&raw mut success)?;
+                    if !success.as_bool() {
+                        args.WebErrorStatus(&raw mut status)?;
+                        if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
+                            navigation_failed();
+                        }
+                    }
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
         core.add_PermissionRequested(
             &PermissionRequestedEventHandler::create(Box::new(|_, args| {
                 if let Some(args) = args {

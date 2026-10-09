@@ -31,6 +31,8 @@ pub struct CapturedResource {
 pub struct CapturedPage {
     /// Original URL used for relative resource resolution and browser origin.
     pub url: String,
+    /// Captured browser identity used for User-Agent-dependent resources.
+    pub user_agent: Option<String>,
     /// Number of response variants available in this scene.
     pub resources: usize,
     /// Unavailable or bounded-out variants; misses still return empty 404s.
@@ -205,6 +207,7 @@ struct Candidate {
     reason: Option<String>,
     vary: Option<Vec<(String, Option<String>)>>,
     source: String,
+    user_agent: Option<String>,
 }
 pub(crate) async fn prepare(
     application: Application,
@@ -322,6 +325,14 @@ fn candidates(
                     .map_or_else(String::new, |query| format!("?{query}"))
             ))?;
             Some(Candidate {
+                user_agent: request
+                    .head
+                    .headers
+                    .values("user-agent")
+                    .next()
+                    .and_then(|value| std::str::from_utf8(value).ok())
+                    .filter(|value| value.len() <= 8192)
+                    .map(str::to_owned),
                 vary: vary_signature(&response.head.headers, &request.head.headers),
                 source: application
                     .traces

@@ -25,6 +25,7 @@ pub(super) struct SceneBuilder {
     skipped: usize,
     decisions: Vec<CapturedResourceDecision>,
     primary_url: Option<String>,
+    user_agent: Option<String>,
 }
 impl SceneBuilder {
     pub(super) fn new(numeric: ExchangeId, root: tempfile::TempDir) -> Self {
@@ -38,6 +39,7 @@ impl SceneBuilder {
             skipped: 0,
             decisions: Vec::new(),
             primary_url: None,
+            user_agent: None,
         }
     }
     fn record(&mut self, mut row: CapturedResourceDecision, reason: &str, bytes: Option<u64>) {
@@ -138,6 +140,7 @@ impl SceneBuilder {
         self.bytes += size;
         self.resources += 1;
         if primary {
+            self.user_agent.clone_from(&candidate.user_agent);
             self.primary_url = Some(candidate.url.clone());
             self.files
                 .entry(("GET".into(), candidate.url.clone()))
@@ -196,6 +199,7 @@ impl SceneBuilder {
         });
         Ok(CapturedPage {
             url,
+            user_agent: self.user_agent,
             resources: self.resources,
             skipped: self.skipped,
             diagnostics,

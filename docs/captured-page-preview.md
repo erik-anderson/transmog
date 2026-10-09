@@ -12,7 +12,8 @@ method and URL, the nearest captured response to the selected request is used.
 **All loaded traffic in this window** is an explicit alternative that can mix
 traces or users while keeping the selected HTML fixed. Resource matching also
 compares exact encoded request bytes and available Vary header values.
-Accept-Encoding is ignored after response decoding. Redacted or unavailable Vary,
+Accept-Encoding is ignored after response decoding. The preview uses the selected
+request’s recorded User-Agent, when available, so browser-dependent styles match. Redacted or unavailable Vary,
 Vary wildcard, unavailable request bodies and unknown URLs produce empty 404s.
 Rendering a selected POST response provides its body for the initial GET used
 by the browser. Unmatched requests return **404 with an empty body**.
@@ -22,6 +23,8 @@ Missing, incomplete or oversized resources remain unavailable. Original response
 policies such as CSP still apply. Browser state from the recording device is
 unavailable. Service workers, WebSockets, WebTransport, peer connections,
 downloads, popups, device permissions and authentication prompts are disabled.
+The native context menu and DevTools are available. F5 reloads the frozen page;
+a failed top-level navigation closes the preview.
 The initial implementation is Windows-only; other platforms require their own
 resource-interception boundary.
 
