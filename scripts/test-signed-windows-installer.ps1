@@ -26,6 +26,10 @@ function Get-HostState {
 }
 $before = Get-HostState
 Invoke-MaintenanceProcess -FilePath $cli -Arguments @('--version')
+# Exercise the signed standalone artifact with owned profiles and loopback HTTP.
+# This never installs a root or changes proxy settings, and runs without OIDC.
+& python (Join-Path $PSScriptRoot 'test-cli-support.py') --executable $cli --artifacts (Join-Path $env:RUNNER_TEMP "transmog-cli-smoke-$env:GITHUB_RUN_ID")
+if ($LASTEXITCODE -ne 0) { throw 'Signed CLI capture/lifecycle qualification failed.' }
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', '/SAZ=1', "/D=$installDirectory")
 if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe')) { throw 'The standalone CLI must not be bundled in the app installer.' }
 $sazCommand = (Get-Item -LiteralPath 'HKCU:\Software\Classes\Transmog.Saz\shell\open\command').GetValue('')
@@ -42,6 +46,7 @@ if ((Get-HostState) -cne $before) { throw 'The no-proxy/no-certificate installer
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReportPath) | Out-Null
 [ordered]@{
     Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; InstallerSha256 = $signatures[0].Sha256
+    CliRuntimeVerified = $true
     InstallVerified = $true; MaintenanceVerified = $true; UninstallVerified = $true; HostStateUnchanged = $true
     OperatingSystem = (Get-CimInstance Win32_OperatingSystem).Caption
     Signatures = $signatures.ToArray(); CleanWindows11Checklist = 'deferred by maintainer'

@@ -1,6 +1,6 @@
 # Traffic and support workflow implementation
 
-This is the implementation checkpoint for the approved feature plan. Work is
+This is the completed implementation record for the approved feature plan. Work is
 on `codex/traffic-support-features` in the attached managed worktree. The shared
 checkout contains independent updater work and is preserved.
 
@@ -114,16 +114,17 @@ builds run sequentially to avoid transient missing generated assets.
 
 Captured-page preview initially supports Windows. Timings and transport metrics
 report measured evidence, with unsupported points left unavailable. Native/gzip
-saving preserves complete merged source associations; SAZ conversion reports its
-compatibility limits. Copy actions never execute generated commands. Saved-capture
+and extended SAZ preserve merged source associations; compatibility SAZ retains
+the client view with explicit normalization and evidence limits. Copy actions never execute generated commands. Saved-capture
 viewers own independent catalogs; replay is an explicit Composer action.
 
 ## Audit follow-up
 
 A comparison with the original plan identified remaining work. The user
 requested fixing every gap and clarified Unlimited capture keeps the overall
-storage budget. The implementation remains in progress; phases 1–14 are a
-qualified baseline, not completion of the complete plan.
+storage budget. Phases 15–28 close those implementation gaps. The full feature
+plan is implemented and qualified on Windows within the product boundaries above;
+production signing and clean-machine release checks remain release gates.
 
 15. Header fidelity: complete-block measurements, per-value sizes, global
     largest-first ordering and paged inspection; present/absent/unknown
@@ -284,10 +285,38 @@ qualified baseline, not completion of the complete plan.
     entries, with explicit note-omission counts. The 116 app tests and strict
     workspace Clippy pass.
 
-Remaining isolated phases:
+## Final qualification
 
-- Final qualification: updated support guide with download authenticity and
-  recovery steps, full product/browser/native/interoperability checks and
-  protected signed-release qualification where credentials permit.
+- The final workspace passes **456 Rust tests** with no failures and strict
+  workspace Clippy. Its Docker-backed product test passes separately, along with
+  all eight Chromium/cURL HTTP/1, HTTP/2, HTTP/3, coding and WebSocket checks.
+- Production-template browser checks pass with CSP/Trusted Types, asynchronous
+  cancellation/retry, original-text search navigation, streamed replay, export
+  privacy and provenance, exact header measurements and QUIC labeling.
+- Real Windows main/saved-viewer checks pass, including accessibility, forced
+  colors, DPI, long labels, proxy drain/resume, file activation, permissions,
+  source metadata, streamed binary replay, captured-page variants, script choice,
+  empty misses, IPC/network denial and owned-window/profile cleanup. Reviewed
+  populated, wide and compact screenshots for the new workflows.
+- Real CLI console checks pass for Ctrl+C, sealed gzip output, sensitive-header
+  defaults, memory-only ephemeral keys, persistent reuse, forced interruption
+  and recovery. Root lifecycle unit tests cover canceled cleanup, expiry rotation
+  and legacy migration. The support guide includes publisher/signature checks
+  and copyable interrupted-capture recovery steps.
+- Release payload/publication/version lifecycle and compiled isolated installer
+  association fixtures pass. Protected signed-release qualification now runs the
+  CLI console capture/recovery test against the signed standalone executable,
+  with isolated profiles, loopback traffic and no certificate/proxy mutation.
+  The installer continues to exclude that executable.
 
-The primary checkout's independent updater changes remain preserved.
+No implementation gaps remain from this audit. Captured-page preview remains
+Windows-only as approved. Search and preview retain their documented processing
+bounds; Unlimited request capture preserves overall storage budgets. Actual
+production Authenticode signing/timestamp qualification and the maintainer's
+clean Windows 11 release checklist require the protected release environment.
+Signing endpoint/profile/publisher configuration is absent locally; no signed
+release or publication was claimed or performed. Linux kernel-statistics code
+is implemented but was not qualified on a Linux host in this Windows run.
+
+The primary checkout's independent updater changes remain preserved. All feature
+work is committed on the attached managed worktree branch.
