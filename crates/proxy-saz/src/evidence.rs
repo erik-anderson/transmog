@@ -66,7 +66,7 @@ impl SessionEvidence {
 pub(crate) fn write_sources<W: std::io::Write + std::io::Seek>(
     writer: &mut zip::ZipWriter<W>,
     capture: &transmog_capture::RecoveredCapture,
-    options: zip::write::SimpleFileOptions,
+    options: zip::write::FileOptions<'_, ()>,
     remaining: usize,
 ) -> Result<usize, crate::SazError> {
     let sources = capture
@@ -99,7 +99,7 @@ pub(crate) fn write_session<W: std::io::Write + std::io::Seek>(
     session: &mut crate::Session,
     native_id: u128,
     id: usize,
-    options: zip::write::SimpleFileOptions,
+    options: zip::write::FileOptions<'_, ()>,
     remaining: usize,
 ) -> Result<usize, crate::SazError> {
     if remaining == 0 {

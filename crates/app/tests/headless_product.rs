@@ -304,6 +304,8 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     application.stop_capture().await.unwrap();
     let json = application
         .export_capture(ExportRequest {
+            password: None,
+            source_password: None,
             redact_sensitive_headers: false,
             source: workspace.capture.clone(),
             destination: workspace.json_export.clone(),
@@ -314,6 +316,8 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
         .unwrap();
     let saz = application
         .export_capture(ExportRequest {
+            password: None,
+            source_password: None,
             redact_sensitive_headers: false,
             source: workspace.capture.clone(),
             destination: workspace.saz_export.clone(),

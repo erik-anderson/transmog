@@ -244,6 +244,7 @@ impl TraceRegistry {
                 request.max_file_bytes,
                 canceled,
                 &report,
+                request.password.clone(),
             )?
         } else {
             import_native(
@@ -451,21 +452,23 @@ fn import_saz(
     max_bytes: u64,
     canceled: &AtomicBool,
     progress: &dyn Fn(u64, u64),
+    password: Option<transmog_capture::CapturePassword>,
 ) -> Result<ImportData, AppError> {
-    let mut archive = SazArchive::open(
+    let mut archive = SazArchive::with_password(
         reader,
         SazImportLimits {
             max_archive_bytes: max_bytes,
             ..SazImportLimits::default()
         },
+        password,
     )
-    .map_err(|error| invalid(&format!("SAZ could not be opened: {error}")))?;
+    .map_err(AppError::from)?;
     let index = archive
         .index(
             |done, total| progress(done as u64, total as u64),
             || canceled.load(Ordering::Acquire),
         )
-        .map_err(|error| invalid(&format!("SAZ could not be indexed: {error}")))?;
+        .map_err(AppError::from)?;
     let mut result = ImportData {
         format: "saz",
         sources: BTreeMap::new(),
@@ -853,7 +856,7 @@ fn import_native(
         },
         password,
     )
-    .map_err(|error| invalid(&error.to_string()))?;
+    .map_err(AppError::from)?;
     let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
     let mut context = Value::Null;
     let mut sources = BTreeMap::new();
@@ -2038,6 +2041,8 @@ mod tests {
             });
             workspace
                 .export_capture(crate::ExportRequest {
+                    password: None,
+                    source_password: None,
                     source: saved.clone(),
                     destination: destination.clone(),
                     format,
@@ -2094,6 +2099,8 @@ mod tests {
         let destination = root.path().join("extended.saz");
         workspace
             .export_capture(crate::ExportRequest {
+                password: None,
+                source_password: None,
                 source: native_path,
                 destination: destination.clone(),
                 format: crate::ExportFormat::SazExtended,
@@ -2392,6 +2399,56 @@ mod tests {
             .read_range(id, ExchangeBoundary::ClientRequest, 0, 64)
             .unwrap();
         assert_eq!(range.bytes, b"private payload");
+        assert!(!root.path().join("cache").exists());
+    }
+
+    #[tokio::test]
+    async fn encrypted_saz_export_import_keeps_passwords_transient() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.tmcap");
+        native(&source, Some(b"private payload".to_vec()), 15);
+        let exporter = app(root.path());
+        let password = transmog_capture::CapturePassword::new("secret".into());
+        let destination = root.path().join("protected.saz");
+        exporter
+            .export_capture(crate::ExportRequest {
+                source_password: None,
+                password: Some(password.clone()),
+                redact_sensitive_headers: false,
+                source,
+                destination: destination.clone(),
+                format: crate::ExportFormat::SazExtended,
+                max_source_bytes: 64 * 1024 * 1024,
+            })
+            .await
+            .unwrap();
+        let reopened = app(root.path());
+        let error = reopened
+            .import_trace(request(destination.clone(), "missing"), Arc::new(|_| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.category, crate::ErrorCategory::PasswordRequired);
+        let mut input = request(destination, "password");
+        input.password = Some(password);
+        reopened
+            .import_trace(input, Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        let id =
+            transmog_core::intercept::ExchangeId(u128::from_str_radix(&rows[0].id, 16).unwrap());
+        assert_eq!(
+            reopened
+                .body_store()
+                .unwrap()
+                .read_range(id, ExchangeBoundary::ClientRequest, 0, 64)
+                .unwrap()
+                .bytes,
+            b"private payload"
+        );
         assert!(!root.path().join("cache").exists());
     }
 

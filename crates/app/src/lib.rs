@@ -105,6 +105,10 @@ pub use workspace::{ColumnPreference, TrafficColumn, TrafficLayout, WorkspacePre
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ErrorCategory {
+    /// Encrypted input needs a transient password.
+    PasswordRequired,
+    /// The supplied input password was rejected.
+    InvalidPassword,
     /// Caller input failed validation.
     InvalidInput,
     /// Requested operation conflicts with current application state.
@@ -144,6 +148,27 @@ impl AppError {
             message,
             retryable,
         }
+    }
+}
+
+impl From<transmog_capture::CaptureError> for AppError {
+    fn from(error: transmog_capture::CaptureError) -> Self {
+        let category = match error {
+            transmog_capture::CaptureError::PasswordRequired => ErrorCategory::PasswordRequired,
+            transmog_capture::CaptureError::InvalidPassword => ErrorCategory::InvalidPassword,
+            _ => ErrorCategory::InvalidInput,
+        };
+        Self::new(category, error.to_string(), false)
+    }
+}
+impl From<transmog_saz::SazError> for AppError {
+    fn from(error: transmog_saz::SazError) -> Self {
+        let category = match error {
+            transmog_saz::SazError::PasswordRequired => ErrorCategory::PasswordRequired,
+            transmog_saz::SazError::InvalidPassword => ErrorCategory::InvalidPassword,
+            _ => ErrorCategory::InvalidInput,
+        };
+        Self::new(category, error.to_string(), false)
     }
 }
 

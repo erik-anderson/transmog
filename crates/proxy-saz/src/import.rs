@@ -197,6 +197,7 @@ pub struct SazIndex {
 pub struct SazArchive<R> {
     archive: ZipArchive<R>,
     limits: SazImportLimits,
+    password: Option<transmog_capture::CapturePassword>,
 }
 
 #[derive(Default)]
@@ -213,7 +214,19 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
     /// # Errors
     /// Returns invalid ZIPs, resource overflow, unsafe/duplicate names,
     /// encryption, or unsupported compression. Never extracts arbitrary paths.
-    pub fn open(mut reader: R, limits: SazImportLimits) -> Result<Self, SazError> {
+    pub fn open(reader: R, limits: SazImportLimits) -> Result<Self, SazError> {
+        Self::with_password(reader, limits, None)
+    }
+
+    /// Opens an archive with a transient password; supports `ZipCrypto` and `WinZip` AES variants.
+    ///
+    /// # Errors
+    /// Returns missing/wrong passwords, unsupported schemes, malformed ZIPs or bounds.
+    pub fn with_password(
+        mut reader: R,
+        limits: SazImportLimits,
+        password: Option<transmog_capture::CapturePassword>,
+    ) -> Result<Self, SazError> {
         if limits.max_archive_bytes == 0
             || limits.max_sessions == 0
             || limits.max_members == 0
@@ -242,12 +255,13 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             if !names.insert(name) {
                 return Err(SazError::UnsafeMember);
             }
-            if member.encrypted()
-                || !matches!(
-                    member.compression(),
-                    CompressionMethod::Stored | CompressionMethod::Deflated
-                )
-            {
+            if member.encrypted() && password.is_none() {
+                return Err(SazError::PasswordRequired);
+            }
+            if !matches!(
+                member.compression(),
+                CompressionMethod::Stored | CompressionMethod::Deflated
+            ) {
                 return Err(SazError::UnsupportedMember);
             }
             total = total
@@ -257,7 +271,23 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                 return Err(SazError::ImportLimitExceeded);
             }
         }
-        Ok(Self { archive, limits })
+        Ok(Self {
+            archive,
+            limits,
+            password,
+        })
+    }
+
+    fn member(&mut self, index: usize) -> Result<zip::read::ZipFile<'_, R>, SazError> {
+        let result = if let Some(password) = &self.password {
+            self.archive.by_index_decrypt(index, password.bytes())
+        } else {
+            self.archive.by_index(index)
+        };
+        result.map_err(|error| match error {
+            zip::result::ZipError::InvalidPassword => SazError::InvalidPassword,
+            other => SazError::Zip(other),
+        })
     }
 
     /// Indexes requests, responses and metadata with progress and cancellation.
@@ -280,7 +310,22 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             if canceled() {
                 return Err(SazError::Canceled);
             }
-            let name = safe_name(self.archive.by_index_raw(index)?.name())?;
+            let member = self.archive.by_index_raw(index)?;
+            let name = safe_name(member.name())?;
+            let encrypted = member.encrypted();
+            let expected = member.size();
+            drop(member);
+            if encrypted {
+                // Verify each complete member before publishing its heads. ZIP authentication
+                // covers a whole member, unlike native per-frame AEAD; no bytes are extracted.
+                let bound = self.limits.max_member_bytes;
+                let mut member = self.member(index)?.take(bound.saturating_add(1));
+                let mut sink = std::io::sink();
+                let count = copy_bounded(&mut member, &mut sink, expected, &canceled)?;
+                if count > bound {
+                    return Err(SazError::ImportLimitExceeded);
+                }
+            }
             if name == "transmog/trace-metadata.json" {
                 let bytes = self.read_metadata(index)?;
                 metadata_bytes += bytes.len();
@@ -453,7 +498,8 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         if body.dropped {
             return Err(SazError::InvalidArchive);
         }
-        let member = self.archive.by_index(body.member)?;
+        let bound = self.limits.max_member_bytes;
+        let member = self.member(body.member)?;
         if body.offset > member.size() || member.size() - body.offset != body.wire_bytes {
             return Err(SazError::InvalidArchive);
         }
@@ -463,7 +509,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             return Err(SazError::InvalidArchive);
         }
         if body.chunked {
-            copy_chunked(&mut reader, output, self.limits.max_member_bytes, canceled)
+            copy_chunked(&mut reader, output, bound, canceled)
         } else {
             copy_bounded(&mut reader, output, body.wire_bytes, canceled)
                 .map(|bytes| (bytes, HeaderBlock::new()))
@@ -471,14 +517,13 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
     }
 
     fn read_metadata(&mut self, index: usize) -> Result<Vec<u8>, SazError> {
-        let member = self.archive.by_index(index)?;
-        if member.size() > self.limits.max_metadata_bytes as u64 {
+        let bound = self.limits.max_metadata_bytes;
+        let member = self.member(index)?;
+        if member.size() > bound as u64 {
             return Err(SazError::ImportLimitExceeded);
         }
         let mut bytes = Vec::new();
-        member
-            .take(self.limits.max_metadata_bytes as u64 + 1)
-            .read_to_end(&mut bytes)?;
+        member.take(bound as u64 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > self.limits.max_metadata_bytes {
             return Err(SazError::ImportLimitExceeded);
         }
@@ -539,15 +584,14 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         request: bool,
         head_response: bool,
     ) -> Result<ArchiveMessage, SazError> {
-        let member = self.archive.by_index(index)?;
+        let bound = self.limits.max_head_bytes;
+        let member = self.member(index)?;
         let size = member.size();
-        let mut reader = BufReader::new(member.take(self.limits.max_head_bytes as u64 + 1));
+        let mut reader = BufReader::new(member.take(bound as u64 + 1));
         let mut bytes = Vec::new();
         loop {
             let before = bytes.len();
-            if reader.read_until(b'\n', &mut bytes)? == 0
-                || bytes.len() > self.limits.max_head_bytes
-            {
+            if reader.read_until(b'\n', &mut bytes)? == 0 || bytes.len() > bound {
                 return Err(SazError::InvalidArchive);
             }
             if matches!(&bytes[before..], b"\r\n" | b"\n") {

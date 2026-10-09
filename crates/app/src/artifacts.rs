@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use transmog_capture::{
     CaptureExporter, CaptureLimits, CapturePolicy, CaptureRecordKind, CaptureWriter,
-    JsonLinesExporter, recover,
+    JsonLinesExporter, recover_with_password,
 };
 use transmog_saz::{SazExporter, SazLimits, SazMode};
 use transmog_session::{ApplicationSessionService, CaptureStart, CaptureStatus, SealedCapture};
@@ -71,6 +71,9 @@ pub enum CaptureReadModel {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportRequest {
+    /// Transient password for encrypted native input.
+    #[serde(default, skip_serializing)]
+    pub password: Option<transmog_capture::CapturePassword>,
     /// Native capture path.
     pub path: PathBuf,
     /// Explicit maximum input bytes, capped by the application maximum.
@@ -115,6 +118,12 @@ pub enum ExportFormat {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportRequest {
+    /// Transient password for the source native trace.
+    #[serde(default, skip_serializing)]
+    pub source_password: Option<transmog_capture::CapturePassword>,
+    /// Opt-in AES-256 password for native or SAZ output.
+    #[serde(default, skip_serializing)]
+    pub password: Option<transmog_capture::CapturePassword>,
     /// Redact sensitive header values in the exported copy only.
     #[serde(default)]
     pub redact_sensitive_headers: bool,
@@ -212,7 +221,11 @@ pub(crate) fn capture_status(service: &ApplicationSessionService) -> CaptureRead
 
 pub(crate) async fn import_capture(request: ImportRequest) -> Result<CaptureSummaryView, AppError> {
     tokio::task::spawn_blocking(move || {
-        let capture = recover_path(&request.path, request.max_file_bytes)?;
+        let capture = recover_path(
+            &request.path,
+            request.max_file_bytes,
+            request.password.as_ref(),
+        )?;
         Ok(summary(&capture))
     })
     .await
@@ -233,7 +246,18 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
             false,
         ));
     }
-    let mut capture = recover_path(&request.source, request.max_source_bytes)?;
+    if request.password.is_some() && request.format == ExportFormat::JsonLines {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "JSONL cannot be password encrypted; choose TMCap or SAZ",
+            false,
+        ));
+    }
+    let mut capture = recover_path(
+        &request.source,
+        request.max_source_bytes,
+        request.source_password.as_ref(),
+    )?;
     if request.redact_sensitive_headers {
         for record in &mut capture.records {
             crate::export_privacy::redact(&mut record.kind);
@@ -247,7 +271,7 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
             .inspect(|_file| {
                 destination_created = true;
             })
-            .and_then(|file| export_native(file, &capture)),
+            .and_then(|file| export_native(file, &capture, request.password.clone())),
         ExportFormat::JsonLines => create_new(&destination)
             .map_err(|error| error.to_string())
             .inspect(|_file| {
@@ -269,7 +293,7 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
                 .inspect(|_file| {
                     destination_created = true;
                 })
-                .and_then(|file| export_saz(file, mode, &capture))
+                .and_then(|file| export_saz(file, mode, &capture, request.password.clone()))
         }
     };
     match result {
@@ -302,15 +326,22 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
 
 type ExportOutcome = Result<(usize, u64, String), String>;
 
-fn export_native(file: File, capture: &transmog_capture::RecoveredCapture) -> ExportOutcome {
+fn export_native(
+    file: File,
+    capture: &transmog_capture::RecoveredCapture,
+    password: Option<transmog_capture::CapturePassword>,
+) -> ExportOutcome {
     let limits = CaptureLimits {
         max_file_bytes: MAX_IMPORT_BYTES,
         max_record_bytes: MAX_RECORD_BYTES,
         max_records: MAX_RECORDS,
     };
-    let mut writer =
-        CaptureWriter::with_encoding(file, limits, &transmog_capture::CaptureEncoding::default())
-            .map_err(|error| error.to_string())?;
+    let mut writer = CaptureWriter::with_encoding(
+        file,
+        limits,
+        &transmog_capture::CaptureEncoding { password },
+    )
+    .map_err(|error| error.to_string())?;
     let mut records = 0_usize;
     for record in capture
         .records
@@ -344,9 +375,15 @@ fn export_saz(
     file: File,
     mode: SazMode,
     capture: &transmog_capture::RecoveredCapture,
+    password: Option<transmog_capture::CapturePassword>,
 ) -> ExportOutcome {
     let mut exporter =
         SazExporter::new(file, mode, SazLimits::default()).map_err(|error| error.to_string())?;
+    if let Some(password) = password {
+        exporter = exporter
+            .encrypted(password)
+            .map_err(|error| error.to_string())?;
+    }
     let report = exporter
         .export(capture)
         .map_err(|error| error.to_string())?;
@@ -366,6 +403,7 @@ fn export_saz(
 fn recover_path(
     path: &PathBuf,
     requested_max_bytes: u64,
+    password: Option<&transmog_capture::CapturePassword>,
 ) -> Result<transmog_capture::RecoveredCapture, AppError> {
     if requested_max_bytes == 0 || requested_max_bytes > MAX_IMPORT_BYTES {
         return Err(AppError::new(
@@ -395,21 +433,16 @@ fn recover_path(
             false,
         )
     })?;
-    recover(
+    recover_with_password(
         file,
         CaptureLimits {
             max_file_bytes: requested_max_bytes,
             max_record_bytes: MAX_RECORD_BYTES,
             max_records: MAX_RECORDS,
         },
+        password,
     )
-    .map_err(|error| {
-        AppError::new(
-            ErrorCategory::InvalidInput,
-            format!("native capture is invalid: {error}"),
-            false,
-        )
-    })
+    .map_err(AppError::from)
 }
 
 fn create_new(path: &PathBuf) -> Result<File, transmog_capture::CaptureError> {
@@ -479,6 +512,7 @@ mod tests {
             .write_all(&[1, 2, 3])
             .unwrap();
         let imported = import_capture(ImportRequest {
+            password: None,
             path: source.clone(),
             max_file_bytes: 1024 * 1024,
         })
@@ -487,6 +521,8 @@ mod tests {
         assert!(imported.truncated_tail);
         assert_eq!(imported.records, 1);
         let request = ExportRequest {
+            password: None,
+            source_password: None,
             redact_sensitive_headers: false,
             source: source.clone(),
             destination: destination.clone(),
@@ -500,6 +536,8 @@ mod tests {
         let native_destination = temp("native-export");
         let _ = std::fs::remove_file(&native_destination);
         let native = export_capture(ExportRequest {
+            password: None,
+            source_password: None,
             redact_sensitive_headers: false,
             source: source.clone(),
             destination: native_destination.clone(),
@@ -510,7 +548,7 @@ mod tests {
         .unwrap();
         assert_eq!(native.records, 1);
         assert!(native.source_truncated_tail);
-        let recovered = recover(
+        let recovered = transmog_capture::recover(
             File::open(&native_destination).unwrap(),
             CaptureLimits::default(),
         )

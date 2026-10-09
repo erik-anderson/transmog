@@ -21,6 +21,7 @@ try {
         & cargo fmt --all -- --check
         & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         & cargo test --workspace --all-features --locked
+        & (Join-Path $PSScriptRoot 'test-saz-interop.ps1')
         & cargo deny check
         & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
         & (Join-Path $PSScriptRoot 'check-crypto-graph.ps1')

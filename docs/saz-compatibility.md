@@ -16,13 +16,19 @@ This structure is described by Telerik's
 [Fiddler Archives documentation](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 The ZIP implementation writes Deflate-compressed entries with ZIP64-capable
 file options. The selected `zip` crate enables only its existing `flate2`
-backend; additional archive codecs and encryption remain disabled.
+backend and its AES support. Additional compression codecs remain disabled.
 
 The import adapter accepts stored and Deflate-compressed ZIP/ZIP64 archives.
 It bounds compressed input, central-directory size and counts before the ZIP
 index allocates, plus individual and aggregate declared uncompressed sizes,
 HTTP heads and XML metadata. It rejects unsafe member names, collisions,
-encryption and unsupported compression. It never extracts archive paths.
+unsupported compression and encryption schemes. It never extracts archive paths.
+Password imports accept the ZIP library’s ZipCrypto and WinZip AES-128/192/256
+(AE-1/AE-2) readers. Opt-in encrypted exports use AES-256 for every file member;
+ZIP member names remain visible. Passwords stay in memory and are never saved
+in preferences. Encrypted members are streamed through a sink to validate
+whole-member authentication before publishing heads, then read on demand
+from their original archive. No decrypted file copy is created.
 Indexing reads headers and metadata. The viewer also streams chunked members
 through a sink to retain validated trailers and exact entity sizes, without
 allocating their bodies. Other bodies stay lazy; reads remove chunk framing and
@@ -35,7 +41,7 @@ collide. Saved bodies remain in pinned, read-only source files and are opened
 on demand by the same inspector, command-copy and Composer APIs used for live
 traffic. They do not consume or get evicted by the live body-cache quota.
 Native files use a streaming checksummed frame index; later body reads verify
-both CRC and the indexed body digest. Missing native protocol and terminal-time
+CRC, per-frame authentication when encrypted, and the indexed body digest. Missing native protocol and terminal-time
 fields remain unavailable. Older redacted headers with unknown sizes remain
 unknown instead of being presented as zero bytes.
 
@@ -89,3 +95,10 @@ cargo run --locked -p transmog -- capture export `
 
 The converter never overwrites an existing destination. Native capture remains
 the fidelity and recovery source even after a SAZ is produced.
+
+Run `scripts/test-saz-interop.ps1` to check exports with the independent native
+7-Zip implementation. It authenticates strict and extended AES-256 archives,
+compares every decrypted file to its unencrypted reference, rejects a wrong
+password, and checks Transmog importing a 7-Zip ZipCrypto binary fixture. Windows
+can use the checksummed official portable tooling; no installation is required.
+This gate runs before signing credentials are available.

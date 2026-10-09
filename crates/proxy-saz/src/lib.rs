@@ -18,7 +18,10 @@ use transmog_capture::{
     CaptureExporter, CaptureRecordKind, CapturedHeader, ExportReport, RecoveredCapture,
 };
 use transmog_core::observe::ExchangeBoundary;
-use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
+use zip::{
+    CompressionMethod, ZipWriter,
+    write::{FileOptions, SimpleFileOptions},
+};
 
 mod evidence;
 mod import;
@@ -99,6 +102,7 @@ pub struct SazExporter<W> {
     mode: SazMode,
     limits: SazLimits,
     report: Option<SazReport>,
+    password: Option<transmog_capture::CapturePassword>,
 }
 
 impl<W: Write + Seek> SazExporter<W> {
@@ -113,6 +117,31 @@ impl<W: Write + Seek> SazExporter<W> {
             mode,
             limits: limits.validate()?,
             report: None,
+            password: None,
+        })
+    }
+
+    /// Opt in to AES-256 encryption of every file member in the new archive.
+    ///
+    /// # Errors
+    /// Rejects empty passwords before writing any archive bytes.
+    pub fn encrypted(
+        mut self,
+        password: transmog_capture::CapturePassword,
+    ) -> Result<Self, SazError> {
+        if password.bytes().is_empty() {
+            return Err(SazError::InvalidPassword);
+        }
+        self.password = Some(password);
+        Ok(self)
+    }
+
+    fn file_options(&self) -> FileOptions<'_, ()> {
+        let options = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .large_file(true);
+        self.password.as_ref().map_or(options, |password| {
+            options.with_aes_encryption_bytes(zip::AesMode::Aes256, password.bytes())
         })
     }
 
@@ -145,9 +174,7 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
         let starting_position = output.stream_position()?;
         let mut sessions = collect_sessions(capture, self.limits)?;
         let mut writer = ZipWriter::new(output);
-        let options = SimpleFileOptions::default()
-            .compression_method(CompressionMethod::Deflated)
-            .large_file(true);
+        let options = self.file_options();
         write_member(
             &mut writer,
             "[Content_Types].xml",
@@ -156,7 +183,7 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
         )?;
         // Fiddler validates this directory entry before scanning request files;
         // file names with a raw/ prefix do not satisfy that archive check.
-        writer.add_directory("raw/", options)?;
+        writer.add_directory("raw/", SimpleFileOptions::default())?;
         let mut report = SazReport {
             entries: 2,
             ..SazReport::default()
@@ -532,7 +559,7 @@ fn write_http_session<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     id: usize,
     session: &Session,
-    options: SimpleFileOptions,
+    options: FileOptions<'_, ()>,
     remaining: usize,
 ) -> Result<bool, SazError> {
     if remaining < 3 {
@@ -573,7 +600,7 @@ fn write_http_session<W: Write + Seek>(
 fn write_trace_context<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     capture: &RecoveredCapture,
-    options: SimpleFileOptions,
+    options: FileOptions<'_, ()>,
     remaining: usize,
 ) -> Result<usize, SazError> {
     let metadata = capture
@@ -606,7 +633,7 @@ fn write_member<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     name: &str,
     bytes: &[u8],
-    options: SimpleFileOptions,
+    options: FileOptions<'_, ()>,
 ) -> Result<(), SazError> {
     writer.start_file(name, options)?;
     writer.write_all(bytes)?;
@@ -616,6 +643,12 @@ fn write_member<W: Write + Seek>(
 /// SAZ conversion failure.
 #[derive(Debug, Error)]
 pub enum SazError {
+    /// Encrypted archive requires a transient password.
+    #[error("This SAZ archive requires a password")]
+    PasswordRequired,
+    /// Supplied password was rejected by the ZIP encryption reader.
+    #[error("The SAZ password is incorrect")]
+    InvalidPassword,
     /// Archive member names collide or escape the archive namespace.
     #[error("SAZ contains an unsafe or duplicate member name")]
     UnsafeMember,
@@ -673,6 +706,135 @@ mod tests {
     use transmog_capture::CaptureRecord;
 
     use super::*;
+
+    #[test]
+    fn encrypted_saz_round_trips_and_produces_interop_fixtures() {
+        let password = transmog_capture::CapturePassword::new("Transmog-interop-password".into());
+        let capture = capture(true, true);
+        for (name, mode) in [("strict", SazMode::Strict), ("extended", SazMode::Extended)] {
+            let mut exporter =
+                SazExporter::new(Cursor::new(Vec::new()), mode, SazLimits::default())
+                    .unwrap()
+                    .encrypted(password.clone())
+                    .unwrap();
+            exporter.export(&capture).unwrap();
+            let bytes = exporter.into_inner().unwrap().into_inner();
+            assert!(matches!(
+                SazArchive::open(Cursor::new(bytes.clone()), SazImportLimits::default()),
+                Err(SazError::PasswordRequired)
+            ));
+            let mut wrong = SazArchive::with_password(
+                Cursor::new(bytes.clone()),
+                SazImportLimits::default(),
+                Some(transmog_capture::CapturePassword::new("incorrect".into())),
+            )
+            .unwrap();
+            assert!(matches!(
+                wrong.index(|_, _| {}, || false),
+                Err(SazError::InvalidPassword)
+            ));
+            let mut archive = SazArchive::with_password(
+                Cursor::new(bytes.clone()),
+                SazImportLimits::default(),
+                Some(password.clone()),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(index.sessions.len(), 1);
+            let mut body = Vec::new();
+            archive
+                .copy_body(
+                    &index.sessions[0].request.as_ref().unwrap().body,
+                    &mut body,
+                    || false,
+                )
+                .unwrap();
+            assert_eq!(body, b"req");
+            if let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") {
+                let root = std::path::PathBuf::from(directory);
+                std::fs::write(root.join(format!("{name}-encrypted.saz")), bytes).unwrap();
+                std::fs::write(
+                    root.join(format!("{name}-plain.saz")),
+                    export(mode, &capture).0,
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn external_zipcrypto_imports_exact_binary_without_extraction() {
+        let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") else {
+            return;
+        };
+        let bytes =
+            std::fs::read(std::path::PathBuf::from(directory).join("external-zipcrypto.saz"))
+                .unwrap();
+        let mut archive = SazArchive::with_password(
+            Cursor::new(bytes),
+            SazImportLimits::default(),
+            Some(transmog_capture::CapturePassword::new(
+                "Transmog-interop-password".into(),
+            )),
+        )
+        .unwrap();
+        let index = archive.index(|_, _| {}, || false).unwrap();
+        let mut body = Vec::new();
+        archive
+            .copy_body(
+                &index.sessions[0].request.as_ref().unwrap().body,
+                &mut body,
+                || false,
+            )
+            .unwrap();
+        assert_eq!(body.len(), 262_144);
+        assert!(
+            body.iter()
+                .enumerate()
+                .all(|(index, byte)| usize::from(*byte) == index % 256)
+        );
+    }
+
+    #[test]
+    fn aes_128_192_and_256_archives_import_without_extraction() {
+        for mode in [
+            zip::AesMode::Aes128,
+            zip::AesMode::Aes192,
+            zip::AesMode::Aes256,
+        ] {
+            let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+            writer
+                .start_file(
+                    "raw/1_c.txt",
+                    SimpleFileOptions::default()
+                        .compression_method(CompressionMethod::Deflated)
+                        .with_aes_encryption(mode, "password"),
+                )
+                .unwrap();
+            writer
+                .write_all(
+                    b"POST https://example.test/upload HTTP/1.1\r\nContent-Length: 3\r\n\r\nreq",
+                )
+                .unwrap();
+            let bytes = writer.finish().unwrap().into_inner();
+            let mut archive = SazArchive::with_password(
+                Cursor::new(bytes),
+                SazImportLimits::default(),
+                Some(transmog_capture::CapturePassword::new("password".into())),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            let mut body = Vec::new();
+            archive
+                .copy_body(
+                    &index.sessions[0].request.as_ref().unwrap().body,
+                    &mut body,
+                    || false,
+                )
+                .unwrap();
+            assert_eq!(body, b"req");
+        }
+    }
 
     fn capture(include_response: bool, include_body: bool) -> RecoveredCapture {
         let headers = vec![
