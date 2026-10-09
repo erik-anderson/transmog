@@ -422,3 +422,20 @@ release environment; no signed release or publication was performed locally.
     circularly retain every entry, so streaming CLI memory does not grow with
     its entire recording. Current preference/root generations remain recoverable
     after corruption, independently of removed historical-schema migration.
+
+39. Final qualification passes 474 workspace tests, strict workspace Clippy,
+    production browser checks, native main/viewer flows, real CLI Ctrl+C captures
+    and independent 7-Zip interoperability. The separately enabled Docker product
+    test and all eight protocol/browser cases pass. Native probes now construct
+    current indexed fixtures rather than historical raw containers. Reviewed native
+    Settings, saved-viewer binary replay, wide/compact recording and entry-limit
+    layouts; corrected stale file-budget help and removed unused quota styling.
+
+The follow-up supersedes the earlier four-GiB output budget and historical-layout
+compatibility statements in this record. New captures use only the indexed native
+container. Live entries default to no count cap, with optional completed-entry
+eviction. Saved native traces have no fixed file-size or record-count ceiling.
+Metadata indexing retains its separate resource bounds. Individual expanded chunks
+are bounded to eight MiB and larger bodies are split automatically; a single
+oversized metadata record reports a capture error rather than silently truncating.
+SAZ encryption support remains as approved. Production signing was not performed.

@@ -1160,6 +1160,10 @@ try {
   assert.equal(await page.evaluate(()=>Object.hasOwn(globalThis.__workspaceFixture.lastCaptureRequest,'maxFileBytes')),false,'Recording imposed an implicit file ceiling');
   assert.equal(await captures.getByRole('button',{name:'Start recording',exact:true}).isDisabled(),true);
   await captures.getByRole('button',{name:'Stop recording',exact:true}).click();await captureIdle();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/record-unlimited-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/record-unlimited-small.png')});
+  await page.setViewportSize({width:1280,height:800});
   await captures.locator('.capture-tabs').getByRole('button',{name:'Inspect / recover',exact:true}).click();
   await captures.getByRole('button',{name:'Inspect file',exact:true}).click();await captureIdle();
   assert.match(await captures.locator('.capture-receipt').textContent(),/Interrupted tail; valid prefix recovered/);

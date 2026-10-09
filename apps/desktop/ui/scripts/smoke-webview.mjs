@@ -433,6 +433,7 @@ try {
     const preference=await window.__TAURI_INTERNALS__.invoke('product_state');
     const input=workspace.captureForm.elements.namedItem('bodies');
     if(input.checked!==preference.privacy.retainBodySamples)throw new Error('Recording did not honor saved body defaults');
+    if(workspace.captureForm.elements.namedItem('quotaAmount')!==null)throw new Error('Recording still exposes an implicit quota');
     const before=input.checked;const touched=workspace.bodyChoiceTouched;
     try {input.checked=!before;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.checked!==!before)throw new Error('Recording defaults overwrote a draft');}
     finally {input.checked=before;workspace.bodyChoiceTouched=touched;}
@@ -448,6 +449,14 @@ try {
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();
       const settings=shell.shadowRoot.querySelector('settings-workspace');
       settings.showSettingsSection('preferences');settings.$flushUpdates();
+      const entryChoice=settings.settingsForm.elements.namedItem('limitEntries');
+      const entryMaximum=settings.settingsForm.elements.namedItem('maxEntries');
+      const originalEntryChoice=entryChoice.checked;
+      entryChoice.checked=true;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      entryMaximum.scrollIntoView({block:'center'});entryMaximum.focus();
+      const entryRect=entryMaximum.getBoundingClientRect();
+      if(entryMaximum.disabled||settings.getRootNode().activeElement!==entryMaximum||settings.getRootNode().elementFromPoint(entryRect.x+entryRect.width/2,entryRect.y+entryRect.height/2)!==entryMaximum)throw new Error('Live-entry control was not reachable');
+      entryChoice.checked=originalEntryChoice;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
       const select=settings.settingsForm.elements.namedItem('bufferMode');
       const size=settings.settingsForm.elements.namedItem('bufferSize');
       const original=select.value;

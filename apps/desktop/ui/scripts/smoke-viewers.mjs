@@ -3,6 +3,34 @@ import {writeFile, readFile, glob} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
+import {deflateRawSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
+
+// Native probes use the current plain indexed container; encrypted I/O is covered
+// by the CLI and Rust tests. Keep fixtures independent of historical layouts.
+function nativeFixture(records, exchangeId) {
+  const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
+  const encode=(bytes,counter)=>{
+    const compressed=deflateRawSync(bytes),useCompressed=compressed.length<bytes.length;
+    const prefix=Buffer.alloc(13);prefix.writeBigUInt64LE(BigInt(counter));prefix.writeUInt32LE(bytes.length,8);prefix[12]=Number(useCompressed);
+    const payload=Buffer.concat([prefix,useCompressed?compressed:bytes]);
+    const envelope=Buffer.alloc(8);envelope.writeUInt32LE(payload.length);envelope.writeUInt32LE(crc(payload),4);
+    return Buffer.concat([envelope,payload]);
+  };
+  const header=Buffer.from(JSON.stringify({version:5,compression:'deflate',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
+  const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
+  const frames=[Buffer.from('TMCAP05\0'),size,header];
+  for(const [index,original] of [...records,{kind:'seal',payload:{record_count:records.length}}].entries()) {
+    const record={revision:3,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
+    let body;
+    if(record.kind==='body-segment'&&Array.isArray(record.payload.bytes)) {
+      const bytes=Buffer.from(record.payload.bytes);body=encode(bytes,index*2+2);
+      record.body_index={frame_bytes:body.length,bytes:bytes.length,digest:Array.from(createHash('sha256').update(bytes).digest())};record.payload.bytes=null;
+    }
+    frames.push(encode(Buffer.from(JSON.stringify(record)),index*2+1));if(body)frames.push(body);
+  }
+  return Buffer.concat(frames);
+}
 
 const argument=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const port=argument('--port'), source=argument('--source'), executable=argument('--executable'), screenshot=argument('--screenshot');
@@ -59,7 +87,7 @@ try{
   assert.match(result.denial,/only in the main proxy window/);
   assert.equal(result.sourceIp,'192.0.2.25');assert.match(result.headers,/\r\n\r\n\r\nHTTP\/1\.1 200 Fixture/);assert.equal(result.body,'');assert.ok(result.traceId);
   process.stdout.write('Viewer inspection and permissions verified.\n');
-  const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
+  const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
   assert.equal(search.matches,1);assert.equal(search.selected,1);assert.doesNotMatch(search.status,/binary/i);
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMode='regex';workspace.searchInput.value='(';await workspace.runContentSearch();if(!workspace.contentSearchStatus.startsWith('Search failed:'))throw new Error('Invalid regex was not explained');await workspace.clearContentSearch();workspace.searchMode='text';})()`);
   await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
@@ -90,10 +118,7 @@ try{
   const timingSource=join(dirname(source),'timing-fixture.tmcap');
   const perf={points:[{milestone:'request-headers',unixMillis:1800000000000,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000004,offsetMicros:4000}],protocols:[],transports:[{leg:'upstream',connectionId:'native-tcp-stats',shared:true,outcome:'connected',sampledOffsetMicros:3500,bytesRead:8192,bytesWritten:4096,tcpSampledOffsetMicros:3000,tcp:{rttMicros:2400,congestionWindow:65536,sendWindow:32768,retransmittedBytes:2048},socketIo:{writeWaitMicros:1750,writeWaits:2,lastWriteOffsetMicros:2800,lastFlushOffsetMicros:2900}}],work:[{kind:'hook',label:'Request headers · native support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · native support script',beganOffsetMicros:1200,endedOffsetMicros:3500,busyNanos:500000,calls:3}]};
   const fixture=[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/native-waterfall',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'performance',payload:perf},{kind:'completed',payload:null}];
-  const frames=[Buffer.from('TMCAP01\0')];
-  const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
-  for(const [index,record] of [...fixture,{kind:'seal',payload:{record_count:fixture.length}}].entries()) {const payload=Buffer.from(JSON.stringify({revision:3,sequence:index+1,exchange_id:record.kind==='seal'?0:99,...record}));const header=Buffer.alloc(8);header.writeUInt32LE(payload.length);header.writeUInt32LE(crc(payload),4);frames.push(header,payload);}
-  await writeFile(timingSource,Buffer.concat(frames));
+  await writeFile(timingSource,nativeFixture(fixture,99));
   await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(timingSource)})`);
   await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-waterfall')`),'Native timing fixture did not import');
   const timingId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-waterfall');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
@@ -121,9 +146,7 @@ try{
     const records=[{kind:'request-head',payload:{boundary:'client-request',method:'POST',target:url,headers:[{name:Array.from(Buffer.from('Content-Length')),value:Array.from(Buffer.from(String(replayLength)))}]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}}];
     for(let remaining=replayLength;remaining>0;){const count=Math.min(remaining,512*1024);records.push({kind:'body-segment',payload:{boundary:'client-request',byte_count:count,bytes:Array(count).fill(7),truncated:false}});remaining-=count;}
     records.push({kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'completed',payload:null});
-    const replayFrames=[Buffer.from('TMCAP01\0')];
-    for(const [index,record] of [...records,{kind:'seal',payload:{record_count:records.length}}].entries()){const payload=Buffer.from(JSON.stringify({revision:3,sequence:index+1,exchange_id:record.kind==='seal'?0:101,...record}));const header=Buffer.alloc(8);header.writeUInt32LE(payload.length);header.writeUInt32LE(crc(payload),4);replayFrames.push(header,payload);}
-    const replaySource=join(dirname(source),'replay-fixture.tmcap');await writeFile(replaySource,Buffer.concat(replayFrames));
+    const replaySource=join(dirname(source),'replay-fixture.tmcap');await writeFile(replaySource,nativeFixture(records,101));
     await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(replaySource)})`);
     const replayImportStatus=await viewer.evaluate(`${traffic}.importStatus`);assert.ok(!replayImportStatus.startsWith('Import failed'),replayImportStatus);
     await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-replay')`),'Native replay fixture did not import');
@@ -174,7 +197,7 @@ try{
     const target=await waitFor(async()=>{const all=await targets();return all.find(target=>!existing.includes(target.id));},'Compressed capture viewer did not open');
     const compressed=await connect(target);
     await waitFor(()=>compressed.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Compressed capture did not import');
-    const found=await compressed.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='CLI support fixture';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
+    const found=await compressed.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.searchInput.value='captured';await workspace.runContentSearch();return workspace.contentMatchCount;})()`);
     assert.equal(found,1,'Compressed CLI response body was not searchable');
   }
   if(pageSource){
