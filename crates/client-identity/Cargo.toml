@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-transmog-core = { version = "=0.0.1", path = "../proxy-core" }
+transmog-core = { version = "=0.0.2", path = "../proxy-core" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

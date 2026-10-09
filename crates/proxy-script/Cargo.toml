@@ -14,7 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-transmog-core = { version = "=0.0.1", path = "../proxy-core" }
+transmog-core = { version = "=0.0.2", path = "../proxy-core" }
 
 [dev-dependencies]
 tokio.workspace = true

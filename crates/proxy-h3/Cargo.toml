@@ -11,9 +11,9 @@ repository.workspace = true
 boring.workspace = true
 bytes.workspace = true
 quiche.workspace = true
-transmog-core = { version = "=0.0.1", path = "../proxy-core" }
-transmog-network = { version = "=0.0.1", path = "../network" }
-transmog-tls = { version = "=0.0.1", path = "../proxy-tls" }
+transmog-core = { version = "=0.0.2", path = "../proxy-core" }
+transmog-network = { version = "=0.0.2", path = "../network" }
+transmog-tls = { version = "=0.0.2", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
