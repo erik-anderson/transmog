@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 sysinfo.workspace = true
 url = "=2.5.8"
-transmog-network = { version = "=0.1.0", path = "../network" }
+transmog-network = { version = "=1.0.0", path = "../network" }
 bytes.workspace = true
 base64.workspace = true
 getrandom.workspace = true
@@ -26,20 +26,20 @@ tempfile.workspace = true
 time.workspace = true
 tokio.workspace = true
 zip.workspace = true
-transmog-content = { version = "=0.1.0", path = "../proxy-content" }
-transmog-automation = { version = "=0.1.0", path = "../proxy-automation" }
-transmog-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
-transmog-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
-transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
-transmog-core = { version = "=0.1.0", path = "../proxy-core" }
-transmog-http = { version = "=0.1.0", path = "../proxy-http" }
-transmog-preview-worker = { version = "=0.1.0", path = "../preview-worker" }
-transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
-transmog-saz = { version = "=0.1.0", path = "../proxy-saz" }
-transmog-script = { version = "=0.1.0", path = "../proxy-script" }
-transmog-script-supervisor = { version = "=0.1.0", path = "../script-supervisor" }
-transmog-session = { version = "=0.1.0", path = "../proxy-session" }
-transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
+transmog-content = { version = "=1.0.0", path = "../proxy-content" }
+transmog-automation = { version = "=1.0.0", path = "../proxy-automation" }
+transmog-control-model = { version = "=1.0.0", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=1.0.0", path = "../proxy-control-transport" }
+transmog-capture = { version = "=1.0.0", path = "../proxy-capture" }
+transmog-core = { version = "=1.0.0", path = "../proxy-core" }
+transmog-http = { version = "=1.0.0", path = "../proxy-http" }
+transmog-preview-worker = { version = "=1.0.0", path = "../preview-worker" }
+transmog-runtime = { version = "=1.0.0", path = "../proxy-runtime" }
+transmog-saz = { version = "=1.0.0", path = "../proxy-saz" }
+transmog-script = { version = "=1.0.0", path = "../proxy-script" }
+transmog-script-supervisor = { version = "=1.0.0", path = "../script-supervisor" }
+transmog-session = { version = "=1.0.0", path = "../proxy-session" }
+transmog-tls = { version = "=1.0.0", path = "../proxy-tls" }
 
 [lints]
 workspace = true

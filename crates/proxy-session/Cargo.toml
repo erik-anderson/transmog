@@ -11,11 +11,11 @@ description = "Headless application and live-session service for Transmog"
 serde_json.workspace = true
 bytes.workspace = true
 http.workspace = true
-transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
-transmog-control-model = { version = "=0.1.0", path = "../proxy-control-model" }
-transmog-control-transport = { version = "=0.1.0", path = "../proxy-control-transport" }
-transmog-core = { version = "=0.1.0", path = "../proxy-core" }
-transmog-runtime = { version = "=0.1.0", path = "../proxy-runtime" }
+transmog-capture = { version = "=1.0.0", path = "../proxy-capture" }
+transmog-control-model = { version = "=1.0.0", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=1.0.0", path = "../proxy-control-transport" }
+transmog-core = { version = "=1.0.0", path = "../proxy-core" }
+transmog-runtime = { version = "=1.0.0", path = "../proxy-runtime" }
 thiserror.workspace = true
 tokio.workspace = true
 
@@ -23,4 +23,4 @@ tokio.workspace = true
 workspace = true
 
 [dev-dependencies]
-transmog-tls = { version = "=0.1.0", path = "../proxy-tls" }
+transmog-tls = { version = "=1.0.0", path = "../proxy-tls" }
