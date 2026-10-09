@@ -158,8 +158,8 @@ try{
   }finally{replayServer.closeAllConnections();await new Promise(resolve=>replayServer.close(resolve));}
 
   await viewer.evaluate(`${traffic}.showSaveTrace()`);
-  const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked})`);
-  assert.ok(saveChoices.open);assert.ok(saveChoices.compressed);assert.equal(saveChoices.network,false);
+  const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked,redact:${traffic}.saveTraceForm.elements.namedItem('redactHeaders').checked})`);
+  assert.ok(saveChoices.open);assert.ok(saveChoices.compressed);assert.equal(saveChoices.network,false);assert.equal(saveChoices.redact,false);
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-save.png'),Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeSaveTrace()`);
   const before=(await targets()).map(target=>target.id);

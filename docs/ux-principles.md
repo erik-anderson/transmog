@@ -132,8 +132,11 @@ search results, excluding entries removed from Traffic. Offer compression for
 sharing by default. Preserve original source metadata and request associations
 when saving merged captures. Network configuration from the saving computer is
 an explicit, unchecked option and stays separate from imported source context;
-show collection time, platform and failures in Trace metadata. Report incomplete
-bodies and keep existing destination files intact when a save fails.
+show collection time, platform and failures in Trace metadata. Offer unchecked export-only sensitive-header redaction without changing retained
+evidence. Explain that URLs, bodies and metadata may still contain private data.
+Show collector, machine, purpose and time for newly collected network context;
+older context stays explicitly original without invented provenance. Report
+incomplete bodies and keep existing destination files intact when a save fails.
 
 The installer offers SAZ registration as an explicit choice. Preserve an existing
 Windows default, explain how Windows may ask for a default-app choice, and remove

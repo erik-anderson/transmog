@@ -316,9 +316,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       else if(network&&typeof network==='object'){
         const fields=network as Record<string,unknown>;
         if(typeof fields.output==='string')this.metadataNetworkContext=fields.output;
-        if(typeof fields.command==='string')this.metadataNetworkTitle=fields.command;
+        if(typeof fields.command==='string')this.metadataNetworkTitle=(fields.purpose==='trace-save'?'Network configuration at save time · ':fields.purpose==='capture-start'?'Network configuration at capture start · ':'Original network configuration · ')+fields.command;
         const collected=typeof fields.collectedAt==='number'?new Date(fields.collectedAt):null;
-        this.metadataNetworkSummary=[typeof fields.platform==='string'?fields.platform:'',collected&&Number.isFinite(collected.getTime())?'Collected '+collected.toISOString():''].filter(Boolean).join(' · ');
+        this.metadataNetworkSummary=[typeof fields.platform==='string'?fields.platform:'',typeof fields.collector==='string'?fields.collector:'',typeof fields.computerName==='string'?fields.computerName:'',collected&&Number.isFinite(collected.getTime())?'Collected '+collected.toISOString():''].filter(Boolean).join(' · ');
         if(Array.isArray(fields.notes))this.metadataNetworkSummary+='. '+fields.notes.filter(note=>typeof note==='string').join(' ');
       }
       if(this.metadataNetworkContext||this.metadataNetworkTitle){this.metadataNetworkTitle||='Network context';const additional={...context};delete additional.networkContext;this.metadataContext=Object.keys(additional).length?JSON.stringify(additional,null,2):'';}
@@ -832,7 +832,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeSaveTrace():void {this.saveTraceDialog.close();}
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
-    try {const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{includeNetworkContext:data.get('networkContext')==='on'},compressed:data.get('compress')==='on'});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
+    try {const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},compressed:data.get('compress')==='on'});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
     catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);if(!this.saveTraceDialog.open)this.showNotice('Trace save failed',describeError(error),null,null);}}
     finally {this.savingTrace=false;}
   }

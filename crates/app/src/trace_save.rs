@@ -13,9 +13,12 @@ use transmog_core::{HeaderBlock, observe::ExchangeBoundary};
 use transmog_session::{SessionSnapshot, SessionTerminal};
 
 /// Explicit save choices; collection is always opt-in.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceSaveOptions {
+    /// Omit sensitive header values from this copy; retained evidence is unchanged.
+    #[serde(default)]
+    pub redact_sensitive_headers: bool,
     /// Collect network configuration from this computer when saving.
     #[serde(default)]
     pub include_network_context: bool,
@@ -40,18 +43,26 @@ pub(crate) async fn save(
     options: TraceSaveOptions,
 ) -> Result<TraceSaveResult, AppError> {
     let network = if options.include_network_context {
-        Some(transmog_network::context::collect().await)
+        Some(transmog_network::context::collect_for("trace-save").await)
     } else {
         None
     };
-    tokio::task::spawn_blocking(move || write(&application, destination, network.as_ref()))
-        .await
-        .map_err(|_| error("Trace save worker failed"))?
+    tokio::task::spawn_blocking(move || {
+        write(
+            &application,
+            destination,
+            network.as_ref(),
+            options.redact_sensitive_headers,
+        )
+    })
+    .await
+    .map_err(|_| error("Trace save worker failed"))?
 }
 fn write(
     application: &Application,
     destination: PathBuf,
     network: Option<&transmog_network::context::NetworkContext>,
+    redact: bool,
 ) -> Result<TraceSaveResult, AppError> {
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
@@ -89,6 +100,7 @@ fn write(
         store,
         &sessions,
         network,
+        redact,
     )?;
     temporary
         .as_file()
@@ -140,6 +152,7 @@ fn write_records(
     store: &BodyStore,
     sessions: &[SessionSnapshot],
     network: Option<&transmog_network::context::NetworkContext>,
+    redact: bool,
 ) -> Result<usize, AppError> {
     let mut writer = CaptureWriter::new(
         output,
@@ -156,7 +169,7 @@ fn write_records(
         0,
         CaptureRecordKind::Unknown {
             kind: "trace-metadata".into(),
-            payload: serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"),"savedAt":millis(SystemTime::now()),"networkContext":network}),
+            payload: serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"),"savedAt":millis(SystemTime::now()),"networkContext":network,"sensitiveHeadersRedacted":redact}),
         },
     )?;
     let source_ids = sessions
@@ -198,7 +211,7 @@ fn write_records(
     }
     let mut incomplete = 0;
     for session in sessions {
-        incomplete += write_session(&mut writer, application, store, session)?;
+        incomplete += write_session(&mut writer, application, store, session, redact)?;
     }
     writer
         .seal()
@@ -225,10 +238,14 @@ fn write_session<W: Write>(
     application: &Application,
     store: &BodyStore,
     session: &SessionSnapshot,
+    redact: bool,
 ) -> Result<usize, AppError> {
     let id = session.exchange_id.0;
     let mut sequence = 0;
-    let mut emit = |kind| {
+    let mut emit = |mut kind| {
+        if redact {
+            crate::export_privacy::redact(&mut kind);
+        }
         sequence += 1;
         append(writer, id, sequence, kind)
     };

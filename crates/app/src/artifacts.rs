@@ -112,6 +112,9 @@ pub enum ExportFormat {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportRequest {
+    /// Redact sensitive header values in the exported copy only.
+    #[serde(default)]
+    pub redact_sensitive_headers: bool,
     /// Authoritative native source.
     pub source: PathBuf,
     /// Create-new destination.
@@ -226,7 +229,12 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
             false,
         ));
     }
-    let capture = recover_path(&request.source, request.max_source_bytes)?;
+    let mut capture = recover_path(&request.source, request.max_source_bytes)?;
+    if request.redact_sensitive_headers {
+        for record in &mut capture.records {
+            crate::export_privacy::redact(&mut record.kind);
+        }
+    }
     let destination = request.destination.clone();
     let mut destination_created = false;
     let result = match request.format {
@@ -267,7 +275,13 @@ fn export_blocking(request: &ExportRequest) -> Result<ExportResult, AppError> {
             bytes,
             source_sealed: capture.sealed,
             source_truncated_tail: capture.truncated_tail,
-            fidelity,
+            fidelity: if request.redact_sensitive_headers {
+                format!(
+                    "{fidelity} Sensitive header values redacted; bodies, URLs and metadata may still contain private data."
+                )
+            } else {
+                fidelity
+            },
         }),
         Err(error) => {
             if destination_created {
@@ -467,6 +481,7 @@ mod tests {
         assert!(imported.truncated_tail);
         assert_eq!(imported.records, 1);
         let request = ExportRequest {
+            redact_sensitive_headers: false,
             source: source.clone(),
             destination: destination.clone(),
             format: ExportFormat::JsonLines,
@@ -479,6 +494,7 @@ mod tests {
         let native_destination = temp("native-export");
         let _ = std::fs::remove_file(&native_destination);
         let native = export_capture(ExportRequest {
+            redact_sensitive_headers: false,
             source: source.clone(),
             destination: native_destination.clone(),
             format: ExportFormat::Native,

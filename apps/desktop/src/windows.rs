@@ -1205,6 +1205,7 @@ async fn export_live_capture(state: State<'_, DesktopState>) -> Result<ExportRes
     let result = state
         .application
         .export_capture(ExportRequest {
+            redact_sensitive_headers: false,
             source,
             destination: destination.clone(),
             format: ExportFormat::Native,

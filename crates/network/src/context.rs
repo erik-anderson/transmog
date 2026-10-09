@@ -10,6 +10,15 @@ const MAX_OUTPUT: u64 = 1024 * 1024;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NetworkContext {
+    /// Application and version that collected this context.
+    #[serde(default)]
+    pub collector: String,
+    /// Capture start or trace-save collection purpose.
+    #[serde(default)]
+    pub purpose: String,
+    /// Collector machine name when available; collected only after opt-in.
+    #[serde(default)]
+    pub computer_name: Option<String>,
     /// Operating system that produced the output.
     pub platform: String,
     /// UTC collection time in Unix milliseconds.
@@ -23,7 +32,17 @@ pub struct NetworkContext {
 }
 /// Collects configuration only when explicitly requested by the caller.
 pub async fn collect() -> NetworkContext {
+    collect_for("capture-start").await
+}
+/// Collects context with the caller's collection purpose.
+pub async fn collect_for(purpose: &str) -> NetworkContext {
     let mut context = NetworkContext {
+        collector: format!("Transmog {}", env!("CARGO_PKG_VERSION")),
+        purpose: purpose.into(),
+        computer_name: std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .ok()
+            .map(|name| name.chars().take(255).collect()),
         platform: std::env::consts::OS.into(),
         collected_at: u64::try_from(
             SystemTime::now()

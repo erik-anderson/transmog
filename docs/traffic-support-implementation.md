@@ -236,10 +236,17 @@ qualified baseline, not completion of the complete plan.
     ownership, compact diagnostics and continued IPC/network denial. Browser
     layout and keyboard/focus reviews cover source choices and diagnostics.
 
+24. Export-only redaction removes sensitive header values and preserved raw header
+    text from native, gzip, JSONL and SAZ copies while preserving source files and
+    retained evidence. Presence and original sizes remain in native/extended
+    evidence. Network context records collector/version, machine, collection
+    purpose and time; the metadata view distinguishes original and save-time
+    context without inventing old provenance. Round-trip/source invariance tests,
+    strict Clippy, browser interactions and real saved-viewer checks pass.
+    Reviewed populated native and compact save dialogs, retry and default choices.
+
 Remaining isolated phases:
 
-- Trace exports: opt-in export redaction without changing retained evidence,
-  clearer collector provenance and original-versus-save network context.
 - SAZ fidelity: trailers, conventional timers, extended evidence and merged
   source associations with documented interoperability boundaries.
 - CLI lifecycle: persistent-root expiry/rotation, richer recovery ledger,

@@ -15,6 +15,7 @@ mod captured_page;
 mod captured_page_report;
 mod composer;
 mod diagnostics;
+mod export_privacy;
 mod inspector;
 mod lifecycle;
 mod preview;

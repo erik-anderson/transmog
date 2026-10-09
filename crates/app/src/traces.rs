@@ -1562,6 +1562,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn redacted_export_omits_raw_secrets_and_preserves_retained_source() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.saz");
+        saz(&source);
+        let original = std::fs::read(&source).unwrap();
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source.clone(), "privacy"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let id = workspace
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0]
+            .id
+            .clone();
+        assert!(
+            workspace
+                .copy_all_headers(&id)
+                .unwrap()
+                .contains("Cookie: secret")
+        );
+        let destination = root.path().join("redacted.tmcap");
+        workspace
+            .save_traffic_trace(
+                destination.clone(),
+                crate::TraceSaveOptions {
+                    redact_sensitive_headers: true,
+                    include_network_context: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            !std::fs::read(&destination)
+                .unwrap()
+                .windows(6)
+                .any(|bytes| bytes == b"secret")
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        assert!(
+            workspace
+                .copy_all_headers(&id)
+                .unwrap()
+                .contains("Cookie: secret")
+        );
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(destination, "redacted"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let id = reopened
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0]
+            .id
+            .clone();
+        assert!(!reopened.copy_all_headers(&id).unwrap().contains("secret"));
+        let detail = reopened.session_detail(&id).unwrap();
+        assert!(
+            detail.requests[0]
+                .headers
+                .iter()
+                .any(|field| field.name == "Cookie" && field.sensitive)
+        );
+    }
+
+    #[tokio::test]
     async fn saved_merged_workspace_keeps_original_sources_bodies_and_duration() {
         let root = tempfile::tempdir().unwrap();
         let native_path = root.path().join("original.tmcap");
@@ -1582,6 +1650,7 @@ mod tests {
             .save_traffic_trace(
                 path.clone(),
                 crate::TraceSaveOptions {
+                    redact_sensitive_headers: false,
                     include_network_context: false,
                 },
             )
@@ -1661,6 +1730,7 @@ mod tests {
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
+                    redact_sensitive_headers: false,
                     include_network_context: false,
                 },
             )
@@ -1689,6 +1759,7 @@ mod tests {
             .save_traffic_trace(
                 root.path().join("empty.tmcap"),
                 crate::TraceSaveOptions {
+                    redact_sensitive_headers: false,
                     include_network_context: false,
                 },
             )
@@ -1714,6 +1785,7 @@ mod tests {
                 .save_traffic_trace(
                     output.clone(),
                     crate::TraceSaveOptions {
+                        redact_sensitive_headers: false,
                         include_network_context: false
                     }
                 )
