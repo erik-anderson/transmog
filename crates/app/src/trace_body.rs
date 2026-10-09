@@ -212,7 +212,7 @@ impl Read for NativeBodyReader {
             let piece = &self.pieces[self.next];
             self.reader.seek(SeekFrom::Start(piece.offset))?;
             let limits = CaptureLimits {
-                max_file_bytes: 4 * 1024 * 1024 * 1024,
+                max_file_bytes: u64::MAX,
                 max_record_bytes: 8 * 1024 * 1024,
                 max_records: 1,
             };

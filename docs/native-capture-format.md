@@ -39,3 +39,8 @@ opens more slowly; encrypted expansion still contains ciphertext frames.
 The desktop defaults to chunk-compressed `.tmcap`. Password prompts appear only
 when required, and password fields are cleared on close. CLI circular retention
 keeps metadata/body pairs together, then writes retained exchanges at stop.
+
+Trace output has no fixed file-size or record-count ceiling. Chunks have bounded
+encoded/expanded lengths. Metadata indexing retains its independent memory bounds.
+Callers can explicitly request a finite input or recording budget; the desktop and
+guided CLI do not impose one.

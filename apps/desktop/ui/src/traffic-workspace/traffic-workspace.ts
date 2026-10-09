@@ -278,7 +278,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     const operationId=crypto.randomUUID();this.importOperation=operationId;
     const onProgress=new Channel<TraceImportProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.importOperation===progress.operationId)this.importPercent=progress.total?Math.min(99,Math.floor(progress.completed/progress.total*100)):0;};
     try {
-      const result=await this.withTracePassword('Open '+(path.split(/[\\/]/).pop()??'capture'),password=>invoke<TraceImportResult>('import_trace',{request:{path,password,operationId,maxFileBytes:4*1024*1024*1024},onProgress}));
+      const result=await this.withTracePassword('Open '+(path.split(/[\\/]/).pop()??'capture'),password=>invoke<TraceImportResult>('import_trace',{request:{path,password,operationId},onProgress}));
       if(result===null){this.importStatus='Import canceled. Traffic is unchanged.';return;}
       if(!this.isConnected||this.importOperation!==operationId)return;
       this.importPercent=100;this.importStatus=`Imported ${result.trace.sessions} ${result.trace.sessions===1?'entry':'entries'} from ${result.trace.name}.${result.issues.length?' Some saved evidence is incomplete; see Trace metadata.':''}`;

@@ -1157,7 +1157,7 @@ try {
   assert.equal(await captures.getByLabel('New capture file',{exact:true}).inputValue(),'kept.tmcap','Canceling the picker changed a path');
   await captures.getByRole('button',{name:'Start recording',exact:true}).click();
   await captures.locator('.capture-state').getByText('Recording · 2 KiB written',{exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastCaptureRequest.maxFileBytes),1073741824);
+  assert.equal(await page.evaluate(()=>Object.hasOwn(globalThis.__workspaceFixture.lastCaptureRequest,'maxFileBytes')),false,'Recording imposed an implicit file ceiling');
   assert.equal(await captures.getByRole('button',{name:'Start recording',exact:true}).isDisabled(),true);
   await captures.getByRole('button',{name:'Stop recording',exact:true}).click();await captureIdle();
   await captures.locator('.capture-tabs').getByRole('button',{name:'Inspect / recover',exact:true}).click();

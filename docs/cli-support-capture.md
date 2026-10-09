@@ -51,7 +51,7 @@ Large requests continue forwarding when their capture prefix reaches the cap. To
 captures. Use `--retain-sensitive` to change it back. Bodies can still contain
 private information, so review the trace before sharing.
 
-To remove the per-request capture cap while retaining the 4 GiB file budget:
+To remove the per-request capture cap (trace output has no file-size ceiling):
 
 ```powershell
 .\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap.gz
@@ -193,8 +193,7 @@ and retained encoded frames stay in memory until Ctrl+C saves them. An abrupt
 process termination loses an unsaved memory buffer. Specify a custom limit such
 as `--circular-buffer 512MiB`, `2GB`, or a positive byte count (at least 1 MiB).
 Limits above half installed RAM use disk. `--circular-buffer unlimited` has no
-buffer maximum and uses disk; the separate 4 GiB finished trace budget still
-applies. Disk circular caches hold compressed frames and, for encrypted runs,
+buffer maximum and uses disk. Saved traces have no fixed file-size ceiling. Disk circular caches hold compressed frames and, for encrypted runs,
 ciphertext. Completed older exchanges are evicted first; if active traffic alone
 exceeds the quota, older active evidence can be dropped without interrupting
 forwarding. The saved trace’s metadata records eviction counts.

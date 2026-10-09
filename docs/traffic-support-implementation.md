@@ -400,3 +400,10 @@ release environment; no signed release or publication was performed locally.
     Product state accepts only its current schema; earlier development layouts
     are rejected without migration. Browser checks cover choosing and saving
     the maximum; catalog tests cover more than 10,000 rows and limit transitions.
+
+37. Native recording, workspace Save trace and native export default to unlimited
+    file bytes and record counts. Desktop recording removes the file-quota form;
+    reopening/inspection/export no longer sends a four-GiB bound. Circular output
+    uses the same unlimited writer. Per-chunk allocation and metadata-index bounds
+    remain separate. The writer regression exercises append/seal across the former
+    four-GiB boundary with a sink rather than allocating a multi-GiB fixture.

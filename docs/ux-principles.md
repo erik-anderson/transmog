@@ -169,7 +169,9 @@ storage location and installed RAM in Settings. Changing storage applies to new
 body boundaries without spilling previously retained memory bodies to disk.
 
 Request-body retention defaults to **25 MB** (25,000,000 bytes). **Unlimited**
-removes the per-request cap while preserving overall cache and trace budgets.
+removes the per-request cap while preserving the selected circular buffer budget.
+Saved trace files have no byte-size or record-count ceiling; storage errors remain
+actionable failures. Keep individual encoded chunks bounded.
 Keep forwarding independent from capture limits; report a retained prefix as
 incomplete while preserving full measured byte counts. Explain that cache
 changes apply to new requests and recording changes to the next recording.

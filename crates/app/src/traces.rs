@@ -34,6 +34,10 @@ use crate::{
     trace_body::{NativeBodyPiece, NativeBodySource, SazBodySource, SourceReader},
 };
 
+const fn no_file_limit() -> u64 {
+    u64::MAX
+}
+
 const MAX_SESSIONS: usize = 100_000;
 const MAX_HEAD_BYTES: usize = 256 * 1024 * 1024;
 
@@ -48,7 +52,8 @@ pub struct TraceImportRequest {
     pub path: PathBuf,
     /// Caller-generated operation key used for cancellation and stale results.
     pub operation_id: String,
-    /// Finite source byte limit, at most four GiB.
+    /// Explicit source byte limit; omission means no file-size maximum.
+    #[serde(default = "no_file_limit")]
     pub max_file_bytes: u64,
 }
 
@@ -159,7 +164,6 @@ impl TraceRegistry {
         if request.operation_id.is_empty()
             || request.operation_id.len() > 128
             || request.max_file_bytes == 0
-            || request.max_file_bytes > 4 * 1024 * 1024 * 1024
         {
             return Err(invalid("Choose a bounded trace file and import operation"));
         }
@@ -852,7 +856,7 @@ fn import_native(
         CaptureLimits {
             max_file_bytes: max_bytes,
             max_record_bytes: 8 * 1024 * 1024,
-            max_records: 10_000_000,
+            max_records: usize::MAX,
         },
         password,
     )

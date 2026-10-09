@@ -35,7 +35,7 @@ pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 /// Native capture format revision.
 pub const CAPTURE_FORMAT_REVISION: u32 = 3;
 
-/// Finite writer and recovery limits.
+/// Writer/recovery limits; artifact size and record count default to no maximum.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureLimits {
     /// Maximum complete artifact size including framing.
@@ -49,9 +49,9 @@ pub struct CaptureLimits {
 impl Default for CaptureLimits {
     fn default() -> Self {
         Self {
-            max_file_bytes: 4 * 1024 * 1024 * 1024,
+            max_file_bytes: u64::MAX,
             max_record_bytes: 8 * 1024 * 1024,
-            max_records: 10_000_000,
+            max_records: usize::MAX,
         }
     }
 }
@@ -1822,6 +1822,16 @@ mod tests {
                 assert!(recovered.truncated_tail || recovered.valid_bytes == length as u64);
             }
         }
+    }
+
+    #[test]
+    fn default_writer_crosses_four_gib_without_a_file_ceiling() {
+        let mut writer = CaptureWriter::new(std::io::sink(), CaptureLimits::default()).unwrap();
+        // Resume accounting just before the former ceiling without allocating a multi-GiB fixture.
+        writer.bytes_written = 4 * 1024 * 1024 * 1024 - 1;
+        writer.append(&completed(1)).unwrap();
+        writer.seal().unwrap();
+        assert!(writer.bytes_written() > 4 * 1024 * 1024 * 1024);
     }
 
     #[test]

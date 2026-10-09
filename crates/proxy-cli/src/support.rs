@@ -156,7 +156,7 @@ fn recording_preferences(
         body_choice,
     )?;
     println!(
-        "Request body retention: {}. The overall trace file budget is 4 GiB; reaching a retention limit keeps byte counts and marks bodies incomplete.",
+        "Request body retention: {}. Trace files have no size ceiling. A request retention limit keeps byte counts and marks bodies incomplete.",
         request_body_limit.map_or_else(
             || "Unlimited per request".into(),
             |limit| format!("{limit} bytes per request")

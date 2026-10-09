@@ -13,11 +13,13 @@ use transmog_session::{ApplicationSessionService, CaptureStart, CaptureStatus, S
 
 use crate::{AppError, ErrorCategory};
 
-const MAX_IMPORT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const fn no_file_limit() -> u64 {
+    u64::MAX
+}
 const MAX_RECORD_BYTES: usize = 8 * 1024 * 1024;
-const MAX_RECORDS: usize = 10_000_000;
+const MAX_RECORDS: usize = usize::MAX;
 
-/// Finite native capture start settings.
+/// Native capture start settings; no file-size maximum by default.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStartRequest {
@@ -29,7 +31,8 @@ pub struct CaptureStartRequest {
     pub include_network_context: bool,
     /// Create-new native artifact path.
     pub path: PathBuf,
-    /// Maximum complete file bytes.
+    /// Optional explicit embedding budget; omitted means no file-size maximum.
+    #[serde(default = "no_file_limit")]
     pub max_file_bytes: u64,
     /// Whether redacted bounded body samples are retained.
     #[serde(default)]
@@ -76,7 +79,8 @@ pub struct ImportRequest {
     pub password: Option<transmog_capture::CapturePassword>,
     /// Native capture path.
     pub path: PathBuf,
-    /// Explicit maximum input bytes, capped by the application maximum.
+    /// Explicit maximum input bytes; omitted means no file-size maximum.
+    #[serde(default = "no_file_limit")]
     pub max_file_bytes: u64,
 }
 
@@ -134,6 +138,7 @@ pub struct ExportRequest {
     /// Derived format.
     pub format: ExportFormat,
     /// Explicit maximum source bytes.
+    #[serde(default = "no_file_limit")]
     pub max_source_bytes: u64,
 }
 
@@ -160,10 +165,10 @@ pub(crate) async fn start_capture(
     request: CaptureStartRequest,
     request_body_limit: Option<u64>,
 ) -> Result<CaptureReadModel, AppError> {
-    if request.max_file_bytes <= 1024 || request.max_file_bytes > MAX_IMPORT_BYTES {
+    if request.max_file_bytes <= 1024 {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
-            "capture quota must be between one KiB and four GiB",
+            "An explicit capture quota must exceed one KiB; omit it for no limit",
             false,
         ));
     }
@@ -332,7 +337,7 @@ fn export_native(
     password: Option<transmog_capture::CapturePassword>,
 ) -> ExportOutcome {
     let limits = CaptureLimits {
-        max_file_bytes: MAX_IMPORT_BYTES,
+        max_file_bytes: no_file_limit(),
         max_record_bytes: MAX_RECORD_BYTES,
         max_records: MAX_RECORDS,
     };
@@ -405,10 +410,10 @@ fn recover_path(
     requested_max_bytes: u64,
     password: Option<&transmog_capture::CapturePassword>,
 ) -> Result<transmog_capture::RecoveredCapture, AppError> {
-    if requested_max_bytes == 0 || requested_max_bytes > MAX_IMPORT_BYTES {
+    if requested_max_bytes == 0 {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
-            "capture input bound must be between one byte and four GiB",
+            "An explicit input bound must be positive; omit it for no limit",
             false,
         ));
     }
