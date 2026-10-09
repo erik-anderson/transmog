@@ -28,6 +28,11 @@ mod scripts;
 mod search;
 mod sessions;
 mod trace_body;
+mod trace_format;
+mod trace_har;
+mod traffic_clear;
+pub use trace_format::{TraceFormat, detect_trace_format};
+pub use traffic_clear::TrafficClearResult;
 mod trace_save;
 mod traces;
 mod version;
@@ -91,7 +96,7 @@ pub use sessions::{
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
 };
 use thiserror::Error;
-pub use trace_save::{TraceSaveOptions, TraceSaveResult};
+pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
 pub use traces::{TraceImportProgress, TraceImportRequest, TraceImportResult, TraceMetadataView};
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
@@ -855,14 +860,15 @@ impl Application {
         }
     }
 
-    /// Gracefully stops the service and restores any active host transaction.
+    /// Stops unfinished work immediately when closing, seals explicit recordings,
+    /// and restores any active host transaction.
     ///
     /// # Errors
     ///
     /// Returns a retryable safe error when drain or restoration fails.
     pub async fn shutdown(&self) -> Result<(), AppError> {
         self.breakpoints.disable().await;
-        let result = self.service.stop().await.map_err(AppError::from);
+        let result = self.service.stop_now().await.map_err(AppError::from);
         self.diagnostics.record(
             if result.is_ok() {
                 DiagnosticLevel::Info
@@ -1055,6 +1061,38 @@ impl Application {
             self.service.catalog().dismiss(&ids)
         };
         Ok(changed.iter().map(|id| format!("{:032x}", id.0)).collect())
+    }
+
+    /// Clears all traffic, expiring Undo for large retained data sets.
+    ///
+    /// # Errors
+    /// Returns a body-store failure while releasing discarded data.
+    pub async fn clear_traffic(&self) -> Result<TrafficClearResult, AppError> {
+        let application = self.clone();
+        tokio::task::spawn_blocking(move || traffic_clear::clear(&application))
+            .await
+            .map_err(|_| {
+                AppError::new(ErrorCategory::Internal, "Traffic clear worker failed", true)
+            })?
+    }
+
+    /// Releases this window's transient evidence after its proxy is stopped.
+    ///
+    /// # Errors
+    /// Returns a cache-worker failure while deleting owned body data.
+    pub fn discard_traffic(&self) -> Result<(), AppError> {
+        let ids = self.service.catalog().discard_all();
+        if let Some(store) = &self.body_store {
+            store.forget_entries(&ids).map_err(|_| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Traffic cache could not be released",
+                    true,
+                )
+            })?;
+        }
+        self.traces.forget_entries(&ids);
+        Ok(())
     }
 
     /// Removes all unselected entries across the whole workspace, with Undo.

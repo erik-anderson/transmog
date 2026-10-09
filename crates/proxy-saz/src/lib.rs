@@ -280,6 +280,8 @@ struct Session {
     response_body_incomplete: bool,
     loss: bool,
     terminal: TerminalState,
+    request_representation: Option<serde_json::Value>,
+    response_representation: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -316,6 +318,7 @@ struct ManifestSession {
     incomplete: bool,
 }
 
+#[allow(clippy::too_many_lines)]
 fn collect_sessions(
     capture: &RecoveredCapture,
     limits: SazLimits,
@@ -343,6 +346,17 @@ fn collect_sessions(
             }
             CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
                 session.evidence.provenance = Some(payload.clone());
+            }
+            CaptureRecordKind::Unknown { kind, payload } if kind == "body-representation" => {
+                match payload["boundary"].as_str() {
+                    Some("client-request") => {
+                        session.request_representation = Some(payload.clone());
+                    }
+                    Some("client-response") => {
+                        session.response_representation = Some(payload.clone());
+                    }
+                    _ => {}
+                }
             }
             CaptureRecordKind::Trailers {
                 boundary: ExchangeBoundary::ClientRequest,
@@ -413,7 +427,68 @@ fn collect_sessions(
             _ => {}
         }
     }
+    for session in sessions.values_mut() {
+        if let (Some(head), Some(representation)) =
+            (&mut session.request, &session.request_representation)
+        {
+            apply_representation(
+                &mut head.headers,
+                representation,
+                session.request_body.len(),
+            );
+        }
+        if let (Some(head), Some(representation)) =
+            (&mut session.response, &session.response_representation)
+        {
+            apply_representation(
+                &mut head.headers,
+                representation,
+                session.response_body.len(),
+            );
+        }
+    }
     Ok(sessions)
+}
+
+fn apply_representation(
+    headers: &mut Vec<CapturedHeader>,
+    representation: &serde_json::Value,
+    bytes: usize,
+) {
+    headers.retain(|field| {
+        ![
+            b"content-encoding".as_slice(),
+            b"content-type",
+            b"content-length",
+            b"transfer-encoding",
+        ]
+        .iter()
+        .any(|name| field.name.eq_ignore_ascii_case(name))
+    });
+    let mut add = |name: &str, value: String| {
+        headers.push(CapturedHeader {
+            name: name.as_bytes().to_vec(),
+            value: Some(value.into_bytes()),
+            original_value_bytes: None,
+        });
+    };
+    if let Some(media) = representation["mediaType"].as_str() {
+        add(
+            "Content-Type",
+            representation["charset"].as_str().map_or_else(
+                || media.into(),
+                |charset| format!("{media}; charset={charset}"),
+            ),
+        );
+    }
+    if let Some(codings) = representation["contentCodings"].as_array() {
+        for coding in codings {
+            if let Some(value) = coding.as_str() {
+                add("Content-Encoding", value.into());
+            }
+        }
+    }
+    add("Content-Length", bytes.to_string());
 }
 
 fn render_request(

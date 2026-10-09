@@ -16,6 +16,9 @@ use transmog_session::{SessionSnapshot, SessionTerminal};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceSaveOptions {
+    /// Native trace or standard HTTP Archive.
+    #[serde(default)]
+    pub format: TraceSaveFormat,
     /// Password for opt-in per-frame AES-256-GCM encryption.
     #[serde(default)]
     pub password: Option<transmog_capture::CapturePassword>,
@@ -25,6 +28,16 @@ pub struct TraceSaveOptions {
     /// Collect network configuration from this computer when saving.
     #[serde(default)]
     pub include_network_context: bool,
+}
+/// Formats offered by Save trace. `NetLog` is import-only.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TraceSaveFormat {
+    /// Full-fidelity native capture.
+    #[default]
+    Native,
+    /// HAR 1.2 HTTP exchanges and decoded response bodies.
+    Har,
 }
 /// Result of saving the whole retained workspace.
 #[derive(Clone, Debug, Serialize)]
@@ -45,6 +58,25 @@ pub(crate) async fn save(
     destination: PathBuf,
     options: TraceSaveOptions,
 ) -> Result<TraceSaveResult, AppError> {
+    let expected = match options.format {
+        TraceSaveFormat::Native => "tmcap",
+        TraceSaveFormat::Har => "har",
+    };
+    if !destination
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+    {
+        return Err(error(
+            "The filename extension must match the selected trace format",
+        ));
+    }
+    if options.format == TraceSaveFormat::Har
+        && (options.password.is_some() || options.include_network_context)
+    {
+        return Err(error(
+            "HAR has no encryption or network-configuration option; choose TMCap for those options",
+        ));
+    }
     let network = if options.include_network_context {
         Some(transmog_network::context::collect_for("trace-save").await)
     } else {
@@ -72,11 +104,22 @@ fn write(
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
     }
+    if destination
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
+    {
+        if password.is_some() || network.is_some() {
+            return Err(error(
+                "HAR has no encryption or network-configuration option; choose TMCap for those options",
+            ));
+        }
+        return crate::trace_har::write(application, destination, redact);
+    }
     if !destination
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("tmcap"))
     {
-        return Err(error("Trace filename must end in .tmcap"));
+        return Err(error("Trace filename must end in .tmcap or .har"));
     }
     let store = application
         .body_store
@@ -307,6 +350,11 @@ fn write_session<W: Write>(
             continue;
         }
         if let Ok(mut body) = store.open_complete(session.exchange_id, boundary) {
+            let recorded = body.metadata();
+            emit(CaptureRecordKind::Unknown {
+                kind: "body-representation".into(),
+                payload: serde_json::json!({"boundary":crate::inspector::boundary(boundary),"observedBytes":recorded.observed_bytes,"mediaType":recorded.media_type,"charset":recorded.charset,"contentCodings":recorded.content_codings}),
+            })?;
             let expected = body.metadata().retained_bytes;
             let length_known = body.metadata().length_known;
             let mut copied = 0u64;

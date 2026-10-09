@@ -135,6 +135,8 @@ pub enum ArtifactKind {
     JsonLines,
     /// SAZ export.
     Saz,
+    /// HTTP Archive export.
+    Har,
     /// Public interception certificate.
     Certificate,
 }

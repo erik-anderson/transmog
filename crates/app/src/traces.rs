@@ -34,6 +34,9 @@ use crate::{
     trace_body::{NativeBodyPiece, NativeBodySource, SazBodySource, SourceReader},
 };
 
+#[path = "trace_json.rs"]
+mod json;
+
 const fn no_file_limit() -> u64 {
     u64::MAX
 }
@@ -77,7 +80,7 @@ pub struct TraceMetadataView {
     pub id: String,
     /// Human-readable source filename.
     pub name: String,
-    /// `saz` or `native`.
+    /// `native`, `saz`, `har` or `netlog`.
     pub format: &'static str,
     /// Source path explicitly selected by the user.
     pub path: PathBuf,
@@ -116,6 +119,9 @@ pub(crate) struct TraceEntry {
 #[derive(Default)]
 struct State {
     index_bytes: usize,
+    // Keep each import's full charge until its last entry is released. An
+    // even split would undercount a large surviving entry after partial Clear.
+    index_batches: Vec<(std::collections::HashSet<String>, usize)>,
     metadata_bytes: usize,
     metadata: BTreeMap<String, TraceMetadataView>,
     entries: HashMap<String, TraceEntry>,
@@ -128,6 +134,32 @@ pub(crate) struct TraceRegistry {
     state: Arc<Mutex<State>>,
 }
 impl TraceRegistry {
+    pub(crate) fn forget_entries(&self, ids: &[ExchangeId]) {
+        let mut state = self.lock();
+        let removed = ids.iter().map(|id|format!("{:032x}",id.0)).collect::<std::collections::HashSet<_>>();
+        for id in ids {
+            state.entries.remove(&format!("{:032x}", id.0));
+        }
+        let sources = state
+            .entries
+            .values()
+            .map(|entry| entry.trace_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        state.metadata.retain(|id, _| sources.contains(id));
+        for (entries, _) in &mut state.index_batches {
+            entries.retain(|id|!removed.contains(id));
+        }
+        state
+            .index_batches
+            .retain(|(entries, _)| !entries.is_empty());
+        state.index_bytes = state.index_batches.iter().map(|(_, bytes)| bytes).sum();
+        state.metadata_bytes = state
+            .metadata
+            .values()
+            .filter_map(|meta| serde_json::to_vec(meta).ok())
+            .map(|bytes| bytes.len())
+            .sum();
+    }
     pub(crate) fn source_id(&self, id: &str) -> Option<String> {
         self.lock()
             .entries
@@ -222,12 +254,8 @@ impl TraceRegistry {
                 total,
             });
         };
-        let mut imported = if request
-            .path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("saz"))
-        {
-            import_saz(
+        let mut imported = match crate::detect_trace_format(&request.path) {
+            Some(crate::TraceFormat::Saz) => import_saz(
                 reader,
                 prefix,
                 &trace_id,
@@ -235,9 +263,8 @@ impl TraceRegistry {
                 canceled,
                 &report,
                 request.password.clone(),
-            )?
-        } else {
-            import_native(
+            )?,
+            Some(crate::TraceFormat::Native) => import_native(
                 &reader,
                 prefix,
                 &trace_id,
@@ -245,7 +272,11 @@ impl TraceRegistry {
                 canceled,
                 &report,
                 request.password.as_ref(),
-            )?
+            )?,
+            Some(format @ (crate::TraceFormat::Har | crate::TraceFormat::Netlog)) => {
+                json::import(reader, prefix, &trace_id, format, canceled, &report)?
+            }
+            None => return Err(invalid("Choose a TMCap, SAZ, HAR or Chromium NetLog file")),
         };
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
@@ -329,6 +360,10 @@ impl TraceRegistry {
                 }
                 let mut state = self.lock();
                 state.index_bytes = state.index_bytes.saturating_add(imported.index_bytes);
+                state.index_batches.push((
+                    imported.entries.keys().cloned().collect(),
+                    imported.index_bytes,
+                ));
                 state.metadata_bytes = state.metadata_bytes.saturating_add(extra_metadata);
                 state.metadata.extend(imported.sources);
                 state.metadata.insert(trace_id, trace.clone());
@@ -749,6 +784,7 @@ struct NativeSession {
 }
 #[derive(Default)]
 struct NativeBody {
+    representation: Option<Value>,
     pieces: Vec<NativeBodyPiece>,
     observed: u64,
     retained: u64,
@@ -865,6 +901,30 @@ fn apply_native_frame(
 ) -> Result<(), AppError> {
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
+        CaptureRecordKind::Unknown { kind, payload } if kind == "body-representation" => {
+            let boundary = parse_boundary(payload["boundary"].as_str().unwrap_or_default())?;
+            let bytes = serde_json::to_vec(&payload)
+                .map_err(|_| invalid("Invalid body representation"))?
+                .len();
+            if bytes > 16 * 1024 {
+                return Err(invalid("Body representation exceeds its limit"));
+            }
+            *budget = budget.saturating_add(bytes);
+            let body = row
+                .bodies
+                .entry(crate::inspector::boundary(boundary))
+                .or_default();
+            if body.representation.is_some()
+                || !payload["contentCodings"].is_array()
+                || payload["contentCodings"].as_array().is_some_and(|codings| {
+                    codings.len() > 16 || codings.iter().any(|value| !value.is_string())
+                })
+                || payload["observedBytes"].as_u64().is_none()
+            {
+                return Err(invalid("Invalid or repeated saved body representation"));
+            }
+            body.representation = Some(payload);
+        }
         CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|_| invalid("Invalid entry provenance"))?
@@ -1132,6 +1192,9 @@ fn append_native(
             .bodies
             .entry(crate::inspector::boundary(boundary))
             .or_default();
+        if body.representation.is_some() {
+            continue;
+        }
         let lengths = headers
             .values("content-length")
             .map(|value| {
@@ -1146,12 +1209,12 @@ fn append_native(
     }
     for (name, body) in row.bodies {
         let boundary = parse_boundary(&name)?;
-        let response_head = snapshot
+        let mut response_head = snapshot
             .response_heads
             .iter()
             .find(|head| head.boundary == boundary)
             .map(|head| head.head.clone());
-        let headers = response_head
+        let mut headers = response_head
             .as_ref()
             .map(|head| head.headers.clone())
             .or_else(|| {
@@ -1162,12 +1225,53 @@ fn append_native(
                     .map(|head| head.head.headers.clone())
             })
             .unwrap_or_default();
+        let observed = body
+            .representation
+            .as_ref()
+            .and_then(|rep| rep["observedBytes"].as_u64())
+            .unwrap_or(body.observed);
+        if let Some(representation) = &body.representation {
+            headers.remove_all("content-encoding");
+            headers.remove_all("transfer-encoding");
+            headers.remove_all("content-type");
+            headers.remove_all("content-length");
+            if let Some(media) = representation["mediaType"].as_str() {
+                let content_type = representation["charset"].as_str().map_or_else(
+                    || media.into(),
+                    |charset| format!("{media}; charset={charset}"),
+                );
+                headers.push(
+                    HeaderField::try_new("Content-Type", content_type)
+                        .map_err(|_| invalid("Invalid saved body content type"))?,
+                );
+            }
+            if let Some(codings) = representation["contentCodings"].as_array() {
+                for coding in codings {
+                    headers.push(
+                        HeaderField::try_new(
+                            "Content-Encoding",
+                            coding
+                                .as_str()
+                                .ok_or_else(|| invalid("Invalid saved body coding"))?,
+                        )
+                        .map_err(|_| invalid("Invalid saved body coding"))?,
+                    );
+                }
+            }
+            headers.push(
+                HeaderField::try_new("Content-Length", body.retained.to_string())
+                    .expect("decimal length"),
+            );
+            if let Some(response) = &mut response_head {
+                response.headers = headers.clone();
+            }
+        }
         let complete = (row.completed && !row.failed || body.framing_complete)
             && !body.incomplete
             && row.loss == 0;
         snapshot.bodies.push(BodySnapshot {
             boundary,
-            observed_bytes: body.observed,
+            observed_bytes: observed,
             retained_prefix: bytes::Bytes::new(),
             truncated: !complete,
             trailers: body.trailers,
@@ -1182,7 +1286,7 @@ fn append_native(
                 pieces: Arc::from(body.pieces),
                 bytes: body.retained,
             }),
-            observed: body.observed,
+            observed,
             complete,
         });
     }
@@ -1345,8 +1449,17 @@ fn parse_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
 fn timestamp(value: &str) -> Option<SystemTime> {
     let time =
         time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
-    let nanos = u64::try_from(time.unix_timestamp_nanos()).ok()?;
-    SystemTime::UNIX_EPOCH.checked_add(Duration::from_nanos(nanos))
+    let nanos = time.unix_timestamp_nanos();
+    let absolute = nanos.unsigned_abs();
+    let duration = Duration::new(
+        u64::try_from(absolute / 1_000_000_000).ok()?,
+        u32::try_from(absolute % 1_000_000_000).ok()?,
+    );
+    if nanos < 0 {
+        SystemTime::UNIX_EPOCH.checked_sub(duration)
+    } else {
+        SystemTime::UNIX_EPOCH.checked_add(duration)
+    }
 }
 fn millis(time: SystemTime) -> u64 {
     time.duration_since(SystemTime::UNIX_EPOCH)
@@ -1454,6 +1567,8 @@ fn saved_source(value: Value, parent: &str) -> Result<TraceMetadataView, AppErro
     }
     let format = match source.format.as_str() {
         "saz" => "saz",
+        "har" => "har",
+        "netlog" => "netlog",
         "native" => "native",
         "live" => "live",
         _ => return Err(invalid("Unknown saved source format")),
@@ -1698,6 +1813,7 @@ mod tests {
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: None,
                     redact_sensitive_headers: true,
                     include_network_context: false,
@@ -1760,6 +1876,7 @@ mod tests {
             .save_traffic_trace(
                 path.clone(),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
@@ -1921,6 +2038,7 @@ mod tests {
             .save_traffic_trace(
                 saved.clone(),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: None,
                     redact_sensitive_headers: true,
                     ..crate::TraceSaveOptions::default()
@@ -2057,6 +2175,7 @@ mod tests {
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
@@ -2087,6 +2206,7 @@ mod tests {
             .save_traffic_trace(
                 root.path().join("empty.tmcap"),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
@@ -2114,6 +2234,7 @@ mod tests {
                 .save_traffic_trace(
                     output.clone(),
                     crate::TraceSaveOptions {
+                        format: crate::TraceSaveFormat::Native,
                         password: None,
                         redact_sensitive_headers: false,
                         include_network_context: false
@@ -2246,6 +2367,7 @@ mod tests {
             .save_traffic_trace(
                 encrypted.clone(),
                 crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
                     password: Some(password.clone()),
                     ..Default::default()
                 },

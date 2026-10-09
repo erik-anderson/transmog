@@ -316,6 +316,8 @@ struct CatalogState {
     max_live_entries: Option<NonZeroUsize>,
     imported_count: usize,
     dismissed: HashSet<ExchangeId>,
+    dismissal_versions: HashMap<ExchangeId, u64>,
+    next_dismissal: u64,
     by_id: HashMap<ExchangeId, MutableSession>,
     order: BTreeMap<u64, ExchangeId>,
     next_admission: u64,
@@ -564,6 +566,7 @@ impl SessionCatalog {
             .into_iter()
             .filter(|id| state.dismissed.insert(*id))
             .collect::<Vec<_>>();
+        track_dismissal(&mut state, &changed);
         drop(state);
         self.notify_view_change(&changed);
         changed
@@ -581,9 +584,83 @@ impl SessionCatalog {
             .filter(|id| !selected.contains(id) && !state.dismissed.contains(id))
             .collect::<Vec<_>>();
         state.dismissed.extend(changed.iter().copied());
+        track_dismissal(&mut state, &changed);
         drop(state);
         self.notify_view_change(&changed);
         changed
+    }
+
+    /// Clears every retained entry, including evidence from earlier removals.
+    /// Renew dismissal identities so earlier expiry tasks cannot delete this Undo.
+    pub fn dismiss_all(&self) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let ids = state.by_id.keys().copied().collect::<Vec<_>>();
+        state.dismissed.extend(ids.iter().copied());
+        track_dismissal(&mut state, &ids);
+        drop(state);
+        self.notify_view_change(&ids);
+        ids
+    }
+
+    /// Permanently releases dismissed evidence after Undo expires.
+    pub fn forget_dismissed(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        forget_dismissed(&mut state, ids)
+    }
+
+    /// Snapshot dismissal identities so a stale expiry cannot erase later work.
+    pub fn dismissal_versions(&self, ids: &[ExchangeId]) -> Vec<(ExchangeId, u64)> {
+        let state = self.lock_state();
+        ids.iter()
+            .filter_map(|id| {
+                state
+                    .dismissal_versions
+                    .get(id)
+                    .map(|version| (*id, *version))
+            })
+            .collect()
+    }
+
+    /// Release only dismissals which still belong to this Undo operation.
+    pub fn forget_dismissed_versions(&self, versions: &[(ExchangeId, u64)]) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let ids = versions
+            .iter()
+            .filter_map(|(id, version)| {
+                (state.dismissal_versions.get(id) == Some(version)).then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        forget_dismissed(&mut state, &ids)
+    }
+
+    /// Counts retained header bytes without cloning headers during Clear.
+    pub fn retained_header_bytes(&self, ids: &[ExchangeId]) -> u64 {
+        let state = self.lock_state();
+        ids.iter()
+            .filter_map(|id| state.by_id.get(id))
+            .flat_map(|session| {
+                session
+                    .request_heads
+                    .iter()
+                    .map(|h| &h.head.headers)
+                    .chain(session.response_heads.iter().map(|h| &h.head.headers))
+            })
+            .flat_map(transmog_core::HeaderBlock::iter)
+            .fold(0_u64, |sum, field| {
+                sum.saturating_add((field.name().len() + field.value().len()) as u64)
+            })
+    }
+
+    /// Releases all in-memory evidence when the owning desktop session closes.
+    pub fn discard_all(&self) -> Vec<ExchangeId> {
+        let mut state = self.lock_state();
+        let ids = state.by_id.keys().copied().collect();
+        state.by_id.clear();
+        state.order.clear();
+        state.dismissed.clear();
+        state.dismissal_versions.clear();
+        state.imported_count = 0;
+        ids
     }
 
     /// Restores dismissed entries which have not since been evicted.
@@ -594,6 +671,9 @@ impl SessionCatalog {
             .copied()
             .filter(|id| state.dismissed.remove(id))
             .collect::<Vec<_>>();
+        for id in &changed {
+            state.dismissal_versions.remove(id);
+        }
         drop(state);
         self.notify_view_change(&changed);
         changed
@@ -820,6 +900,7 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
     state.order.remove(&admission);
     state.by_id.remove(&exchange_id);
     state.dismissed.remove(&exchange_id);
+    state.dismissal_versions.remove(&exchange_id);
     state.counters.evicted = state.counters.evicted.saturating_add(1);
     true
 }
@@ -1000,8 +1081,56 @@ fn matches_filter(session: &MutableSession, filter: &SessionFilter) -> bool {
     true
 }
 
+fn track_dismissal(state: &mut CatalogState, ids: &[ExchangeId]) {
+    if ids.is_empty() {
+        return;
+    }
+    state.next_dismissal = state.next_dismissal.wrapping_add(1).max(1);
+    for id in ids {
+        state.dismissal_versions.insert(*id, state.next_dismissal);
+    }
+}
+fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+    let removed = ids
+        .iter()
+        .copied()
+        .filter(|id| state.dismissed.contains(id))
+        .collect::<HashSet<_>>();
+    for id in &removed {
+        if let Some(session) = state.by_id.remove(id) {
+            state.imported_count = state
+                .imported_count
+                .saturating_sub(usize::from(session.imported));
+        }
+        state.dismissed.remove(id);
+        state.dismissal_versions.remove(id);
+    }
+    state.order.retain(|_, id| !removed.contains(id));
+    removed.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clear_includes_previous_removals_and_stale_expiry_cannot_release_new_undo() {
+        let catalog = SessionCatalog::new(limits(3));
+        start(&catalog, 1, "placeholder.invalid");
+        start(&catalog, 2, "placeholder.invalid");
+        catalog.dismiss(&[ExchangeId(1)]);
+        let old = catalog.dismissal_versions(&[ExchangeId(1)]);
+        assert_eq!(catalog.dismiss_all().len(), 2);
+        assert!(catalog.forget_dismissed_versions(&old).is_empty());
+        let clear = catalog.dismissal_versions(&[ExchangeId(1), ExchangeId(2)]);
+        catalog.restore_dismissed(&[ExchangeId(1)]);
+        catalog.dismiss(&[ExchangeId(1)]);
+        assert_eq!(
+            catalog.forget_dismissed_versions(&clear),
+            vec![ExchangeId(2)]
+        );
+        catalog.restore_dismissed(&[ExchangeId(1)]);
+        assert!(catalog.get(ExchangeId(1)).is_some());
+        assert!(catalog.get(ExchangeId(2)).is_none());
+    }
     use std::{net::SocketAddr, sync::Arc, time::SystemTime};
 
     use transmog_core::{

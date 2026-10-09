@@ -479,6 +479,7 @@ struct StoreState {
     terminal_order: VecDeque<BodyKey>,
     lossy_exchanges: HashSet<ExchangeId>,
     last_sequences: HashMap<ExchangeId, u64>,
+    discarded: HashSet<ExchangeId>,
     counters: BodyStoreCounters,
 }
 
@@ -523,6 +524,13 @@ struct BodyStoreInner {
 impl Drop for BodyStoreInner {
     fn drop(&mut self) {
         let _ = self.sender.try_send(WorkerCommand::Shutdown);
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for record in state.records.values() {
+            remove_record_file(record);
+        }
     }
 }
 
@@ -563,10 +571,11 @@ impl BodyStore {
         observe_headers(&self.inner, &mut state, id, boundary, headers);
         let record = state.records.get_mut(&key).expect("registered head");
         record.source_size_deferred = source.length().is_none();
+        let retained = source.length().unwrap_or(bytes);
         record.source = Some(source);
         record.response_head = response;
         record.observed_bytes = bytes;
-        record.retained_bytes = bytes;
+        record.retained_bytes = retained;
         record.terminal = true;
         record.availability = if complete {
             BodyAvailability::Complete
@@ -615,6 +624,7 @@ impl BodyStore {
                 terminal_order: VecDeque::new(),
                 lossy_exchanges: HashSet::new(),
                 last_sequences: HashMap::new(),
+                discarded: HashSet::new(),
                 counters: BodyStoreCounters::default(),
             }),
             config,
@@ -950,6 +960,41 @@ impl BodyStore {
         Ok(keys.len())
     }
 
+    pub(crate) fn forget_entries(&self, ids: &[ExchangeId]) -> Result<(), BodyStoreError> {
+        self.flush()?;
+        let ids = ids.iter().copied().collect::<HashSet<_>>();
+        let mut state = self.lock_state();
+        for id in &ids {
+            if state.exchange_modes.contains_key(id) {
+                state.discarded.insert(*id);
+            }
+            state.exchange_modes.remove(id);
+            state.last_sequences.remove(id);
+            state.lossy_exchanges.remove(id);
+        }
+        let keys = state
+            .records
+            .keys()
+            .filter(|key| ids.contains(&key.exchange_id))
+            .copied()
+            .collect::<Vec<_>>();
+        for key in keys {
+            if let Some(record) = state.records.remove(&key) {
+                remove_record_file(&record);
+                if record.source.is_none() {
+                    state.counters.retained_bytes = state
+                        .counters
+                        .retained_bytes
+                        .saturating_sub(record.retained_bytes);
+                }
+            }
+        }
+        state
+            .terminal_order
+            .retain(|key| !ids.contains(&key.exchange_id));
+        Ok(())
+    }
+
     fn enqueue(&self, event: ObserverEvent) {
         let event = if self.inner.redact_sensitive.load(Ordering::Acquire) {
             event.redacted()
@@ -1003,6 +1048,15 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
         .state
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if state.discarded.contains(&event.exchange_id) {
+        if matches!(
+            event.kind,
+            ObserverEventKind::Completed(_) | ObserverEventKind::Failed(_)
+        ) {
+            state.discarded.remove(&event.exchange_id);
+        }
+        return;
+    }
     let prior = state
         .last_sequences
         .insert(event.exchange_id, event.sequence)

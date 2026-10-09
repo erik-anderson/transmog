@@ -6,6 +6,12 @@ Undo a removal before saving if those entries should be included. The file dialo
 confirms overwriting, and an existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact.
 
+The Save trace dialog offers TMCap and HAR. HAR 1.2 preserves HTTP exchanges,
+original headers, decoded response bodies and available timings. HAR has no
+password encryption or computer network-context option. Missing bodies are
+disclosed; binary request bodies use a Transmog extension. See
+[JSON archive import](json-archives.md).
+
 Save native traces as `.tmcap`. Each chunk is compressed independently, so the
 desktop can read body payloads on demand. Bodies stream from retained storage;
 large captures are not collected into one in-memory buffer. Active, missing or
