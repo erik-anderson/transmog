@@ -8,6 +8,7 @@ import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
+import initialState from '../initial-state.json';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
@@ -144,6 +145,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable sort:TrafficSort = {column:'started-at',direction:'descending'};
   @observable sortLabel = 'Newest first';
   @observable filters:TrafficFilter[] = [];
+  @observable filterCount=0;
+  @observable fetchDestinations:string[]=[];
+  @observable fetchDestinationSummary='All destinations';
+  @observable fetchDestinationOptions=structuredClone(initialState.fetchDestinationOptions);
   @observable searchText = '';
   @observable searchingTraffic=false;
   @observable searchMode='text';
@@ -438,7 +443,21 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pageIndex = 0; this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
   }
   async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.pageIndex = 0; this.queryRevision++; await this.refreshSessions(undefined,true); }
-  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);}
+  filtersChanged():void {this.filterCount=this.filters.length+(this.fetchDestinations.length?1:0);}
+  fetchDestinationsChanged():void {
+    this.fetchDestinationOptions=this.fetchDestinationOptions.map(option=>({...option,selected:this.fetchDestinations.includes(option.value)}));
+    const selected=this.fetchDestinationOptions.filter(option=>option.selected);
+    this.fetchDestinationSummary=selected.length>2?selected.length+' selected':selected.map(option=>option.label).join(', ')||'All destinations';
+    this.filtersChanged();
+  }
+  async setFetchDestination(value:string,event:Event):Promise<void> {
+    const checked=(event.currentTarget as HTMLInputElement).checked;
+    this.fetchDestinations=checked?[...new Set([...this.fetchDestinations,value])]:this.fetchDestinations.filter(destination=>destination!==value);
+    await this.refreshDestinationFilter();
+  }
+  private async refreshDestinationFilter():Promise<void> {this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;this.followLatest=false;await this.refreshSessions(undefined,true);}
+  async clearFetchDestinations():Promise<void> {this.fetchDestinations=[];await this.refreshDestinationFilter();}
+  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.fetchDestinations=[];this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);}
   searchChanged(event:Event):void {
     this.searchText=(event.currentTarget as HTMLInputElement).value;
     // Content decoding starts on Search/Enter, rather than on each keystroke.
@@ -455,9 +474,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     try{
       const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,requestHeaders:this.searchRequestHeaders,responseHeaders:this.searchResponseHeaders,requestBodies:this.searchRequestBodies,responseBodies:this.searchBodies},onProgress});
       if(!this.isConnected||this.searchOperation!==operationId)return;
-      const query={searchResultId:result.id,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort,offset:0,limit:this.pageLimit};
-      const [page,ids]=await Promise.all([invoke<SessionPage>('query_sessions',{query}),invoke<string[]>('matching_traffic_ids',{query})]);
-      if(!this.isConnected||this.searchOperation!==operationId)return;
+      let page:SessionPage,ids:string[],revision:number;
+      do {
+        revision=this.queryRevision;
+        const query={searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort,offset:0,limit:this.pageLimit};
+        [page,ids]=await Promise.all([invoke<SessionPage>('query_sessions',{query}),invoke<string[]>('matching_traffic_ids',{query})]);
+        if(!this.isConnected||this.searchOperation!==operationId)return;
+      }while(revision!==this.queryRevision);
       if(this.searchCancelRequested){this.contentSearchStatus='Search canceled. Previous results and selections are unchanged.';return;}
       this.closeMatches();this.searchResultId=result.id;this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.contentSearchActive=true;this.contentSearchLabel=pattern;
       this.contentSearchStatus=ids.length+' matching '+(ids.length===1?'entry':'entries')+' in '+result.examined+' searched entries.'+(result.unavailableBodies?' '+result.unavailableBodies+' text bodies were unavailable or beyond the search limit.':'');
@@ -504,7 +527,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async refreshSearchMatchIds():Promise<void> {
     if(!this.searchResultId)return;
     const resultId=this.searchResultId, revision=this.queryRevision;
-    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
     if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
   }
@@ -584,7 +607,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:null,searchResultId:this.searchResultId,sort:this.sort,offset:this.pageIndex*this.pageLimit,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      const page = await invoke<SessionPage>('query_sessions',{query:{cursor:null,latest:false,limit:this.pageLimit,terminal:null,method:null,host:null,search:null,searchResultId:this.searchResultId,sort:this.sort,offset:this.pageIndex*this.pageLimit,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
       if (!this.isConnected || revision !== this.queryRevision) return;
       this.totalMatched = page.totalMatched ?? page.sessions.length;
       this.pageEnd = Math.min(this.totalMatched,this.pageIndex*this.pageLimit+page.sessions.length);
@@ -759,10 +782,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (!row) throw new Error('Source no longer in Traffic.');
       // Discard live queries started with the old filters while the source page was loading.
       revision = ++this.queryRevision;
-      const filtered = this.filters.length > 0 || this.searchText.length > 0;
+      const filtered = this.filterCount > 0 || this.searchText.length > 0;
       if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
       this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentSearchStatus='';this.contentSearchLabel='';this.contentMatchCount=0;
-      this.filters = []; this.searchText = ''; this.searchInput.value = '';
+      this.filters = []; this.fetchDestinations=[]; this.searchText = ''; this.searchInput.value = '';
       this.pageIndex = Math.floor((page.focusOffset ?? 0)/this.pageLimit);
       this.totalMatched = page.totalMatched; this.displayedMatched = page.totalMatched;
       this.pageEnd = this.pageIndex*this.pageLimit+page.sessions.length;
@@ -820,7 +843,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',draining:'Finishing active requests.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
-    const empty = this.filters.length || this.contentSearchActive ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    const empty = this.filterCount || this.contentSearchActive ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
     const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' exchanges.' : empty);
     this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? 'Loaded '+this.sessions.length+' of '+this.totalMatched+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
     this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';

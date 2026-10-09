@@ -103,6 +103,14 @@ traffic-workspace { display:contents; }
 .column-menu { inset:5rem auto auto 20%; }
 @supports (left:attr(data-x type(<length>))) { .column-menu { top:attr(data-y type(<length>),80px); left:attr(data-x type(<length>),12px); max-height:min(80vh,680px,calc(100dvh - attr(data-y type(<length>),80px) - 12px)); } }
 .filter-menu, .table-settings { inset:5.5rem 1rem auto auto; }
+.fetch-destination-trigger { anchor-name:--fetch-destination-filter; }
+.fetch-destination-trigger span { float:right; }
+.fetch-destination-menu { width:min(18rem,calc(100vw - 2rem)); inset:auto 2rem 6rem auto; max-height:calc(100dvh - 2rem); }
+.fetch-destination-list { max-height:min(20rem,50dvh); overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.fetch-destination-list label { display:flex; align-items:center; gap:.4rem; cursor:pointer; }
+@supports (anchor-name:--fetch-destination-filter) {
+  .fetch-destination-menu { position-anchor:--fetch-destination-filter; inset:auto; position-area:inline-start span-block-end; margin:0 .25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
+}
 .table-popover > button { display:block; width:100%; min-height:2rem; padding:.4rem .5rem; border:0; border-radius:.2rem; color:var(--text); background:transparent; text-align:left; font-size:.76rem; font-weight:400; }
 .table-popover > button:hover { background:var(--row-hover); }
 .popover-title { display:block; padding:.45rem .5rem; border-bottom:1px solid var(--line); margin-bottom:.35rem; font-size:.76rem; }

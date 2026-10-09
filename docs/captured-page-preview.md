@@ -12,6 +12,13 @@ and, when present, `Sec-Fetch-Mode: navigate` as defined by
 Iframe requests and entries without clear fetch metadata remain unmarked;
 HTML content alone does not identify a top-level navigation.
 
+Use **Filter → Fetch destination** to narrow traffic by its original
+`Sec-Fetch-Dest` header. The checkbox dropdown accepts multiple destinations;
+matching any selected value includes an entry. The selection combines with other
+filters and content-search results across all retained entries before paging.
+Clear the destination chip or all filters to restore the list. **Fetch / XHR
+(empty)** matches the recorded `empty` value; missing headers remain unknown.
+
 The page keeps its original URL so relative CSS, images and other resources can
 resolve naturally. Resources come from the selected entry's original trace,
 including when several traces have been imported into one workspace. For each

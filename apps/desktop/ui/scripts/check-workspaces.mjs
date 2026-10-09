@@ -156,6 +156,7 @@ await page.addInitScript((workspace) => {
         case 'cancel_traffic_search': state.searchCanceled=true;return;
         case 'matching_traffic_ids': {
           const result=state.searchResults?.find(result=>result.id===args.query.searchResultId);let rows=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)&&(!result||result.ids.includes(row.id)));
+          if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
           for(const filter of args.query.filters??[])rows=rows.filter(row=>filter.column==='status'?String(row.status)===filter.value:filter.column==='host'?row.host.includes(filter.value):true);
           return rows.map(row=>row.id);
         }
@@ -164,6 +165,7 @@ await page.addInitScript((workspace) => {
         }
         case 'watch_sessions': state.channel = args.onEvent; return;
         case 'query_sessions': {
+          if(state.deferResultQuery&&args.query.searchResultId){state.deferResultQuery=false;state.resultQueryPending=true;await new Promise(resolve=>state.releaseResultQuery=resolve);}
           if(state.searchQueryFailure&&args.query.searchResultId===state.searchResults?.at(-1)?.id)throw new Error('Fixture result paging failed');
           if (state.queryError) throw new Error('Fixture query failure');
           if (state.deferFocus && args.query.focusId) { state.deferFocus=false; state.focusPending=true; await new Promise(resolve=>state.releaseFocus=resolve); }
@@ -171,6 +173,7 @@ await page.addInitScript((workspace) => {
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
           const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
           let rows = structuredClone(state.sessions).filter(row => (!args.query.searchResultId||state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids.includes(row.id)) && !state.dismissedIds?.includes(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
+          if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
           let offset=args.query.offset??0;
@@ -378,6 +381,36 @@ try {
   assert.match(await page.locator('tr[data-session-id="first"]').getAttribute('aria-label'),/^Top-level navigation:/);
   assert.equal(await page.locator('tr[data-session-id="second"] .navigation-badge').count(),0);
   assert.equal(await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.timingDialog.showModal();workspace.closeTimings();workspace.timingDialog.showModal();const generation=workspace.timingGeneration;await new Promise(resolve=>setTimeout(resolve,20));const stable=workspace.timingGeneration===generation;workspace.closeTimings();return stable;}),true,'A stale close event invalidated reopened timings');
+  await page.getByRole('button',{name:'Filter',exact:true}).click();
+  await page.getByRole('button',{name:'Fetch destination',exact:true}).click();
+  const destinations=page.locator('#fetch-destination-options:popover-open');
+  assert.equal(await destinations.getByRole('checkbox').count(),24);
+  assert.equal(await destinations.locator('input[value="fencedframe"]').count(),0);
+  await destinations.getByRole('checkbox',{name:'Document',exact:true}).check();
+  const imageDestination=destinations.getByRole('checkbox',{name:'Image',exact:true});await imageDestination.focus();await page.keyboard.press('Space');
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===2);
+  assert.deepEqual(await page.locator('tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId).sort()),['first','image']);
+  assert.equal(await destinations.getByRole('checkbox',{name:'Document',exact:true}).isChecked(),true);
+  assert.equal(await imageDestination.isChecked(),true);
+  assert.equal(await page.locator('.filter-chip').count(),1);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  const destinationBounds=await destinations.boundingBox();assert.ok(destinationBounds.x>=0&&destinationBounds.y>=0&&destinationBounds.x+destinationBounds.width<=760&&destinationBounds.y+destinationBounds.height<=520,'Destination dropdown escaped the viewport');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-compact.png')});
+  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-contrast.png')});await page.emulateMedia({forcedColors:'none'});
+  await page.keyboard.press('Escape');await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Remove fetch destination filter',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===4);
+  assert.equal(await page.locator('.filter-chip').count(),0);
+  await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__workspaceFixture.deferResultQuery=true;workspace.searchText='/';workspace.searchInput.value='/';globalThis.__destinationSearch=workspace.runContentSearch();});
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.resultQueryPending);
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').setFetchDestination('script',{currentTarget:{checked:true}});globalThis.__workspaceFixture.releaseResultQuery();await globalThis.__destinationSearch;});
+  assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').searchMatchIds),['second'],'A late search ignored the updated destination filter');
+  assert.deepEqual(await page.locator('tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId)),['second']);
+  await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');await workspace.selectAllSearchMatches();});
+  assert.equal(await page.locator('tr[data-session-id][aria-selected="true"]').count(),1);
+  await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');await workspace.clearContentSearch(false);await workspace.clearFilters();workspace.selectSearchMatches=false;});
   const toggle = page.getByRole('button',{name:'Toggle navigation labels'});
   await toggle.click();
   assert.equal(await toggle.getAttribute('aria-expanded'),'false');

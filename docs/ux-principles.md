@@ -41,6 +41,11 @@ its actual effect on the user's task.
 - Identify top-level navigations with a small neutral Page badge beside the
   traffic path and an accessible label. Use original client fetch metadata;
   do not infer navigation from HTML content, method or URL alone.
+- Put fetch-destination filtering inside the existing Filter menu, using a
+  checkbox dropdown. Combine selected destinations with OR, combine that group
+  with other filters using AND, and show one removable chip for the group.
+  No selections shows all traffic; an explicit empty destination is recorded
+  fetch/XHR metadata, not missing metadata.
 - Give important labels room to wrap or reflow. Secondary URLs and metadata may
   use deliberate abbreviation or ellipsis when the complete value is readily
   available. A tooltip alone should not be necessary to discover an action's

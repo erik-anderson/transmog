@@ -65,6 +65,32 @@ pub struct SessionColumnFilter {
 const MAX_CURSOR_TOKENS: usize = 256;
 const DEFAULT_PAGE_SIZE: usize = 100;
 const MAX_FILTER_CHARS: usize = 255;
+const FETCH_DESTINATIONS: [&str; 24] = [
+    "audio",
+    "audioworklet",
+    "document",
+    "embed",
+    "empty",
+    "font",
+    "frame",
+    "iframe",
+    "image",
+    "json",
+    "manifest",
+    "object",
+    "paintworklet",
+    "report",
+    "script",
+    "serviceworker",
+    "sharedworker",
+    "style",
+    "text",
+    "track",
+    "video",
+    "webidentity",
+    "worker",
+    "xslt",
+];
 
 #[derive(Default)]
 pub(crate) struct CursorRegistry {
@@ -118,6 +144,9 @@ pub struct SessionQueryInput {
     /// Column filters, combined with AND.
     #[serde(default)]
     pub filters: Vec<SessionColumnFilter>,
+    /// Original client fetch destinations, combined with OR within this group.
+    #[serde(default)]
+    pub fetch_destinations: Vec<String>,
     /// Sort all retained matching traffic before returning a bounded page.
     #[serde(default)]
     pub sort: Option<SessionSort>,
@@ -296,9 +325,11 @@ pub(crate) fn query_sessions_with_traces(
 ) -> Result<SessionPage, AppError> {
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
+    validate_fetch_destinations(&input.fetch_destinations)?;
     if input.sort.is_some()
         || input.search.is_some()
         || !input.filters.is_empty()
+        || !input.fetch_destinations.is_empty()
         || input.offset.is_some()
         || input.focus_id.is_some()
         || matching.is_some()
@@ -527,6 +558,21 @@ fn single_header<'a>(headers: &'a transmog_core::HeaderBlock, name: &str) -> Opt
     (!field.is_redacted() && fields.next().is_none()).then(|| field.value().trim_ascii())
 }
 
+fn validate_fetch_destinations(values: &[String]) -> Result<(), AppError> {
+    if values.len() > FETCH_DESTINATIONS.len()
+        || values
+            .iter()
+            .any(|value| !FETCH_DESTINATIONS.contains(&value.as_str()))
+    {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Choose supported fetch destinations, with at most 24 selections",
+            false,
+        ));
+    }
+    Ok(())
+}
+
 fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
     match column {
         TrafficColumn::Status => row.status.map(u64::from),
@@ -693,6 +739,11 @@ fn matches_query_row(
             .terminal
             .is_none_or(|terminal| (row.terminal != "active") == terminal)
         && search.is_none_or(|search| matches_search(row, search))
+        && (input.fetch_destinations.is_empty()
+            || row
+                .fetch_destination
+                .as_ref()
+                .is_some_and(|destination| input.fetch_destinations.contains(destination)))
         && filters.iter().all(|filter| filter.matches(row))
 }
 
@@ -702,6 +753,7 @@ pub(crate) fn matching_ids(
     traces: &crate::traces::TraceRegistry,
     matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<Vec<String>, AppError> {
+    validate_fetch_destinations(&input.fetch_destinations)?;
     validate_filter(input.method.as_deref())?;
     validate_filter(input.host.as_deref())?;
     validate_filter(input.search.as_deref())?;
@@ -1095,6 +1147,99 @@ mod tests {
                 serde_json::to_value(row).unwrap()["topLevelNavigation"],
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn destination_multiselect_filters_before_paging_and_matches_search_selection() {
+        use transmog_core::{HeaderBlock, HeaderField, observe::ExchangeBoundary};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=50 {
+            service.catalog().apply(started(id));
+            let destination = match id {
+                49 => Some("empty"),
+                50 => None,
+                id if id % 2 == 0 => Some("script"),
+                _ => Some("image"),
+            };
+            let fields = destination
+                .into_iter()
+                .map(|value| HeaderField::try_new("Sec-Fetch-Dest", value).unwrap())
+                .collect();
+            observe_request(
+                &service,
+                id,
+                2,
+                ExchangeBoundary::ClientRequest,
+                if id % 2 == 0 { "GET" } else { "POST" },
+                HeaderBlock::from_fields(fields),
+            );
+        }
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let query = SessionQueryInput {
+            fetch_destinations: vec!["image".into(), "script".into()],
+            limit: Some(2),
+            offset: Some(46),
+            ..Default::default()
+        };
+        let page = query_sessions(&service, &registry, query.clone()).unwrap();
+        assert_eq!(
+            (page.total_matched, page.retained_count, page.sessions.len()),
+            (48, 50, 2)
+        );
+        assert!(page.sessions.iter().all(|row| {
+            query
+                .fetch_destinations
+                .contains(row.fetch_destination.as_ref().unwrap())
+        }));
+        let traces = crate::traces::TraceRegistry::default();
+        let matching = [
+            format!("{:032x}", 1),
+            format!("{:032x}", 2),
+            format!("{:032x}", 49),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            matching_ids(&service, &query, &traces, Some(&matching))
+                .unwrap()
+                .len(),
+            2
+        );
+        let query = SessionQueryInput {
+            fetch_destinations: vec!["image".into()],
+            method: Some("POST".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            query_sessions(&service, &registry, query.clone())
+                .unwrap()
+                .total_matched,
+            24
+        );
+        assert_eq!(
+            matching_ids(&service, &query, &traces, None).unwrap().len(),
+            24
+        );
+        let empty = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                fetch_destinations: vec!["empty".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(empty.total_matched, 1);
+        assert_eq!(empty.sessions[0].id, format!("{:032x}", 49));
+        for destinations in [vec!["unknown".into()], vec!["image".into(); 25]] {
+            let query = SessionQueryInput {
+                fetch_destinations: destinations,
+                ..Default::default()
+            };
+            assert!(query_sessions(&service, &registry, query.clone()).is_err());
+            assert!(matching_ids(&service, &query, &traces, None).is_err());
         }
     }
 

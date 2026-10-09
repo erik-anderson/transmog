@@ -12,7 +12,7 @@
         <button type="button" class="secondary compact-button" @click="{showSaveTrace()}" ?disabled="{{savingTrace}}">Save trace…</button>
         <button type="button" class="secondary compact-button" @click="{clearTraffic()}" ?disabled="{{removingTraffic}}" title="Clear every entry in this window. Undo expires after 5 minutes for 100 MB or more and is unavailable for 1 GB or more.">Clear all</button>
         <button type="button" class="secondary compact-button" popovertarget="trace-files-menu">Files</button>
-        <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filter <if condition="filters.length">({{filters.length}})</if></button>
+        <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filter <if condition="filterCount">({{filterCount}})</if></button>
         <button type="button" class="secondary compact-button" popovertarget="table-settings">Table settings</button>
       </div>
     </header>
@@ -20,8 +20,8 @@
     <if condition="contentSearchActive"><div class="content-search-results"><span class="search-result-label" title="{{contentSearchLabel}}">Search results: {{contentSearchLabel}}</span><button type="button" class="secondary compact-button" @click="{selectAllSearchMatches()}" ?disabled="{{searchingTraffic}}"><if condition="contentMatchCount == 1">Select 1 entry</if><if condition="contentMatchCount != 1">Select all {{contentMatchCount}} entries</if></button><button type="button" class="secondary compact-button" @click="{showMatches()}" ?disabled="{{searchingTraffic || !contentMatchCount}}">View matches…</button><button type="button" class="secondary compact-button" @click="{clearContentSearch()}">Clear search</button><span class="field-help"><if condition="viewerMode">Search again after importing more traffic.</if><if condition="!viewerMode">Search again to include newly captured traffic.</if></span></div></if>
     <if condition="importStatus"><div class="trace-import-status"><span role="status">{{importStatus}}</span><if condition="importingTrace"><progress aria-label="Indexing saved traffic" value="{{importPercent}}" max="100"></progress><button type="button" class="secondary compact-button" @click="{cancelImport()}">Cancel import</button></if><if condition="!importingTrace"><button type="button" class="secondary compact-button" aria-label="Dismiss import message" @click="{dismissImportStatus()}">×</button></if></div></if>
     <div class="traffic-summary"><output class="session-status" data-kind="{{sessionKind}}">{{sessionText}}</output><span class="sort-summary">{{sortLabel}}</span></div>
-    <if condition="filters.length">
-      <div class="filter-chips"><for each="filter in filters"><button key="{{filter.label}}" type="button" class="filter-chip" aria-label="Remove {{filter.label}} filter" @click="{removeFilter(filter.column,filter.operator)}">{{filter.label}} ×</button></for><button type="button" class="clear-filters" @click="{clearFilters()}">Clear filters</button></div>
+    <if condition="filterCount">
+      <div class="filter-chips"><for each="filter in filters"><button key="{{filter.label}}" type="button" class="filter-chip" aria-label="Remove {{filter.label}} filter" @click="{removeFilter(filter.column,filter.operator)}">{{filter.label}} ×</button></for><if condition="fetchDestinations.length"><button type="button" class="filter-chip" aria-label="Remove fetch destination filter" @click="{clearFetchDestinations()}">Fetch destination: {{fetchDestinationSummary}} ×</button></if><button type="button" class="clear-filters" @click="{clearFilters()}">Clear filters</button></div>
     </if>
     </div><div class="traffic-workspace" data-layout="{{preferences.layout}}" data-list-share="{{listShare}}">
       <section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
@@ -148,7 +148,16 @@
       <button type="button" @click="{pinColumn()}">{{pinLabel}}</button><button type="button" @click="{hideColumn()}">Hide column</button>
       <div class="column-menu-moves"><button type="button" @click="{moveColumn(-1)}">Move left</button><button type="button" @click="{moveColumn(1)}">Move right</button></div>
     </div>
-    <div id="filter-fields" class="table-popover filter-menu" popover="auto"><strong class="popover-title">Filter by</strong><for each="column in settingsColumns"><button key="{{column.id}}" type="button" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}">{{column.label}}</button></for></div>
+    <div id="filter-fields" class="table-popover filter-menu" popover="auto">
+      <strong class="popover-title">Filter by</strong>
+      <button type="button" class="fetch-destination-trigger" popovertarget="fetch-destination-options">Fetch destination <span aria-hidden="true">›</span></button>
+      <div id="fetch-destination-options" class="table-popover fetch-destination-menu" popover="auto" aria-label="Fetch destination filters">
+        <strong class="popover-title">Fetch destination</strong><p class="column-hint">Sec-Fetch-Dest · Show any selected destination. No selection shows all traffic.</p>
+        <div class="fetch-destination-list" role="group" aria-label="Destinations"><for each="option in fetchDestinationOptions"><label key="{{option.value}}"><input type="checkbox" value="{{option.value}}" ?checked="{{option.selected}}" @change="{setFetchDestination(option.value,e)}"> {{option.label}}</label></for></div>
+        <button type="button" @click="{clearFetchDestinations()}" ?disabled="{{!fetchDestinations.length}}">Clear selection</button>
+      </div>
+      <for each="column in settingsColumns"><button key="{{column.id}}" type="button" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}">{{column.label}}</button></for>
+    </div>
     <div id="table-settings" class="table-popover table-settings" popover="auto">
       <strong class="popover-title">Table settings</strong><label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">List above inspector</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.wrapCells}}" @change="{setWrap(e)}"> Wrap cells</label><label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>

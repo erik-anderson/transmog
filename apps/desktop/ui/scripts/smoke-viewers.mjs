@@ -223,6 +223,12 @@ try{
     const navigation=await second.evaluate(`(()=>{const workspace=${traffic};return {pages:workspace.sessions.filter(row=>row.topLevelNavigation).map(row=>row.path),badges:workspace.getRootNode().querySelectorAll('.navigation-badge').length};})()`);
     assert.deepEqual(navigation,{pages:['/captured-page'],badges:1});
     if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-navigation.png'),Buffer.from(image.data,'base64'));}
+    await second.evaluate(`(()=>{const root=${traffic}.getRootNode();root.querySelector('button[popovertarget="filter-fields"]').click();root.querySelector('button[popovertarget="fetch-destination-options"]').click();root.querySelector('#fetch-destination-options input[value="document"]').click();root.querySelector('#fetch-destination-options input[value="style"]').click();})()`);
+    await waitFor(()=>second.evaluate(`${traffic}.sessions.length===2 && ${traffic}.sessions.every(row=>['document','style'].includes(row.fetchDestination))`),'Native multi-destination filter did not select document and stylesheet');
+    assert.equal(await second.evaluate(`${traffic}.getRootNode().querySelectorAll('#fetch-destination-options input:checked').length`),2);
+    if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-destinations.png'),Buffer.from(image.data,'base64'));}
+    await second.evaluate(`(async()=>{const root=${traffic}.getRootNode();root.querySelector('#fetch-destination-options').hidePopover();root.querySelector('#filter-fields').hidePopover();await ${traffic}.clearFetchDestinations();})()`);
+    await waitFor(()=>second.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-frame')`),'Clearing the native filter did not restore iframe traffic');
     const htmlId=await second.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/captured-page');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
     await waitFor(()=>second.evaluate(`${traffic}.selectedDetail?.id===${JSON.stringify(htmlId)} && ${traffic}.previewPageAvailable`),'Selected HTML inspection did not finish');
     await second.evaluate(`${traffic}.showCapturedPage()`);
