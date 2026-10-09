@@ -607,22 +607,42 @@ fn composer_target(value: &str) -> Result<(Target, String), AppError> {
             false,
         ));
     }
-    let port = authority
-        .port_u16()
-        .unwrap_or(if scheme == "https" { 443 } else { 80 });
+    let explicit_port = authority.as_str().len() > authority.host().len();
+    let port = if explicit_port {
+        authority
+            .port_u16()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::InvalidInput,
+                    "composer URL port must be between 1 and 65535",
+                    false,
+                )
+            })?
+    } else {
+        if scheme == "https" { 443 } else { 80 }
+    };
     let path_and_query = uri
         .path_and_query()
         .map_or("/", http::uri::PathAndQuery::as_str);
     let (path, query) = path_and_query
         .split_once('?')
         .map_or((path_and_query, None), |(path, query)| (path, Some(query)));
-    let host = authority.host().trim_matches(['[', ']']).to_ascii_lowercase();
-    let normalized_host = if host.contains(':') { format!("[{host}]") } else { host.clone() };
-    let normalized_authority = if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
-        normalized_host
+    let host = authority
+        .host()
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
+    let normalized_host = if host.contains(':') {
+        format!("[{host}]")
     } else {
-        format!("{normalized_host}:{port}")
+        host.clone()
     };
+    let normalized_authority =
+        if (scheme == "https" && port == 443) || (scheme == "http" && port == 80) {
+            normalized_host
+        } else {
+            format!("{normalized_host}:{port}")
+        };
     let target = Target {
         scheme: scheme.to_owned(),
         authority: normalized_authority.clone(),
@@ -631,7 +651,10 @@ fn composer_target(value: &str) -> Result<(Target, String), AppError> {
         path: path.to_owned(),
         query: query.map(str::to_owned),
     };
-    Ok((target, format!("{scheme}://{normalized_authority}{path_and_query}")))
+    Ok((
+        target,
+        format!("{scheme}://{normalized_authority}{path_and_query}"),
+    ))
 }
 
 fn parse_hex(value: &str) -> Result<Vec<u8>, AppError> {
@@ -895,17 +918,48 @@ mod tests {
 
     #[test]
     fn explicit_default_ports_are_normalized_before_replay_validation() {
+        for url in [
+            "https://placeholder.invalid:65536/",
+            "https://placeholder.invalid:0/",
+            "https://placeholder.invalid:invalid/",
+        ] {
+            assert!(composer_target(url).is_err());
+        }
         for (url, authority, host) in [
-            ("https://EXAMPLE.invalid:443/resource", "example.invalid", "example.invalid"),
-            ("http://example.invalid:80/resource", "example.invalid", "example.invalid"),
+            (
+                "https://EXAMPLE.invalid:443/resource",
+                "example.invalid",
+                "example.invalid",
+            ),
+            (
+                "http://example.invalid:80/resource",
+                "example.invalid",
+                "example.invalid",
+            ),
             ("https://[::1]:443/resource", "[::1]", "::1"),
-            ("https://example.invalid:8443/resource", "example.invalid:8443", "example.invalid"),
+            (
+                "https://example.invalid:8443/resource",
+                "example.invalid:8443",
+                "example.invalid",
+            ),
         ] {
             let (target, _) = composer_target(url).unwrap();
             assert_eq!(target.authority, authority);
             assert_eq!(target.host, host);
-            assert!(transmog_core::route::UpstreamDestination::from_target(&target).matches_target(&target));
-            ReplayRequest { method: "GET".into(), target, headers: HeaderBlock::default(), body: Bytes::new(), risk: ReplayRisk::RejectNonIdempotent, credentials: ReplayCredentialPolicy::Reject }.validate(ReplayLimits::default()).unwrap();
+            assert!(
+                transmog_core::route::UpstreamDestination::from_target(&target)
+                    .matches_target(&target)
+            );
+            ReplayRequest {
+                method: "GET".into(),
+                target,
+                headers: HeaderBlock::default(),
+                body: Bytes::new(),
+                risk: ReplayRisk::RejectNonIdempotent,
+                credentials: ReplayCredentialPolicy::Reject,
+            }
+            .validate(ReplayLimits::default())
+            .unwrap();
         }
     }
 
