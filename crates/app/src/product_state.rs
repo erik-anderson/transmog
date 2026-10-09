@@ -85,30 +85,22 @@ impl Default for ProductPreferences {
 #[allow(clippy::struct_excessive_bools)]
 pub struct PrivacySettings {
     /// Aggregate circular buffer limit and memory/disk policy.
-    #[serde(default)]
     pub buffer_limit: crate::BufferLimit,
     /// Optional maximum live entries; older completed entries drop off first.
     pub max_live_entries: Option<usize>,
     /// Retain request bodies for command generation and replay.
-    #[serde(default = "default_true")]
     pub retain_request_bodies: bool,
     /// Retained bytes per request; None is Unlimited within overall storage limits.
-    #[serde(default = "default_request_body_limit")]
     pub request_body_limit: Option<u64>,
     /// Remove credential and cookie values from subsequently captured traffic.
-    #[serde(default)]
     pub redact_sensitive_headers: bool,
     /// Retain response bodies in the product cache for inspection.
-    #[serde(default = "default_true")]
     pub retain_response_bodies: bool,
     /// Default to retaining bounded body samples in new captures.
-    #[serde(default = "default_true")]
     pub retain_body_samples: bool,
     /// Permit recent artifact paths to be retained locally.
-    #[serde(default)]
     pub remember_recent_artifacts: bool,
     /// Permit paths in manually-created support bundles.
-    #[serde(default)]
     pub include_paths_in_support_bundles: bool,
 }
 
@@ -128,13 +120,9 @@ impl Default for PrivacySettings {
     }
 }
 
-#[allow(clippy::unnecessary_wraps)] // Serde needs the optional field type; null means Unlimited.
+#[allow(clippy::unnecessary_wraps)] // The default policy shares the optional Unlimited type.
 const fn default_request_body_limit() -> Option<u64> {
     Some(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES)
-}
-
-const fn default_true() -> bool {
-    true
 }
 
 /// Type of a recent user-selected artifact.
@@ -177,7 +165,6 @@ pub struct ProductState {
     /// Most-recent-first user artifact references.
     pub recent_artifacts: Vec<RecentArtifact>,
     /// Non-sensitive layout and column presentation.
-    #[serde(default)]
     pub workspace: WorkspacePreferences,
 }
 

@@ -298,6 +298,15 @@ struct FileReplayExecutor {
     file: Mutex<Option<(std::fs::File, u64)>>,
 }
 impl ReplayExecutor for FileReplayExecutor {
+    fn execute_file(
+        &self,
+        request: ValidatedReplayRequest,
+        file: std::fs::File,
+        length: u64,
+        cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_> {
+        self.inner.execute_file(request, file, length, cancellation)
+    }
     fn execute(
         &self,
         request: ValidatedReplayRequest,
@@ -675,6 +684,19 @@ mod tests {
     struct EchoExecutor;
 
     impl ReplayExecutor for EchoExecutor {
+        fn execute_file(
+            &self,
+            _request: ValidatedReplayRequest,
+            _file: std::fs::File,
+            _length: u64,
+            _cancellation: ExchangeCancellation,
+        ) -> BoxReplayFuture<'_> {
+            Box::pin(async {
+                Err(ReplayExecutionError::new(
+                    "this test executor does not support file bodies",
+                ))
+            })
+        }
         fn execute(
             &self,
             request: ValidatedReplayRequest,
@@ -835,7 +857,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn older_executor_rejects_file_body_instead_of_sending_empty_bytes() {
+    async fn unsupported_executor_rejects_file_body_instead_of_sending_empty_bytes() {
         use std::io::{Seek, Write};
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(b"body").unwrap();

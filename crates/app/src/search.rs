@@ -14,9 +14,6 @@ use transmog_core::{intercept::ExchangeId, observe::ExchangeBoundary};
 use transmog_session::{ApplicationSessionService, SessionSnapshot};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
-fn enabled() -> bool {
-    true
-}
 fn metadata_text(snapshot: &SessionSnapshot) -> String {
     let target = snapshot.metadata.original_target.as_target();
     format!(
@@ -126,7 +123,7 @@ async fn entry_matches(
             MAX_ENTRY_MATCHES + 1,
         ));
     }
-    if request.headers {
+    if request.request_headers || request.response_headers {
         for (boundary, headers) in scoped_headers(&snapshot, request) {
             for (index, field) in headers.iter().enumerate() {
                 if matches.len() > MAX_ENTRY_MATCHES {
@@ -201,16 +198,11 @@ pub struct TrafficSearchRequest {
     pub ignore_diacritics: bool,
     /// Include URL, method, process, PID and status.
     pub metadata: bool,
-    /// Include full retained request and response headers.
-    pub headers: bool,
-    /// Search request headers when the legacy headers scope is enabled.
-    #[serde(default = "enabled")]
+    /// Search retained request headers.
     pub request_headers: bool,
-    /// Search response headers when the legacy headers scope is enabled.
-    #[serde(default = "enabled")]
+    /// Search retained response headers.
     pub response_headers: bool,
     /// Include decoded original request bodies (falling back to upstream bodies).
-    #[serde(default)]
     pub request_bodies: bool,
     /// Include decoded text client-response bodies.
     pub response_bodies: bool,
@@ -313,7 +305,7 @@ impl SearchRegistry {
         if request.operation_id.is_empty()
             || request.operation_id.len() > 128
             || !(request.metadata
-                || request.headers && (request.request_headers || request.response_headers)
+                || (request.request_headers || request.response_headers)
                 || request.request_bodies
                 || request.response_bodies)
         {
@@ -478,7 +470,7 @@ async fn scan(
             continue;
         };
         let mut found = request.metadata && matcher.matches(&metadata_text(&snapshot));
-        if !found && request.headers {
+        if !found && (request.request_headers || request.response_headers) {
             found = scoped_headers(&snapshot, request)
                 .iter()
                 .any(|(_, headers)| {
@@ -624,9 +616,8 @@ mod tests {
             case_sensitive: false,
             ignore_diacritics: false,
             metadata: false,
-            headers: false,
-            request_headers: true,
-            response_headers: true,
+            request_headers: false,
+            response_headers: false,
             request_bodies: false,
             response_bodies: true,
         }
@@ -754,7 +745,8 @@ mod tests {
         assert_eq!(scoped.len(), 1);
         let mut headers = request("END-NEEDLE");
         headers.response_bodies = false;
-        headers.headers = true;
+        headers.request_headers = true;
+        headers.response_headers = true;
         assert_eq!(
             app.search_traffic(headers, Arc::new(|_| {}))
                 .await
@@ -769,7 +761,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let app = fixture(root.path()).await;
         let mut input = request("END-NEEDLE");
-        input.headers = true;
+        input.request_headers = true;
+        input.response_headers = true;
         input.response_bodies = false;
         input.request_headers = false;
         assert!(

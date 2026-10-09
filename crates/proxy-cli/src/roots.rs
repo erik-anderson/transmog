@@ -16,7 +16,6 @@ pub(crate) struct RootRecord {
     schema: u32,
     pub(crate) sha256: String,
     pub(crate) persistent: bool,
-    #[serde(default)]
     pub(crate) lifecycle: Lifecycle,
 }
 
@@ -26,11 +25,10 @@ struct PrivacyRecord {
     schema: u32,
     generation: u64,
     redact_sensitive_headers: bool,
-    #[serde(default = "default_request_body_limit")]
     request_body_limit: Option<u64>,
 }
 
-#[allow(clippy::unnecessary_wraps)] // Serde needs the optional field type; null means Unlimited.
+#[allow(clippy::unnecessary_wraps)] // The default policy shares the optional Unlimited type.
 const fn default_request_body_limit() -> Option<u64> {
     Some(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES)
 }
@@ -111,7 +109,7 @@ impl RootLedger {
         for path in paths.iter().rev() {
             if let Ok(bytes) = read_bounded(path, 8192)
                 && let Ok(record) = serde_json::from_slice::<PrivacyRecord>(&bytes)
-                && record.schema == 1
+                && record.schema == 2
                 && record.request_body_limit != Some(0)
                 && path.file_name().is_some_and(|name| {
                     name == format!("privacy-{:020}.json", record.generation).as_str()
@@ -156,7 +154,7 @@ impl RootLedger {
             .checked_add(1)
             .ok_or_else(|| io::Error::other("CLI privacy generation is exhausted"))?;
         let record = PrivacyRecord {
-            schema: 1,
+            schema: 2,
             generation,
             redact_sensitive_headers: redact,
             request_body_limit: limit,
@@ -200,7 +198,7 @@ impl RootLedger {
             }
             let bytes = read_bounded(&entry.path(), 8192)?;
             let record: RootRecord = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if !matches!(record.schema, 1 | 2)
+            if record.schema != 2
                 || !record.lifecycle.valid()
                 || !valid_hash(&record.sha256)
                 || name != format!("root-{}.json", record.sha256)
@@ -314,13 +312,12 @@ impl RootLedger {
             serde_json::from_slice(&read_bounded(&path, 8192)?).map_err(io::Error::other)?;
         if latest.sha256 != record.sha256
             || latest.persistent != record.persistent
-            || !matches!(latest.schema, 1 | 2)
+            || latest.schema != 2
             || !latest.lifecycle.valid()
         {
             return Err(io::Error::other("CLI root ownership changed"));
         }
         change(&mut latest)?;
-        latest.schema = 2;
         if !latest.lifecycle.valid() {
             return Err(io::Error::other("Invalid CLI root lifecycle"));
         }
@@ -764,31 +761,22 @@ mod tests {
         assert_eq!(ledger.records().unwrap().len(), 1);
     }
     #[test]
-    fn legacy_owned_root_is_migrated_on_reuse_and_unknown_schema_is_rejected() {
+    fn outdated_owned_roots_are_rejected_without_migration_or_trust_changes() {
         let directory = tempfile::tempdir().unwrap();
         let ledger = RootLedger::open(directory.path().into()).unwrap();
         let (_, root) = ledger.prepare(true).unwrap();
         let path = ledger.path(&root.sha256, "json");
-        fs::write(
-            &path,
-            serde_json::to_vec(
-                &serde_json::json!({"schema":1,"sha256":root.sha256,"persistent":true}),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let (_, migrated) = ledger.prepare(true).unwrap();
-        assert_eq!(migrated.sha256, root.sha256);
-        assert_eq!(migrated.schema, 2);
-        assert!(migrated.lifecycle.created_at.is_some());
-        fs::write(
-            &path,
-            serde_json::to_vec(
-                &serde_json::json!({"schema":99,"sha256":root.sha256,"persistent":true}),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        for schema in [1, 99] {
+            let mut value = serde_json::to_value(&root).unwrap();
+            value["schema"] = schema.into();
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(ledger.records().is_err());
+            assert!(ledger.prepare(true).is_err());
+            assert!(ledger.certificate(&root).exists());
+        }
+        let mut value = serde_json::to_value(&root).unwrap();
+        value.as_object_mut().unwrap().remove("lifecycle");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(ledger.records().is_err());
     }
 

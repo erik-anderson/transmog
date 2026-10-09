@@ -175,7 +175,7 @@ pub struct CapturedHeader {
     pub name: Vec<u8>,
     /// Header value, or `None` when policy redacted it.
     pub value: Option<Vec<u8>>,
-    /// Original value size; absent in older captures whose values were redacted.
+    /// Original value size; unavailable when the source did not record it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_value_bytes: Option<usize>,
 }
@@ -324,6 +324,22 @@ struct StoredRecord {
     body_index: Option<StoredBodyIndex>,
 }
 
+impl StoredRecord {
+    fn load_metadata(self) -> Result<(CaptureRecord, Option<StoredBodyIndex>), CaptureError> {
+        let index = self.body_index;
+        let record = load(self)?;
+        match record.kind {
+            CaptureRecordKind::BodySegment { bytes: Some(_), .. } => {
+                return Err(CaptureError::InvalidMagic);
+            }
+            CaptureRecordKind::BodySegment { bytes: None, .. } => {}
+            _ if index.is_some() => return Err(CaptureError::InvalidMagic),
+            _ => {}
+        }
+        Ok((record, index))
+    }
+}
+
 #[derive(Clone, Copy, Deserialize, Serialize)]
 struct StoredBodyIndex {
     frame_bytes: u64,
@@ -377,7 +393,6 @@ impl StoredBodyIndex {
 #[derive(Deserialize, Serialize)]
 struct StartedPayload {
     client_addr: String,
-    #[serde(default)]
     client_identity: ClientIdentity,
     listener_addr: String,
     authority: String,
@@ -1005,16 +1020,9 @@ impl<R: Read> CaptureReader<R> {
         let payload = self
             .codec
             .decode(&payload, index, self.limits.max_record_bytes)?;
-        let stored = serde_json::from_slice::<StoredRecord>(&payload)?;
-        let body_index = stored.body_index;
-        let mut record = load(stored)?;
+        let (mut record, body_index) =
+            serde_json::from_slice::<StoredRecord>(&payload)?.load_metadata()?;
         if let Some(body) = body_index {
-            if !matches!(
-                record.kind,
-                CaptureRecordKind::BodySegment { bytes: None, .. }
-            ) {
-                return Err(CaptureError::InvalidMagic);
-            }
             body.validate(self.limits.max_record_bytes)?;
             frame_bytes = frame_bytes
                 .checked_add(body.frame_bytes)
@@ -1905,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn observer_conversion_redacts_again_and_ignores_legacy_head_aliases() {
+    fn observer_conversion_redacts_again_and_ignores_nonfinalized_heads() {
         let mut headers = HeaderBlock::new();
         headers.push(HeaderField::try_new("authorization", b"secret".to_vec()).unwrap());
         headers.push(HeaderField::try_new("x-visible", b"yes".to_vec()).unwrap());
@@ -1943,12 +1951,12 @@ mod tests {
             field.name == b"x-visible" && field.value.as_deref() == Some(&b"yes"[..])
         }));
 
-        let legacy = ObserverEvent {
+        let nonfinalized = ObserverEvent {
             exchange_id: ExchangeId(7),
             sequence: 3,
             kind: ObserverEventKind::RequestHeadFinalized(head),
         };
-        assert!(record_from_observer(&legacy, &CapturePolicy::default()).is_none());
+        assert!(record_from_observer(&nonfinalized, &CapturePolicy::default()).is_none());
     }
 
     #[test]

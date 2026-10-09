@@ -23,14 +23,12 @@ pub(crate) enum RootLifecycle {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum KeyStorage {
     #[default]
-    Unknown,
     MemoryOnly,
     ProtectedFile,
     Removed,
 }
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[serde(default)]
 pub(crate) struct Lifecycle {
     pub(crate) state: RootLifecycle,
     pub(crate) key_storage: KeyStorage,

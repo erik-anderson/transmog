@@ -447,7 +447,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     const operationId=crypto.randomUUID();this.searchOperation=operationId;
     const onProgress=new Channel<TrafficSearchProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.searchOperation===progress.operationId)this.contentSearchStatus=`Searching captured traffic · ${progress.completed} of ${progress.total} entries checked…`;};
     try{
-      const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,headers:this.searchRequestHeaders||this.searchResponseHeaders,requestHeaders:this.searchRequestHeaders,responseHeaders:this.searchResponseHeaders,requestBodies:this.searchRequestBodies,responseBodies:this.searchBodies},onProgress});
+      const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,requestHeaders:this.searchRequestHeaders,responseHeaders:this.searchResponseHeaders,requestBodies:this.searchRequestBodies,responseBodies:this.searchBodies},onProgress});
       if(!this.isConnected||this.searchOperation!==operationId)return;
       const query={searchResultId:result.id,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort,offset:0,limit:this.pageLimit};
       const [page,ids]=await Promise.all([invoke<SessionPage>('query_sessions',{query}),invoke<string[]>('matching_traffic_ids',{query})]);

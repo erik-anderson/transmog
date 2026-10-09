@@ -407,3 +407,18 @@ release environment; no signed release or publication was performed locally.
     uses the same unlimited writer. Per-chunk allocation and metadata-index bounds
     remain separate. The writer regression exercises append/seal across the former
     four-GiB boundary with a sink rather than allocating a multi-GiB fixture.
+
+38. Earlier Transmog layout compatibility is removed: native inline/old-schema
+    readers, preference migrations/defaulted missing fields, CLI root schema-one
+    migration and missing lifecycle acceptance, the curl-windows command alias,
+    and the older combined-header search gate. Current root ownership records
+    remain strict and fail without trust-store mutation when unsupported. SAZ
+    interoperability, HTTP semantics, recovery of interrupted current data and
+    explicit gzip wrappers remain supported current features.
+
+    Replay executors now explicitly implement file dispatch, without the older
+    adapter default. The CLI's non-viewer catalog retains only active metadata
+    and the most recent completion; separate capture observers still stream or
+    circularly retain every entry, so streaming CLI memory does not grow with
+    its entire recording. Current preference/root generations remain recoverable
+    after corruption, independently of removed historical-schema migration.

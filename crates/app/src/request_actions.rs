@@ -27,8 +27,7 @@ const COMPOSER_BYTES: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequestCommandFormat {
-    /// Plain cURL with POSIX shell quoting (including legacy Windows callers).
-    #[serde(alias = "curl-windows")]
+    /// Plain cURL with POSIX shell quoting.
     Curl,
     /// Invoke-WebRequest or .NET HTTP commands for PowerShell 5.1 and 7.
     Powershell,

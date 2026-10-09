@@ -84,7 +84,7 @@ pub struct HeadView {
 pub struct HeaderSummary {
     /// Number of original fields, including duplicates.
     pub total_fields: usize,
-    /// Sum of original value bytes; unavailable when legacy evidence omitted sizes.
+    /// Sum of original value bytes; unavailable when source evidence omitted sizes.
     pub value_bytes: Option<u64>,
     /// HTTP/1-equivalent field bytes including the final empty line.
     pub serialized_bytes: Option<u64>,

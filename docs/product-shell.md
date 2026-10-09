@@ -140,7 +140,7 @@ physical connection facts. DNS/TCP/TLS and QUIC setup costs use only the request
 actual overlap after upstream admission. Completed reused phases show zero;
 setup still in progress shows the request's wait alongside the full original
 phase duration. Connection start and finish offsets explain how long before or
-after this request's zero timestamp setup occurred. Older captures lacking
+after this request's zero timestamp setup occurred. Source evidence lacking
 these timestamps show connection measurements without inventing a wait or age.
 The waterfall compares overlapping request intervals and named local operations.
 Repeated callback windows use dashed borders; their displayed call time sums the

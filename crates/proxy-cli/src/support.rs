@@ -237,7 +237,15 @@ async fn run_capture(
             "complete, including credentials and cookies"
         }
     );
-    let service = ApplicationSessionService::new(ServiceConfig::default())?;
+    // The CLI has no traffic viewer. Capture observers retain all evidence independently;
+    // its internal catalog needs only active entries and the most recent completed one.
+    let service = ApplicationSessionService::new(ServiceConfig {
+        sessions: transmog_session::SessionLimits {
+            max_sessions: std::num::NonZeroUsize::new(1),
+            ..Default::default()
+        },
+        ..ServiceConfig::default()
+    })?;
     service.set_redact_sensitive_headers(redact);
     let config = ProxyConfig {
         listener: ListenerConfig {
@@ -443,7 +451,7 @@ async fn wait_for_stop(
         tokio::select! {
             signal = tokio::signal::ctrl_c() => {
                 signal?;
-                // The legacy bounded stop intentionally permits forced completion.
+                // The explicitly bounded stop permits forced completion.
                 service.stop_now().await.map_err(io::Error::other)?;
                 return Ok(());
             }

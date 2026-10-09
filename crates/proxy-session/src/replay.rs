@@ -138,22 +138,16 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
-    /// Executes a file body from its current position. The caller must validate
-    /// the byte length and repair framing before dispatch. The default fails
-    /// explicitly, so an older executor cannot accidentally send an empty body.
+    /// Executes a file body from its current position. The caller validates its
+    /// length and repairs framing before dispatch. Implementations explicitly
+    /// provide streaming support or return a capability error.
     fn execute_file(
         &self,
-        _request: ValidatedReplayRequest,
-        _file: std::fs::File,
-        _length: u64,
-        _cancellation: ExchangeCancellation,
-    ) -> BoxReplayFuture<'_> {
-        Box::pin(async {
-            Err(ReplayExecutionError::new(
-                "this replay executor does not support file bodies",
-            ))
-        })
-    }
+        request: ValidatedReplayRequest,
+        file: std::fs::File,
+        length: u64,
+        cancellation: ExchangeCancellation,
+    ) -> BoxReplayFuture<'_>;
 
     /// Executes one fully owned and validated request.
     fn execute(
@@ -372,6 +366,19 @@ mod tests {
     struct Echo;
 
     impl ReplayExecutor for Echo {
+        fn execute_file(
+            &self,
+            _request: ValidatedReplayRequest,
+            _file: std::fs::File,
+            _length: u64,
+            _cancellation: ExchangeCancellation,
+        ) -> BoxReplayFuture<'_> {
+            Box::pin(async {
+                Err(ReplayExecutionError::new(
+                    "this test executor does not support file bodies",
+                ))
+            })
+        }
         fn execute(
             &self,
             request: ValidatedReplayRequest,
@@ -390,6 +397,19 @@ mod tests {
     struct Wait;
 
     impl ReplayExecutor for Wait {
+        fn execute_file(
+            &self,
+            _request: ValidatedReplayRequest,
+            _file: std::fs::File,
+            _length: u64,
+            _cancellation: ExchangeCancellation,
+        ) -> BoxReplayFuture<'_> {
+            Box::pin(async {
+                Err(ReplayExecutionError::new(
+                    "this test executor does not support file bodies",
+                ))
+            })
+        }
         fn execute(
             &self,
             _request: ValidatedReplayRequest,

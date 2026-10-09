@@ -7,7 +7,7 @@ semantics.
 
 ## Persisted state
 
-The current schema is version 5 and contains only:
+The current schema is version 6 and contains only:
 
 - theme, bounded session page size, and the default system-proxy choice;
 - explicit body-retention, recent-artifact, and support-bundle path choices;
@@ -49,7 +49,7 @@ processing retains its separate bounded memory limit. Oversized or unknown-lengt
 requests in Auto mode use streaming HTTP/1 or HTTP/2 instead of buffered H3 retries.
 
 On Windows these files live under `%LOCALAPPDATA%\Transmog` using the
-`preferences.<generation>.json` name family. Save, migration, read-only
+`preferences.<generation>.json` name family. Save, unsupported-schema, read-only
 directory, and storage failures are reported as bounded diagnostics and never
 participate in proxy shutdown or host restoration.
 
