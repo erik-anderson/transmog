@@ -374,6 +374,7 @@ try {
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
   assert.equal(await page.locator('tr[data-session-id="cached"]').getAttribute('data-tone'),'not-modified');
+  assert.equal(await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.timingDialog.showModal();workspace.closeTimings();workspace.timingDialog.showModal();const generation=workspace.timingGeneration;await new Promise(resolve=>setTimeout(resolve,20));const stable=workspace.timingGeneration===generation;workspace.closeTimings();return stable;}),true,'A stale close event invalidated reopened timings');
   const toggle = page.getByRole('button',{name:'Toggle navigation labels'});
   await toggle.click();
   assert.equal(await toggle.getAttribute('aria-expanded'),'false');

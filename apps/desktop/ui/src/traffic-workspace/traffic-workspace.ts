@@ -305,7 +305,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async copyTimings():Promise<void> {if(!this.timingReportText)return;try {await navigator.clipboard.writeText(this.timingReportText);this.timingStatus='Timing report copied.';}catch{this.timingReportVisible=true;this.timingStatus='Select the report text below and use Copy.';}}
   closeTimings():void {this.timingDialog.close();}
-  timingsClosed():void {this.timingGeneration++;this.timingBusy=false;}
+  timingsClosed():void {if(this.timingDialog.open)return;this.timingGeneration++;this.timingBusy=false;}
   async showTraceMetadata(id?:string):Promise<void> {
     this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNetworkTitle='';this.metadataNetworkContext='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
     try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows.sort((a,b)=>b.importedAt-a.importedAt);this.loadTraceMetadata(id??rows[0]?.id??'');}
