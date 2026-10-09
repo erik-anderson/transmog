@@ -148,6 +148,14 @@ finish; idle clients do not delay shutdown. Keep **Start proxy** available durin
 this state so turning it back on resumes the same run without disrupting work.
 Reject stale shutdown and status results after a new state transition.
 
+Live body retention uses a configurable circular buffer. Automatic chooses half
+installed physical RAM, stored in memory. Custom limits up to that threshold
+also stay in memory; larger limits and **No max size (writes to disk)** use an
+application-owned disk cache. Starting the proxy never implicitly records a
+trace. Save trace and explicit recording write files. Display the resolved limit,
+storage location and installed RAM in Settings. Changing storage applies to new
+body boundaries without spilling previously retained memory bodies to disk.
+
 Request-body retention defaults to **25 MB** (25,000,000 bytes). **Unlimited**
 removes the per-request cap while preserving overall cache and trace budgets.
 Keep forwarding independent from capture limits; report a retained prefix as

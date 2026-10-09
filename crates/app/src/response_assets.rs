@@ -1297,6 +1297,7 @@ mod tests {
         let body_root = root.join("bodies");
         let body_store = BodyStore::new(BodyStoreConfig {
             root: body_root,
+            storage: crate::BufferStorage::Memory,
             mode: RetentionMode::Circular,
             max_bytes: 1024,
             max_body_bytes: 1024,

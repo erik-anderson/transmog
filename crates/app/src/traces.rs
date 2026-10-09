@@ -2300,12 +2300,7 @@ mod tests {
                     .body_file_required
             );
         }
-        assert_eq!(
-            std::fs::read_dir(root.path().join("cache"))
-                .unwrap()
-                .count(),
-            0
-        );
+        assert!(!root.path().join("cache").exists());
     }
 
     #[tokio::test]

@@ -320,3 +320,14 @@ is implemented but was not qualified on a Linux host in this Windows run.
 
 The primary checkout's independent updater changes remain preserved. All feature
 work is committed on the attached managed worktree branch.
+
+## Additional storage and encryption work (in progress)
+
+29. Configurable memory-first circular buffer; Automatic is half installed RAM.
+30. Independently compressed and authenticated encrypted TMCap chunks with lazy reads.
+31. Password-protected SAZ import and opt-in AES-256 export.
+32. Desktop password flows and streaming/circular CLI recording; populated UX and end-to-end qualification.
+
+Ordinary CLI recording streams every entry. Circular CLI recording saves only newest retained traffic at stop.
+
+Phase 29 completed: persistent Automatic / custom GiB / unlimited disk policies, memory chunk leases and eviction, no implicit desktop journal, Settings status and populated native focus/reachability review. Validation: 133 Rust application/renderer/desktop tests, strict application/desktop Clippy, production browser workspace flow, native WebView2 and inspected Settings screenshot.

@@ -84,6 +84,9 @@ impl Default for ProductPreferences {
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct PrivacySettings {
+    /// Aggregate circular buffer limit and memory/disk policy.
+    #[serde(default)]
+    pub buffer_limit: crate::BufferLimit,
     /// Retain request bodies for command generation and replay.
     #[serde(default = "default_true")]
     pub retain_request_bodies: bool,
@@ -110,6 +113,7 @@ pub struct PrivacySettings {
 impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
+            buffer_limit: crate::BufferLimit::Automatic,
             retain_request_bodies: true,
             request_body_limit: default_request_body_limit(),
             redact_sensitive_headers: false,
@@ -291,7 +295,7 @@ impl ProductStateManager {
     }
 }
 
-fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
+pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -299,6 +303,10 @@ fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
         || !(480..=16_384).contains(&state.window.height)
         || !(10..=200).contains(&state.preferences.session_page_size)
         || state.recent_artifacts.len() > MAX_RECENT_ARTIFACTS
+        || matches!(
+            state.privacy.buffer_limit,
+            crate::BufferLimit::Custom { bytes: 0 }
+        )
         || state.privacy.request_body_limit == Some(0)
         || !state.workspace.is_valid()
     {

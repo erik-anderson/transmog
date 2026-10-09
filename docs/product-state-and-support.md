@@ -36,10 +36,14 @@ Redaction preserves their names, order, duplicates and original byte lengths,
 so authorization presence and oversized headers remain diagnosable. It does
 not rewrite existing traffic or saved files. Body retention changes apply to
 new exchanges; an in-flight body never becomes falsely complete after a toggle.
-The circular body cache holds at most 1 GiB across both directions. Request
+The circular body cache defaults to half installed RAM across all observed
+boundaries, stored in memory. Settings accepts a custom GiB maximum; values over
+half installed RAM use disk, as does No max size (writes to disk). There is no
+automatic trace journal when starting the proxy. Explicit recording and Save
+trace write files. Request
 bodies default to a 25 MB cap (25,000,000 bytes) per original/effective boundary.
 The persistent Unlimited choice removes that per-request cap, while the overall
-cache and trace file budgets remain finite. Cache changes apply to new requests;
+cache budget (unless explicitly unlimited) and trace file budgets still apply. Cache changes apply to new requests;
 a recording snapshots its policy when started and saves that limit in metadata. Capture limits retain a prefix and
 full observed byte counts; they do not reject forwarding. Non-streaming
 processing retains its separate bounded memory limit. Oversized or unknown-length

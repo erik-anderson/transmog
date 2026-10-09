@@ -429,6 +429,30 @@ try {
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
     result.screenshot = screenshotPath;
+    result.bufferControls = await evaluate(`(async () => {
+      const shell=document.querySelector('app-shell');
+      shell.shadowRoot.querySelector('a[data-view="settings"]').click();
+      const settings=shell.shadowRoot.querySelector('settings-workspace');
+      settings.showSettingsSection('preferences');settings.$flushUpdates();
+      const select=settings.settingsForm.elements.namedItem('bufferMode');
+      const size=settings.settingsForm.elements.namedItem('bufferSize');
+      const original=select.value;
+      select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      size.scrollIntoView({block:'center'});
+      const rect=size.getBoundingClientRect();
+      const reachable=settings.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===size;
+      const status=await window.__TAURI_INTERNALS__.invoke('buffer_status');
+      if(!reachable||status.storage!=='memory'||status.maxBytes!==Math.floor(status.installedRam/2))throw new Error('Memory buffer configuration or reachability failed');
+      size.focus();if(settings.getRootNode().activeElement!==size)throw new Error('Buffer input focus failed');
+      select.value=original;select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      await settings.loadSettings();
+      settings.querySelector('.settings-content').scrollTop=0;
+      return {reachable,storage:status.storage,maxBytes:status.maxBytes,installedRam:status.installedRam};
+    })()`);
+    const settingsScreenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
+    await writeFile(screenshotPath.replace(/\.png$/i,'-settings.png'),Buffer.from(settingsScreenshot.data,'base64'));
+    await evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`);
+
   }
   if (automationScreenshotPath !== undefined) {
     const automationLayout = await evaluate(`(() => {

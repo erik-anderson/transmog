@@ -8,7 +8,7 @@ mod workspaces;
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -44,7 +44,6 @@ use transmog_host_windows::{
 };
 
 const UI_HOST: &str = "transmog-ui.localhost";
-const AUTOMATIC_CAPTURE_BYTES: u64 = 1024 * 1024 * 1024;
 static ARTIFACT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone)]
@@ -58,9 +57,7 @@ struct DesktopState {
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     diagnostics_path: PathBuf,
-    capture_root: PathBuf,
     export_root: PathBuf,
-    live_capture_path: Arc<Mutex<Option<PathBuf>>>,
 }
 
 #[derive(Serialize)]
@@ -94,6 +91,14 @@ fn app_status(
 ) -> Result<AppStatus, AppError> {
     let application = state.window_application(&window)?;
     Ok(application.status())
+}
+
+#[tauri::command]
+fn buffer_status(state: State<'_, DesktopState>) -> Option<transmog_app::BufferStatus> {
+    state
+        .application
+        .body_store()
+        .map(transmog_app::BodyStore::buffer_status)
 }
 
 #[tauri::command]
@@ -489,50 +494,14 @@ async fn start_proxy(
         DiagnosticLevel::Info,
         "desktop",
         "proxy-start-requested",
-        "proxy start requested with automatic capture and current-user Windows proxy integration",
+        "proxy start requested with current-user Windows proxy integration",
     );
-    std::fs::create_dir_all(&state.capture_root)
-        .map_err(|error| format!("automatic capture directory is unavailable: {error}"))?;
-    let (capture_path, capture_started) = match state.application.capture_status() {
-        CaptureReadModel::Active { path, .. } => (path, false),
-        CaptureReadModel::Shutdown => {
-            return Err("capture service is unavailable until Transmog restarts".to_owned());
-        }
-        CaptureReadModel::Idle
-        | CaptureReadModel::Sealed { .. }
-        | CaptureReadModel::Failed { .. } => {
-            let path = unique_artifact_path(&state.capture_root, "live", "tmcap");
-            state
-                .application
-                .start_capture(CaptureStartRequest {
-                    include_network_context: false,
-                    path: path.clone(),
-                    max_file_bytes: AUTOMATIC_CAPTURE_BYTES,
-                    retain_body_samples: state
-                        .application
-                        .product_state()
-                        .privacy
-                        .retain_body_samples,
-                })
-                .await
-                .map_err(|error| error.to_string())?;
-            (path, true)
-        }
-    };
-    *state
-        .live_capture_path
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(capture_path);
     let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
-    match state.application.start_proxy(request, host).await {
-        Ok(status) => Ok(status),
-        Err(error) => {
-            if capture_started {
-                let _ = state.application.stop_capture().await;
-            }
-            Err(error.to_string())
-        }
-    }
+    state
+        .application
+        .start_proxy(request, host)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1193,30 +1162,31 @@ async fn export_capture(
 
 #[tauri::command]
 async fn export_live_capture(state: State<'_, DesktopState>) -> Result<ExportResult, String> {
-    let source = state
-        .live_capture_path
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-        .ok_or_else(|| "Start the proxy before exporting its traffic.".to_owned())?;
     std::fs::create_dir_all(&state.export_root)
         .map_err(|error| format!("capture export directory is unavailable: {error}"))?;
     let destination = unique_artifact_path(&state.export_root, "Transmog-capture", "tmcap");
     let result = state
         .application
-        .export_capture(ExportRequest {
-            redact_sensitive_headers: false,
-            source,
-            destination: destination.clone(),
-            format: ExportFormat::Native,
-            max_source_bytes: 4 * 1024 * 1024 * 1024,
-        })
+        .save_traffic_trace(
+            destination.clone(),
+            transmog_app::TraceSaveOptions::default(),
+        )
         .await
         .map_err(|error| error.to_string())?;
     state
         .application
-        .remember_artifact(destination, ArtifactKind::NativeCapture);
-    Ok(result)
+        .remember_artifact(destination.clone(), ArtifactKind::NativeCapture);
+    Ok(ExportResult {
+        destination,
+        records: result.entries,
+        bytes: result.bytes,
+        source_sealed: true,
+        source_truncated_tail: false,
+        fidelity: format!(
+            "Saved retained Traffic; {} incomplete body boundaries",
+            result.incomplete_bodies
+        ),
+    })
 }
 
 fn unique_artifact_path(root: &std::path::Path, prefix: &str, extension: &str) -> PathBuf {
@@ -1305,9 +1275,7 @@ pub fn run() {
             ca_certificate_path,
             ca_private_key_path,
             diagnostics_path,
-            capture_root: state_root.join("captures"),
             export_root: state_root.join("exports"),
-            live_capture_path: Arc::new(Mutex::new(None)),
         })
         .register_uri_scheme_protocol("transmog-ui", move |context, request: Request<Vec<u8>>| {
             let state = context.app_handle().state::<DesktopState>();
@@ -1358,6 +1326,7 @@ pub fn run() {
                 trace_metadata_list,
                 trace_metadata,
                 app_status,
+                buffer_status,
                 product_state,
                 save_product_state,
                 save_workspace_preferences,

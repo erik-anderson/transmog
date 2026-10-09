@@ -39,6 +39,7 @@ license = "MIT"
 repository = "https://github.com/erik-anderson/transmog"
 
 [workspace.dependencies]
+sysinfo = { version = "=0.37.2", default-features = false, features = ["system"] }
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"
 boring = "=5.2.0"

@@ -108,6 +108,7 @@ await page.addInitScript((workspace) => {
           if(state.caTrustError)throw new Error('Fixture Windows trust canceled');
           state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
         }
+        case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
         case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
@@ -1206,6 +1207,17 @@ try {
   const caIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').proxyPending);
   await page.locator('.settings-tabs').getByRole('button',{name:'Preferences',exact:true}).click();
   const preferences=page.locator('settings-workspace');
+  await preferences.getByLabel('Circular buffer limit',{exact:true}).selectOption('custom');
+  await preferences.getByLabel('Maximum size (GiB)',{exact:true}).fill('2');
+  assert.equal(await preferences.getByLabel('Maximum size (GiB)',{exact:true}).isVisible(),true);
+  await preferences.getByLabel('Circular buffer limit',{exact:true}).selectOption('unlimited');
+  assert.equal(await preferences.getByLabel('Maximum size (GiB)',{exact:true}).isVisible(),false);
+  await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct)).privacy.bufferLimit.mode,'unlimited');
+  await preferences.getByLabel('Circular buffer limit',{exact:true}).selectOption('automatic');
+  await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   await preferences.getByLabel('Theme',{exact:true}).selectOption('light');
   assert.equal(await preferences.getByRole('button',{name:'Save settings',exact:true}).isEnabled(),true);
   await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();

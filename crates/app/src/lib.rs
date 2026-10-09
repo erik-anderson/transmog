@@ -46,7 +46,8 @@ pub use automation::{
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
-    BodyStoreError, DEFAULT_BODY_READ_BYTES, RetentionMode, StoredBodyMetadata,
+    BodyStoreError, BufferLimit, BufferStatus, BufferStorage, DEFAULT_BODY_READ_BYTES,
+    RetentionMode, StoredBodyMetadata,
 };
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
@@ -272,6 +273,8 @@ impl Application {
     ///
     /// Returns a bounded application error if the owned service cannot start.
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let (product_state, warning) =
+            product_state::ProductStateManager::load(config.product_state_path);
         let body_store = config
             .body_store
             .map(BodyStore::new)
@@ -298,13 +301,16 @@ impl Application {
             "startup",
             "Transmog application initialized",
         );
-        let (product_state, warning) =
-            product_state::ProductStateManager::load(config.product_state_path);
         service.set_redact_sensitive_headers(
             product_state.snapshot().privacy.redact_sensitive_headers,
         );
         if let Some(store) = &body_store {
             let privacy = product_state.snapshot().privacy;
+            store
+                .set_buffer_limit(privacy.buffer_limit)
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })?;
             store.set_request_body_limit(privacy.request_body_limit);
             store.set_privacy(
                 privacy.retain_request_bodies,
@@ -367,12 +373,25 @@ impl Application {
     /// Returns a bounded validation or persistence error. A persistence error
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
+        let state = product_state::validate(state)?;
+        if let Some(store) = &self.body_store {
+            store
+                .prepare_buffer_limit(state.privacy.buffer_limit)
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })?;
+        }
         let result = self.product_state.save(state);
         if let Ok(state) = &result {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
         }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
+            store
+                .set_buffer_limit(state.privacy.buffer_limit)
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })?;
             store.set_request_body_limit(state.privacy.request_body_limit);
             store.set_privacy(
                 state.privacy.retain_request_bodies,
