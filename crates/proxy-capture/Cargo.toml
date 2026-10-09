@@ -15,6 +15,7 @@ flate2.workspace = true
 getrandom.workspace = true
 zeroize.workspace = true
 crc32fast.workspace = true
+sha2.workspace = true
 transmog-core = { version = "=0.1.0", path = "../proxy-core" }
 serde.workspace = true
 serde_json.workspace = true

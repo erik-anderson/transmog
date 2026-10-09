@@ -103,20 +103,29 @@ impl CircularCapture {
                 self.order.push_back(id);
             }
         }
-        let mut index = self.encoder.records_written;
+        let index_base = self.encoder.records_written;
         self.encoder.append(record)?;
         let encoded = std::mem::take(&mut self.encoder.output);
-        let mut position = 0;
-        while position < encoded.len() {
-            let length = u32::from_le_bytes(
-                encoded[position..position + 4]
-                    .try_into()
-                    .map_err(|_| CaptureError::InvalidMagic)?,
-            ) as usize
-                + 8;
-            let bytes = encoded
-                .get(position..position + length)
-                .ok_or(CaptureError::InvalidMagic)?;
+        let mut scanner = crate::CaptureReader {
+            input: std::io::Cursor::new(&encoded),
+            limits: crate::CaptureLimits {
+                max_file_bytes: u64::MAX,
+                max_records: usize::MAX,
+                ..self.limits
+            },
+            records: 0,
+            valid_bytes: 0,
+            truncated_tail: false,
+            sealed: false,
+            done: false,
+            codec: self.encoder.codec.clone(),
+            index_base,
+        };
+        while let Some(frame) = scanner.read_next_indexed()? {
+            let start = usize::try_from(frame.offset).map_err(|_| CaptureError::QuotaExceeded)?;
+            let end = usize::try_from(frame.offset + frame.frame_bytes)
+                .map_err(|_| CaptureError::QuotaExceeded)?;
+            let bytes = encoded.get(start..end).ok_or(CaptureError::InvalidMagic)?;
             let entry = self
                 .entries
                 .get_mut(&id)
@@ -128,17 +137,15 @@ impl CircularCapture {
             } else {
                 (0, Some(bytes.to_vec()))
             };
-            let charge = length as u64 + std::mem::size_of::<Frame>() as u64;
+            let charge = frame.frame_bytes + std::mem::size_of::<Frame>() as u64;
             entry.frames.push(Frame {
-                index,
-                bytes: length as u64,
+                index: frame.index,
+                bytes: frame.frame_bytes,
                 offset,
                 memory,
             });
             entry.charged = entry.charged.saturating_add(charge);
             self.retained = self.retained.saturating_add(charge);
-            position += length;
-            index += 1;
         }
         if matches!(
             record.kind,

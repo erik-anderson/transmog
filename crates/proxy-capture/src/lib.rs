@@ -12,12 +12,13 @@ pub use encoding::{CaptureEncoding, CapturePassword, FrameCodec};
 
 use std::{
     collections::{BTreeSet, HashMap},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use transmog_core::{
     ClientIdentity, HeaderBlock,
@@ -25,7 +26,7 @@ use transmog_core::{
     observe::{ExchangeBoundary, ObserverEvent, ObserverEventKind},
 };
 
-const MAGIC: [u8; 8] = *b"TMCAP01\0";
+const MAGIC: [u8; 8] = encoding::MAGIC;
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Default retained request-body limit (25 decimal MB); file budgets still apply.
@@ -319,6 +320,58 @@ struct StoredRecord {
     exchange_id: u128,
     kind: String,
     payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_index: Option<StoredBodyIndex>,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+struct StoredBodyIndex {
+    frame_bytes: u64,
+    bytes: usize,
+    digest: [u8; 32],
+}
+
+impl StoredBodyIndex {
+    fn validate(self, maximum: usize) -> Result<(), CaptureError> {
+        if self.bytes > maximum
+            || self.frame_bytes < FRAME_HEADER_BYTES as u64
+            || self.frame_bytes
+                > FRAME_HEADER_BYTES as u64 + FrameCodec::encoded_bound(maximum) as u64
+        {
+            return Err(CaptureError::RecordTooLarge {
+                actual: self.bytes,
+                limit: maximum,
+            });
+        }
+        Ok(())
+    }
+    fn decode(
+        self,
+        codec: &FrameCodec,
+        encoded: &[u8],
+        index: u64,
+        maximum: usize,
+        record_index: usize,
+    ) -> Result<Vec<u8>, CaptureError> {
+        let length = u32::from_le_bytes(
+            encoded[..4]
+                .try_into()
+                .map_err(|_| CaptureError::InvalidMagic)?,
+        ) as usize;
+        let crc = u32::from_le_bytes(
+            encoded[4..8]
+                .try_into()
+                .map_err(|_| CaptureError::InvalidMagic)?,
+        );
+        if length != encoded.len() - FRAME_HEADER_BYTES || crc32fast::hash(&encoded[8..]) != crc {
+            return Err(CaptureError::ChecksumMismatch { record_index });
+        }
+        let bytes = codec.decode_body(&encoded[8..], index, maximum)?;
+        if bytes.len() != self.bytes || <[u8; 32]>::from(Sha256::digest(&bytes)) != self.digest {
+            return Err(CaptureError::AuthenticationFailed);
+        }
+        Ok(bytes)
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -421,20 +474,11 @@ impl<W: Write> CaptureWriter<W> {
     /// # Errors
     ///
     /// Returns a typed limit or I/O error.
-    pub fn new(mut output: W, limits: CaptureLimits) -> Result<Self, CaptureError> {
-        let limits = limits.validate()?;
-        output.write_all(&MAGIC)?;
-        Ok(Self {
-            output,
-            limits,
-            bytes_written: MAGIC.len() as u64,
-            records_written: 0,
-            sealed: false,
-            codec: FrameCodec::default(),
-        })
+    pub fn new(output: W, limits: CaptureLimits) -> Result<Self, CaptureError> {
+        Self::with_encoding(output, limits, &CaptureEncoding::default())
     }
 
-    /// Creates a compressed, optionally encrypted capture with an agile v4 header.
+    /// Creates a compressed, optionally encrypted capture with an agile header.
     ///
     /// # Errors
     /// Returns invalid bounds, cryptographic initialization or output failures.
@@ -474,10 +518,10 @@ impl<W: Write> CaptureWriter<W> {
             truncated,
         } = &record.kind
         {
-            // JSON byte arrays can require four payload bytes per body byte.
+            // Raw body frames remain bounded independently of metadata.
             // Each fragment keeps its observer sequence; file order determines
             // body order. Only the final fragment carries unretained counts.
-            let part_bytes = self.limits.max_record_bytes.saturating_sub(1024) / 4;
+            let part_bytes = self.limits.max_record_bytes.saturating_sub(1024);
             if bytes.len() > part_bytes && part_bytes > 0 {
                 let mut counted = 0;
                 for part in bytes.chunks(part_bytes) {
@@ -517,9 +561,44 @@ impl<W: Write> CaptureWriter<W> {
         if self.records_written >= self.limits.max_records.saturating_sub(1) as u64 {
             return Err(CaptureError::RecordCountExceeded);
         }
-        let stored = store(record)?;
-        let payload = serde_json::to_vec(&stored)?;
-        self.write_payload(&payload)?;
+        if let CaptureRecordKind::BodySegment {
+            boundary,
+            byte_count,
+            bytes: Some(bytes),
+            truncated,
+        } = &record.kind
+        {
+            let body = self.codec.encode_body(bytes, self.records_written)?;
+            let metadata = CaptureRecord {
+                sequence: record.sequence,
+                exchange_id: record.exchange_id,
+                kind: CaptureRecordKind::BodySegment {
+                    boundary: *boundary,
+                    byte_count: *byte_count,
+                    bytes: None,
+                    truncated: *truncated,
+                },
+            };
+            let mut stored = store(&metadata)?;
+            stored.body_index = Some(StoredBodyIndex {
+                frame_bytes: FRAME_HEADER_BYTES as u64 + body.len() as u64,
+                bytes: bytes.len(),
+                digest: Sha256::digest(bytes).into(),
+            });
+            let payload = serde_json::to_vec(&stored)?;
+            if payload.len() > self.limits.max_record_bytes {
+                return Err(CaptureError::RecordTooLarge {
+                    actual: payload.len(),
+                    limit: self.limits.max_record_bytes,
+                });
+            }
+            let metadata = self.codec.encode(&payload, self.records_written)?;
+            self.write_encoded(&[&metadata, &body])?;
+        } else {
+            let stored = store(record)?;
+            let payload = serde_json::to_vec(&stored)?;
+            self.write_payload(&payload)?;
+        }
         self.records_written = self.records_written.saturating_add(1);
         Ok(())
     }
@@ -565,7 +644,15 @@ impl<W: Write> CaptureWriter<W> {
             });
         }
         let payload = self.codec.encode(payload, self.records_written)?;
-        let framed = (FRAME_HEADER_BYTES as u64).saturating_add(payload.len() as u64);
+        self.write_encoded(&[&payload])
+    }
+
+    fn write_encoded(&mut self, payloads: &[&[u8]]) -> Result<(), CaptureError> {
+        let framed = payloads.iter().try_fold(0_u64, |total, payload| {
+            total
+                .checked_add(FRAME_HEADER_BYTES as u64 + payload.len() as u64)
+                .ok_or(CaptureError::QuotaExceeded)
+        })?;
         let next = self
             .bytes_written
             .checked_add(framed)
@@ -573,16 +660,19 @@ impl<W: Write> CaptureWriter<W> {
         if next > self.limits.max_file_bytes {
             return Err(CaptureError::QuotaExceeded);
         }
-        let length = u32::try_from(payload.len()).map_err(|_| CaptureError::RecordTooLarge {
-            actual: payload.len(),
-            limit: u32::MAX as usize,
-        })?;
-        // A partial I/O failure poisons this writer so no nonce can be reused with different bytes.
+        // Poison until the entire metadata/payload pair is committed; retries must never reuse a nonce.
         self.sealed = true;
-        self.output.write_all(&length.to_le_bytes())?;
-        self.output
-            .write_all(&crc32fast::hash(&payload).to_le_bytes())?;
-        self.output.write_all(&payload)?;
+        for payload in payloads {
+            let length =
+                u32::try_from(payload.len()).map_err(|_| CaptureError::RecordTooLarge {
+                    actual: payload.len(),
+                    limit: u32::MAX as usize,
+                })?;
+            self.output.write_all(&length.to_le_bytes())?;
+            self.output
+                .write_all(&crc32fast::hash(payload).to_le_bytes())?;
+            self.output.write_all(payload)?;
+        }
         self.output.flush()?;
         self.bytes_written = next;
         self.sealed = false;
@@ -733,7 +823,7 @@ pub fn recover<R: Read>(input: R, limits: CaptureLimits) -> Result<RecoveredCapt
     recover_with_password(input, limits, None)
 }
 
-/// Recover a bounded legacy or encrypted capture using a transient password.
+/// Recover a bounded capture using a transient password.
 ///
 /// # Errors
 /// Returns password, authentication, format, resource or I/O failures.
@@ -755,6 +845,15 @@ pub fn recover_with_password<R: Read>(
     })
 }
 
+/// Authenticated metadata for a separately stored body payload.
+#[derive(Clone, Copy, Debug)]
+pub struct CaptureBodyIndex {
+    /// Captured (expanded) body byte count.
+    pub bytes: usize,
+    /// Expected digest, verified when the payload is first read.
+    pub digest: [u8; 32],
+}
+
 /// One checked native frame with its stable on-disk location.
 #[derive(Clone, Debug)]
 pub struct CaptureFrame {
@@ -768,6 +867,8 @@ pub struct CaptureFrame {
     pub codec: FrameCodec,
     /// Validated durable record.
     pub record: CaptureRecord,
+    /// Separate payload descriptor; indexed reads leave body bytes unloaded.
+    pub body: Option<CaptureBodyIndex>,
 }
 
 /// Streaming native reader retaining at most one bounded frame payload.
@@ -792,7 +893,7 @@ impl<R: Read> CaptureReader<R> {
         Self::with_password(input, limits, None)
     }
 
-    /// Opens a legacy or v4 capture, checking the password before accepting records.
+    /// Opens a native capture, checking the password before accepting records.
     ///
     /// # Errors
     /// Returns a missing/wrong password, unsupported encoding or preamble error.
@@ -810,13 +911,10 @@ impl<R: Read> CaptureReader<R> {
                 CaptureError::Io(error)
             }
         })?;
-        let (codec, valid_bytes) = if magic == MAGIC {
-            (FrameCodec::default(), MAGIC.len() as u64)
-        } else if magic == encoding::MAGIC {
-            FrameCodec::read(&mut input, password)?
-        } else {
+        if magic != MAGIC {
             return Err(CaptureError::InvalidMagic);
-        };
+        }
+        let (codec, valid_bytes) = FrameCodec::read(&mut input, password)?;
         if valid_bytes > limits.max_file_bytes {
             return Err(CaptureError::QuotaExceeded);
         }
@@ -838,6 +936,29 @@ impl<R: Read> CaptureReader<R> {
     /// # Errors
     /// Returns complete-frame corruption, serialization, resource or I/O errors.
     pub fn read_next(&mut self) -> Result<Option<CaptureFrame>, CaptureError> {
+        self.read_next_using(|input, bytes| {
+            let length = usize::try_from(bytes).map_err(|_| CaptureError::QuotaExceeded)?;
+            let mut payload = vec![0; length];
+            input.read_exact(&mut payload)?;
+            Ok(Some(payload))
+        })
+    }
+
+    fn check_frame_bytes(&self, bytes: u64) -> Result<(), CaptureError> {
+        if self
+            .valid_bytes
+            .checked_add(bytes)
+            .is_none_or(|next| next > self.limits.max_file_bytes)
+        {
+            return Err(CaptureError::QuotaExceeded);
+        }
+        Ok(())
+    }
+
+    fn read_next_using(
+        &mut self,
+        mut read_body: impl FnMut(&mut R, u64) -> Result<Option<Vec<u8>>, CaptureError>,
+    ) -> Result<Option<CaptureFrame>, CaptureError> {
         if self.done {
             return Ok(None);
         }
@@ -858,7 +979,7 @@ impl<R: Read> CaptureReader<R> {
                 .try_into()
                 .map_err(|_| CaptureError::InvalidMagic)?,
         );
-        if length > self.codec.encoded_bound(self.limits.max_record_bytes) {
+        if length > FrameCodec::encoded_bound(self.limits.max_record_bytes) {
             return Err(CaptureError::RecordTooLarge {
                 actual: length,
                 limit: self.limits.max_record_bytes,
@@ -867,10 +988,8 @@ impl<R: Read> CaptureReader<R> {
         if self.records >= self.limits.max_records {
             return Err(CaptureError::RecordCountExceeded);
         }
-        let frame_bytes = FRAME_HEADER_BYTES as u64 + length as u64;
-        if self.valid_bytes.saturating_add(frame_bytes) > self.limits.max_file_bytes {
-            return Err(CaptureError::QuotaExceeded);
-        }
+        let mut frame_bytes = FRAME_HEADER_BYTES as u64 + length as u64;
+        self.check_frame_bytes(frame_bytes)?;
         let mut payload = vec![0_u8; length];
         if read_until_eof(&mut self.input, &mut payload)? != length {
             self.done = true;
@@ -886,7 +1005,42 @@ impl<R: Read> CaptureReader<R> {
         let payload = self
             .codec
             .decode(&payload, index, self.limits.max_record_bytes)?;
-        let record = load(serde_json::from_slice::<StoredRecord>(&payload)?)?;
+        let stored = serde_json::from_slice::<StoredRecord>(&payload)?;
+        let body_index = stored.body_index;
+        let mut record = load(stored)?;
+        if let Some(body) = body_index {
+            if !matches!(
+                record.kind,
+                CaptureRecordKind::BodySegment { bytes: None, .. }
+            ) {
+                return Err(CaptureError::InvalidMagic);
+            }
+            body.validate(self.limits.max_record_bytes)?;
+            frame_bytes = frame_bytes
+                .checked_add(body.frame_bytes)
+                .ok_or(CaptureError::QuotaExceeded)?;
+            self.check_frame_bytes(frame_bytes)?;
+            let encoded = match read_body(&mut self.input, body.frame_bytes) {
+                Err(CaptureError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                    self.done = true;
+                    self.truncated_tail = true;
+                    return Ok(None);
+                }
+                result => result?,
+            };
+            if let Some(encoded) = encoded {
+                let bytes = body.decode(
+                    &self.codec,
+                    &encoded,
+                    index,
+                    self.limits.max_record_bytes,
+                    self.records,
+                )?;
+                if let CaptureRecordKind::BodySegment { bytes: target, .. } = &mut record.kind {
+                    *target = Some(bytes);
+                }
+            }
+        }
         self.sealed = matches!(&record.kind, CaptureRecordKind::Seal { record_count } if *record_count == self.records as u64);
         self.records += 1;
         let offset = self.valid_bytes;
@@ -897,6 +1051,10 @@ impl<R: Read> CaptureReader<R> {
             frame_bytes,
             codec: self.codec.clone(),
             record,
+            body: body_index.map(|body| CaptureBodyIndex {
+                bytes: body.bytes,
+                digest: body.digest,
+            }),
         }))
     }
 
@@ -919,16 +1077,30 @@ impl<R: Read> CaptureReader<R> {
     }
 }
 
-/// Re-reads one indexed frame without allocating more than its declared bound.
-///
-/// # Errors
-/// Returns malformed/truncated frames, checksum changes, or resource errors.
-pub fn read_indexed_frame(
-    mut input: impl Read,
-    frame_bytes: u64,
-    limits: CaptureLimits,
-) -> Result<CaptureRecord, CaptureError> {
-    read_indexed_frame_with_codec(&mut input, frame_bytes, limits, &FrameCodec::default(), 0)
+impl<R: Read + Seek> CaptureReader<R> {
+    /// Reads only record metadata, seeking over separately encoded body bytes.
+    /// The skipped payload's
+    /// checksum, authentication tag and digest are checked by an on-demand read.
+    ///
+    /// # Errors
+    /// Returns metadata corruption, invalid bounds or I/O errors. An incomplete
+    /// final metadata/body pair is a recoverable truncated tail.
+    pub fn read_next_indexed(&mut self) -> Result<Option<CaptureFrame>, CaptureError> {
+        let position = self.input.stream_position()?;
+        let end = self.input.seek(SeekFrom::End(0))?;
+        self.input.seek(SeekFrom::Start(position))?;
+        self.read_next_using(|input, bytes| {
+            let next = input
+                .stream_position()?
+                .checked_add(bytes)
+                .ok_or(CaptureError::QuotaExceeded)?;
+            if next > end {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+            }
+            input.seek(SeekFrom::Start(next))?;
+            Ok(None)
+        })
+    }
 }
 
 /// Re-read one compressed/encrypted frame with the original context and physical index.
@@ -1292,12 +1464,13 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
         exchange_id: record.exchange_id,
         kind: kind.to_owned(),
         payload,
+        body_index: None,
     })
 }
 
 #[allow(clippy::too_many_lines)]
 fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
-    if !(1..=CAPTURE_FORMAT_REVISION).contains(&record.revision) {
+    if record.revision != CAPTURE_FORMAT_REVISION {
         return Err(CaptureError::UnsupportedRevision(record.revision));
     }
     let kind = match record.kind.as_str() {
@@ -1497,11 +1670,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_revisions_remain_readable_and_new_performance_round_trips() {
+    fn outdated_revisions_are_rejected_and_performance_round_trips() {
         for revision in [1, 2] {
             let mut old = store(&completed(3)).unwrap();
             old.revision = revision;
-            assert_eq!(load(old).unwrap(), completed(3));
+            assert!(matches!(
+                load(old),
+                Err(CaptureError::UnsupportedRevision(_))
+            ));
         }
         let evidence = transmog_core::performance::PerformanceEvidence {
             points: vec![transmog_core::performance::TimingPoint {
@@ -1554,7 +1730,14 @@ mod tests {
         let mut cursor = Cursor::new(&bytes);
         cursor.set_position(second.offset);
         assert_eq!(
-            read_indexed_frame(cursor, second.frame_bytes, CaptureLimits::default()).unwrap(),
+            read_indexed_frame_with_codec(
+                cursor,
+                second.frame_bytes,
+                CaptureLimits::default(),
+                &second.codec,
+                second.index
+            )
+            .unwrap(),
             completed(2)
         );
         let mut changed = bytes.clone();
@@ -1562,7 +1745,16 @@ mod tests {
         changed[last] ^= 255;
         let mut cursor = Cursor::new(changed);
         cursor.set_position(second.offset);
-        assert!(read_indexed_frame(cursor, second.frame_bytes, CaptureLimits::default()).is_err());
+        assert!(
+            read_indexed_frame_with_codec(
+                cursor,
+                second.frame_bytes,
+                CaptureLimits::default(),
+                &second.codec,
+                second.index
+            )
+            .is_err()
+        );
         reader.read_next().unwrap().unwrap();
         assert!(reader.sealed());
         assert!(reader.read_next().unwrap().is_none());
@@ -1616,11 +1808,17 @@ mod tests {
     #[test]
     fn every_truncated_tail_recovers_only_a_valid_prefix() {
         let bytes = artifact(&[completed(1), completed(2)], true);
-        for length in MAGIC.len()..bytes.len() {
+        let preamble = usize::try_from(
+            CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default())
+                .unwrap()
+                .valid_bytes(),
+        )
+        .unwrap();
+        for length in preamble..bytes.len() {
             let recovered = recover(&bytes[..length], CaptureLimits::default()).unwrap();
             assert!(recovered.valid_bytes <= length as u64);
             assert!(!recovered.sealed);
-            if length > MAGIC.len() {
+            if length > preamble {
                 assert!(recovered.truncated_tail || recovered.valid_bytes == length as u64);
             }
         }
@@ -1635,12 +1833,8 @@ mod tests {
             Err(CaptureError::ChecksumMismatch { record_index: 0 })
         ));
 
-        let limits = CaptureLimits {
-            max_file_bytes: 24,
-            max_record_bytes: 1024,
-            max_records: 2,
-        };
-        let mut writer = CaptureWriter::new(Vec::new(), limits).unwrap();
+        let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+        writer.limits.max_file_bytes = writer.bytes_written() + 1;
         assert!(matches!(
             writer.append(&completed(1)),
             Err(CaptureError::QuotaExceeded)

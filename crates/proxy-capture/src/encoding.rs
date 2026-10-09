@@ -13,7 +13,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub(crate) const MAGIC: [u8; 8] = *b"TMCAP04\0";
+pub(crate) const MAGIC: [u8; 8] = *b"TMCAP05\0";
 const MAX_HEADER: usize = 4096;
 const FRAME_OVERHEAD: usize = 29;
 
@@ -64,9 +64,9 @@ struct Header {
 
 /// Immutable decoding context shared by indexed payload readers.
 /// Keys remain in memory and Debug never reveals them.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FrameCodec {
-    inner: Option<Arc<CodecInner>>,
+    inner: Arc<CodecInner>,
 }
 struct CodecInner {
     header: Vec<u8>,
@@ -76,11 +76,8 @@ struct CodecInner {
 impl fmt::Debug for FrameCodec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FrameCodec")
-            .field("compressed", &self.inner.is_some())
-            .field(
-                "encrypted",
-                &self.inner.as_ref().is_some_and(|inner| inner.key.is_some()),
-            )
+            .field("compressed", &true)
+            .field("encrypted", &self.inner.key.is_some())
             .finish()
     }
 }
@@ -97,7 +94,7 @@ impl FrameCodec {
             .map_err(|_| CaptureError::Crypto("System randomness is unavailable"))?;
         let encrypted = options.password.is_some();
         let header = Header {
-            version: 4,
+            version: 5,
             compression: "deflate".into(),
             cipher: if encrypted { "aes-256-gcm" } else { "none" }.into(),
             kdf: if encrypted { "argon2id" } else { "none" }.into(),
@@ -136,11 +133,7 @@ impl FrameCodec {
         let codec = Self::from_header(encoded, &header, password)?;
         let mut proof = vec![0; codec.proof()?.len()];
         input.read_exact(&mut proof)?;
-        if codec
-            .inner
-            .as_ref()
-            .is_some_and(|inner| inner.key.is_some())
-        {
+        if codec.inner.key.is_some() {
             codec
                 .decrypt(0, &[], &proof)
                 .map_err(|_| CaptureError::InvalidPassword)?;
@@ -152,7 +145,7 @@ impl FrameCodec {
         header: &Header,
         password: Option<&CapturePassword>,
     ) -> Result<Self, CaptureError> {
-        if header.version != 4 || header.compression != "deflate" {
+        if header.version != 5 || header.compression != "deflate" {
             return Err(CaptureError::UnsupportedEncoding);
         }
         let key = match (header.cipher.as_str(), header.kdf.as_str()) {
@@ -180,32 +173,27 @@ impl FrameCodec {
             _ => return Err(CaptureError::UnsupportedEncoding),
         };
         Ok(Self {
-            inner: Some(Arc::new(CodecInner {
+            inner: Arc::new(CodecInner {
                 header: encoded,
                 key,
                 prefix: header.nonce_prefix,
-            })),
+            }),
         })
     }
     fn nonce(&self, counter: u64) -> [u8; 12] {
         let mut nonce = [0; 12];
-        if let Some(inner) = &self.inner {
-            nonce[..4].copy_from_slice(&inner.prefix);
-        }
+        nonce[..4].copy_from_slice(&self.inner.prefix);
         nonce[4..].copy_from_slice(&counter.to_be_bytes());
         nonce
     }
     fn aad(&self, counter: u64, frame_head: &[u8]) -> Vec<u8> {
-        let mut aad = self
-            .inner
-            .as_ref()
-            .map_or_else(Vec::new, |inner| inner.header.clone());
+        let mut aad = self.inner.header.clone();
         aad.extend_from_slice(&counter.to_le_bytes());
         aad.extend_from_slice(frame_head);
         aad
     }
     fn encrypt(&self, counter: u64, head: &[u8], bytes: &[u8]) -> Result<Vec<u8>, CaptureError> {
-        let Some(key) = self.inner.as_ref().and_then(|inner| inner.key.as_ref()) else {
+        let Some(key) = self.inner.key.as_ref() else {
             return Ok(bytes.to_vec());
         };
         let cipher = Aes256Gcm::new_from_slice(&**key)
@@ -221,7 +209,7 @@ impl FrameCodec {
             .map_err(|_| CaptureError::Crypto("Frame encryption failed"))
     }
     fn decrypt(&self, counter: u64, head: &[u8], bytes: &[u8]) -> Result<Vec<u8>, CaptureError> {
-        let Some(key) = self.inner.as_ref().and_then(|inner| inner.key.as_ref()) else {
+        let Some(key) = self.inner.key.as_ref() else {
             return Ok(bytes.to_vec());
         };
         let cipher = Aes256Gcm::new_from_slice(&**key)
@@ -237,26 +225,28 @@ impl FrameCodec {
             .map_err(|_| CaptureError::AuthenticationFailed)
     }
     fn proof(&self) -> Result<Vec<u8>, CaptureError> {
-        if self.inner.as_ref().is_some_and(|inner| inner.key.is_some()) {
+        if self.inner.key.is_some() {
             self.encrypt(0, &[], &[])
         } else {
             Ok(Vec::new())
         }
     }
-    pub(crate) fn encoded_bound(&self, maximum: usize) -> usize {
-        if self.inner.is_some() {
-            maximum.saturating_add(FRAME_OVERHEAD)
-        } else {
-            maximum
-        }
+    pub(crate) fn encoded_bound(maximum: usize) -> usize {
+        maximum.saturating_add(FRAME_OVERHEAD)
+    }
+    fn counter(index: u64, body: bool) -> Result<u64, CaptureError> {
+        index
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(if body { 2 } else { 1 }))
+            .ok_or(CaptureError::RecordCountExceeded)
+    }
+    pub(crate) fn encode_body(&self, bytes: &[u8], index: u64) -> Result<Vec<u8>, CaptureError> {
+        self.encode_counter(bytes, Self::counter(index, true)?)
     }
     pub(crate) fn encode(&self, bytes: &[u8], index: u64) -> Result<Vec<u8>, CaptureError> {
-        if self.inner.is_none() {
-            return Ok(bytes.to_vec());
-        }
-        let counter = index
-            .checked_add(1)
-            .ok_or(CaptureError::RecordCountExceeded)?;
+        self.encode_counter(bytes, Self::counter(index, false)?)
+    }
+    fn encode_counter(&self, bytes: &[u8], counter: u64) -> Result<Vec<u8>, CaptureError> {
         let mut compressor =
             flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
         compressor.write_all(bytes)?;
@@ -285,9 +275,22 @@ impl FrameCodec {
         index: u64,
         maximum: usize,
     ) -> Result<Vec<u8>, CaptureError> {
-        if self.inner.is_none() {
-            return Ok(bytes.to_vec());
-        }
+        self.decode_counter(bytes, Self::counter(index, false)?, maximum)
+    }
+    pub(crate) fn decode_body(
+        &self,
+        bytes: &[u8],
+        index: u64,
+        maximum: usize,
+    ) -> Result<Vec<u8>, CaptureError> {
+        self.decode_counter(bytes, Self::counter(index, true)?, maximum)
+    }
+    fn decode_counter(
+        &self,
+        bytes: &[u8],
+        expected_counter: u64,
+        maximum: usize,
+    ) -> Result<Vec<u8>, CaptureError> {
         if bytes.len() < 13 {
             return Err(CaptureError::AuthenticationFailed);
         }
@@ -296,11 +299,7 @@ impl FrameCodec {
                 .try_into()
                 .map_err(|_| CaptureError::InvalidMagic)?,
         );
-        if counter
-            != index
-                .checked_add(1)
-                .ok_or(CaptureError::RecordCountExceeded)?
-        {
+        if counter != expected_counter {
             return Err(CaptureError::AuthenticationFailed);
         }
         let expanded = u32::from_le_bytes(
@@ -349,6 +348,113 @@ mod tests {
                 bytes: Some(vec![b'x'; 200_000]),
                 truncated: false,
             },
+        }
+    }
+    struct CountedCursor {
+        input: Cursor<Vec<u8>>,
+        read_bytes: usize,
+    }
+    impl Read for CountedCursor {
+        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.input.read(output)?;
+            self.read_bytes += count;
+            Ok(count)
+        }
+    }
+    impl std::io::Seek for CountedCursor {
+        fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.input.seek(position)
+        }
+    }
+    #[test]
+    fn indexed_open_seeks_over_payload_and_authenticates_it_only_on_read() {
+        for password in [None, Some(CapturePassword::new("lazy-password".into()))] {
+            let mut random = 0x1234_5678_u32;
+            let body = (0..1_048_576)
+                .map(|_| {
+                    random ^= random << 13;
+                    random ^= random >> 17;
+                    random ^= random << 5;
+                    random.to_le_bytes()[0]
+                })
+                .collect::<Vec<_>>();
+            let expected = CaptureRecord {
+                sequence: 1,
+                exchange_id: 1,
+                kind: CaptureRecordKind::BodySegment {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientRequest,
+                    byte_count: body.len(),
+                    bytes: Some(body),
+                    truncated: false,
+                },
+            };
+            let mut writer = CaptureWriter::with_encoding(
+                Vec::new(),
+                CaptureLimits::default(),
+                &CaptureEncoding {
+                    password: password.clone(),
+                },
+            )
+            .unwrap();
+            writer.append(&expected).unwrap();
+            writer.seal().unwrap();
+            let encoded = writer.into_inner();
+            let mut reader = CaptureReader::with_password(
+                CountedCursor {
+                    input: Cursor::new(encoded.clone()),
+                    read_bytes: 0,
+                },
+                CaptureLimits::default(),
+                password.as_ref(),
+            )
+            .unwrap();
+            let frame = reader.read_next_indexed().unwrap().unwrap();
+            assert!(matches!(
+                frame.record.kind,
+                CaptureRecordKind::BodySegment { bytes: None, .. }
+            ));
+            assert_eq!(frame.body.unwrap().bytes, 1_048_576);
+            assert!(reader.read_next_indexed().unwrap().is_some());
+            assert!(reader.read_next_indexed().unwrap().is_none());
+            assert!(
+                reader.input.read_bytes < 4096,
+                "Indexing read body payload bytes"
+            );
+            let mut cursor = Cursor::new(encoded.clone());
+            cursor.set_position(frame.offset);
+            assert_eq!(
+                read_indexed_frame_with_codec(
+                    cursor,
+                    frame.frame_bytes,
+                    CaptureLimits::default(),
+                    &frame.codec,
+                    frame.index
+                )
+                .unwrap(),
+                expected
+            );
+            let mut changed = encoded;
+            // The last byte of the body pair belongs to the body payload, not its metadata.
+            changed[usize::try_from(frame.offset + frame.frame_bytes - 1).unwrap()] ^= 1;
+            let mut lazy = CaptureReader::with_password(
+                Cursor::new(&changed),
+                CaptureLimits::default(),
+                password.as_ref(),
+            )
+            .unwrap();
+            assert!(lazy.read_next_indexed().unwrap().is_some());
+            let mut cursor = Cursor::new(changed);
+            cursor.set_position(frame.offset);
+            assert!(
+                read_indexed_frame_with_codec(
+                    cursor,
+                    frame.frame_bytes,
+                    CaptureLimits::default(),
+                    &frame.codec,
+                    frame.index
+                )
+                .is_err()
+            );
         }
     }
     #[test]
@@ -430,8 +536,9 @@ mod tests {
         let mut changed = indexed.to_vec();
         let last = changed.len() - 1;
         changed[last] ^= 1;
-        let checksum = crc32fast::hash(&changed[8..]);
-        changed[4..8].copy_from_slice(&checksum.to_le_bytes());
+        let body_start = 8 + u32::from_le_bytes(changed[..4].try_into().unwrap()) as usize;
+        let checksum = crc32fast::hash(&changed[body_start + 8..]);
+        changed[body_start + 4..body_start + 8].copy_from_slice(&checksum.to_le_bytes());
         assert!(matches!(
             read_indexed_frame_with_codec(
                 Cursor::new(changed),

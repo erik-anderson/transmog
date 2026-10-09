@@ -384,3 +384,12 @@ records, while circular CLI capture writes the newest retained exchanges at stop
 All phases are committed in the managed worktree. Production signing and the
 maintainer's protected release checklist remain qualification steps for the
 release environment; no signed release or publication was performed locally.
+
+## Format and retention follow-up
+
+35. Native body payloads are separate from authenticated metadata frames. Indexed
+    opening seeks past payloads, with checksums/authentication/digests checked on
+    demand. The prior encrypted layout is replaced directly, as requested.
+    A counted-read test verifies that a one-MiB incompressible encrypted or plain
+    body is never read while indexing; a corrupt skipped body fails on access.
+    Circular recording preserves complete metadata/body pairs and nonce domains.

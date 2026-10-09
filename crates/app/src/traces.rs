@@ -862,7 +862,7 @@ fn import_native(
     let mut sources = BTreeMap::new();
     let mut budget = 0_usize;
     while let Some(frame) = capture
-        .read_next()
+        .read_next_indexed()
         .map_err(|_| invalid("The native capture contains a corrupt or oversized frame"))?
     {
         if canceled.load(Ordering::Acquire) {
@@ -1034,18 +1034,22 @@ fn apply_native_frame(
                 .entry(crate::inspector::boundary(boundary))
                 .or_default();
             body.observed = body.observed.saturating_add(byte_count as u64);
-            body.incomplete |= truncated
-                || bytes.as_ref().is_none_or(|bytes| bytes.len() != byte_count) && byte_count > 0;
-            if let Some(bytes) = bytes
-                && !bytes.is_empty()
-            {
-                body.retained += bytes.len() as u64;
+            let captured = frame
+                .body
+                .map_or_else(|| bytes.as_ref().map_or(0, Vec::len), |index| index.bytes);
+            body.incomplete |= truncated || captured != byte_count && byte_count > 0;
+            if captured > 0 {
+                let digest = frame.body.map_or_else(
+                    || Sha256::digest(bytes.as_ref().unwrap()).into(),
+                    |index| index.digest,
+                );
+                body.retained += captured as u64;
                 body.pieces.push(NativeBodyPiece {
                     offset: frame.offset,
                     index: frame.index,
                     codec: frame.codec.clone(),
                     frame_bytes: frame.frame_bytes,
-                    digest: Sha256::digest(bytes).into(),
+                    digest,
                 });
                 *budget = budget.saturating_add(std::mem::size_of::<NativeBodyPiece>());
             }
