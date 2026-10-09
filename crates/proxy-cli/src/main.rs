@@ -282,7 +282,11 @@ impl Observer for FileCaptureObserver {
 
 fn open_live_capture(path: &Path) -> Result<LiveCapture, Box<dyn Error>> {
     let file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    let writer = CaptureWriter::new(file, CaptureLimits::default())?;
+    let writer = CaptureWriter::with_encoding(
+        file,
+        CaptureLimits::default(),
+        &transmog_capture::CaptureEncoding::default(),
+    )?;
     Ok(Arc::new(Mutex::new(LiveCaptureState {
         writer,
         retention: CaptureBodyRetention::default(),
@@ -408,7 +412,11 @@ fn write_sealed_capture<W: Write>(
     output: W,
     capture: &RecoveredCapture,
 ) -> Result<(), transmog_capture::CaptureError> {
-    let mut writer = CaptureWriter::new(output, CaptureLimits::default())?;
+    let mut writer = CaptureWriter::with_encoding(
+        output,
+        CaptureLimits::default(),
+        &transmog_capture::CaptureEncoding::default(),
+    )?;
     for record in &capture.records {
         if !matches!(
             record.kind,

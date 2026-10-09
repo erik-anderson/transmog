@@ -79,17 +79,16 @@ Undo. Column filters remain applicable to search results and bulk selection.
   inside the application viewport; the document root never scrolls.
 - The `system` theme follows the host light/dark preference live. Explicit
   light and dark choices override it and keep Monaco aligned with the shell.
-- Response-body retention is enabled by default with a bounded one-GiB circular
-  store and can be disabled. Text, binary, missing,
+- Response-body retention is enabled by default with a configurable circular
+  store (half installed RAM in memory by default) and can be disabled. Text, binary, missing,
   truncated, redacted, and lossy evidence are distinct inspector states.
 - Interactive breakpoints use one same-build controller. Closing the window,
   disabling breakpoints, timing out, or losing the controller fails unresolved
   decisions closed.
 - Composer replay requires explicit acknowledgement for non-idempotent methods
   and credential-bearing fields and uses the canonical Rust HTTP/TLS stack.
-- Native `.tmcap` files are the streaming source of truth. The desktop captures
-  automatically while its proxy is running and can export a create-new, sealed
-  TMCap snapshot without stopping the live source. JSONL export streams records
+- Native `.tmcap` files are the streaming source of truth. The desktop keeps traffic in its memory-first buffer and can save a sealed
+  TMCap snapshot or explicitly start a streaming recording. JSONL export streams records
   sequentially. SAZ must be finalized and cannot preserve every native boundary
   or hook record, so each result includes a fidelity disclosure.
 - Raster previews are decoded and normalized to PNG in an AppContainer helper,

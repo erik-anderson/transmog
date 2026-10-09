@@ -255,6 +255,7 @@ async fn run_capture(
     let metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
     service
         .start_capture(CaptureStart {
+            encoding: transmog_capture::CaptureEncoding::default(),
             metadata: Some(metadata),
             path: native.to_path_buf(),
             limits: CaptureLimits::default(),

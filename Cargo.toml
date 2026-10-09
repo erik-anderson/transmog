@@ -39,6 +39,9 @@ license = "MIT"
 repository = "https://github.com/erik-anderson/transmog"
 
 [workspace.dependencies]
+aes-gcm = "=0.10.3"
+argon2 = "=0.5.3"
+zeroize = "=1.9.0"
 sysinfo = { version = "=0.37.2", default-features = false, features = ["system"] }
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"

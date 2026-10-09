@@ -5,6 +5,9 @@
 //! The durable schema is independent from live control messages. A valid
 //! prefix remains readable after a crash-truncated final record.
 
+mod encoding;
+pub use encoding::{CaptureEncoding, CapturePassword, FrameCodec};
+
 use std::{
     collections::{BTreeSet, HashMap},
     io::{self, Read, Write},
@@ -407,6 +410,7 @@ pub struct CaptureWriter<W> {
     bytes_written: u64,
     records_written: u64,
     sealed: bool,
+    codec: FrameCodec,
 }
 
 impl<W: Write> CaptureWriter<W> {
@@ -424,6 +428,31 @@ impl<W: Write> CaptureWriter<W> {
             bytes_written: MAGIC.len() as u64,
             records_written: 0,
             sealed: false,
+            codec: FrameCodec::default(),
+        })
+    }
+
+    /// Creates a compressed, optionally encrypted capture with an agile v4 header.
+    ///
+    /// # Errors
+    /// Returns invalid bounds, cryptographic initialization or output failures.
+    pub fn with_encoding(
+        mut output: W,
+        limits: CaptureLimits,
+        options: &CaptureEncoding,
+    ) -> Result<Self, CaptureError> {
+        let limits = limits.validate()?;
+        let (codec, bytes_written) = FrameCodec::create(&mut output, options)?;
+        if bytes_written > limits.max_file_bytes {
+            return Err(CaptureError::QuotaExceeded);
+        }
+        Ok(Self {
+            output,
+            limits,
+            bytes_written,
+            records_written: 0,
+            sealed: false,
+            codec,
         })
     }
 
@@ -533,6 +562,7 @@ impl<W: Write> CaptureWriter<W> {
                 limit: self.limits.max_record_bytes,
             });
         }
+        let payload = self.codec.encode(payload, self.records_written)?;
         let framed = (FRAME_HEADER_BYTES as u64).saturating_add(payload.len() as u64);
         let next = self
             .bytes_written
@@ -545,12 +575,15 @@ impl<W: Write> CaptureWriter<W> {
             actual: payload.len(),
             limit: u32::MAX as usize,
         })?;
+        // A partial I/O failure poisons this writer so no nonce can be reused with different bytes.
+        self.sealed = true;
         self.output.write_all(&length.to_le_bytes())?;
         self.output
-            .write_all(&crc32fast::hash(payload).to_le_bytes())?;
-        self.output.write_all(payload)?;
+            .write_all(&crc32fast::hash(&payload).to_le_bytes())?;
+        self.output.write_all(&payload)?;
         self.output.flush()?;
         self.bytes_written = next;
+        self.sealed = false;
         Ok(())
     }
 }
@@ -695,7 +728,19 @@ impl<W: Write> CaptureExporter for JsonLinesExporter<W> {
 ///
 /// Returns a typed format, checksum, serialization, bound, or I/O error.
 pub fn recover<R: Read>(input: R, limits: CaptureLimits) -> Result<RecoveredCapture, CaptureError> {
-    let mut reader = CaptureReader::new(input, limits)?;
+    recover_with_password(input, limits, None)
+}
+
+/// Recover a bounded legacy or encrypted capture using a transient password.
+///
+/// # Errors
+/// Returns password, authentication, format, resource or I/O failures.
+pub fn recover_with_password<R: Read>(
+    input: R,
+    limits: CaptureLimits,
+    password: Option<&CapturePassword>,
+) -> Result<RecoveredCapture, CaptureError> {
+    let mut reader = CaptureReader::with_password(input, limits, password)?;
     let mut records = Vec::new();
     while let Some(frame) = reader.read_next()? {
         records.push(frame.record);
@@ -713,8 +758,12 @@ pub fn recover<R: Read>(input: R, limits: CaptureLimits) -> Result<RecoveredCapt
 pub struct CaptureFrame {
     /// Offset of its frame header, suitable for a later bounded re-read.
     pub offset: u64,
+    /// Zero-based physical frame index used for authenticated random reads.
+    pub index: u64,
     /// Total header and payload bytes.
     pub frame_bytes: u64,
+    /// Decoding context for an independently indexed payload.
+    pub codec: FrameCodec,
     /// Validated durable record.
     pub record: CaptureRecord,
 }
@@ -728,6 +777,8 @@ pub struct CaptureReader<R> {
     truncated_tail: bool,
     sealed: bool,
     done: bool,
+    codec: FrameCodec,
+    index_base: u64,
 }
 
 impl<R: Read> CaptureReader<R> {
@@ -735,7 +786,19 @@ impl<R: Read> CaptureReader<R> {
     ///
     /// # Errors
     /// Returns a format, truncated-preamble or I/O error.
-    pub fn new(mut input: R, limits: CaptureLimits) -> Result<Self, CaptureError> {
+    pub fn new(input: R, limits: CaptureLimits) -> Result<Self, CaptureError> {
+        Self::with_password(input, limits, None)
+    }
+
+    /// Opens a legacy or v4 capture, checking the password before accepting records.
+    ///
+    /// # Errors
+    /// Returns a missing/wrong password, unsupported encoding or preamble error.
+    pub fn with_password(
+        mut input: R,
+        limits: CaptureLimits,
+        password: Option<&CapturePassword>,
+    ) -> Result<Self, CaptureError> {
         let limits = limits.validate()?;
         let mut magic = [0_u8; MAGIC.len()];
         input.read_exact(&mut magic).map_err(|error| {
@@ -745,17 +808,26 @@ impl<R: Read> CaptureReader<R> {
                 CaptureError::Io(error)
             }
         })?;
-        if magic != MAGIC {
+        let (codec, valid_bytes) = if magic == MAGIC {
+            (FrameCodec::default(), MAGIC.len() as u64)
+        } else if magic == encoding::MAGIC {
+            FrameCodec::read(&mut input, password)?
+        } else {
             return Err(CaptureError::InvalidMagic);
+        };
+        if valid_bytes > limits.max_file_bytes {
+            return Err(CaptureError::QuotaExceeded);
         }
         Ok(Self {
             input,
             limits,
             records: 0,
-            valid_bytes: MAGIC.len() as u64,
+            valid_bytes,
             truncated_tail: false,
             sealed: false,
             done: false,
+            codec,
+            index_base: 0,
         })
     }
 
@@ -784,7 +856,7 @@ impl<R: Read> CaptureReader<R> {
                 .try_into()
                 .map_err(|_| CaptureError::InvalidMagic)?,
         );
-        if length > self.limits.max_record_bytes {
+        if length > self.codec.encoded_bound(self.limits.max_record_bytes) {
             return Err(CaptureError::RecordTooLarge {
                 actual: length,
                 limit: self.limits.max_record_bytes,
@@ -808,6 +880,10 @@ impl<R: Read> CaptureReader<R> {
                 record_index: self.records,
             });
         }
+        let index = self.index_base + self.records as u64;
+        let payload = self
+            .codec
+            .decode(&payload, index, self.limits.max_record_bytes)?;
         let record = load(serde_json::from_slice::<StoredRecord>(&payload)?)?;
         self.sealed = matches!(&record.kind, CaptureRecordKind::Seal { record_count } if *record_count == self.records as u64);
         self.records += 1;
@@ -815,9 +891,16 @@ impl<R: Read> CaptureReader<R> {
         self.valid_bytes += frame_bytes;
         Ok(Some(CaptureFrame {
             offset,
+            index,
             frame_bytes,
+            codec: self.codec.clone(),
             record,
         }))
+    }
+
+    /// Decoding context for later independent authenticated frame reads.
+    pub fn codec(&self) -> FrameCodec {
+        self.codec.clone()
     }
 
     /// Length of the fully validated native prefix.
@@ -843,8 +926,31 @@ pub fn read_indexed_frame(
     frame_bytes: u64,
     limits: CaptureLimits,
 ) -> Result<CaptureRecord, CaptureError> {
-    let prefix = std::io::Cursor::new(MAGIC).chain((&mut input).take(frame_bytes));
-    let mut reader = CaptureReader::new(prefix, limits)?;
+    read_indexed_frame_with_codec(&mut input, frame_bytes, limits, &FrameCodec::default(), 0)
+}
+
+/// Re-read one compressed/encrypted frame with the original context and physical index.
+///
+/// # Errors
+/// Rejects changed ciphertext, reordered frames, malformed data or exceeded bounds.
+pub fn read_indexed_frame_with_codec(
+    input: impl Read,
+    frame_bytes: u64,
+    limits: CaptureLimits,
+    codec: &FrameCodec,
+    index: u64,
+) -> Result<CaptureRecord, CaptureError> {
+    let mut reader = CaptureReader {
+        input: input.take(frame_bytes),
+        limits: limits.validate()?,
+        records: 0,
+        valid_bytes: 0,
+        truncated_tail: false,
+        sealed: false,
+        done: false,
+        codec: codec.clone(),
+        index_base: index,
+    };
     let frame = reader.read_next()?.ok_or(CaptureError::TruncatedPreamble)?;
     if frame.frame_bytes != frame_bytes {
         return Err(CaptureError::InvalidMagic);
@@ -1316,6 +1422,21 @@ fn read_until_eof<R: Read>(input: &mut R, destination: &mut [u8]) -> io::Result<
 /// Native capture failure.
 #[derive(Debug, Error)]
 pub enum CaptureError {
+    /// Encrypted capture needs an explicitly supplied transient password.
+    #[error("This capture requires a password")]
+    PasswordRequired,
+    /// Header key check failed before any traffic was published.
+    #[error("The capture password is incorrect or its encrypted header is damaged")]
+    InvalidPassword,
+    /// Cipher, KDF or compression parameters are not supported.
+    #[error("The capture uses an unsupported encoding or encryption algorithm")]
+    UnsupportedEncoding,
+    /// Authenticated ciphertext or frame ordering changed.
+    #[error("The capture failed authentication")]
+    AuthenticationFailed,
+    /// Redacted cryptographic failure.
+    #[error("Capture cryptography failed: {0}")]
+    Crypto(&'static str),
     /// Limits were zero or internally inconsistent.
     #[error("capture limits are invalid")]
     InvalidLimits,

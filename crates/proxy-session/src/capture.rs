@@ -18,6 +18,8 @@ use transmog_core::observe::ObserverEvent;
 /// Settings for a new native capture artifact.
 #[derive(Clone, Debug)]
 pub struct CaptureStart {
+    /// Independent compression and optional password-derived encryption.
+    pub encoding: transmog_capture::CaptureEncoding,
     /// New destination path. Existing files are never overwritten.
     pub path: PathBuf,
     /// Finite artifact, record, and recovery bounds.
@@ -334,7 +336,7 @@ fn start_capture(
                 CaptureServiceError::Writer(error.to_string())
             }
         })?;
-    let writer = match prepare_writer(file, request.limits, request.metadata) {
+    let writer = match prepare_writer(file, request.limits, request.metadata, &request.encoding) {
         Ok(writer) => writer,
         Err(error) => {
             let _ = std::fs::remove_file(&request.path);
@@ -362,8 +364,9 @@ fn prepare_writer(
     file: File,
     limits: CaptureLimits,
     metadata: Option<serde_json::Value>,
+    encoding: &transmog_capture::CaptureEncoding,
 ) -> Result<CaptureWriter<File>, CaptureServiceError> {
-    let mut writer = CaptureWriter::new(file, limits)
+    let mut writer = CaptureWriter::with_encoding(file, limits, encoding)
         .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
     if let Some(metadata) = metadata {
         writer
@@ -529,6 +532,7 @@ mod tests {
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
         manager
             .start(CaptureStart {
+                encoding: transmog_capture::CaptureEncoding::default(),
                 metadata: None,
                 path: path.clone(),
                 limits: CaptureLimits::default(),
@@ -554,7 +558,7 @@ mod tests {
     async fn context_precedes_exchange_records_without_changing_their_sequence() {
         let path = temp_path();
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
-        manager.start(CaptureStart{path:path.clone(),limits:CaptureLimits::default(),policy:CapturePolicy::default(),metadata:Some(serde_json::json!({"networkContext":{"platform":"fixture","output":"original machine"}}))}).await.unwrap();
+        manager.start(CaptureStart{encoding:transmog_capture::CaptureEncoding::default(),path:path.clone(),limits:CaptureLimits::default(),policy:CapturePolicy::default(),metadata:Some(serde_json::json!({"networkContext":{"platform":"fixture","output":"original machine"}}))}).await.unwrap();
         manager.record(start_event(1));
         let sealed = manager.stop().await.unwrap();
         let capture = recover(File::open(&sealed.path).unwrap(), CaptureLimits::default()).unwrap();
@@ -575,9 +579,10 @@ mod tests {
         assert!(
             manager
                 .start(CaptureStart {
+                    encoding: transmog_capture::CaptureEncoding::default(),
                     path: path.clone(),
                     limits: CaptureLimits {
-                        max_file_bytes: 32,
+                        max_file_bytes: 1024,
                         max_record_bytes: 16,
                         max_records: 2
                     },
@@ -600,6 +605,7 @@ mod tests {
         assert_eq!(
             manager
                 .start(CaptureStart {
+                    encoding: transmog_capture::CaptureEncoding::default(),
                     metadata: None,
                     path: path.clone(),
                     limits: CaptureLimits::default(),
@@ -619,10 +625,11 @@ mod tests {
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
         manager
             .start(CaptureStart {
+                encoding: transmog_capture::CaptureEncoding::default(),
                 metadata: None,
                 path: path.clone(),
                 limits: CaptureLimits {
-                    max_file_bytes: 32,
+                    max_file_bytes: 1024,
                     max_record_bytes: 16,
                     max_records: 2,
                 },

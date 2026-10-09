@@ -9,7 +9,7 @@ use std::{
         mpsc,
     },
 };
-use transmog_capture::{CaptureLimits, CaptureRecordKind, read_indexed_frame};
+use transmog_capture::{CaptureLimits, CaptureRecordKind, read_indexed_frame_with_codec};
 use transmog_saz::{ArchiveBody, SazArchive};
 
 use crate::body_store::SavedBodySource;
@@ -169,6 +169,8 @@ impl Read for ChunkReader {
 #[derive(Clone, Debug)]
 pub(crate) struct NativeBodyPiece {
     pub offset: u64,
+    pub index: u64,
+    pub codec: transmog_capture::FrameCodec,
     pub frame_bytes: u64,
     pub digest: [u8; 32],
 }
@@ -214,8 +216,14 @@ impl Read for NativeBodyReader {
                 max_record_bytes: 8 * 1024 * 1024,
                 max_records: 1,
             };
-            let record = read_indexed_frame(&mut self.reader, piece.frame_bytes, limits)
-                .map_err(|_| io::Error::other("Saved native frame changed or is corrupt"))?;
+            let record = read_indexed_frame_with_codec(
+                &mut self.reader,
+                piece.frame_bytes,
+                limits,
+                &piece.codec,
+                piece.index,
+            )
+            .map_err(|_| io::Error::other("Saved native frame changed or is corrupt"))?;
             let CaptureRecordKind::BodySegment {
                 bytes: Some(bytes), ..
             } = record.kind

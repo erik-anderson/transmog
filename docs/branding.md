@@ -21,7 +21,7 @@ Developer-facing identifiers follow their ecosystem conventions:
   under the single user-visible `%LOCALAPPDATA%\Transmog` folder. The package
   identifier must not be used as an application-data folder name.
 
-Native captures use the `.tmcap` extension and `TMCAP01` preamble. Extended SAZ
+Native captures use the `.tmcap` extension and `TMCAP04` preamble (legacy `TMCAP01` is still readable). Extended SAZ
 exports use `transmog/manifest.json` and the `transmog-saz-extension-v1` format
 marker. Pre-Transmog development formats are intentionally unsupported.
 

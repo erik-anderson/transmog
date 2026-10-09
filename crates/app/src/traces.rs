@@ -41,6 +41,9 @@ const MAX_HEAD_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceImportRequest {
+    /// Transient password for encrypted native or SAZ traffic.
+    #[serde(default)]
+    pub password: Option<transmog_capture::CapturePassword>,
     /// User-selected original source file.
     pub path: PathBuf,
     /// Caller-generated operation key used for cancellation and stale results.
@@ -243,7 +246,15 @@ impl TraceRegistry {
                 &report,
             )?
         } else {
-            import_native(&reader, prefix, &trace_id, bytes, canceled, &report)?
+            import_native(
+                &reader,
+                prefix,
+                &trace_id,
+                bytes,
+                canceled,
+                &report,
+                request.password.as_ref(),
+            )?
         };
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
@@ -831,16 +842,18 @@ fn import_native(
     max_bytes: u64,
     canceled: &AtomicBool,
     progress: &dyn Fn(u64, u64),
+    password: Option<&transmog_capture::CapturePassword>,
 ) -> Result<ImportData, AppError> {
-    let mut capture = CaptureReader::new(
+    let mut capture = CaptureReader::with_password(
         reader.clone(),
         CaptureLimits {
             max_file_bytes: max_bytes,
             max_record_bytes: 8 * 1024 * 1024,
             max_records: 10_000_000,
         },
+        password,
     )
-    .map_err(|_| invalid("The selected file is not a valid native capture"))?;
+    .map_err(|error| invalid(&error.to_string()))?;
     let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
     let mut context = Value::Null;
     let mut sources = BTreeMap::new();
@@ -1022,6 +1035,8 @@ fn apply_native_frame(
                 body.retained += bytes.len() as u64;
                 body.pieces.push(NativeBodyPiece {
                     offset: frame.offset,
+                    index: frame.index,
+                    codec: frame.codec.clone(),
                     frame_bytes: frame.frame_bytes,
                     digest: Sha256::digest(bytes).into(),
                 });
@@ -1571,6 +1586,7 @@ mod tests {
     }
     fn request(path: PathBuf, operation_id: &str) -> TraceImportRequest {
         TraceImportRequest {
+            password: None,
             path,
             operation_id: operation_id.into(),
             max_file_bytes: 64 * 1024 * 1024,
@@ -1782,6 +1798,7 @@ mod tests {
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
+                    password: None,
                     redact_sensitive_headers: true,
                     include_network_context: false,
                 },
@@ -1843,6 +1860,7 @@ mod tests {
             .save_traffic_trace(
                 path.clone(),
                 crate::TraceSaveOptions {
+                    password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
                 },
@@ -2002,6 +2020,7 @@ mod tests {
             .save_traffic_trace(
                 saved.clone(),
                 crate::TraceSaveOptions {
+                    password: None,
                     redact_sensitive_headers: true,
                     ..crate::TraceSaveOptions::default()
                 },
@@ -2133,6 +2152,7 @@ mod tests {
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
+                    password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
                 },
@@ -2162,6 +2182,7 @@ mod tests {
             .save_traffic_trace(
                 root.path().join("empty.tmcap"),
                 crate::TraceSaveOptions {
+                    password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
                 },
@@ -2188,6 +2209,7 @@ mod tests {
                 .save_traffic_trace(
                     output.clone(),
                     crate::TraceSaveOptions {
+                        password: None,
                         redact_sensitive_headers: false,
                         include_network_context: false
                     }
@@ -2300,6 +2322,76 @@ mod tests {
                     .body_file_required
             );
         }
+        assert!(!root.path().join("cache").exists());
+    }
+
+    #[tokio::test]
+    async fn encrypted_native_save_reopens_lazily_and_wrong_password_publishes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("plain.tmcap");
+        native(&source, Some(b"private payload".to_vec()), 15);
+        let original = app(root.path());
+        original
+            .import_trace(request(source, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let encrypted = root.path().join("encrypted.tmcap");
+        let password = transmog_capture::CapturePassword::new("secret phrase".into());
+        original
+            .save_traffic_trace(
+                encrypted.clone(),
+                crate::TraceSaveOptions {
+                    password: Some(password.clone()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let bytes = std::fs::read(&encrypted).unwrap();
+        assert!(!bytes.windows(15).any(|part| part == b"private payload"));
+        let reopened = app(root.path());
+        assert!(
+            reopened
+                .import_trace(
+                    request(encrypted.clone(), "missing-password"),
+                    Arc::new(|_| {})
+                )
+                .await
+                .is_err()
+        );
+        let mut input = request(encrypted.clone(), "wrong-password");
+        input.password = Some(transmog_capture::CapturePassword::new("incorrect".into()));
+        assert!(
+            reopened
+                .import_trace(input, Arc::new(|_| {}))
+                .await
+                .is_err()
+        );
+        assert!(
+            reopened
+                .query_sessions(crate::SessionQueryInput::default())
+                .unwrap()
+                .sessions
+                .is_empty()
+        );
+        let mut input = request(encrypted, "correct-password");
+        input.password = Some(password);
+        reopened
+            .import_trace(input, Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        let id =
+            transmog_core::intercept::ExchangeId(u128::from_str_radix(&rows[0].id, 16).unwrap());
+        let range = reopened
+            .body_store()
+            .unwrap()
+            .read_range(id, ExchangeBoundary::ClientRequest, 0, 64)
+            .unwrap();
+        assert_eq!(range.bytes, b"private payload");
         assert!(!root.path().join("cache").exists());
     }
 

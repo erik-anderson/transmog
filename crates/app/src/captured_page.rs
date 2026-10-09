@@ -561,6 +561,7 @@ mod tests {
         let original = app
             .import_trace(
                 TraceImportRequest {
+                    password: None,
                     path: first,
                     operation_id: "one".into(),
                     max_file_bytes: 1024 * 1024,
@@ -571,6 +572,7 @@ mod tests {
             .unwrap();
         app.import_trace(
             TraceImportRequest {
+                password: None,
                 path: second,
                 operation_id: "two".into(),
                 max_file_bytes: 1024 * 1024,
@@ -721,6 +723,7 @@ mod tests {
             application
                 .import_trace(
                     TraceImportRequest {
+                        password: None,
                         path,
                         operation_id: key.into(),
                         max_file_bytes: 1024 * 1024,

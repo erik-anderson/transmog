@@ -331,3 +331,5 @@ work is committed on the attached managed worktree branch.
 Ordinary CLI recording streams every entry. Circular CLI recording saves only newest retained traffic at stop.
 
 Phase 29 completed: persistent Automatic / custom GiB / unlimited disk policies, memory chunk leases and eviction, no implicit desktop journal, Settings status and populated native focus/reachability review. Validation: 133 Rust application/renderer/desktop tests, strict application/desktop Clippy, production browser workspace flow, native WebView2 and inspected Settings screenshot.
+
+Phase 30 completed: v4 compressed frames, optional AES-256-GCM with Argon2id and agile header, authenticated indexed reads, transient wiped passwords/keys, no plaintext expansion of encrypted native files. New recordings and workspace saves use frame compression. Validation: 166 Rust capture/session/application tests and strict Clippy; encrypted native save/reopen and failed-password atomic publication verified.

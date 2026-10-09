@@ -21,6 +21,9 @@ const MAX_RECORDS: usize = 10_000_000;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaptureStartRequest {
+    /// Transient password for an explicitly encrypted recording.
+    #[serde(default, skip_serializing)]
+    pub password: Option<transmog_capture::CapturePassword>,
     /// Include this machine's network configuration in original capture metadata.
     #[serde(default)]
     pub include_network_context: bool,
@@ -174,6 +177,7 @@ pub(crate) async fn start_capture(
                 max_records: MAX_RECORDS,
             },
             policy,
+            encoding: transmog_capture::CaptureEncoding { password: request.password },
         })
         .await
         .map_err(AppError::from)?;
@@ -304,7 +308,9 @@ fn export_native(file: File, capture: &transmog_capture::RecoveredCapture) -> Ex
         max_record_bytes: MAX_RECORD_BYTES,
         max_records: MAX_RECORDS,
     };
-    let mut writer = CaptureWriter::new(file, limits).map_err(|error| error.to_string())?;
+    let mut writer =
+        CaptureWriter::with_encoding(file, limits, &transmog_capture::CaptureEncoding::default())
+            .map_err(|error| error.to_string())?;
     let mut records = 0_usize;
     for record in capture
         .records

@@ -16,6 +16,9 @@ use transmog_session::{SessionSnapshot, SessionTerminal};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceSaveOptions {
+    /// Password for opt-in per-frame AES-256-GCM encryption.
+    #[serde(default)]
+    pub password: Option<transmog_capture::CapturePassword>,
     /// Omit sensitive header values from this copy; retained evidence is unchanged.
     #[serde(default)]
     pub redact_sensitive_headers: bool,
@@ -53,6 +56,7 @@ pub(crate) async fn save(
             destination,
             network.as_ref(),
             options.redact_sensitive_headers,
+            options.password,
         )
     })
     .await
@@ -63,6 +67,7 @@ fn write(
     destination: PathBuf,
     network: Option<&transmog_network::context::NetworkContext>,
     redact: bool,
+    password: Option<transmog_capture::CapturePassword>,
 ) -> Result<TraceSaveResult, AppError> {
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
@@ -101,6 +106,7 @@ fn write(
         &sessions,
         network,
         redact,
+        &transmog_capture::CaptureEncoding { password },
     )?;
     temporary
         .as_file()
@@ -153,14 +159,16 @@ fn write_records(
     sessions: &[SessionSnapshot],
     network: Option<&transmog_network::context::NetworkContext>,
     redact: bool,
+    encoding: &transmog_capture::CaptureEncoding,
 ) -> Result<usize, AppError> {
-    let mut writer = CaptureWriter::new(
+    let mut writer = CaptureWriter::with_encoding(
         output,
         CaptureLimits {
             max_file_bytes: 4 * 1024 * 1024 * 1024,
             max_record_bytes: 8 * 1024 * 1024,
             max_records: 10_000_000,
         },
+        encoding,
     )
     .map_err(|_| error("Trace writer could not start"))?;
     append(

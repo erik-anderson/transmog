@@ -683,6 +683,7 @@ mod tests {
         application
             .import_trace(
                 TraceImportRequest {
+                    password: None,
                     path,
                     operation_id: "import".into(),
                     max_file_bytes: 4 * 1024 * 1024,
