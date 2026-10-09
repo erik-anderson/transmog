@@ -43,7 +43,9 @@ branding, so reviewed Beta assets can become Stable without another build/signin
 | Draft publication | `contents: write` | None |
 
 The build runs the full locked repository gate, browser workspace
-tests, and 30-minute WebView soak before credentials exist. Same-run immutable
+tests, and 30-minute WebView soak before credentials exist. Soak progress logs
+include UTC timestamps and elapsed/remaining time once per
+minute, with a completion timestamp. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The
 build also validates matching full PDBs for all four released executables and
 retains them in a versioned public symbols ZIP. The archive includes the source

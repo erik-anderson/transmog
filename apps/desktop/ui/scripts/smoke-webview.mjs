@@ -617,7 +617,17 @@ try {
   await call('Emulation.clearDeviceMetricsOverride');
   await call('Emulation.setEmulatedMedia', { media: 'screen', features: [] });
 
-  const soak = await evaluate(`(async () => {
+  const soakStartedAt = performance.now();
+  const reportSoakProgress = () => {
+    const elapsed = (performance.now() - soakStartedAt) / 60_000;
+    const remaining = Math.max(0, soakMinutes - elapsed);
+    process.stdout.write(`[${new Date().toISOString()}] WebView soak: ${elapsed.toFixed(1)} min elapsed, approximately ${remaining.toFixed(1)} min remaining (target ${soakMinutes} min).\n`);
+  };
+  if (soakMinutes > 0) reportSoakProgress();
+  const soakProgressTimer = soakMinutes > 0 ? setInterval(reportSoakProgress, 60_000) : undefined;
+  let soak;
+  try {
+    soak = await evaluate(`(async () => {
     const shell = document.querySelector('app-shell');
     const deadline = performance.now() + ${Math.round(soakMinutes * 60_000)};
     const minimumIterations = ${soakMinutes === 0 ? 100 : 1};
@@ -629,7 +639,13 @@ try {
       if (deadline > performance.now()) await new Promise((resolve) => setTimeout(resolve, 100));
     } while (iterations < minimumIterations || performance.now() < deadline);
     return { iterations };
-  })()`);
+    })()`);
+  } finally {
+    if (soakProgressTimer !== undefined) clearInterval(soakProgressTimer);
+  }
+  if (soakMinutes > 0) {
+    process.stdout.write(`[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`);
+  }
   const metrics = await call('Performance.getMetrics');
   const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
   assert(heap < 64 * 1024 * 1024, `bounded status soak exceeded 64 MiB JS heap: ${heap}`);
