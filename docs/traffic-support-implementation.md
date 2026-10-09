@@ -245,10 +245,18 @@ qualified baseline, not completion of the complete plan.
     strict Clippy, browser interactions and real saved-viewer checks pass.
     Reviewed populated native and compact save dialogs, retry and default choices.
 
+25. SAZ retains validated trailers as structured evidence through native saves
+    and extended conversions. Chunked imports stream to a sink for exact entity
+    lengths/trailers; exports correctly reconstruct chunk framing. Conventional
+    timers preserve original attributes and measured local observations with
+    explicit delivery semantics. Actual protocols/custom reasons survive
+    normalization; extended members preserve performance, redacted presence and
+    sizes, IDs and merged source associations. Metadata/index/member budgets
+    remain finite. All 114 app and 16 SAZ tests pass, including real file
+    conversions, redaction, lazy binary reads and CRC checks; strict Clippy passes.
+
 Remaining isolated phases:
 
-- SAZ fidelity: trailers, conventional timers, extended evidence and merged
-  source associations with documented interoperability boundaries.
 - CLI lifecycle: persistent-root expiry/rotation, richer recovery ledger,
   cleanup retries at completion and interruption/crash recovery instructions.
 - Final qualification: updated support guide with download authenticity and

@@ -18,6 +18,7 @@ flate2.workspace = true
 httparse.workspace = true
 http.workspace = true
 quick-xml.workspace = true
+time.workspace = true
 
 [lints]
 workspace = true

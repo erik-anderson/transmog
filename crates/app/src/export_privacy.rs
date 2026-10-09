@@ -25,9 +25,15 @@ pub(crate) fn redact(kind: &mut CaptureRecordKind) {
                 if let Some(notes) = source
                     .get_mut("diagnostics")
                     .and_then(serde_json::Value::as_array_mut)
-                    && notes.len() < 64
                 {
-                    notes.push("Raw header text omitted by export redaction.".into());
+                    notes.retain(|note| {
+                        !note.as_str().is_some_and(|note| {
+                            note.starts_with("Saved ") && note.contains(" trailer: ")
+                        })
+                    });
+                    if notes.len() < 64 {
+                        notes.push("Raw header text omitted by export redaction.".into());
+                    }
                 }
             }
         }

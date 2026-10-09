@@ -163,6 +163,8 @@ pub struct ArchiveSession {
     pub response: Option<ArchiveMessage>,
     /// Original metadata, including latency evidence and client information.
     pub metadata: ArchiveMetadata,
+    /// Bounded namespaced Transmog evidence, if provided by an extended exporter.
+    pub evidence: Option<crate::SessionEvidence>,
 }
 
 /// An actionable per-session issue without captured credentials or bodies.
@@ -185,6 +187,8 @@ pub struct SazIndex {
     pub additional_issues: usize,
     /// Optional Transmog trace context, preserved independently of this machine.
     pub trace_metadata: Option<serde_json::Value>,
+    /// Original merged source records, from an extended archive.
+    pub trace_sources: Vec<serde_json::Value>,
 }
 
 /// Seekable, cloneable archive handle. Its reader must clone an independent
@@ -200,6 +204,7 @@ struct Parts {
     request: Option<usize>,
     response: Option<usize>,
     metadata: Option<usize>,
+    evidence: Option<usize>,
 }
 
 impl<R: Read + Seek + Clone> SazArchive<R> {
@@ -268,6 +273,8 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
     ) -> Result<SazIndex, SazError> {
         let mut parts: BTreeMap<u64, Parts> = BTreeMap::new();
         let mut trace_metadata = None;
+        let mut trace_sources: Vec<serde_json::Value> = Vec::new();
+        let mut metadata_bytes = 0_usize;
         let members = self.archive.len();
         for index in 0..members {
             if canceled() {
@@ -276,7 +283,32 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             let name = safe_name(self.archive.by_index_raw(index)?.name())?;
             if name == "transmog/trace-metadata.json" {
                 let bytes = self.read_metadata(index)?;
+                metadata_bytes += bytes.len();
                 trace_metadata = Some(serde_json::from_slice(&bytes)?);
+            } else if name == "transmog/trace-sources.json" {
+                let bytes = self.read_metadata(index)?;
+                metadata_bytes += bytes.len();
+                trace_sources = serde_json::from_slice(&bytes)?;
+                if trace_sources.len() > self.limits.max_sessions {
+                    return Err(SazError::ImportLimitExceeded);
+                }
+            } else if let Some(id) = name
+                .strip_prefix("transmog/session-")
+                .and_then(|name| name.strip_suffix(".json"))
+                .and_then(|id| id.parse::<u64>().ok())
+            {
+                if parts
+                    .entry(id)
+                    .or_default()
+                    .evidence
+                    .replace(index)
+                    .is_some()
+                {
+                    return Err(SazError::UnsafeMember);
+                }
+                if parts.len() > self.limits.max_sessions {
+                    return Err(SazError::ImportLimitExceeded);
+                }
             } else if let Some((id, kind)) = session_member(&name) {
                 let session = parts.entry(id).or_default();
                 let slot = match kind {
@@ -300,13 +332,29 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             issues: Vec::new(),
             additional_issues: 0,
             trace_metadata,
+            trace_sources,
         };
-        let mut index_bytes = 0_usize;
+        let mut index_bytes = metadata_bytes;
         for (position, (id, parts)) in parts.into_iter().enumerate() {
             if canceled() {
                 return Err(SazError::Canceled);
             }
             let source_id = id.to_string();
+            let evidence = parts
+                .evidence
+                .map(|index| {
+                    let bytes = self.read_metadata(index)?;
+                    index_bytes = index_bytes.saturating_add(bytes.len());
+                    let evidence: crate::SessionEvidence = serde_json::from_slice(&bytes)?;
+                    if !evidence.valid() {
+                        return Err(SazError::InvalidArchive);
+                    }
+                    Ok(evidence)
+                })
+                .transpose()?;
+            if index_bytes > self.limits.max_index_bytes {
+                return Err(SazError::ImportLimitExceeded);
+            }
             let metadata = parts
                 .metadata
                 .map(|index| {
@@ -369,6 +417,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                     request,
                     response,
                     metadata,
+                    evidence,
                 });
             }
             progress(members + position + 1, members + count);
@@ -387,6 +436,20 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         output: &mut impl Write,
         canceled: impl Fn() -> bool,
     ) -> Result<u64, SazError> {
+        self.copy_body_with_trailers(body, output, canceled)
+            .map(|(bytes, _)| bytes)
+    }
+
+    /// Streams entity bytes and returns validated original trailers.
+    ///
+    /// # Errors
+    /// Returns the same framing, checksum, cancellation and resource errors as `copy_body`.
+    pub fn copy_body_with_trailers(
+        &mut self,
+        body: &ArchiveBody,
+        output: &mut impl Write,
+        canceled: impl Fn() -> bool,
+    ) -> Result<(u64, HeaderBlock), SazError> {
         if body.dropped {
             return Err(SazError::InvalidArchive);
         }
@@ -403,6 +466,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
             copy_chunked(&mut reader, output, self.limits.max_member_bytes, canceled)
         } else {
             copy_bounded(&mut reader, output, body.wire_bytes, canceled)
+                .map(|bytes| (bytes, HeaderBlock::new()))
         }
     }
 
@@ -898,7 +962,7 @@ fn copy_chunked(
     output: &mut impl Write,
     limit: u64,
     canceled: impl Fn() -> bool,
-) -> Result<u64, SazError> {
+) -> Result<(u64, HeaderBlock), SazError> {
     let mut total = 0_u64;
     loop {
         if canceled() {
@@ -929,17 +993,24 @@ fn copy_chunked(
                 }
             }
             let mut fields = [httparse::EMPTY_HEADER; 256];
-            if !matches!(
-                httparse::parse_headers(&trailers, &mut fields),
-                Ok(httparse::Status::Complete(_))
-            ) {
+            let Ok(httparse::Status::Complete((_, fields))) =
+                httparse::parse_headers(&trailers, &mut fields)
+            else {
                 return Err(SazError::InvalidArchive);
-            }
+            };
+            let fields = fields
+                .iter()
+                .map(|field| {
+                    HeaderField::try_new(field.name.as_bytes().to_vec(), field.value.to_vec())
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| SazError::InvalidArchive)?;
+            let fields = HeaderBlock::from_fields(fields);
             let mut extra = [0_u8; 1];
             if reader.read(&mut extra)? != 0 {
                 return Err(SazError::InvalidArchive);
             }
-            return Ok(total);
+            return Ok((total, fields));
         }
         total = total
             .checked_add(count)

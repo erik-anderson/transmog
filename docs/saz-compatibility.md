@@ -23,8 +23,10 @@ It bounds compressed input, central-directory size and counts before the ZIP
 index allocates, plus individual and aggregate declared uncompressed sizes,
 HTTP heads and XML metadata. It rejects unsafe member names, collisions,
 encryption and unsupported compression. It never extracts archive paths.
-Indexing reads headers and metadata; bodies stay in the source archive until
-requested, at which point chunk framing is removed and ZIP CRC is checked.
+Indexing reads headers and metadata. The viewer also streams chunked members
+through a sink to retain validated trailers and exact entity sizes, without
+allocating their bodies. Other bodies stay lazy; reads remove chunk framing and
+verify ZIP CRC.
 Content-Encoding and original body bytes are preserved.
 
 The application import API publishes a complete indexed batch with per-file
@@ -57,6 +59,15 @@ hook-effect trail. `saz-extended` adds `transmog/manifest.json` with stable
 native exchange IDs and completeness state; consumers expecting only classic
 members should use strict mode.
 
+Raw messages normalize HTTP/2 and HTTP/3 to textual HTTP/1.1; original protocols
+remain in session flags and extended evidence. Recorded HTTP/1.0 and custom
+response reasons are retained. Entity bytes are re-chunked when needed for
+Transfer-Encoding or trailers. Conventional XML timers contain measured local
+observations, with explicit semantic flags: complete request headers and terminal
+proxy processing do not imply first client send or remote receipt. Original
+imported timer attributes remain unchanged. The timer vocabulary follows
+[Telerik SessionMetrics](https://www.telerik.com/fiddler/fiddlercore/documentation/api/fiddler.sessionmetrics).
+
 Redacted fields are omitted from raw headers. When body bytes were not retained,
 observer delivery was lost, or an exchange did not complete cleanly, conventional
 `log-drop-request-body` or `log-drop-response-body` flags disclose that the wire
@@ -64,6 +75,10 @@ file is incomplete. Exchanges without both request and response heads are
 skipped and counted in the conversion report. Unsafe line breaks, invalid
 statuses, body-limit overflow, entry-limit overflow, and ZIP failures stop the
 conversion rather than producing ambiguous wire text.
+
+Metadata members are bounded to 4 MiB, with the existing aggregate index and ZIP
+budgets enforced before publication. Native/gzip remains the complete persistence
+choice for very large captures or all four HTTP boundaries.
 
 Use the headless converter with a new destination path:
 

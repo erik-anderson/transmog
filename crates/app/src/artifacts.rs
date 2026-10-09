@@ -349,7 +349,7 @@ fn export_saz(
         report.records,
         report.bytes,
         format!(
-            "SAZ is finalized, not streaming; it omits non-HTTP-native evidence. skipped_incomplete={}, incomplete_bodies={}, extended_manifest={}",
+            "SAZ is finalized, not streaming, and normalizes HTTP framing. Extended mode preserves local performance, original fields and source associations; compatibility mode preserves conventional timers and protocol flags. skipped_incomplete={}, incomplete_bodies={}, extended_manifest={}",
             detail.skipped_incomplete,
             detail.incomplete_bodies,
             mode == SazMode::Extended

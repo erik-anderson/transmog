@@ -475,23 +475,88 @@ fn import_saz(
             .push(format!("{} additional issues", index.additional_issues));
     }
     let mut head_bytes = 0_usize;
-    for (position, session) in index.sessions.into_iter().enumerate() {
+    for source in index.trace_sources {
+        head_bytes += serde_json::to_vec(&source)
+            .map_err(|_| invalid("Invalid SAZ source"))?
+            .len();
+        let source = saved_source(source, trace_id)?;
+        if result.sources.insert(source.id.clone(), source).is_some() {
+            return Err(invalid("Duplicate SAZ source metadata"));
+        }
+    }
+    for (position, mut session) in index.sessions.into_iter().enumerate() {
+        let evidence = session.evidence.take();
+        if let Some(evidence) = &evidence {
+            head_bytes += serde_json::to_vec(evidence)
+                .map_err(|_| invalid("Invalid SAZ evidence"))?
+                .len();
+            if let Some(headers) = &evidence.request_headers
+                && let Some(message) = &mut session.request
+            {
+                message.headers = native_headers(headers.clone())?;
+            }
+            if let Some(headers) = &evidence.response_headers
+                && let Some(message) = &mut session.response
+            {
+                message.headers = native_headers(headers.clone())?;
+            }
+        }
+        let saved = evidence
+            .as_ref()
+            .and_then(|evidence| evidence.provenance.clone())
+            .map(serde_json::from_value::<SavedEntry>)
+            .transpose()
+            .map_err(|_| invalid("Invalid SAZ entry association"))?;
+        if saved.as_ref().is_some_and(|saved| !saved.valid()) {
+            return Err(invalid("SAZ entry association exceeds its limits"));
+        }
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
         let id = ExchangeId(u128::from(prefix) << 64 | (position as u128 + 1));
-        let request = session
+        let mut request = session
             .request
             .as_ref()
             .map(|request| request.request_head(&session.metadata))
             .transpose()
             .map_err(|_| invalid("Saved request target is unavailable"))?;
-        let response = session
+        let mut response = session
             .response
             .as_ref()
             .map(transmog_saz::ArchiveMessage::response_head)
             .transpose()
             .map_err(|_| invalid("Saved response head is unavailable"))?;
+        for (boundary, flag, head_version) in [
+            (
+                "client-request",
+                "x-transmog-original-request-protocol",
+                request.as_mut().map(|head| &mut head.source_version),
+            ),
+            (
+                "client-response",
+                "x-transmog-original-response-protocol",
+                response.as_mut().map(|head| &mut head.source_version),
+            ),
+        ] {
+            let version = evidence
+                .as_ref()
+                .and_then(|evidence| {
+                    evidence
+                        .performance
+                        .protocols
+                        .iter()
+                        .find(|item| item.boundary == boundary)
+                        .map(|item| item.version.as_str())
+                })
+                .or_else(|| session.metadata.flags.get(flag).map(String::as_str));
+            if let (Some(version), Some(head_version)) = (version, head_version) {
+                if version.starts_with("HTTP/2") {
+                    *head_version = HttpLegVersion::Http2;
+                } else if version.starts_with("HTTP/3") {
+                    *head_version = HttpLegVersion::Http3;
+                }
+            }
+        }
         let target = request
             .as_ref()
             .map_or_else(unknown_target, |request| request.target.clone());
@@ -501,10 +566,16 @@ fn import_saz(
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("x-clientIP"))
             .and_then(|(_, value)| value.parse::<IpAddr>().ok());
-        let client = client_ip.map_or_else(
-            || "127.0.0.1:0".parse().expect("constant peer"),
-            |ip| SocketAddr::new(ip, 0),
-        );
+        let client = evidence
+            .as_ref()
+            .and_then(|evidence| evidence.client_addr.as_ref())
+            .and_then(|addr| addr.parse().ok())
+            .unwrap_or_else(|| {
+                client_ip.map_or_else(
+                    || "127.0.0.1:0".parse().expect("constant peer"),
+                    |ip| SocketAddr::new(ip, 0),
+                )
+            });
         let started = session
             .metadata
             .timers
@@ -564,20 +635,44 @@ fn import_saz(
                 message.start_line.split_ascii_whitespace().next()
             };
             if let Some(version) = version {
-                snapshot.performance.protocols.push(
-                    transmog_core::performance::ProtocolObservation {
-                        boundary: crate::inspector::boundary(boundary),
-                        version: version.into(),
-                        reason: (boundary == ExchangeBoundary::ClientResponse).then(|| {
-                            message
-                                .start_line
-                                .splitn(3, ' ')
-                                .nth(2)
-                                .unwrap_or("")
-                                .to_owned()
-                        }),
-                    },
-                );
+                let flag = if boundary == ExchangeBoundary::ClientRequest {
+                    "x-transmog-original-request-protocol"
+                } else {
+                    "x-transmog-original-response-protocol"
+                };
+                let version = session
+                    .metadata
+                    .flags
+                    .get(flag)
+                    .filter(|value| {
+                        matches!(
+                            value.as_str(),
+                            "HTTP/1.0"
+                                | "HTTP/1.1"
+                                | "HTTP/2"
+                                | "HTTP/2.0"
+                                | "HTTP/3"
+                                | "HTTP/3.0"
+                                | "unavailable"
+                        )
+                    })
+                    .map_or(version, String::as_str);
+                if version != "unavailable" {
+                    snapshot.performance.protocols.push(
+                        transmog_core::performance::ProtocolObservation {
+                            boundary: crate::inspector::boundary(boundary),
+                            version: version.into(),
+                            reason: (boundary == ExchangeBoundary::ClientResponse).then(|| {
+                                message
+                                    .start_line
+                                    .splitn(3, ' ')
+                                    .nth(2)
+                                    .unwrap_or("")
+                                    .to_owned()
+                            }),
+                        },
+                    );
+                }
             }
             head_bytes = head_bytes.saturating_add(message.raw_head.len());
             if head_bytes > MAX_HEAD_BYTES {
@@ -586,37 +681,97 @@ fn import_saz(
             if let Ok(raw) = std::str::from_utf8(&message.raw_head) {
                 raw_blocks.push(raw.trim_end_matches(['\r', '\n']).to_owned());
             }
+            let (observed, mut trailers, mut complete) = if message.body.chunked
+                && !message.body.dropped
+            {
+                match archive.copy_body_with_trailers(&message.body, &mut std::io::sink(), || {
+                    canceled.load(Ordering::Acquire)
+                }) {
+                    Ok((bytes, trailers)) => (bytes, Some(trailers), true),
+                    Err(_) if canceled.load(Ordering::Acquire) => {
+                        return Err(unavailable("Trace import canceled"));
+                    }
+                    Err(_) => {
+                        result.issues.push(format!(
+                            "Session {}: chunked body or checksum unavailable",
+                            session.source_id
+                        ));
+                        (message.body.wire_bytes, None, false)
+                    }
+                }
+            } else {
+                (message.body.wire_bytes, None, !message.body.dropped)
+            };
+            if let Some(evidence) = &evidence {
+                let fields = if boundary == ExchangeBoundary::ClientRequest {
+                    &evidence.request_trailers
+                } else {
+                    &evidence.response_trailers
+                };
+                if !fields.is_empty() {
+                    trailers = Some(native_headers(fields.clone())?);
+                }
+            }
+            complete &= !message.body.dropped;
             snapshot.bodies.push(BodySnapshot {
                 boundary,
-                observed_bytes: message.body.wire_bytes,
+                observed_bytes: observed,
                 retained_prefix: bytes::Bytes::new(),
-                truncated: message.body.dropped,
-                trailers: None,
+                truncated: !complete,
+                trailers,
             });
             result.bodies.push(ImportedBody {
                 id,
                 boundary,
                 headers: message.headers,
                 response: response_head,
-                observed: message.body.wire_bytes,
-                complete: !message.body.dropped,
-                source: Arc::new(SazBodySource::new(archive.clone(), message.body)),
+                observed,
+                complete,
+                source: Arc::new(SazBodySource::new(
+                    archive.clone(),
+                    message.body,
+                    complete.then_some(observed),
+                )),
             });
+        }
+        if let Some(evidence) = &evidence {
+            snapshot.performance.merge(&evidence.performance);
         }
         let mut timings = session.metadata.timers;
         timings.extend(session.metadata.metrics);
-        result.entries.insert(
-            format!("{:032x}", id.0),
+        let entry = if let Some(mut saved) = saved {
+            let source = source_namespace(trace_id, &saved.source.trace_id);
+            if !result.sources.contains_key(&source) {
+                return Err(invalid("SAZ entry refers to missing source metadata"));
+            }
+            saved.source.trace_id = source;
+            saved.source
+        } else {
             TraceEntry {
                 trace_id: trace_id.into(),
-                original_id: session.source_id,
-                raw_headers: (!raw_blocks.is_empty()).then(|| raw_blocks.join("\r\n\r\n\r\n")),
+                original_id: evidence
+                    .as_ref()
+                    .and_then(|evidence| evidence.native_exchange_id.clone())
+                    .unwrap_or(session.source_id),
+                raw_headers: (evidence.is_none()
+                    && !session
+                        .metadata
+                        .flags
+                        .keys()
+                        .any(|name| name.starts_with("x-transmog-original-"))
+                    && !raw_blocks.is_empty())
+                .then(|| raw_blocks.join("\r\n\r\n\r\n")),
                 timings,
-                protocol_known: true,
+                protocol_known: snapshot
+                    .performance
+                    .protocols
+                    .iter()
+                    .any(|item| item.boundary == "client-request"),
                 target_known: request.is_some(),
                 diagnostics: Vec::new(),
-            },
-        );
+            }
+        };
+        result.entries.insert(format!("{:032x}", id.0), entry);
         result.sessions.push(snapshot);
     }
     result.index_bytes = head_bytes;
@@ -647,6 +802,7 @@ struct NativeBody {
     retained: u64,
     incomplete: bool,
     framing_complete: bool,
+    trailers: Option<HeaderBlock>,
 }
 
 fn import_native(
@@ -862,24 +1018,17 @@ fn apply_native_frame(
             }
         }
         CaptureRecordKind::Trailers { boundary, headers } => {
-            let _ = row
-                .bodies
+            let trailers = native_headers(headers)?;
+            *budget = budget.saturating_add(
+                trailers
+                    .iter()
+                    .map(|field| field.name().len() + field.value().len())
+                    .sum::<usize>(),
+            );
+            row.bodies
                 .entry(crate::inspector::boundary(boundary))
-                .or_default();
-            if row.diagnostics.len() < 64 {
-                for field in native_headers(headers)?.iter().take(16) {
-                    row.diagnostics.push(format!(
-                        "Saved {} trailer: {}: {}",
-                        crate::inspector::boundary(boundary),
-                        String::from_utf8_lossy(field.name()),
-                        if field.is_redacted() {
-                            "[redacted]".into()
-                        } else {
-                            String::from_utf8_lossy(field.value()).into_owned()
-                        }
-                    ));
-                }
-            }
+                .or_default()
+                .trailers = Some(trailers);
         }
         CaptureRecordKind::HookEffect {
             hook_name,
@@ -1062,7 +1211,7 @@ fn append_native(
             observed_bytes: body.observed,
             retained_prefix: bytes::Bytes::new(),
             truncated: !complete,
-            trailers: None,
+            trailers: body.trailers,
         });
         result.bodies.push(ImportedBody {
             id,
@@ -1712,6 +1861,160 @@ mod tests {
             reopened.composer_source(&saz_row.id).unwrap().body,
             "616263"
         );
+    }
+
+    #[tokio::test]
+    async fn native_and_extended_saz_preserve_structured_redacted_trailers() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("original.tmcap");
+        native(&source, Some(vec![1, 2, 3]), 3);
+        let mut recovered =
+            transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                .unwrap();
+        recovered
+            .records
+            .retain(|record| !matches!(record.kind, CaptureRecordKind::Seal { .. }));
+        recovered.records.push(CaptureRecord {
+            exchange_id: 7,
+            sequence: 6,
+            kind: CaptureRecordKind::Trailers {
+                boundary: ExchangeBoundary::ClientRequest,
+                headers: vec![CapturedHeader {
+                    name: b"Cookie".to_vec(),
+                    value: Some(b"secret".to_vec()),
+                    original_value_bytes: Some(6),
+                }],
+            },
+        });
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for record in recovered.records {
+            writer.append(&record).unwrap();
+        }
+        writer.seal().unwrap();
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "trailers"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let saved = root.path().join("saved.tmcap");
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    redact_sensitive_headers: true,
+                    ..crate::TraceSaveOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        for format in [
+            crate::ExportFormat::Native,
+            crate::ExportFormat::SazExtended,
+        ] {
+            let destination = root.path().join(if format == crate::ExportFormat::Native {
+                "copy.tmcap"
+            } else {
+                "copy.saz"
+            });
+            workspace
+                .export_capture(crate::ExportRequest {
+                    source: saved.clone(),
+                    destination: destination.clone(),
+                    format,
+                    max_source_bytes: 64 * 1024 * 1024,
+                    redact_sensitive_headers: false,
+                })
+                .await
+                .unwrap();
+            let reopened = app(&root.path().join(format!("reopened-{format:?}")));
+            reopened
+                .import_trace(request(destination, "copy"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let row = &reopened
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions[0];
+            let snapshot = reopened
+                .service
+                .catalog()
+                .get(ExchangeId(u128::from_str_radix(&row.id, 16).unwrap()))
+                .unwrap();
+            let field = snapshot
+                .bodies
+                .iter()
+                .find(|body| body.boundary == ExchangeBoundary::ClientRequest)
+                .unwrap()
+                .trailers
+                .as_ref()
+                .unwrap()
+                .iter()
+                .next()
+                .unwrap();
+            assert!(field.is_redacted());
+            assert_eq!(field.original_value_bytes(), Some(6));
+        }
+    }
+
+    #[tokio::test]
+    async fn extended_saz_keeps_merged_sources_and_original_entry_ids() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("original.saz");
+        saz(&source);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let native_path = root.path().join("workspace.tmcap");
+        workspace
+            .save_traffic_trace(native_path.clone(), crate::TraceSaveOptions::default())
+            .await
+            .unwrap();
+        let destination = root.path().join("extended.saz");
+        workspace
+            .export_capture(crate::ExportRequest {
+                source: native_path,
+                destination: destination.clone(),
+                format: crate::ExportFormat::SazExtended,
+                max_source_bytes: 64 * 1024 * 1024,
+                redact_sensitive_headers: true,
+            })
+            .await
+            .unwrap();
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(destination, "extended"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let row = &reopened
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0];
+        let detail = reopened.session_detail(&row.id).unwrap();
+        assert_eq!(detail.original_id.as_deref(), Some("1"));
+        assert_eq!(
+            reopened
+                .trace_metadata(row.trace_id.as_deref().unwrap())
+                .unwrap()
+                .name,
+            "original.saz"
+        );
+        assert_eq!(row.duration_ms, Some(250));
+        assert!(
+            reopened
+                .copy_all_headers(&row.id)
+                .unwrap()
+                .contains("404 Custom reason")
+        );
+        assert!(
+            !reopened
+                .copy_all_headers(&row.id)
+                .unwrap()
+                .contains("secret")
+        );
+        assert_eq!(reopened.composer_source(&row.id).unwrap().body, "616263");
     }
 
     #[tokio::test]

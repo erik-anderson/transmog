@@ -66,12 +66,16 @@ pub(crate) struct SazBodySource {
     length: Arc<AtomicU64>,
 }
 impl SazBodySource {
-    pub(crate) fn new(archive: SazArchive<SourceReader>, body: ArchiveBody) -> Self {
-        let length = Arc::new(AtomicU64::new(if body.chunked {
+    pub(crate) fn new(
+        archive: SazArchive<SourceReader>,
+        body: ArchiveBody,
+        measured_length: Option<u64>,
+    ) -> Self {
+        let length = Arc::new(AtomicU64::new(measured_length.unwrap_or(if body.chunked {
             u64::MAX
         } else {
             body.wire_bytes
-        }));
+        })));
         Self {
             archive,
             body,
