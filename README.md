@@ -41,8 +41,12 @@ the Transmog UI.
 - **Find the caller.** On supported local platforms, traffic records include
   the originating process name and PID; non-loopback clients are identified as
   remote.
-- **Capture once, analyze later.** Stream to the native compressed, checksummed
-  `.tmcap` format, export JSONL, or produce finalized Fiddler-compatible SAZ archives.
+- **Capture once, analyze later.** Save or stream compressed `.tmcap` traces,
+  reopen bodies on demand, and import Fiddler SAZ archives into separate viewers.
+  Password encryption is optional for native and SAZ files.
+- **Find and reproduce issues.** Search headers and decoded text, compare timing
+  waterfalls and shared transport evidence, copy request commands or edit and
+  replay requests. A captured-page preview serves only already captured resources.
 - **Debug modern web traffic.** Intercept HTTP/1.1 and HTTP/2 over an explicit
   proxy, inspect HTTP/1.1 WebSockets, and use HTTP/3 for supported origin
   egress. Content processing supports gzip, Brotli, DEFLATE, and zstd.
@@ -74,7 +78,8 @@ On first launch:
    loopback endpoint to the current user's Windows proxy settings.
 3. Use a browser or application normally; its captured traffic appears in the
    Traffic workspace.
-4. Choose **Stop proxy** when finished to restore the previous proxy settings.
+4. Choose **Stop proxy** when finished. It restores the previous proxy settings
+   first and lets requests already in progress finish.
 
 To create an unsigned installer for testing on another Windows machine:
 
@@ -99,8 +104,8 @@ That design makes the lower layers useful on their own:
 - embed the proxy runtime with application-provided hooks, routing, trust,
   upstream services, and bounded observers;
 - reuse streaming content decoding and re-encoding independently of the UI;
-- consume the session/application facade from another front end or a future
-  command-line workflow; and
+- consume the session/application facade from another front end or headless
+  workflow; and
 - write native TMCap captures or finalized SAZ exports from an owned
   application.
 

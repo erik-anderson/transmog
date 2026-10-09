@@ -9,6 +9,11 @@ The page keeps its original URL so relative CSS, images and other resources can
 resolve naturally. Resources come from the selected entry's original trace,
 including when several traces have been imported into one workspace. For each
 method and URL, the nearest captured response to the selected request is used.
+**All loaded traffic in this window** is an explicit alternative that can mix
+traces or users while keeping the selected HTML fixed. Resource matching also
+compares exact encoded request bytes and available Vary header values.
+Accept-Encoding is ignored after response decoding. Redacted or unavailable Vary,
+Vary wildcard, unavailable request bodies and unknown URLs produce empty 404s.
 Rendering a selected POST response provides its body for the initial GET used
 by the browser. Unmatched requests return **404 with an empty body**.
 
@@ -19,6 +24,20 @@ unavailable. Service workers, WebSockets, WebTransport, peer connections,
 downloads, popups, device permissions and authentication prompts are disabled.
 The initial implementation is Windows-only; other platforms require their own
 resource-interception boundary.
+
+## Preview diagnostics
+
+**Last preview diagnostics** stays in the trusted workbench and belongs to the
+window that opened the preview. It shows which captured variant was chosen,
+links to retained source traffic, served/missing counts and script choice. Refresh
+after navigating the preview. Reports remain readable after the preview closes.
+Recent reports and displayed observations are bounded; counts include requests
+that no longer fit in the displayed list. Headers and request bodies are excluded.
+
+Preparation bounds decoded resource bytes, request-body hashing and variants.
+Oversized or unavailable resources remain missing; these processing budgets do
+not constrain capture or file-based Composer replay. The
+[preparation code](../crates/app/src/captured_page_build.rs) owns these limits.
 
 ## Isolation and implementation
 

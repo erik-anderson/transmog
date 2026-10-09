@@ -71,9 +71,9 @@ decisions. No push or tag automatically starts a release build.
    ```
 
    The workflow builds the selected branch's commit at dispatch. Later pushes to
-   that branch do not change the run. The first successful build took about an hour,
-   including a 30-minute WebView soak; signing and qualification then took a few
-   minutes after approval. The separate **Windows unsigned installer** workflow
+   that branch do not change the run. Build and qualification progress is visible
+   in the run; the release build includes a 30-minute WebView soak.
+   The separate **Windows unsigned installer** workflow
    is available for development builds that do not need signing or a release.
 
 4. When the build passes, open the run's **Review deployments** prompt and approve
@@ -315,9 +315,9 @@ content-coding paths. Certificate validation remains enabled.
 
 ## Clean-machine release checklist
 
-The maintainer has deferred this checklist for the initial pipeline integration.
-Hosted Windows Server installer and WebView checks do not establish clean Windows
-11 qualification. Draft release evidence records that limitation.
+Hosted Windows Server installer and WebView checks do not establish clean
+Windows 11 qualification. Run this checklist for a release candidate and record
+its outcome, including any explicit maintainer deferral, with the release evidence.
 
 Use a disposable, fully updated Windows 11 VM with no Transmog state:
 

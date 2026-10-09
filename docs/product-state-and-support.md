@@ -1,102 +1,89 @@
-# Product state and support diagnostics
+# Product state, retention and support
 
-Transmog keeps product preferences above the proxy/session layers. The
-`transmog-app` facade owns validation and persistence so the Windows desktop
-and a future command-line frontend share the same privacy and failure
-semantics.
+`transmog-app` owns preference validation and persistence above the proxy/session
+layers. Desktop and headless callers share those failure and privacy semantics.
 
 ## Persisted state
 
-The current schema is version 6 and contains only:
+Preferences contain theme, table/pane layout, window geometry, connection
+configuration, live-entry/body-retention policy and explicit recent-path choices.
+Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
+controller capabilities, replay drafts and CA private keys are not settings.
+Recent artifact references are retained only when the user opts in.
 
-- theme, bounded session page size, and the default system-proxy choice;
-- explicit body-retention, recent-artifact, and support-bundle path choices;
-- bounded window geometry; and
-- at most 20 recent artifact references when the user opts in.
+Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
+settings so a stale workspace snapshot cannot overwrite newer preferences.
+Each save writes and flushes a temporary file, then atomically publishes a new
+numbered generation. Startup validates the newest generation and quarantines
+corrupt state, falling back to a retained valid generation or safe defaults.
+Only the current schema is supported. Exact fields and validation belong to
+[the product-state model](../crates/app/src/product_state.rs).
 
-Live sessions, captured bodies, request/response headers, credentials,
-breakpoint envelopes, controller capabilities, replay drafts, and CA private
-keys are not product settings.
+On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the
+`preferences.<generation>.json` family. Persistence errors remain visible and
+cannot participate in proxy shutdown or host restoration.
 
-Each save writes and flushes a create-new temporary file, then atomically
-renames it to a monotonically numbered generation. The newest valid generation
-is authoritative and at most three valid generations are retained. This avoids
-Windows' non-replacing `rename` behavior without creating a corrupt window
-between removing and replacing one canonical file. Startup validates the
-256-KiB file bound and every field before use. A bad newest generation is
-quarantined and an older valid generation is used; if none is valid, safe
-defaults are loaded. Only the current schema is accepted; prior development schemas are not migrated.
+## Retention and privacy
 
-New installations retain request and response bodies in the memory-first buffer,
-and default to including bodies in explicitly started recordings. Sensitive header values are collected by default. Settings →
-Preferences offers a persistent option to redact Authorization,
-Proxy-Authorization, Cookie and Set-Cookie values in newly received headers.
-Redaction preserves their names, order, duplicates and original byte lengths,
-so authorization presence and oversized headers remain diagnosable. It does
-not rewrite existing traffic or saved files. Body retention changes apply to
-new exchanges; an in-flight body never becomes falsely complete after a toggle.
-The circular body cache defaults to half installed RAM across all observed
-boundaries, stored in memory. Settings accepts a custom GiB maximum; values over
-half installed RAM use disk, as does No max size (writes to disk). There is no
-automatic trace journal when starting the proxy. Explicit recording and Save
-trace write files. Request
-bodies default to a 25 MB cap (25,000,000 bytes) per original/effective boundary.
-The persistent Unlimited choice removes that per-request cap, while the overall
-cache budget (unless explicitly unlimited) and trace file budgets still apply. Cache changes apply to new requests;
-a recording snapshots its policy when started and saves that limit in metadata. Capture limits retain a prefix and
-full observed byte counts; they do not reject forwarding. Non-streaming
-processing retains its separate bounded memory limit. Oversized or unknown-length
-requests in Auto mode use streaming HTTP/1 or HTTP/2 instead of buffered H3 retries.
+New installations retain request and response bodies and include bodies in
+explicit recordings. Sensitive header values are collected by default.
+**Settings → Preferences** offers persistent redaction of Authorization,
+Proxy-Authorization, Cookie and Set-Cookie values for new traffic. Header names,
+ordering, duplicates and measured original lengths remain available. Changing
+redaction does not rewrite retained traffic or saved files. Export-only redaction
+applies just to the new copy; bodies, URLs and metadata can still contain private
+data. Password encryption is available when saving or exporting traces.
 
-On Windows these files live under `%LOCALAPPDATA%\Transmog` using the
-`preferences.<generation>.json` name family. Save, unsupported-schema, read-only
-directory, and storage failures are reported as bounded diagnostics and never
-participate in proxy shutdown or host restoration.
+Live-entry retention has no count cap by default. An optional maximum evicts
+older completed live entries, preserves imported entries and allows active
+requests to finish before eviction. Changing that maximum applies immediately.
+It is separate from the body-byte budget.
+
+The circular body buffer defaults to half installed physical RAM across observed
+boundaries and stores those bytes in memory. Custom limits up to that threshold
+also use memory; larger limits and **No max size (writes to disk)** use the app's
+disk cache. Settings shows the resolved limit and storage mode. Body-policy
+changes apply to new boundaries without spilling retained memory bodies to disk.
+This quota is not a total application-memory ceiling: metadata, editors and
+processing have separate resource bounds. Imported bodies use their pinned source
+files and are independent of live eviction.
+
+Request capture defaults to **25 MB** (25,000,000 bytes) per original/effective
+request boundary. **Unlimited** removes that per-request cap while keeping the
+chosen circular buffer budget. Reaching a retention cap records an incomplete
+prefix and full observed byte counts; it does not stop forwarding. Recordings
+snapshot their policy when started. Saved traces have no fixed byte-size or
+record-count ceiling, while metadata indexing and processing stay bounded.
+Oversized or unknown-length requests in Auto routing stream over HTTP/1 or HTTP/2
+rather than requiring a buffered HTTP/3 retry.
+
+Starting the proxy does not create an automatic trace journal. **Save trace…** and
+explicit recording write files. See [trace saving](trace-saving.md) and the
+[CLI support guide](cli-support-capture.md); the CLI has separate preferences
+and root ownership under `%LOCALAPPDATA%\Transmog-cli`.
 
 ## Operational diagnostics
 
-Operational events have a timestamp, severity, stable component and code, and
-a bounded redacted message. Memory retains at most 256 events. The optional
-JSON-lines log rotates at 1 MiB and failures to create, append, flush, or rotate
-it are non-fatal. Messages containing credential-bearing header names,
-cookies, passwords, bearer credentials, private-key markers, or local paths
-are replaced before either sink sees them.
+Operational diagnostics are bounded, redacted and separate from traffic.
+The desktop writes `%LOCALAPPDATA%\Transmog\diagnostics.jsonl`, rotates the log
+and reports lifecycle, host integration, certificate, command and frontend errors.
+Messages containing credentials, private-key markers or local paths are replaced
+before reaching memory or disk. Diagnostic write failures are non-fatal.
 
-The Windows desktop always configures this sink as
-`%LOCALAPPDATA%\Transmog\diagnostics.jsonl` and writes a startup event as soon
-as the application facade initializes. Command dispatch, proxy lifecycle,
-Windows host integration, certificate create/trust/remove outcomes,
-live-session subscription, and bounded frontend exceptions are recorded
-there. A prior `diagnostics.jsonl` rotates to
-`diagnostics.jsonl.1`; neither file contains captured traffic. Settings →
-Support → Technical details displays the exact active path so support reports
-do not depend on knowing the Tauri package identifier.
+**Settings → Support → Technical details** shows the active log path and a report
+with app/dependency versions, OS, native WebView runtime, state schema and recent
+events. It contains no captured traffic. A support bundle is a create-new ZIP
+with `diagnostics.json` and `product-state-summary.json`; it excludes bodies,
+HTTP header values, credentials and private keys. Recent paths require both the
+saved privacy opt-in and an opt-in for this export.
 
-The diagnostics report includes the Transmog version, selected dependency
-versions, OS/architecture, the native WebView runtime version, the state schema,
-and the bounded event list. It contains no captured traffic.
+## Support procedure
 
-Support bundles are create-new ZIP files with only `diagnostics.json` and a
-validated `product-state-summary.json`. They exclude bodies, HTTP header
-values, credentials, and private keys unconditionally. Recent paths require
-both a persisted privacy opt-in and a per-export opt-in. Failed generation
-removes only the newly created partial bundle and never replaces an existing
-destination.
+1. Stop the proxy normally; preference or log failures cannot block restoration.
+2. Use **Settings → Support → Refresh diagnostics** and inspect the readable
+   summary before copying technical details.
+3. Create a support bundle at a new destination. Include paths only if needed.
+4. If preferences are corrupt, restart and review the recovery message.
 
-## Recovery and support procedure
-
-1. Stop the proxy normally; state/log failures cannot block this step.
-2. Use **Settings → Support → Refresh diagnostics** to inspect the
-   readable summary and copyable technical report.
-3. Choose a new destination and create a support bundle. Leave path inclusion
-   disabled unless the paths themselves are needed to diagnose a problem.
-4. If preferences are corrupt, restart Transmog. It automatically quarantines
-   the bad generation and reports whether it recovered an older generation or
-   loaded defaults.
-
-Product-state generations, operational logs, and support bundles are not
-capture databases. Native `.tmcap` remains the durable traffic format.
-
-Live-entry retention defaults to no count limit. An optional persisted maximum
-evicts oldest completed live entries, leaving imported entries and active requests
-intact. This limit is separate from the body-byte buffer budget.
+A support bundle diagnoses the tool itself. To share captured traffic, review
+and save a `.tmcap` trace instead.

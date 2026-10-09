@@ -82,7 +82,7 @@ Applications that want a composed headless lifecycle can instead use
 `transmog-session`. Create `ApplicationSessionService`, pass existing
 `ProxyComponents` through `prepare_components` exactly once, bind the returned
 components, and give the bound `ProxyServer` to `start`. Caller hooks and
-observers are preserved. The service adds a finite authoritative catalog,
+observers are preserved. The service adds a configurable authoritative catalog,
 bounded delta hints, dynamic native capture, one experimental controller lease,
 and explicit run status. Call `stop` to wait for runtime/observer drain before
 capture sealing.

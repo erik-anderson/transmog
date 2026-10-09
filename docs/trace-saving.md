@@ -10,7 +10,16 @@ Save native traces as `.tmcap`. Each chunk is compressed independently, so the
 desktop can read body payloads on demand. Bodies stream from retained storage;
 large captures are not collected into one in-memory buffer. Active, missing or
 incomplete bodies remain explicit and are counted in the save report. Review
-private headers and bodies before sharing.
+private headers and bodies before sharing. Saved traces have no fixed file-size
+or record-count ceiling; metadata indexing and body-processing budgets remain
+separate.
+
+**Encrypt with a password (AES-256)** is optional. New passwords require
+confirmation and cannot be recovered. Encrypted imports ask only when needed,
+allow retry or Cancel, and leave Traffic unchanged on failure. Passwords are
+kept in memory for the operation and cleared from dialogs on close. Native files
+compress before encrypting each frame, allowing metadata indexing and body reads
+without decrypting the entire file; see [native encoding](native-capture-format.md).
 
 **Include this computer’s network configuration** is optional and unchecked. It
 records bounded ipconfig /all output on Windows, interface/DNS/route context on

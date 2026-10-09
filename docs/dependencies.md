@@ -41,8 +41,9 @@ crates, while the crypto-graph check verifies exactly one `boring` and
 | Content coding | `async-compression` | Bounded streaming gzip, Brotli, DEFLATE/zlib, and zstd decoding and re-encoding in `transmog-content`. |
 | WebSocket compression and handshake primitives | `flate2`, `sha1`, `base64`, `getrandom` | Per-message DEFLATE plus RFC handshake and masking primitives in the bounded `transmog-websocket` implementation. |
 | Structured data | `serde`, `serde_json` | Control models, persisted application state, diagnostics, capture metadata, and narrow process/FFI messages. |
-| Native capture integrity | `crc32fast` | Per-record corruption detection for append-only `.tmcap` captures. |
-| SAZ compatibility | `zip` | Finalized Fiddler-compatible SAZ export. Native `.tmcap` remains the streaming capture format. |
+| Native capture compression and integrity | `flate2`, `crc32fast`, `sha2` | Independent DEFLATE frames, corruption checks and indexed body digests for lazy `.tmcap` reads. |
+| Native capture encryption | `aes-gcm`, `argon2`, `getrandom`, `zeroize` | Optional per-frame AES-256-GCM after compression, password-derived keys, fresh randomness and secret cleanup in `transmog-capture`. |
+| SAZ compatibility | `zip` | Indexed Fiddler-compatible import and finalized export, including supported password encryption. Native `.tmcap` remains the streaming capture format. |
 | Safe raster previews | `image` | GIF, JPEG, PNG, and WebP decoding inside the isolated, resource-bounded preview worker. SVG previews use an opaque image URL rather than parsing active content in the application page. |
 
 ## Desktop application and scripting
@@ -54,7 +55,7 @@ crates, while the crypto-graph check verifies exactly one `boring` and
 | Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
 | Sandboxed script execution | `deno_core` and V8 | Executes user automation in a separate capability-restricted process with explicit time and memory containment. |
 | TypeScript parsing/transpilation | `deno_ast` | Validates and transpiles the supported TypeScript subset before isolated execution. |
-| Browser-side code | TypeScript and `esbuild` | The small client-side layer that cannot be rendered or handled in Rust. Checked-in bundles are reproducibly verified from the npm lockfile. |
+| Browser-side code | TypeScript and `esbuild` | The small client-side layer that cannot be rendered or handled in Rust. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |
 
 ## Build and supply-chain controls

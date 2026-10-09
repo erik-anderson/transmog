@@ -36,12 +36,13 @@ HTTP/1.1 101 upgrade
         +-- hooks installed ----> bounded frame/message/compression relay
 ```
 
-Observers receive redacted immutable events beside the HTTP path through finite
-queues; they cannot mutate traffic.
+Observers receive immutable events beside the HTTP path through finite queues;
+they cannot mutate traffic. Each registration selects body interest and sensitive
+header access, with redaction as the library default.
 
 `transmog-session` sits above this complete path. It turns observer evidence
-into a finite live catalog, owns one runtime task and dynamic capture worker,
-adapts experimental control decisions into an identified hook, and exposes
+into a live catalog with configurable retention, owns one runtime task and dynamic
+capture worker, adapts experimental control decisions into an identified hook, and exposes
 injected replay and transactional host-integration seams. The layer is
 UI-independent and no lower crate depends on it.
 
@@ -154,8 +155,8 @@ UI state, IPC schemas, projects, replay collections, and scripting runtimes
 belong above the core.
 
 The headless application/session service owns only live application lifecycle:
-bounded searchable snapshots, lossy delta hints, capture start/seal state,
-same-build controller attachment, and proxy run status. Durable databases,
+searchable snapshots with bounded per-entry detail and queries, lossy delta hints,
+capture start/seal state, same-build controller attachment and proxy run status. Durable databases,
 saved projects, command-line policy, and UI selection/editor state remain above
 that service. See [the service guide](application-session-service.md). The
 desktop-specific facade, sandbox helpers, and presentation layer sit above that
@@ -167,7 +168,9 @@ service; see [the product shell](product-shell.md).
 every queue, buffer, deadline, connection count, and paused-callback count
 finite. A slow observer uses one declared delivery policy: bounded
 backpressure, drop-newest with a visible counter, or disconnect. Body bytes and
-credential fields are excluded or redacted by default.
+credential fields are excluded or redacted by default for library observers.
+The desktop and guided CLI explicitly retain bodies and sensitive headers under
+product privacy preferences; diagnostics and support bundles remain redacted.
 
 Hook, route-selector, upstream-service, body-filter, and observer callbacks run
 behind panic, timeout, cancellation, and drop containment. Dropping a boundary

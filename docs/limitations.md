@@ -55,16 +55,19 @@ extensions belong in the [roadmap](roadmap.md), not in completed phase plans.
 
 - The desktop is Windows-first and relies on Evergreen WebView2. Linux and
   macOS desktop products have not been qualified.
-- The live session catalog is deliberately finite and in memory. Delta
-  subscriptions are lossy hints; consumers recover by querying authoritative
-  state. Native TMCap is the streaming durable format, while SAZ is a finalized
-  compatibility export.
+- Live metadata stays in memory with no entry-count cap by default. An optional
+  maximum evicts completed live entries; active requests can temporarily exceed
+  it and imported entries are preserved. Body retention has a separate circular
+  budget, not a total application-memory ceiling. Delta subscriptions are lossy
+  hints; consumers recover by querying authoritative state. Native TMCap is the
+  durable format and reads saved bodies on demand; SAZ is a finalized
+  compatibility archive.
 - Persisted automation, scripts, response assets, and preferences are bounded
   product workspaces, not a durable indexed traffic database or full project
   model.
-- Auto-response URL matching is currently case-sensitive exact matching.
-  Request-header criteria are exposed for POST; request-body criteria and URL
-  regular expressions are not yet available in the desktop workflow.
+- Auto-responses support exact URLs, address patterns and bounded regular
+  expressions, with request-header criteria for every method. Request-body
+  matching is not yet available in the auto-response editor.
 - Experimental control revision 0 is a same-build, in-process contract. There
   is no stable external control protocol, and stabilization is deferred until a
   human explicitly requests it.
@@ -73,4 +76,10 @@ extensions belong in the [roadmap](roadmap.md), not in completed phase plans.
   concrete current-user proxy and certificate-store integration. Normal callers
   must stop explicitly to observe restoration errors; last-owner cleanup is
   necessarily best effort.
+- Captured-page preview is Windows-only. It reconstructs captured resources,
+  not browser state from the recording device, and blocks uncaptured requests.
+  Preview/search processing budgets remain separate from capture and replay.
+- Saved traces have no fixed file-size or record-count ceiling, but opening them
+  requires bounded metadata indexes. Recording can fail on storage errors or an
+  oversized metadata record; unlimited capture does not remove these constraints.
 - The proxy binds only to loopback unless a deliberately unsafe option is set.

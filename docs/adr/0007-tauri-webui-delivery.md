@@ -24,8 +24,8 @@ renderer—not a static Tauri configuration string—must own the effective CSP.
 
 ## Decision
 
-Use Tauri 2.12.1 with WebView2 on Windows and Microsoft WebUI 0.0.30 behind a
-local adapter.
+Use Tauri with WebView2 on Windows and Microsoft WebUI behind a local adapter.
+[Dependency manifests](../dependencies.md) own the reviewed version pins.
 
 - Register `transmog-ui` and serve only allowlisted embedded paths. On
   Windows, the observed origin is `http://transmog-ui.localhost/`. Do not
@@ -50,7 +50,8 @@ local adapter.
   the only reasons `style-src 'unsafe-inline'` and `font-src data:` are present;
   inline scripts and evaluation remain forbidden. Serve no remote
   subresources, allow navigation only to the custom application origin that
-  Tauri exposes on the current platform, and deny new windows.
+  Tauri exposes on the current platform, and deny WebView-initiated popups.
+  App commands own separate capture viewers and isolated preview windows.
 - Use same-origin custom-protocol fetch only for explicitly allowlisted,
   app-owned resources. Use typed Tauri
   commands for bounded authoritative queries and mutations. Use bounded
@@ -74,14 +75,16 @@ The main window capability contains no broad Tauri core/plugin permissions.
 Each product command is explicitly registered, accepts a bounded typed DTO,
 revalidates in Rust, and returns a stable bounded result. Live session
 notifications are hint-only typed channels. Filesystem paths are accepted only
-by narrow create-new capture/CA/import/export operations; there is no generic
-filesystem, shell, WebView HTTP-client, or remote-domain IPC permission.
+by narrow capture/CA/import/export and confirmed save operations. There is no
+generic filesystem, shell, WebView HTTP-client or remote-domain IPC permission.
 
 The custom protocol has no filesystem fallback. Unknown and traversal-shaped
 paths return 404, methods other than GET/HEAD return 405, dynamic pages are
 `no-store`, and all responses set `nosniff` and a no-referrer policy. Captured
 traffic never enters raw HTML, script, style, component metadata, or a URL
-loaded by the WebView.
+loaded by the trusted application WebView. The explicit
+[captured-page preview](../captured-page-preview.md) uses a separate profile and
+resource-interception boundary without application-command access.
 
 ## Consequences
 

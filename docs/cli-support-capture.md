@@ -57,8 +57,9 @@ To remove the per-request capture cap (trace output has no file-size ceiling):
 .\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap
 ```
 
-This preference persists for subsequent CLI runs. Use `--request-body-limit
-25000000` to restore the default, or supply another positive byte count. The
+This preference persists for subsequent CLI runs. Use
+`--request-body-limit 25000000` to restore the default, or supply another positive
+byte count. The
 console prints the active limit before recording. Separate bounded
 body-processing limits still apply to tasks such as decoding and searching;
 they do not impose a trace-file size ceiling.
