@@ -13,7 +13,7 @@ if (-not $SbomPath) {
     $SbomPath = Join-Path $repositoryRoot 'artifacts\sbom.cdx.json'
 }
 
-$metadata = cargo metadata --format-version 1 --locked | ConvertFrom-Json
+$metadata = cargo metadata --format-version 1 --locked | ConvertFrom-Json -AsHashtable
 . (Join-Path $PSScriptRoot 'release-version-common.ps1')
 $releaseVersion = (Get-ReleaseVersionState $repositoryRoot).Version
 $packagesById = @{}
