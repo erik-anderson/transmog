@@ -56,7 +56,7 @@ copying, timing reports, replay and reversible removal. See
 and request-copy behavior, and [request timings](request-timings.md) for how to
 interpret latency and shared transport measurements.
 
-**Import…** loads SAZ or TMCap files into the current window. Dropping files onto
+**Import…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
 the traffic list always imports them there. Each entry retains its source trace,
 with **Trace metadata** leading to the original machine's network context and
 capture metadata. Imported bodies are read on demand from pinned source files;
@@ -71,8 +71,12 @@ asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
 **Save trace…** saves retained traffic across pages and searches, with optional
-password encryption, export-only header redaction and network context. Streaming
-recording, recovery and native/JSONL/SAZ export are in Captures. See
+password encryption, export-only header redaction and network context for TMCap,
+or HAR output for HTTP archive interchange. File-only
+recording, recovery and native/JSONL/SAZ export are in Captures. Record chooses a
+destination before starting its proxy and writes requests directly to that file
+without retaining them in Traffic. Stop recording seals the file and restores
+Windows proxy settings. See
 [trace saving](trace-saving.md), [native capture encoding](native-capture-format.md)
 and [SAZ compatibility](saz-compatibility.md) for file behavior. The separate
 [CLI support recorder](cli-support-capture.md) is published outside the installer.

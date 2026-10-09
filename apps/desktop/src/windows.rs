@@ -283,6 +283,14 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 }
 
 #[tauri::command]
+async fn clear_traffic(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficClearResult, AppError> {
+    state.window_application(&window)?.clear_traffic().await
+}
+
+#[tauri::command]
 fn remove_traffic_entries(
     ids: Vec<String>,
     restore: bool,
@@ -566,6 +574,29 @@ async fn start_proxy(
     state: State<'_, DesktopState>,
 ) -> Result<AppStatus, String> {
     let _certificate_operation = state.certificate_operation.lock().await;
+    start_proxy_locked(request, &state).await
+}
+
+async fn start_proxy_locked(
+    request: ProxyStartRequest,
+    state: &DesktopState,
+) -> Result<AppStatus, String> {
+    validate_proxy_start(state)?;
+    state.application.record_diagnostic(
+        DiagnosticLevel::Info,
+        "desktop",
+        "proxy-start-requested",
+        "proxy start requested with current-user Windows proxy integration",
+    );
+    let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
+    state
+        .application
+        .start_proxy(request, host)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn validate_proxy_start(state: &DesktopState) -> Result<(), String> {
     if state.closing.load(Ordering::Acquire) {
         return Err("Transmog is closing for an update.".to_owned());
     }
@@ -595,18 +626,7 @@ async fn start_proxy(
             "Trust the Transmog interception certificate before starting the proxy.".to_owned(),
         );
     }
-    state.application.record_diagnostic(
-        DiagnosticLevel::Info,
-        "desktop",
-        "proxy-start-requested",
-        "proxy start requested with current-user Windows proxy integration",
-    );
-    let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
-    state
-        .application
-        .start_proxy(request, host)
-        .await
-        .map_err(|error| error.to_string())
+    Ok(())
 }
 
 #[tauri::command]
@@ -1062,18 +1082,30 @@ async fn save_traffic_trace(
     state: State<'_, DesktopState>,
 ) -> Result<Option<TraceSaveResult>, AppError> {
     let application = state.window_application(&window)?;
+    let har = options.format == transmog_app::TraceSaveFormat::Har;
     let picker = rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Save traffic trace")
-        .set_file_name("Transmog-trace.tmcap")
-        .add_filter("Traffic traces", &["tmcap"]);
+        .set_file_name(if har {
+            "Transmog-trace.har"
+        } else {
+            "Transmog-trace.tmcap"
+        })
+        .add_filter("Traffic traces", &[if har { "har" } else { "tmcap" }]);
     let Some(file) = picker.save_file().await else {
         return Ok(None);
     };
     let result = application
         .save_traffic_trace(file.path().to_owned(), options)
         .await?;
-    application.remember_artifact(result.destination.clone(), ArtifactKind::NativeCapture);
+    application.remember_artifact(
+        result.destination.clone(),
+        if har {
+            ArtifactKind::Har
+        } else {
+            ArtifactKind::NativeCapture
+        },
+    );
     Ok(Some(result))
 }
 
@@ -1213,8 +1245,35 @@ async fn start_capture(
     request: CaptureStartRequest,
     state: State<'_, DesktopState>,
 ) -> Result<CaptureReadModel, AppError> {
+    let _certificate_operation = state.certificate_operation.lock().await;
+    if !matches!(state.application.status().lifecycle, AppLifecycle::Stopped) {
+        return Err(AppError {
+            category: transmog_app::ErrorCategory::InvalidInput,
+            message: "Stop the proxy before starting a file-only recording.".into(),
+            retryable: false,
+        });
+    }
+    validate_proxy_start(&state).map_err(|message| AppError {category:transmog_app::ErrorCategory::InvalidInput,message,retryable:false})?;
     let path = request.path.clone();
     let result = state.application.start_capture(request).await?;
+    if let Err(error) = start_proxy_locked(
+        ProxyStartRequest {
+            ca_certificate_path: state.ca_certificate_path.clone(),
+            ca_private_key_path: state.ca_private_key_path.clone(),
+            recording_only: true,
+            ..ProxyStartRequest::default()
+        },
+        &state,
+    )
+    .await
+    {
+        let _ = state.application.stop_capture().await;
+        return Err(AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: error,
+            retryable: true,
+        });
+    }
     state
         .application
         .remember_artifact(path, ArtifactKind::NativeCapture);
@@ -1223,7 +1282,9 @@ async fn start_capture(
 
 #[tauri::command]
 async fn stop_capture(state: State<'_, DesktopState>) -> Result<CaptureReadModel, AppError> {
-    state.application.stop_capture().await
+    let _certificate_operation = state.certificate_operation.lock().await;
+    state.application.shutdown().await?;
+    Ok(state.application.capture_status())
 }
 
 #[tauri::command]
@@ -1440,6 +1501,7 @@ pub fn run() {
                 record_frontend_diagnostic,
                 automation_status,
                 remove_traffic_entries,
+                clear_traffic,
                 remove_unselected_traffic_entries,
                 search_traffic,
                 traffic_search_entry,
@@ -1572,6 +1634,7 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     persist_window_state(&application, &window);
                     if application.shutdown().await.is_ok()
+                        && application.discard_traffic().is_ok()
                         && host.recover_pending().is_ok()
                         && !host.recovery_pending()
                     {

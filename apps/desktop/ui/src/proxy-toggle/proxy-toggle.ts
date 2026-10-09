@@ -8,7 +8,7 @@ export class ProxyToggle extends WebUIElement {
   lifecycleChanged(): void { this.updateLabel(); }
   pendingChanged(): void { this.updateLabel(); }
   private updateLabel(): void {
-    this.actionLabel = this.pending === 'starting' ? 'Starting…' : this.pending === 'stopping' || this.lifecycle === 'stopping' ? 'Stopping…' : this.lifecycle === 'running' ? 'Stop proxy' : 'Start proxy';
+    this.actionLabel = this.pending === 'starting' ? 'Starting…' : this.pending === 'stopping' ? 'Stopping…' : this.lifecycle === 'running' ? 'Stop proxy' : 'Start proxy';
   }
   toggle(): void { if (this.ready && !this.pending) this.$emit('toggle-proxy'); }
 }

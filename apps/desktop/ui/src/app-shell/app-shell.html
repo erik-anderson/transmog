@@ -1,5 +1,5 @@
 <template shadowrootmode="open" @operation-error="{onOperationError(e)}" @trace-password-request="{onTracePasswordRequest(e)}" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
-  <div class="shell">
+  <div class="shell" data-lifecycle="{{lifecycleKind}}">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
         <img class="brand-mark" src="/transmog-icon.svg" alt="">
@@ -64,7 +64,7 @@
         <if condition="!viewerMode"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
         <if condition="!viewerMode"><automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace></if>
         <composer-workspace w-ref="{composer}" view="{{activeView}}"></composer-workspace>
-        <if condition="!viewerMode"><capture-workspace view="{{activeView}}"></capture-workspace></if>
+        <if condition="!viewerMode"><capture-workspace view="{{activeView}}" lifecycle="{{lifecycleKind}}"></capture-workspace></if>
         <if condition="!viewerMode"><settings-workspace w-ref="{settings}" view="{{activeView}}" @check-updates="{checkUpdates()}"></settings-workspace></if>
       </main>
     </div>

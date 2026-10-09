@@ -21,6 +21,7 @@ pub struct SessionObserver {
     capture: CaptureManager,
     control: Option<ControlConnector>,
     redact_sensitive: Arc<AtomicBool>,
+    retain_traffic: bool,
 }
 
 impl SessionObserver {
@@ -31,6 +32,7 @@ impl SessionObserver {
             capture,
             control: None,
             redact_sensitive: Arc::new(AtomicBool::new(true)),
+            retain_traffic: true,
         }
     }
 
@@ -45,6 +47,12 @@ impl SessionObserver {
     #[must_use]
     pub fn with_redaction_policy(mut self, policy: Arc<AtomicBool>) -> Self {
         self.redact_sensitive = policy;
+        self
+    }
+    /// Selects whether this run publishes retained Traffic entries.
+    #[must_use]
+    pub fn with_traffic_retention(mut self, retain: bool) -> Self {
+        self.retain_traffic = retain;
         self
     }
 
@@ -70,7 +78,9 @@ impl Observer for SessionObserver {
             control.publish(&event);
         }
         self.capture.record(event.clone());
-        self.catalog.apply(event);
+        if self.retain_traffic {
+            self.catalog.apply(event);
+        }
         Box::pin(async { Ok(()) })
     }
 }
@@ -152,5 +162,70 @@ mod tests {
         assert!(catalog.get(ExchangeId(1)).is_some());
         assert_eq!(capture.status(), CaptureStatus::Idle);
         capture.shutdown().await;
+    }
+    #[tokio::test]
+    async fn file_only_observer_records_without_retaining_traffic() {
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        let capture = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "transmog-file-only-{}-{}.tmcap",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        capture
+            .start(crate::CaptureStart {
+                path: path.clone(),
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                limits: transmog_capture::CaptureLimits::default(),
+                policy: transmog_capture::CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        let observer =
+            SessionObserver::new(catalog.clone(), capture.clone()).with_traffic_retention(false);
+        let metadata = Arc::new(ExchangeMetadata::from_session_at(
+            &SessionMetadata {
+                session_id: SessionId(1),
+                downstream_connection_id: ConnectionId(2),
+                stream_id: StreamId(3),
+                client_addr: "127.0.0.1:1000".parse::<SocketAddr>().unwrap(),
+                client_identity: transmog_core::ClientIdentity::default(),
+                proxy_addr: "127.0.0.1:2000".parse::<SocketAddr>().unwrap(),
+                ingress_version: HttpLegVersion::Http1,
+                egress_version: None,
+            },
+            Target {
+                scheme: "http".into(),
+                authority: "placeholder.invalid".into(),
+                host: "placeholder.invalid".into(),
+                port: 80,
+                path: "/".into(),
+                query: None,
+            },
+            SystemTime::UNIX_EPOCH,
+        ));
+        observer
+            .on_event(ObserverEvent {
+                exchange_id: ExchangeId(1),
+                sequence: 1,
+                kind: ObserverEventKind::ExchangeStarted { metadata },
+            })
+            .await
+            .unwrap();
+        capture.stop().await.unwrap();
+        assert!(catalog.get(ExchangeId(1)).is_none());
+        let saved = transmog_capture::recover(
+            std::fs::File::open(&path).unwrap(),
+            transmog_capture::CaptureLimits::default(),
+        )
+        .unwrap();
+        assert!(saved.sealed);
+        assert!(saved.records.iter().any(|record| record.exchange_id == 1));
+        capture.shutdown().await;
+        std::fs::remove_file(path).unwrap();
     }
 }

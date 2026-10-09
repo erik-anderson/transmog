@@ -78,6 +78,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "execute_composer"
             | "composer_history"
             | "remove_traffic_entries"
+            | "clear_traffic"
             | "remove_unselected_traffic_entries"
             | "search_traffic"
             | "traffic_search_entry"
@@ -100,17 +101,12 @@ pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
         .skip(1)
         .filter_map(|argument| {
             let path = PathBuf::from(argument);
-            if !path.extension().is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("saz") || extension.eq_ignore_ascii_case("tmcap")
-            }) {
-                return None;
-            }
             let path = if path.is_absolute() {
                 path
             } else {
                 cwd.join(path)
             };
-            path.is_file().then_some(path)
+            transmog_app::detect_trace_format(&path).map(|_| path)
         })
         .take(16)
         .collect()
@@ -272,7 +268,10 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
     rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Open saved traffic")
-        .add_filter("Traffic captures", &["saz", "tmcap"])
+        .add_filter(
+            "Traffic captures",
+            &["saz", "tmcap", "har", "netlog", "json"],
+        )
         .pick_file()
         .await
         .map(|file| file.path().to_string_lossy().into_owned())

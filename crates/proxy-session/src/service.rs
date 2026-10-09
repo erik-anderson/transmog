@@ -207,9 +207,20 @@ impl ApplicationSessionService {
     /// bounded worker.
     #[must_use]
     pub fn prepare_components(&self, components: ProxyComponents) -> ProxyComponents {
+        self.prepare_components_with_traffic(components, true)
+    }
+
+    /// Adds capture observation while optionally skipping retained traffic.
+    #[must_use]
+    pub fn prepare_components_with_traffic(
+        &self,
+        components: ProxyComponents,
+        retain: bool,
+    ) -> ProxyComponents {
         let observer = SessionObserver::new(self.inner.catalog.clone(), self.inner.capture.clone())
             .with_control(self.inner.controller.clone())
-            .with_redaction_policy(Arc::clone(&self.inner.redact_sensitive));
+            .with_redaction_policy(Arc::clone(&self.inner.redact_sensitive))
+            .with_traffic_retention(retain);
         components
             .with_interceptor(InterceptorRegistration::named(
                 INTERACTIVE_CONTROL_HOOK_ID,

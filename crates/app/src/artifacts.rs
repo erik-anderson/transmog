@@ -37,6 +37,9 @@ pub struct CaptureStartRequest {
     /// Whether redacted bounded body samples are retained.
     #[serde(default)]
     pub retain_body_samples: bool,
+    /// Redact sensitive header values in this recording only.
+    #[serde(default)]
+    pub redact_sensitive_headers: bool,
 }
 
 /// Presentation-safe native capture state.
@@ -178,7 +181,11 @@ pub(crate) async fn start_capture(
         None
     };
     // The session observer has already applied the application's privacy choice.
-    let mut policy = CapturePolicy::default().retain_sensitive_headers();
+    let mut policy = if request.redact_sensitive_headers {
+        CapturePolicy::default()
+    } else {
+        CapturePolicy::default().retain_sensitive_headers()
+    };
     policy.retain_body_samples = request.retain_body_samples;
     policy.request_body_limit = request_body_limit;
     service

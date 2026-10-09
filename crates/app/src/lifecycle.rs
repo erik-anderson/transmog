@@ -54,6 +54,9 @@ pub struct ProxyStartRequest {
     /// Explicit opt-in for non-loopback clients.
     #[serde(default)]
     pub allow_remote_clients: bool,
+    /// Stream to an explicit recording without retaining entries in Traffic.
+    #[serde(default)]
+    pub recording_only: bool,
 }
 
 impl Default for ProxyStartRequest {
@@ -64,6 +67,7 @@ impl Default for ProxyStartRequest {
             listen: "127.0.0.1:0".parse().expect("constant address is valid"),
             route: ProxyRoute::Auto,
             allow_remote_clients: false,
+            recording_only: false,
         }
     }
 }
@@ -175,7 +179,7 @@ pub(crate) async fn start_proxy(
         .with_content_policy(ContentPolicy::preserve_original_output(
             ContentLimits::default(),
         ));
-    if let Some(body_store) = body_store {
+    if let Some(body_store) = body_store.filter(|_| !request.recording_only) {
         components =
             components.with_observer(Arc::new(body_store.clone()), body_store.observer_config());
     }
@@ -183,7 +187,7 @@ pub(crate) async fn start_proxy(
     // narrows the terminal-publication race; completed detail reads then flush
     // accepted body work, and the presentation layer handles the remaining
     // cross-dispatcher scheduling window with a bounded refresh.
-    let components = service.prepare_components(components);
+    let components = service.prepare_components_with_traffic(components, !request.recording_only);
     let server = ProxyServer::bind_with_components(config, trust, components)
         .await
         .map_err(|_| {

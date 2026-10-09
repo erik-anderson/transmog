@@ -72,6 +72,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let listener = start(&application, &environment).await;
     application
         .start_capture(CaptureStartRequest {
+            redact_sensitive_headers: false,
             password: None,
             include_network_context: false,
             path: workspace.capture.clone(),
@@ -531,6 +532,7 @@ async fn start(application: &Application, environment: &Environment) -> String {
     let status = application
         .start_proxy(
             ProxyStartRequest {
+                recording_only: false,
                 ca_certificate_path: environment.ca_certificate.clone(),
                 ca_private_key_path: environment.ca_private_key.clone(),
                 listen: "127.0.0.1:0".parse().unwrap(),
