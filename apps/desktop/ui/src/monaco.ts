@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor/editor/editor.api';
+import 'monaco-editor/languages/definitions/typescript/register';
 import {
   ModuleKind,
   ModuleResolutionKind,
