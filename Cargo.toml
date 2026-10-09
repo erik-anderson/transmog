@@ -6,6 +6,7 @@ members = [
     "crates/app-webui",
     "crates/client-identity",
     "crates/host-windows",
+    "crates/key-protection",
     "crates/network",
     "crates/socket-info",
     "crates/proxy-core",

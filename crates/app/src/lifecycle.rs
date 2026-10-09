@@ -10,6 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{RoutePolicy, intercept::InterceptorChainFactory};
+use transmog_key_protection::SystemKeyProtection;
 use transmog_runtime::{
     AtomicRuntimeIdGenerator, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
     SystemRuntimeClock,
@@ -44,7 +45,7 @@ pub enum ProxyRoute {
 pub struct ProxyStartRequest {
     /// PEM-encoded public CA certificate path.
     pub ca_certificate_path: PathBuf,
-    /// PEM-encoded private CA key path.
+    /// OS-protected private CA key path, or a legacy PEM input.
     pub ca_private_key_path: PathBuf,
     /// Loopback listener endpoint; port zero requests an ephemeral port.
     pub listen: SocketAddr,
@@ -78,7 +79,7 @@ impl Default for ProxyStartRequest {
 pub struct CaCreateRequest {
     /// Destination for the public certificate.
     pub certificate_path: PathBuf,
-    /// Destination for the private key.
+    /// Destination for the OS-protected private key.
     pub private_key_path: PathBuf,
     /// Human-readable CA common name.
     pub common_name: String,
@@ -115,7 +116,8 @@ pub(crate) async fn start_proxy(
     let (certificate, key, request) = tokio::task::spawn_blocking(move || {
         Ok::<_, AppError>((
             read_bounded(&request.ca_certificate_path)?,
-            read_bounded(&request.ca_private_key_path)?,
+            transmog_key_protection::read(&request.ca_private_key_path, &SystemKeyProtection)
+                .map_err(|error| key_protection_error(&error))?,
             request,
         ))
     })
@@ -231,15 +233,18 @@ pub(crate) async fn create_ca(request: CaCreateRequest) -> Result<CaIdentity, Ap
         }
         let ca = ProxyCa::generate(&request.common_name, request.validity_days)
             .map_err(|_| AppError::new(ErrorCategory::Internal, "CA generation failed", true))?;
-        let key = ca
-            .private_key_pem_pkcs8()
-            .map_err(|_| AppError::new(ErrorCategory::Internal, "CA key encoding failed", true))?;
+        let key =
+            zeroize::Zeroizing::new(ca.private_key_pem_pkcs8().map_err(|_| {
+                AppError::new(ErrorCategory::Internal, "CA key encoding failed", true)
+            })?);
         let certificate = ca
             .certificate_pem()
             .map_err(|_| AppError::new(ErrorCategory::Internal, "CA encoding failed", true))?;
-        write_new(&request.private_key_path, &key)?;
+        transmog_key_protection::write_new(&request.private_key_path, &key, &SystemKeyProtection)
+            .map_err(|error| key_protection_error(&error))?;
         if let Err(error) = write_new(&request.certificate_path, &certificate) {
-            let _ = std::fs::remove_file(&request.private_key_path);
+            let _ =
+                transmog_key_protection::remove(&request.private_key_path, &SystemKeyProtection);
             return Err(error);
         }
         Ok(CaIdentity {
@@ -251,6 +256,44 @@ pub(crate) async fn create_ca(request: CaCreateRequest) -> Result<CaIdentity, Ap
     })
     .await
     .map_err(|_| AppError::new(ErrorCategory::Internal, "CA generation task failed", true))?
+}
+
+/// Validates a certificate/key pair and atomically protects a legacy private key.
+/// The certificate and its trust identity remain unchanged.
+///
+/// # Errors
+/// Returns an error for mismatched material, I/O or unavailable OS protection.
+pub fn protect_ca_private_key(certificate_path: &Path, key_path: &Path) -> Result<(), AppError> {
+    validate_ca_private_key(certificate_path, key_path)?;
+    transmog_key_protection::protect_existing(key_path, &SystemKeyProtection)
+        .map_err(|error| key_protection_error(&error))
+}
+
+/// Checks that a private key can be opened and matches its public certificate.
+/// This inspection does not modify the files or operating-system trust.
+///
+/// # Errors
+/// Returns an error for mismatched material, I/O or inaccessible OS protection.
+pub fn validate_ca_private_key(certificate_path: &Path, key_path: &Path) -> Result<(), AppError> {
+    let certificate = read_bounded(certificate_path)?;
+    let key = transmog_key_protection::read(key_path, &SystemKeyProtection)
+        .map_err(|error| key_protection_error(&error))?;
+    ProxyCa::from_pem(&certificate, &key).map_err(|_| {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "CA certificate or private key is invalid or mismatched",
+            false,
+        )
+    })?;
+    Ok(())
+}
+
+fn key_protection_error(error: &std::io::Error) -> AppError {
+    AppError::new(
+        ErrorCategory::Unavailable,
+        format!("Could not protect or open the interception CA private key: {error}"),
+        true,
+    )
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>, AppError> {
@@ -299,6 +342,22 @@ mod tests {
 
     use super::*;
 
+    async fn create_fixture_ca(request: CaCreateRequest) {
+        #[cfg(windows)]
+        create_ca(request).await.unwrap();
+        #[cfg(not(windows))]
+        {
+            // Proxy fixtures need no desktop credential service or trust changes.
+            let ca = ProxyCa::generate(&request.common_name, request.validity_days).unwrap();
+            write_new(&request.certificate_path, &ca.certificate_pem().unwrap()).unwrap();
+            write_new(
+                &request.private_key_path,
+                &ca.private_key_pem_pkcs8().unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
     async fn read_http_head(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
         let mut head = Vec::new();
         while !head.ends_with(b"\r\n\r\n") {
@@ -326,7 +385,7 @@ mod tests {
             common_name: "Restart test CA".to_owned(),
             validity_days: 2,
         };
-        create_ca(ca.clone()).await.unwrap();
+        create_fixture_ca(ca.clone()).await;
         let application = crate::Application::new(crate::AppConfig {
             body_store: Some(crate::BodyStoreConfig::product_default(root.join("bodies"))),
             ..crate::AppConfig::default()
@@ -425,6 +484,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(windows)]
     #[tokio::test]
     async fn ca_creation_is_create_new_and_round_trips() {
         let root = std::env::temp_dir().join(format!("transmog-app-ca-{}", std::process::id()));
@@ -438,15 +498,51 @@ mod tests {
         };
         let identity = create_ca(request.clone()).await.unwrap();
         assert_eq!(identity.sha256.len(), 64);
+        assert!(transmog_key_protection::is_protected(
+            &std::fs::read(&request.private_key_path).unwrap()
+        ));
         assert!(
             ProxyCa::from_pem(
                 &std::fs::read(&request.certificate_path).unwrap(),
-                &std::fs::read(&request.private_key_path).unwrap()
+                &transmog_key_protection::read(&request.private_key_path, &SystemKeyProtection)
+                    .unwrap()
             )
             .is_ok()
         );
         assert!(create_ca(request).await.is_err());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_key_migration_preserves_identity_and_rejects_mismatched_certificates() {
+        let root = tempfile::tempdir().unwrap();
+        let certificate = root.path().join("ca.pem");
+        let key = root.path().join("ca.key");
+        let ca = ProxyCa::generate("Migration fixture", 2).unwrap();
+        let plaintext = ca.private_key_pem_pkcs8().unwrap();
+        let public = ca.certificate_pem().unwrap();
+        std::fs::write(&certificate, &public).unwrap();
+        std::fs::write(&key, &plaintext).unwrap();
+        protect_ca_private_key(&certificate, &key).unwrap();
+        assert_eq!(std::fs::read(&certificate).unwrap(), public);
+        assert!(transmog_key_protection::is_protected(
+            &std::fs::read(&key).unwrap()
+        ));
+        let loaded = ProxyCa::from_pem(
+            &public,
+            &transmog_key_protection::read(&key, &SystemKeyProtection).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            loaded.sha256_thumbprint().unwrap(),
+            ca.sha256_thumbprint().unwrap()
+        );
+        let other = ProxyCa::generate("Other fixture", 2).unwrap();
+        std::fs::write(&key, other.private_key_pem_pkcs8().unwrap()).unwrap();
+        let original = std::fs::read(&key).unwrap();
+        assert!(protect_ca_private_key(&certificate, &key).is_err());
+        assert_eq!(std::fs::read(&key).unwrap(), original);
     }
 
     #[tokio::test]
@@ -504,7 +600,7 @@ mod tests {
             common_name: "Autoresponse test CA".to_owned(),
             validity_days: 2,
         };
-        create_ca(ca.clone()).await.unwrap();
+        create_fixture_ca(ca.clone()).await;
         let start = ProxyStartRequest {
             ca_certificate_path: ca.certificate_path,
             ca_private_key_path: ca.private_key_path,
@@ -802,7 +898,7 @@ mod tests {
             common_name: "Transmog lifecycle test CA".to_owned(),
             validity_days: 2,
         };
-        create_ca(ca.clone()).await.unwrap();
+        create_fixture_ca(ca.clone()).await;
         let application = crate::Application::new(crate::AppConfig::default()).unwrap();
         let request = ProxyStartRequest {
             ca_certificate_path: ca.certificate_path,

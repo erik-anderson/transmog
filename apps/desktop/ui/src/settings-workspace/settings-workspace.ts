@@ -50,7 +50,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   showSettingsSection(section:string):void {this.settingsSection=section;}
   markSettingsDirty():void {this.settingsDirty=true;this.settingsText='Unsaved changes';}
   settingsKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();if(this.settingsDirty)this.settingsForm.requestSubmit();}}
-  private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateReady=bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted;this.certificateRecovery=bootstrap.caFilesExist&&(!bootstrap.caFilesPresent||bootstrap.ownedCaSha256===null)||!bootstrap.caFilesPresent&&bootstrap.ownedCaSha256!==null;this.hostRecoveryPending=bootstrap.hostRestorePending;}
+  private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateRecovery=this.caRecoveryRequired(bootstrap);this.certificateReady=bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted&&!this.certificateRecovery;this.hostRecoveryPending=bootstrap.hostRestorePending;}
   private async runSupport(operation:()=>Promise<void>):Promise<void> {if(this.supportBusy)return;this.supportBusy=true;try {await operation();}finally{this.supportBusy=false;}}
   @observable proxyReady = initialState.proxyReady;
   @observable proxyText = initialState.proxyText;
@@ -115,7 +115,7 @@ export class SettingsWorkspace extends WorkspaceElement {
           : bootstrap.ownedCaTrusted
             ? 'HTTPS interception certificate is ready.'
             : 'The interception certificate needs current-user trust.';
-      const ready = bootstrap.caFilesPresent && bootstrap.ownedCaTrusted;
+      const ready = this.certificateReady;
       this.setProxyOutput(certificate, ready ? 'success' : recovery ? 'error' : 'progress');
       if (bootstrap.hostRestorePending) {
         this.showNotice(
@@ -186,7 +186,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         this.setProxyOutput('Start blocked: Windows proxy recovery is pending.', 'error');
         return;
       }
-      if (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted) {
+      if (this.caRecoveryRequired(bootstrap) || !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted) {
         if (this.caRecoveryRequired(bootstrap)) {
           this.showCaRecovery(bootstrap);
           this.activateView('settings');
@@ -218,6 +218,11 @@ export class SettingsWorkspace extends WorkspaceElement {
       const message = `Start failed: ${describeError(error)}`;
       this.setProxyOutput(message, 'error');
       this.diagnostic = message;
+      try {
+        const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+        this.updateCertificateState(bootstrap);
+        if (this.caRecoveryRequired(bootstrap)) { this.showCaRecovery(bootstrap); return; }
+      } catch { /* Preserve the original start failure if inspection also fails. */ }
       this.showNotice('Proxy could not start', `${message} See Settings for recovery options.`, 'Open Settings', 'settings');
     }
   }
@@ -227,14 +232,14 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   private caRecoveryRequired(bootstrap: DesktopBootstrap): boolean {
-    return bootstrap.caFilesExist && (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null)
+    return Boolean(bootstrap.caKeyError) || bootstrap.caFilesExist && (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null)
       || !bootstrap.caFilesPresent && bootstrap.ownedCaSha256 !== null;
   }
 
   private showCaRecovery(bootstrap: DesktopBootstrap): void {
-    const reason = bootstrap.ownedCaSha256 === null
+    const reason = bootstrap.caKeyError ?? (bootstrap.ownedCaSha256 === null
       ? 'Certificate files from a previous setup remain, but their Transmog identity is not recorded.'
-      : 'The recorded interception certificate is missing one or both of its files.';
+      : 'The recorded interception certificate is missing one or both of its files.');
     const message = `${reason} Reset the certificate to remove the app-managed certificate and private key, then create and trust a new certificate.`;
     this.setProxyOutput(message, 'error');
     this.showNotice('Interception certificate needs a reset', message, 'Reset certificate and set up again', 'reset-ca');
@@ -305,6 +310,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         sha256,
       });
       bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      this.updateCertificateState(bootstrap);
       if (!bootstrap.ownedCaTrusted) throw new Error('Windows did not report the certificate as trusted.');
       this.caSha256 = sha256;
       const message = 'HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.';

@@ -8,6 +8,7 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
 };
+use transmog_key_protection::{KeyProtection, SystemKeyProtection};
 use transmog_tls::ProxyCa;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,6 +43,7 @@ pub(crate) trait RootTrust {
 pub(crate) struct RootLedger {
     directory: PathBuf,
     _lock: File,
+    key_protection: std::sync::Arc<dyn KeyProtection>,
 }
 impl RootLedger {
     pub(crate) fn open(directory: PathBuf) -> io::Result<Self> {
@@ -66,6 +68,7 @@ impl RootLedger {
         Ok(Self {
             directory,
             _lock: lock,
+            key_protection: std::sync::Arc::new(SystemKeyProtection),
         })
     }
     pub(crate) fn directory(&self) -> &Path {
@@ -219,10 +222,20 @@ impl RootLedger {
                 .iter()
                 .filter(|record| record.persistent && !record.lifecycle.retired)
             {
+                // Credential-store failures must retain the existing key for retry.
+                let key_path = self.path(&record.sha256, "key");
+                let key =
+                    match transmog_key_protection::read(&key_path, self.key_protection.as_ref()) {
+                        Ok(key) => Some(key),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                        Err(error) => return Err(error),
+                    };
                 let ca = (|| {
                     let ca = ProxyCa::from_pem(
                         &read_bounded(&self.certificate(record), 8192)?,
-                        &read_bounded(&self.path(&record.sha256, "key"), 8192)?,
+                        key.as_deref().ok_or_else(|| {
+                            io::Error::other("Persistent root private key is missing")
+                        })?,
                     )
                     .map_err(io::Error::other)?;
                     if ca.sha256_thumbprint().map_err(io::Error::other)? != record.sha256 {
@@ -237,6 +250,10 @@ impl RootLedger {
                 })();
                 match ca {
                     Ok(ca) => {
+                        transmog_key_protection::protect_existing(
+                            &key_path,
+                            self.key_protection.as_ref(),
+                        )?;
                         let updated =
                             self.update(record, |updated| updated.lifecycle.begin(&ca, true))?;
                         println!("Reusing persistent CLI root {}.", record.sha256);
@@ -250,7 +267,10 @@ impl RootLedger {
                                 Some(error.to_string().chars().take(512).collect());
                             Ok(())
                         })?;
-                        remove_if_present(&self.path(&record.sha256, "key"))?;
+                        transmog_key_protection::remove(
+                            &self.path(&record.sha256, "key"),
+                            self.key_protection.as_ref(),
+                        )?;
                         self.update(record, |updated| {
                             updated.lifecycle.key_storage = KeyStorage::Removed;
                             Ok(())
@@ -295,9 +315,10 @@ impl RootLedger {
             &ca.certificate_pem().map_err(io::Error::other)?,
         )?;
         if persistent {
-            write_new(
+            transmog_key_protection::write_new(
                 &self.path(&record.sha256, "key"),
-                &ca.private_key_pem_pkcs8().map_err(io::Error::other)?,
+                &zeroize::Zeroizing::new(ca.private_key_pem_pkcs8().map_err(io::Error::other)?),
+                self.key_protection.as_ref(),
             )?;
         }
         Ok((ca, record))
@@ -371,7 +392,10 @@ impl RootLedger {
             Ok(())
         })?;
         let result = (|| {
-            remove_if_present(&self.path(&record.sha256, "key"))?;
+            transmog_key_protection::remove(
+                &self.path(&record.sha256, "key"),
+                self.key_protection.as_ref(),
+            )?;
             self.update(record, |updated| {
                 updated.lifecycle.key_storage = KeyStorage::Removed;
                 Ok(())
@@ -651,6 +675,60 @@ fn linux_root(hash: &str) -> io::Result<(PathBuf, Vec<&'static str>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn open_fixture(directory: PathBuf) -> io::Result<RootLedger> {
+        #[allow(unused_mut)]
+        let mut ledger = RootLedger::open(directory)?;
+        #[cfg(not(windows))]
+        {
+            static PROTECTION: std::sync::OnceLock<std::sync::Arc<FixtureProtection>> =
+                std::sync::OnceLock::new();
+            ledger.key_protection = PROTECTION
+                .get_or_init(|| std::sync::Arc::new(FixtureProtection::default()))
+                .clone();
+        }
+        Ok(ledger)
+    }
+
+    #[cfg(not(windows))]
+    #[derive(Default)]
+    struct FixtureProtection {
+        secrets: std::sync::Mutex<std::collections::HashMap<u64, Vec<u8>>>,
+        next: std::sync::atomic::AtomicU64,
+    }
+    #[cfg(not(windows))]
+    impl KeyProtection for FixtureProtection {
+        fn protect(&self, bytes: &[u8]) -> io::Result<Vec<u8>> {
+            let id = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.secrets.lock().unwrap().insert(id, bytes.to_vec());
+            let mut bytes = b"TRANSMOG-CA-KEY\0".to_vec();
+            bytes.extend_from_slice(&id.to_le_bytes());
+            Ok(bytes)
+        }
+        fn unprotect(&self, bytes: &[u8]) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
+            let id = u64::from_le_bytes(
+                bytes[b"TRANSMOG-CA-KEY\0".len()..]
+                    .try_into()
+                    .map_err(io::Error::other)?,
+            );
+            self.secrets
+                .lock()
+                .unwrap()
+                .get(&id)
+                .cloned()
+                .map(zeroize::Zeroizing::new)
+                .ok_or_else(|| io::Error::other("Missing fixture credential"))
+        }
+        fn forget(&self, bytes: &[u8]) -> io::Result<()> {
+            let id = u64::from_le_bytes(
+                bytes[b"TRANSMOG-CA-KEY\0".len()..]
+                    .try_into()
+                    .map_err(io::Error::other)?,
+            );
+            self.secrets.lock().unwrap().remove(&id);
+            Ok(())
+        }
+    }
     struct FakeTrust {
         fail: bool,
     }
@@ -669,7 +747,7 @@ mod tests {
     #[test]
     fn ephemeral_keys_never_reach_disk_and_canceled_cleanup_keeps_multiple_identities() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, first) = ledger.prepare(false).unwrap();
         assert!(!ledger.path(&first.sha256, "key").exists());
         assert!(ledger.cleanup(&first, &FakeTrust { fail: true }).is_err());
@@ -677,7 +755,7 @@ mod tests {
         assert_ne!(first.sha256, second.sha256);
         assert_eq!(ledger.records().unwrap().len(), 2);
         drop(ledger);
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         assert_eq!(
             ledger
                 .cleanup_ephemeral(&FakeTrust { fail: false })
@@ -689,7 +767,7 @@ mod tests {
     #[test]
     fn cleanup_recovery_keeps_lifecycle_without_ephemeral_keys() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, root) = ledger.prepare(false).unwrap();
         assert_eq!(root.lifecycle.key_storage, KeyStorage::MemoryOnly);
         assert!(root.lifecycle.expires_at.unwrap() > root.lifecycle.created_at.unwrap());
@@ -718,7 +796,7 @@ mod tests {
                 .contains("canceled")
         );
         drop(ledger);
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, next) = ledger.prepare(false).unwrap();
         assert_ne!(next.sha256, root.sha256);
         assert_ne!(next.lifecycle.run_id, root.lifecycle.run_id);
@@ -731,7 +809,7 @@ mod tests {
     #[test]
     fn persistent_near_expiry_rotates_and_canceled_old_removal_does_not_block_reuse() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, old) = ledger
             .save_new_ca(ProxyCa::generate("Expiry fixture", 2).unwrap(), true)
             .unwrap();
@@ -763,7 +841,7 @@ mod tests {
     #[test]
     fn outdated_owned_roots_are_rejected_without_migration_or_trust_changes() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, root) = ledger.prepare(true).unwrap();
         let path = ledger.path(&root.sha256, "json");
         for schema in [1, 99] {
@@ -783,11 +861,11 @@ mod tests {
     #[test]
     fn redaction_choice_persists_across_runs_and_can_be_reversed() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         assert!(!ledger.redaction(None).unwrap());
         assert!(ledger.redaction(Some(true)).unwrap());
         drop(ledger);
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         assert!(ledger.redaction(None).unwrap());
         assert!(!ledger.redaction(Some(false)).unwrap());
         assert!(!ledger.redaction(None).unwrap());
@@ -795,7 +873,7 @@ mod tests {
     #[test]
     fn request_retention_limit_persists_and_preserves_redaction() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         assert_eq!(
             ledger.preferences(None, None).unwrap(),
             (false, Some(25_000_000))
@@ -805,7 +883,7 @@ mod tests {
             (true, None)
         );
         drop(ledger);
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         assert_eq!(ledger.preferences(None, None).unwrap(), (true, None));
         assert_eq!(
             ledger.preferences(None, Some(Some(25_000_000))).unwrap(),
@@ -816,7 +894,7 @@ mod tests {
     #[test]
     fn corrupt_newest_privacy_falls_back_and_next_save_uses_a_fresh_generation() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         ledger.redaction(Some(true)).unwrap();
         ledger.redaction(Some(false)).unwrap();
         fs::write(
@@ -828,7 +906,7 @@ mod tests {
         assert!(!ledger.redaction(Some(false)).unwrap());
         drop(ledger);
         assert!(
-            !RootLedger::open(directory.path().into())
+            !open_fixture(directory.path().into())
                 .unwrap()
                 .redaction(None)
                 .unwrap()
@@ -837,14 +915,82 @@ mod tests {
     #[test]
     fn persistent_root_is_reused_and_excluded_from_automatic_cleanup() {
         let directory = tempfile::tempdir().unwrap();
-        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
         let (_, first) = ledger.prepare(true).unwrap();
         assert!(ledger.path(&first.sha256, "key").is_file());
+        assert!(transmog_key_protection::is_protected(
+            &fs::read(ledger.path(&first.sha256, "key")).unwrap()
+        ));
         assert_eq!(ledger.prepare(true).unwrap().1.sha256, first.sha256);
         ledger
             .cleanup_ephemeral(&FakeTrust { fail: false })
             .unwrap();
         assert_eq!(ledger.records().unwrap().len(), 1);
-        assert!(RootLedger::open(directory.path().into()).is_err());
+        assert!(open_fixture(directory.path().into()).is_err());
+    }
+
+    #[test]
+    fn persistent_legacy_key_is_migrated_without_changing_its_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
+        let (ca, record) = ledger.prepare(true).unwrap();
+        let key_path = ledger.path(&record.sha256, "key");
+        transmog_key_protection::remove(&key_path, ledger.key_protection.as_ref()).unwrap();
+        fs::write(&key_path, ca.private_key_pem_pkcs8().unwrap()).unwrap();
+        assert_eq!(ledger.prepare(true).unwrap().1.sha256, record.sha256);
+        assert!(transmog_key_protection::is_protected(
+            &fs::read(&key_path).unwrap()
+        ));
+    }
+
+    #[test]
+    fn inaccessible_key_does_not_rotate_or_destroy_the_persistent_root() {
+        struct Locked;
+        impl KeyProtection for Locked {
+            fn protect(&self, _: &[u8]) -> io::Result<Vec<u8>> {
+                Err(io::Error::other("Locked"))
+            }
+            fn unprotect(&self, _: &[u8]) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
+                Err(io::Error::other("Locked"))
+            }
+            fn forget(&self, _: &[u8]) -> io::Result<()> {
+                Err(io::Error::other("Locked"))
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let mut ledger = open_fixture(directory.path().into()).unwrap();
+        let (_, record) = ledger.prepare(true).unwrap();
+        let key = fs::read(ledger.path(&record.sha256, "key")).unwrap();
+        let ownership = fs::read(ledger.path(&record.sha256, "json")).unwrap();
+        ledger.key_protection = std::sync::Arc::new(Locked);
+        assert!(ledger.prepare(true).is_err());
+        assert_eq!(fs::read(ledger.path(&record.sha256, "key")).unwrap(), key);
+        assert_eq!(
+            fs::read(ledger.path(&record.sha256, "json")).unwrap(),
+            ownership
+        );
+        assert_eq!(ledger.records().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_key_after_partial_creation_retains_old_identity_for_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
+        let (_, original) = ledger.prepare(true).unwrap();
+        transmog_key_protection::remove(
+            &ledger.path(&original.sha256, "key"),
+            ledger.key_protection.as_ref(),
+        )
+        .unwrap();
+        let (_, replacement) = ledger.prepare(true).unwrap();
+        assert_ne!(original.sha256, replacement.sha256);
+        assert!(ledger.certificate(&original).exists());
+        assert!(
+            ledger
+                .records()
+                .unwrap()
+                .iter()
+                .any(|record| record.sha256 == original.sha256 && record.lifecycle.retired)
+        );
     }
 }

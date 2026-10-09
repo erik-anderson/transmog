@@ -41,6 +41,7 @@ use transmog_core::{
         ObserverError, ObserverEvent, ObserverHub,
     },
 };
+use transmog_key_protection::SystemKeyProtection;
 use transmog_runtime::{
     ExchangeEvidence, ListenerConfig, ProxyComponents, ProxyConfig, ProxyServer,
     WebSocketSessionEvidence, WebSocketSessionOutcome,
@@ -83,6 +84,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         Some("ca") if arguments.get(1).map(String::as_str) == Some("issue") => {
             issue_certificate(&arguments[2..])
         }
+        Some("ca") if arguments.get(1).map(String::as_str) == Some("protect") => {
+            protect_ca(&arguments[2..])
+        }
         Some("capture") => capture_command(&arguments[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
@@ -108,8 +112,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let allow_remote_clients = arguments.iter().any(|value| value == "--allow-remote");
 
     let certificate_pem = fs::read(certificate_path)?;
-    let private_key_pem = fs::read(key_path)?;
-    let ca = ProxyCa::from_pem(&certificate_pem, &private_key_pem)?;
+    let ca = load_ca(&certificate_pem, Path::new(key_path))?;
     let thumbprint = ca.sha256_thumbprint()?;
     let trust = load_upstream_trust(arguments)?;
     let interceptor: Arc<dyn InterceptorFactory> = proof_id.map_or_else(
@@ -620,17 +623,34 @@ fn generate_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         return Err(invalid_input("refusing to overwrite an existing certificate or key").into());
     }
     let ca = ProxyCa::generate(common_name, 365)?;
-    write_new(&key_path, &ca.private_key_pem_pkcs8()?)?;
+    let key = zeroize::Zeroizing::new(ca.private_key_pem_pkcs8()?);
+    transmog_key_protection::write_new(&key_path, &key, &SystemKeyProtection)?;
     if let Err(error) = write_new(&certificate_path, &ca.certificate_pem()?) {
-        let _ = fs::remove_file(&key_path);
+        let _ = transmog_key_protection::remove(&key_path, &SystemKeyProtection);
         return Err(error.into());
     }
     println!("CA_CERT={}", certificate_path.display());
     println!("CA_KEY={}", key_path.display());
     println!("CA_SHA256={}", ca.sha256_thumbprint()?);
     eprintln!(
-        "Protect the private key with a user-only ACL and install only the public certificate."
+        "The private key is protected for this OS user. Install only the public certificate."
     );
+    Ok(())
+}
+
+fn load_ca(certificate: &[u8], key_path: &Path) -> Result<ProxyCa, Box<dyn Error>> {
+    let key = transmog_key_protection::read(key_path, &SystemKeyProtection)?;
+    let ca = ProxyCa::from_pem(certificate, &key)?;
+    transmog_key_protection::protect_existing(key_path, &SystemKeyProtection)?;
+    Ok(ca)
+}
+
+fn protect_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let certificate = required_option(arguments, "--ca-cert")?;
+    let key = required_option(arguments, "--ca-key")?;
+    let ca = load_ca(&fs::read(certificate)?, Path::new(key))?;
+    println!("CA_SHA256={}", ca.sha256_thumbprint()?);
+    println!("The interception CA private key is protected for this OS user.");
     Ok(())
 }
 
@@ -641,7 +661,7 @@ fn issue_certificate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let certificate_path = PathBuf::from(required_option(arguments, "--cert")?);
     let key_path = PathBuf::from(required_option(arguments, "--key")?);
     let validity_days = option(arguments, "--days").unwrap_or("7").parse::<u32>()?;
-    let ca = ProxyCa::from_pem(&fs::read(ca_certificate_path)?, &fs::read(ca_key_path)?)?;
+    let ca = load_ca(&fs::read(ca_certificate_path)?, Path::new(ca_key_path))?;
     let leaf = ca.issue(identity, validity_days)?;
     write_new(&key_path, &leaf.private_key.private_key_to_pem_pkcs8()?)?;
     if let Err(error) = write_new(&certificate_path, &leaf.certificate.to_pem()?) {
@@ -695,6 +715,7 @@ fn print_usage() {
          transmog-cli roots cleanup [--include-persistent]\n\n\
          Generate a CA (files must not already exist):\n  \
          transmog-cli ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
+         transmog-cli ca protect --ca-cert ca.pem --ca-key ca.key\n\n\
          Issue a short-lived server leaf from an existing CA:\n  \
          transmog-cli ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
          Run the explicit proxy:\n  \

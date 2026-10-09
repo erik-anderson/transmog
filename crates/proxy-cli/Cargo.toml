@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 rpassword.workspace = true
 zeroize.workspace = true
+transmog-key-protection = { version = "=0.1.0", path = "../key-protection" }
 sysinfo.workspace = true
 transmog-network = { version = "=0.1.0", path = "../network" }
 bytes.workspace = true

@@ -74,7 +74,10 @@ pub use inspector::{
     AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
     HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
-pub use lifecycle::{CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest};
+pub use lifecycle::{
+    CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
+    validate_ca_private_key,
+};
 pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
     ThemePreference, WindowState,

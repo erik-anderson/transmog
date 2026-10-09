@@ -23,6 +23,8 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
+zeroize.workspace = true
+transmog-key-protection = { version = "=0.1.0", path = "../key-protection" }
 time.workspace = true
 tokio.workspace = true
 zip.workspace = true

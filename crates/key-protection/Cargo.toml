@@ -1,0 +1,43 @@
+[package]
+name = "transmog-key-protection"
+description = "User-bound operating-system protection for interception CA key files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tempfile.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Security_Cryptography"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+aes-gcm.workspace = true
+getrandom.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", features = ["sync-secret-service", "crypto-rust"] }
+# Vendor D-Bus alone; keyring's combined vendoring feature also resolves OpenSSL.
+dbus = { version = "=0.9.12", features = ["vendored"] }
+
+[lints.rust]
+# The only unsafe operations are synchronous DPAPI calls and freeing their buffers.
+# Each block documents its pointer, length, ownership and lifetime invariants.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[dev-dependencies]
+aes-gcm.workspace = true
+getrandom.workspace = true

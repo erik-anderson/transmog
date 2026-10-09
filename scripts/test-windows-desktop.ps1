@@ -8,6 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$ViewerChecks,
+    [switch]$KeyRecoveryChecks,
     [string]$NativeTracePath,
     [switch]$HostedRunnerDevToolsPolicy
 )
@@ -23,6 +24,7 @@ if ($ExecutablePath) {
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($KeyRecoveryChecks -and ($StartupOnly -or $ViewerChecks)) { throw 'KeyRecoveryChecks requires the main-window smoke checks.' }
 if ($NativeTracePath -and -not $ViewerChecks) { throw 'NativeTracePath requires ViewerChecks.' }
 if ($NativeTracePath) { $NativeTracePath = (Resolve-Path -LiteralPath $NativeTracePath).Path }
 if ($HostedRunnerDevToolsPolicy -and ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted')) { throw 'Machine debug policy is limited to disposable GitHub-hosted runners.' }
@@ -96,6 +98,30 @@ try {
     }
     $viewerSource = $null
     $pageSource = $null
+    if ($KeyRecoveryChecks) {
+        # No trust-store changes: seed an owned fixture whose DPAPI blob is corrupt.
+        $fixtureDirectory = Join-Path $env:LOCALAPPDATA 'Transmog'
+        New-Item -ItemType Directory -Force -Path $fixtureDirectory | Out-Null
+        $fixtureKey = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+        try {
+            $fixtureRequest = [Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=Transmog DPAPI recovery fixture', $fixtureKey, [Security.Cryptography.HashAlgorithmName]::SHA256)
+            $fixtureCertificate = $fixtureRequest.CreateSelfSigned([DateTimeOffset]::UtcNow.AddDays(-1), [DateTimeOffset]::UtcNow.AddDays(2))
+            try {
+                [IO.File]::WriteAllText((Join-Path $fixtureDirectory 'interception-ca.pem'), $fixtureCertificate.ExportCertificatePem())
+                $fixtureHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($fixtureCertificate.RawData))
+                [IO.File]::WriteAllText((Join-Path $fixtureDirectory 'certificate-ownership-v1.json'), (@{schema=1;sha256=$fixtureHash} | ConvertTo-Json -Compress))
+                Add-Type -AssemblyName System.Security.Cryptography.ProtectedData
+                $fixturePlaintext = [Text.Encoding]::UTF8.GetBytes($fixtureKey.ExportPkcs8PrivateKeyPem())
+                $fixtureEntropy = [Text.Encoding]::UTF8.GetBytes('Transmog interception CA private key v1')
+                $fixtureProtected = [Security.Cryptography.ProtectedData]::Protect($fixturePlaintext, $fixtureEntropy, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+                [Array]::Clear($fixturePlaintext)
+                $fixtureProtected[-1] = $fixtureProtected[-1] -bxor 1
+                $fixtureBytes = [byte[]]([Text.Encoding]::UTF8.GetBytes("TRANSMOG-CA-KEY`0") + [byte[]]@(1,1) + $fixtureProtected)
+                $fixturePath = Join-Path $fixtureDirectory 'interception-ca.key'
+                [IO.File]::WriteAllBytes($fixturePath, $fixtureBytes)
+            } finally { $fixtureCertificate.Dispose() }
+        } finally { $fixtureKey.Dispose() }
+    }
     if ($ViewerChecks) {
         $viewerSource = Join-Path $probeRoot 'viewer-fixture.saz'
         $responseBody = 'saved viewer response'
@@ -188,6 +214,7 @@ try {
         if ($AutomationScreenshotPath) {
             $smokeArguments += @('--automation-screenshot', $AutomationScreenshotPath)
         }
+        if ($KeyRecoveryChecks) { $smokeArguments += '--key-recovery' }
         if ($ViewerChecks) {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
             $viewerArguments += @('--page-source', $pageSource)
@@ -201,6 +228,9 @@ try {
         Pop-Location
     }
     $endingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
+    if ($KeyRecoveryChecks -and [Convert]::ToHexString([IO.File]::ReadAllBytes($fixturePath)) -ne [Convert]::ToHexString($fixtureBytes)) {
+        throw 'Inspecting or canceling DPAPI recovery changed the existing private key.'
+    }
     if ($endingWorkingSet - $startingWorkingSet -gt 268435456) {
         throw "Desktop working set grew by more than 256 MiB during soak."
     }
@@ -221,6 +251,7 @@ try {
         HighDpiVerified = -not $ViewerChecks
         LocalizationLengthVerified = -not $ViewerChecks
         ViewerFlowVerified = [bool]$ViewerChecks
+        KeyRecoveryVerified = [bool]$KeyRecoveryChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet
         SingleInstanceVerified = $true

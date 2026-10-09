@@ -32,6 +32,7 @@ if (-not $certificateExists) {
         -BinaryPath $BinaryPath
 }
 
+& $BinaryPath ca protect --ca-cert $CertificatePath --ca-key $PrivateKeyPath
 & "$PSScriptRoot\install-ca-user.ps1" -CertificatePath $CertificatePath
 & "$PSScriptRoot\verify-ca-user.ps1" -CertificatePath $CertificatePath
 Write-Output "CA_CERT=$([System.IO.Path]::GetFullPath($CertificatePath))"

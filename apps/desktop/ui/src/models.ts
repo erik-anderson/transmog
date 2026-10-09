@@ -13,6 +13,7 @@ export interface DesktopBootstrap {
   caPrivateKeyPath: string;
   caFilesPresent: boolean;
   caFilesExist: boolean;
+  caKeyError: string | null;
   ownedCaSha256: string | null;
   ownedCaTrusted: boolean;
   hostRestorePending: boolean;

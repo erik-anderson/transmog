@@ -169,6 +169,7 @@ struct DesktopBootstrap {
     ca_private_key_path: PathBuf,
     ca_files_present: bool,
     ca_files_exist: bool,
+    ca_key_error: Option<String>,
     owned_ca_sha256: Option<String>,
     owned_ca_trusted: bool,
     host_restore_pending: bool,
@@ -253,6 +254,7 @@ fn desktop_bootstrap(
         ca_files_present: state.ca_certificate_path.is_file()
             && state.ca_private_key_path.is_file(),
         ca_files_exist: state.ca_certificate_path.exists() || state.ca_private_key_path.exists(),
+        ca_key_error: managed_ca_key_error(&state.ca_certificate_path, &state.ca_private_key_path),
         owned_ca_sha256,
         owned_ca_trusted,
         host_restore_pending: state.host.recovery_pending(),
@@ -582,6 +584,11 @@ async fn start_proxy_locked(
     state: &DesktopState,
 ) -> Result<AppStatus, String> {
     validate_proxy_start(state)?;
+    transmog_app::protect_ca_private_key(
+        &request.ca_certificate_path,
+        &request.ca_private_key_path,
+    )
+    .map_err(|error| error.to_string())?;
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "desktop",
@@ -611,6 +618,8 @@ fn validate_proxy_start(state: &DesktopState) -> Result<(), String> {
             "Set up the Transmog interception certificate before starting the proxy.".to_owned(),
         );
     }
+    transmog_app::protect_ca_private_key(&state.ca_certificate_path, &state.ca_private_key_path)
+        .map_err(|error| error.to_string())?;
     let sha256 = state
         .owned_certificate
         .owned_thumbprint()
@@ -627,6 +636,18 @@ fn validate_proxy_start(state: &DesktopState) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn managed_ca_key_error(
+    certificate_path: &std::path::Path,
+    key_path: &std::path::Path,
+) -> Option<String> {
+    if !certificate_path.is_file() || !key_path.is_file() {
+        return None;
+    }
+    transmog_app::validate_ca_private_key(certificate_path, key_path)
+        .err()
+        .map(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1411,6 +1432,17 @@ pub fn run() {
         OwnedCertificateRegistry::new(state_root.join("certificate-ownership-v1.json"));
     let ca_certificate_path = state_root.join("interception-ca.pem");
     let ca_private_key_path = state_root.join("interception-ca.key");
+    if ca_private_key_path.is_file()
+        && let Err(error) =
+            transmog_app::protect_ca_private_key(&ca_certificate_path, &ca_private_key_path)
+    {
+        application.record_diagnostic(
+            DiagnosticLevel::Error,
+            "certificate",
+            "startup-key-protection-failed",
+            &error.to_string(),
+        );
+    }
     let diagnostics_path = state_root.join("diagnostics.jsonl");
     let webview_data_path = state_root.join("WebView2");
     let close_application = application.clone();

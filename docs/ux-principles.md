@@ -51,6 +51,15 @@ its actual effect on the user's task.
 
 ## Preserve the user's place and work
 
+- Interception root keys use protection bound to the operating-system user.
+  Protect new keys before writing files and migrate existing keys while preserving
+  the certificate and its trust identity. Protection failures retain existing
+  material and explain recovery; never silently replace a trusted root or save a
+  plaintext key as a fallback.
+  An inaccessible Windows DPAPI key is unlikely to recover. Explain this and
+  offer the explicit certificate-reset flow: remove the exact recorded trusted
+  root and old files before creating and asking Windows to trust a replacement.
+
 - Startup update checks must keep the workspace usable and avoid taking focus.
   Update consent specifies when installation happens. Resolve unsaved drafts and
   finish capture/proxy/host cleanup before installation can close the app. A

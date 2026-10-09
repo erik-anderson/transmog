@@ -14,6 +14,7 @@ const automationScreenshotArgument = process.argv.findIndex((value) => value ===
 const automationScreenshotPath = automationScreenshotArgument >= 0
   ? process.argv[automationScreenshotArgument + 1]
   : undefined;
+const keyRecoveryChecks = process.argv.includes('--key-recovery');
 if (port === undefined || !/^\d{1,5}$/.test(port)) {
   throw new Error('usage: npm run smoke:webview -- --port <loopback DevTools port>');
 }
@@ -371,6 +372,34 @@ try {
     && result.ux.denseRuleList && result.ux.computedEntityHeaders && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
     `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
+
+  if (keyRecoveryChecks) {
+    result.keyRecovery = await evaluate(`(async () => {
+      const shell = document.querySelector('app-shell');
+      const settings = shell.shadowRoot.querySelector('settings-workspace');
+      await settings.ready;
+      const bootstrap = await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
+      if (!bootstrap.caKeyError?.includes('DPAPI') || !bootstrap.caKeyError.includes('unlikely to be recoverable')) throw new Error('The native DPAPI error did not explain recovery');
+      await settings.setupCa();
+      shell.$flushUpdates();settings.$flushUpdates();
+      const notice = shell.shadowRoot.querySelector('.notice');
+      const action = [...notice.querySelectorAll('button')].find(button=>button.textContent.trim()==='Reset certificate and set up again');
+      if (!notice.textContent.includes('unlikely to be recoverable') || !action || settings.certificateReady || !settings.certificateRecovery) throw new Error('The inaccessible root did not offer explicit reset');
+      action.focus();
+      const rect = action.getBoundingClientRect();
+      if (shell.shadowRoot.activeElement !== action || shell.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==action) throw new Error('The recovery action is not reachable by keyboard and pointer');
+      return {explanation:true,resetOffered:true,ready:false};
+    })()`);
+    const dialog = waitForEvent('Page.javascriptDialogOpening', 10_000);
+    const canceledReset = evaluate(`(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').resetCa();return true;})()`);
+    await dialog;
+    await call('Page.handleJavaScriptDialog',{accept:false});
+    await canceledReset;
+    if (screenshotPath) {
+      await writeFile(screenshotPath.replace(/\.png$/i,'-key-recovery.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    }
+    result.keyRecovery.cancelPreservedMaterial = true;
+  }
 
   result.hexViewer = await smokeHexViewer(evaluate, call);
 

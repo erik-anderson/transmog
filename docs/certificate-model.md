@@ -32,6 +32,40 @@ run verifies it read-only, and the dedicated teardown removes the exact root.
 Routine telemetry records fingerprints and verification results, not private
 keys or full subject names. There is no global accept-invalid-certificate mode.
 
+Durable interception CA private-key files use a versioned, OS-protected format.
+Windows encrypts the key with current-user DPAPI, with UI disabled and without
+machine-wide decryption. macOS and Linux encrypt with AES-256-GCM using an
+independent random wrapping key for each file, held in the user's macOS Keychain
+or Linux Secret Service. The file contains ciphertext, a nonce and a credential
+identifier; it contains no wrapping secret. Copying the key file alone to another
+user or computer therefore does not give the recipient the signing key. This
+mitigates accidental sharing, not access by software already running as that user.
+
+New desktop and CLI roots are protected before any key bytes reach disk. The
+desktop migrates its existing PEM key at startup and verifies protection before
+starting the proxy. CLI persistent roots migrate when reused; `serve`, `ca issue`
+and `ca protect --ca-cert ca.pem --ca-key ca.key` also validate and migrate legacy
+keys. Migration atomically replaces only the private-key file, after checking
+that it matches the public certificate, preserving the certificate fingerprint
+and existing trust. Older copies of a plaintext key remain sensitive; migration
+does not erase backups or guarantee physical erasure of previous disk blocks.
+
+Transmog reads protected keys directly into memory for signing. Protected key
+files are not PEM inputs for other tools. Credential-store failures, unsupported
+formats, corruption or missing credentials fail without plaintext fallback or
+silent CA replacement. Linux requires an available, unlocked Secret Service;
+macOS requires access to the user's Keychain. A failed protection step retains an
+existing key for retry. CLI root cleanup deletes its external wrapping secret
+along with the key file; ephemeral CLI roots continue to keep keys only in memory.
+
+When Windows DPAPI cannot decrypt the saved key, the desktop explains that the
+key is unlikely to be recoverable and offers **Reset certificate and set up
+again**. This explicit flow removes only the recorded root from current-user
+trust, deletes its files, then creates a protected replacement and asks Windows
+to trust it. Canceling or failure to remove the old root leaves its material and
+ownership record intact; a failed trust prompt leaves the replacement available
+for another setup attempt.
+
 For private origins and hermetic tests, `transmog-cli serve
 --upstream-ca-cert roots.pem` augments the OS-enumerated roots with one or more
 PEM certificates before constructing the immutable BoringSSL snapshot. It does
@@ -61,8 +95,8 @@ remains. It never uses a subject-name wildcard and never opens the machine
 store.
 
 Installing an interception CA gives this process the ability to read and
-modify TLS traffic for clients that trust it. Keep the private key under the
-user-only ACL applied by `new-proxy-ca.ps1`, do not log or transmit it, and
+modify TLS traffic for clients that trust it. Keep the OS-protected private key
+under the user-only ACL applied by `new-proxy-ca.ps1`, do not log or transmit it, and
 remove ordinary one-off roots immediately after use. For the durable
 live-browser root, run `scripts/remove-live-test-ca.ps1` as soon as repeated
 live testing is complete. Certificate-pinned applications are unsupported;

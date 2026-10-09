@@ -116,7 +116,7 @@ await page.addInitScript((workspace) => {
           const row={...summary('imported-'+trace.id),traceId:trace.id,durationMs:null,startedAt:Date.now()};
           state.sessions.push(row);(state.traces??=[]).push(trace);return {trace,issues:[]};
         }
-        case 'desktop_bootstrap': return { viewerMode:location.search.includes('viewer'), windows:true, caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
+        case 'desktop_bootstrap': return { viewerMode:location.search.includes('viewer'), windows:true, caCertificatePath: 'fixture.pem', caPrivateKeyPath: 'fixture.key', caFilesPresent: true, caFilesExist: true, caKeyError:null, ownedCaSha256: '0'.repeat(64), ownedCaTrusted: true, hostRestorePending: false, diagnosticsPath: 'fixture.jsonl', ...state.caBootstrap };
         case 'reset_ca': {
           state.caEvents??=[];state.caEvents.push('reset');state.resetCaArgs=structuredClone(args);
           if(state.deferCaReset){state.caResetPending=true;await new Promise(resolve=>state.releaseCaReset=resolve);state.deferCaReset=false;}
@@ -1330,10 +1330,22 @@ try {
     {caFilesPresent:true,caFilesExist:true,ownedCaSha256:null,ownedCaTrusted:false},
     {caFilesPresent:false,caFilesExist:true,ownedCaSha256:null,ownedCaTrusted:false},
     {caFilesPresent:false,caFilesExist:false,ownedCaSha256:'0'.repeat(64),ownedCaTrusted:true},
+    {caFilesPresent:true,caFilesExist:true,ownedCaSha256:'0'.repeat(64),ownedCaTrusted:true,caKeyError:'Windows DPAPI cannot decrypt the saved interception CA private key. The key is unlikely to be recoverable. Remove the old trusted root and set up a new interception certificate.'},
   ]) {
     await page.evaluate(bootstrap=>{const state=globalThis.__workspaceFixture;state.caBootstrap=bootstrap;state.caEvents=[];},bootstrap);
     await setupCertificate.click();await caIdle();
     assert.match(await certificateNotice.textContent(),/Interception certificate needs a reset/);
+    if(bootstrap.caKeyError) {
+      assert.match(await certificateNotice.textContent(),/DPAPI.*unlikely to be recoverable/);
+      assert.equal(await preferences.evaluate(element=>element.certificateReady),false,'An inaccessible signing key was reported as ready');
+      await page.getByRole('button',{name:'Start proxy',exact:true}).first().click();await caIdle();
+      assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),[],'Starting with an inaccessible key altered trust or material');
+      await view('settings');
+      await page.screenshot({path:resolve(root,'../../../target/ui-check/certificate-recovery-wide.png')});
+      await page.setViewportSize({width:760,height:520});
+      await page.screenshot({path:resolve(root,'../../../target/ui-check/certificate-recovery-small.png')});
+      await page.setViewportSize({width:1280,height:800});
+    }
     assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),[]);
     page.once('dialog',dialog=>dialog.dismiss());
     await certificateNotice.getByRole('button',{name:'Reset certificate and set up again',exact:true}).click();await caIdle();
