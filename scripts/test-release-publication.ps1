@@ -13,7 +13,7 @@ $hash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $installerName)).Hash
 'fixture signature' | Set-Content -LiteralPath (Join-Path $releaseRoot "$installerName.sig")
 [ordered]@{ version = '0.1.0'; platforms = @{ 'windows-x86_64-nsis' = @{ url = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/$installerName"; signature = 'fixture signature' } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'latest.json')
 $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash } })
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Cli = 'transmog-cli.exe'; Symbols = 'Transmog_0.1.0_windows-x64-symbols.zip'; Files = $files } |
+[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0.1'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Cli = 'transmog-cli.exe'; Symbols = 'Transmog_0.1.0_windows-x64-symbols.zip'; Files = $files } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
 [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; CliRuntimeVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'installer-test.json')
@@ -33,7 +33,7 @@ try {
     $env:GITHUB_SHA = 'fixture-commit'
     $env:GITHUB_RUN_ID = '123'
     $env:GITHUB_REPOSITORY = 'erik-anderson/transmog'
-    $env:GITHUB_REF = 'refs/heads/release/0'
+    $env:GITHUB_REF = 'refs/heads/release/0.1'
     $env:GITHUB_TOKEN = 'fixture'
     $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = $null
     function Invoke-RestMethod {
@@ -76,7 +76,7 @@ try {
             $candidate = Get-Content -Raw -LiteralPath (Join-Path $releaseRoot 'release-manifest.json') | ConvertFrom-Json
             $candidate.ReleaseType = $type
             $candidate.Channel = if ($type -ceq 'Canary') { 'Canary' } else { 'Release' }
-            $candidate.SourceBranch = if ($type -ceq 'Canary') { 'main' } else { 'release/0' }
+            $candidate.SourceBranch = if ($type -ceq 'Canary') { 'main' } else { 'release/0.1' }
             $candidate | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
             $env:GITHUB_REF = "refs/heads/$($candidate.SourceBranch)"
             $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }

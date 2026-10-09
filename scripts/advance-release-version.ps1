@@ -11,10 +11,10 @@ foreach ($name in @('set-release-version.ps1', 'release-version-common.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $temporary $name)
 }
 if ($creatingBranch) {
-    if ($event.ref_type -cne 'branch' -or $event.ref -cnotmatch '^release/(0|[1-9][0-9]*)$') { Write-Host 'Not a per-major release branch.'; return }
+    if ($event.ref_type -cne 'branch' -or $event.ref -cnotmatch '^release/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { Write-Host 'Not a major.minor release branch.'; return }
     $sourceBranch = $event.ref
-    $releaseMajor = [int]$sourceBranch.Substring('release/'.Length)
-    ConvertTo-ReleaseSemVer "$releaseMajor.0.0" | Out-Null
+    $releaseLineVersion = $sourceBranch.Substring('release/'.Length) + '.0'
+    ConvertTo-ReleaseSemVer $releaseLineVersion | Out-Null
     $description = "creation of $sourceBranch"
 } else {
     $release = $event.release
@@ -29,9 +29,8 @@ if ($creatingBranch) {
     if ($assets[0].digest -and $assets[0].digest -cne ('sha256:' + (Get-FileHash -LiteralPath $manifestPath).Hash.ToLowerInvariant())) { throw 'Release manifest digest differs from GitHub.' }
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
     if ($manifest.Version -cne $publishedVersion -or $manifest.Commit -cnotmatch '^[a-f0-9]{40}$') { throw 'Release tag or commit is invalid.' }
-    Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
     $sourceBranch = $manifest.SourceBranch
-    $releaseMajor = [int]$publishedVersion.Split('.')[0]
+    Resolve-ReleaseType $manifest $sourceBranch $manifest.ReleaseType | Out-Null
     $publishedType = if ($sourceBranch -ceq 'main') { 'Canary' } elseif ($release.prerelease) { 'Beta' } else { 'Stable' }
     $description = $release.tag_name
     git fetch --no-tags origin "refs/tags/$($release.tag_name)"
@@ -64,8 +63,8 @@ function Update-BranchAfterEvent([string]$TargetBranch) {
                 if ($LASTEXITCODE -ne 0) { throw 'Release source commit is not an ancestor of its branch.' }
             }
         }
-        if ($TargetBranch -ceq 'main' -and $sourceBranch -cne 'main') {
-            $decision = Get-MainMajorDecision $state $releaseMajor
+        if ($creatingBranch -and $TargetBranch -ceq 'main') {
+            $decision = Get-MainReleaseLineDecision $state $releaseLineVersion
         } elseif ($creatingBranch) {
             $type = if ($state.ReleaseType -ceq 'Canary') { 'Beta' } else { $state.ReleaseType }
             $decision = [pscustomobject]@{ Bump = ($state.Channel -cne 'Release'); Version = $state.Version; Channel = 'Release'; ReleaseType = $type; Reason = 'Release branch already initialized.' }
@@ -97,7 +96,8 @@ function Update-BranchAfterEvent([string]$TargetBranch) {
     throw "Could not push $TargetBranch after three attempts; inspect branch protection or concurrent changes."
 }
 $failures = [System.Collections.Generic.List[string]]::new()
-foreach ($branch in @($sourceBranch, 'main') | Select-Object -Unique) {
+$targetBranches = if ($creatingBranch) { @($sourceBranch, 'main') } else { @($sourceBranch) }
+foreach ($branch in $targetBranches | Select-Object -Unique) {
     try { Update-BranchAfterEvent $branch } catch { $failures.Add("$branch : $($_.Exception.Message)") }
 }
 if ($failures.Count) { throw ($failures -join "`n") }

@@ -19,7 +19,7 @@ try {
 members = ["apps/desktop"]
 resolver = "2"
 [workspace.package]
-version = "1.2.7"
+version = "0.1.0"
 edition = "2024"
 '@ | Set-Content Cargo.toml
     @'
@@ -37,16 +37,16 @@ edition = "2024"
 [workspace]
 '@ | Set-Content fuzz/Cargo.toml
     '// Metadata fixture.' | Set-Content fuzz/src/lib.rs
-    [ordered]@{ version='1.2.7';channel='Canary';releaseType='Canary' } | ConvertTo-Json | Set-Content release-version.json
-    [ordered]@{ version='1.2.7' } | ConvertTo-Json | Set-Content apps/desktop/tauri.conf.json
-    [ordered]@{ name='@transmog/desktop-ui';version='1.2.7';private=$true } | ConvertTo-Json | Set-Content apps/desktop/ui/package.json
-    [ordered]@{ name='@transmog/desktop-ui';version='1.2.7';lockfileVersion=3;packages=[ordered]@{ ''=[ordered]@{name='@transmog/desktop-ui';version='1.2.7'} } } | ConvertTo-Json -Depth 5 | Set-Content apps/desktop/ui/package-lock.json
+    [ordered]@{ version='0.1.0';channel='Canary';releaseType='Canary' } | ConvertTo-Json | Set-Content release-version.json
+    [ordered]@{ version='0.1.0' } | ConvertTo-Json | Set-Content apps/desktop/tauri.conf.json
+    [ordered]@{ name='@transmog/desktop-ui';version='0.1.0';private=$true } | ConvertTo-Json | Set-Content apps/desktop/ui/package.json
+    [ordered]@{ name='@transmog/desktop-ui';version='0.1.0';lockfileVersion=3;packages=[ordered]@{ ''=[ordered]@{name='@transmog/desktop-ui';version='0.1.0'} } } | ConvertTo-Json -Depth 5 | Set-Content apps/desktop/ui/package-lock.json
     cargo generate-lockfile --offline
     cargo generate-lockfile --manifest-path fuzz/Cargo.toml --offline
     git add .
-    git commit -q -m 'Canary main 1.2.7'
-    git branch release/1
-    git push -q origin main release/1
+    git commit -q -m 'Canary main 0.1.0'
+    git branch release/0.1
+    git push -q origin main release/0.1
     $names = @('GITHUB_ACTIONS','GITHUB_EVENT_NAME','RUNNER_ENVIRONMENT','RUNNER_TEMP','GITHUB_EVENT_PATH','GITHUB_REPOSITORY','GITHUB_TOKEN','GITHUB_STEP_SUMMARY','CARGO_NET_OFFLINE')
     $prior = @{}
     foreach ($name in $names) { $prior[$name] = [Environment]::GetEnvironmentVariable($name) }
@@ -86,41 +86,43 @@ edition = "2024"
         $env:GITHUB_TOKEN='fixture'
         $env:GITHUB_STEP_SUMMARY=$null
         $env:CARGO_NET_OFFLINE='true'
-        Invoke-Event create @{ref_type='branch';ref='release/1'}
-        Assert-Remote release/1 1.2.7 Beta
-        Assert-Remote main 2.0.0 Canary
+        Invoke-Event create @{ref_type='branch';ref='release/0.1'}
+        Assert-Remote release/0.1 0.1.0 Beta
+        Assert-Remote main 0.2.0 Canary
         $mainReserved = git rev-parse refs/remotes/origin/main
-        Invoke-Event create @{ref_type='branch';ref='release/1'}
+        Invoke-Event create @{ref_type='branch';ref='release/0.1'}
         if ((git rev-parse refs/remotes/origin/main) -cne $mainReserved) { throw 'Repeated creation advanced main twice.' }
-        Publish-Fixture release/1 1.2.7 $true
-        Assert-Remote release/1 1.2.8 Beta
-        Assert-Remote main 2.0.0 Canary
-        $betaCommit = git rev-parse refs/remotes/origin/release/1
-        Publish-Fixture release/1 1.2.7 $true
-        if ((git rev-parse refs/remotes/origin/release/1) -cne $betaCommit) { throw 'Repeated Beta publication advanced twice.' }
-        Publish-Fixture release/1 1.2.7 $false
-        Assert-Remote release/1 1.2.8 Stable
-        $stableCommit = git rev-parse refs/remotes/origin/release/1
-        Publish-Fixture release/1 1.2.7 $false
-        Publish-Fixture release/1 1.2.7 $true
-        if ((git rev-parse refs/remotes/origin/release/1) -cne $stableCommit) { throw 'Promotion repeated or Stable track was reset to Beta.' }
-        Publish-Fixture main 2.0.0 $true
-        Assert-Remote main 2.0.1 Canary
+        Publish-Fixture release/0.1 0.1.0 $true
+        Assert-Remote release/0.1 0.1.1 Beta
+        Assert-Remote main 0.2.0 Canary
+        $betaCommit = git rev-parse refs/remotes/origin/release/0.1
+        Publish-Fixture release/0.1 0.1.0 $true
+        if ((git rev-parse refs/remotes/origin/release/0.1) -cne $betaCommit) { throw 'Repeated Beta publication advanced twice.' }
+        Publish-Fixture release/0.1 0.1.0 $false
+        Assert-Remote release/0.1 0.1.1 Stable
+        $stableCommit = git rev-parse refs/remotes/origin/release/0.1
+        Publish-Fixture release/0.1 0.1.0 $false
+        Publish-Fixture release/0.1 0.1.0 $true
+        if ((git rev-parse refs/remotes/origin/release/0.1) -cne $stableCommit) { throw 'Promotion repeated or Stable track was reset to Beta.' }
+        Publish-Fixture main 0.2.0 $true
+        Assert-Remote main 0.2.1 Canary
         $canaryCommit = git rev-parse refs/remotes/origin/main
-        Publish-Fixture main 2.0.0 $true
+        Publish-Fixture main 0.2.0 $true
         if ((git rev-parse refs/remotes/origin/main) -cne $canaryCommit) { throw 'Repeated Canary publication advanced twice.' }
-        git branch release/2 refs/remotes/origin/main
-        git push -q origin release/2
-        Invoke-Event create @{ref_type='branch';ref='release/2'}
-        Assert-Remote release/2 2.0.1 Beta
-        Assert-Remote main 3.0.0 Canary
-        Publish-Fixture release/1 1.2.8 $false
-        Assert-Remote release/1 1.2.9 Stable
-        Assert-Remote main 3.0.0 Canary
-        git push -q origin --delete release/1
-        Publish-Fixture release/1 1.2.8 $false
-        Assert-Remote main 3.0.0 Canary
-        Write-Host 'Release lifecycle passed: branch creation reserves a major; Beta advances patches; promotion persists Stable; Canary increments only patch; older-major hotfixes and repeat events preserve main.'
+        Publish-Fixture main 0.2.1 $true
+        Assert-Remote main 0.2.2 Canary
+        git branch release/0.2 refs/remotes/origin/main
+        git push -q origin release/0.2
+        Invoke-Event create @{ref_type='branch';ref='release/0.2'}
+        Assert-Remote release/0.2 0.2.2 Beta
+        Assert-Remote main 0.3.0 Canary
+        Publish-Fixture release/0.1 0.1.1 $false
+        Assert-Remote release/0.1 0.1.2 Stable
+        Assert-Remote main 0.3.0 Canary
+        git push -q origin --delete release/0.1
+        Publish-Fixture release/0.1 0.1.1 $false
+        Assert-Remote main 0.3.0 Canary
+        Write-Host 'Release lifecycle passed: branch creation reserves a minor line; Beta advances patches; promotion persists Stable; Canary increments only patch; older-line hotfixes and repeat events preserve main.'
     } finally {
         foreach ($name in $names) {
             if ($null -eq $prior[$name]) {

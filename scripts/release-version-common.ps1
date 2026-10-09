@@ -25,11 +25,17 @@ function Get-NextReleaseVersion([string]$Version) {
     $parts -join '.'
 }
 
+function Get-ReleaseBranchName([string]$Version) {
+    ConvertTo-ReleaseSemVer $Version | Out-Null
+    $parts = $Version.Split('.')
+    "release/$($parts[0]).$($parts[1])"
+}
+
 function Assert-ReleaseSourceBranch([string]$Branch, [string]$Version) {
     ConvertTo-ReleaseSemVer $Version | Out-Null
     if ($Branch -ceq 'main') { return }
-    $expected = 'release/' + $Version.Split('.')[0]
-    if ($Branch -cne $expected) { throw "Version $Version requires main or the per-major branch $expected." }
+    $expected = Get-ReleaseBranchName $Version
+    if ($Branch -cne $expected) { throw "Version $Version requires main or the release-line branch $expected." }
 }
 
 function Resolve-ReleaseType($State, [string]$Branch, [string]$RequestedType = 'Branch default') {
@@ -37,15 +43,21 @@ function Resolve-ReleaseType($State, [string]$Branch, [string]$RequestedType = '
     $type = if (-not $RequestedType -or $RequestedType -ceq 'Branch default') { $State.ReleaseType } else { $RequestedType }
     if ($Branch -ceq 'main') {
         if ($State.Channel -cne 'Canary' -or $type -cne 'Canary') { throw 'Main produces Canary releases.' }
-    } elseif ($State.Channel -cne 'Release' -or $type -cnotin @('Beta', 'Stable')) { throw 'A per-major release branch produces Beta or Stable releases with a neutral Release source channel.' }
+    } elseif ($State.Channel -cne 'Release' -or $type -cnotin @('Beta', 'Stable')) { throw 'A major.minor release branch produces Beta or Stable releases with a neutral Release source channel.' }
     return $type
 }
 
-function Get-MainMajorDecision($State, [int]$ReleaseMajor) {
-    $currentMajor = [int]$State.Version.Split('.')[0]
-    if ($currentMajor -gt $ReleaseMajor) { return [pscustomobject]@{ Bump = $false; Reason = 'Main is already on a later major.' } }
-    if ($ReleaseMajor -ge 65535) { throw 'No Windows-compatible major remains after this release branch.' }
-    [pscustomobject]@{ Bump = $true; Version = "$($ReleaseMajor + 1).0.0"; Channel = 'Canary'; ReleaseType = 'Canary' }
+function Get-MainReleaseLineDecision($State, [string]$ReleaseLineVersion) {
+    ConvertTo-ReleaseSemVer $State.Version | Out-Null
+    ConvertTo-ReleaseSemVer $ReleaseLineVersion | Out-Null
+    $current = [version]$State.Version
+    $release = [version]$ReleaseLineVersion
+    if ($current.Major -gt $release.Major -or ($current.Major -eq $release.Major -and $current.Minor -gt $release.Minor)) {
+        return [pscustomobject]@{ Bump = $false; Reason = 'Main is already on a later release line.' }
+    }
+    if ($current.Major -lt $release.Major) { throw 'Advance main to the new major explicitly before creating its release branch. Automation never increases a major version.' }
+    if ($release.Minor -ge 65535) { throw 'The Windows minor range is exhausted. Choose a new major version explicitly.' }
+    [pscustomobject]@{ Bump = $true; Version = "$($release.Major).$($release.Minor + 1).0"; Channel = 'Canary'; ReleaseType = 'Canary' }
 }
 
 function Get-PostReleaseDecision($State, [string]$PublishedVersion, [string]$Branch = 'main', [string]$PublishedType = 'Beta') {
@@ -68,11 +80,11 @@ function Get-PostReleaseDecision($State, [string]$PublishedVersion, [string]$Bra
     [pscustomobject]@{ Bump = $true; Version = $next; Channel = 'Release'; ReleaseType = $nextType }
 }
 
-function Assert-CanaryMajorAvailable([string]$Version, [string]$Repository, $Headers) {
-    $major = $Version.Split('.')[0]
+function Assert-CanaryReleaseLineAvailable([string]$Version, [string]$Repository, $Headers) {
+    $branch = Get-ReleaseBranchName $Version
     $reserved = $null
-    try { $reserved = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/git/ref/heads/release/$major" -Headers $Headers } catch {
+    try { $reserved = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/git/ref/heads/$branch" -Headers $Headers } catch {
         if ([int]$_.Exception.Response.StatusCode -ne 404) { throw }
     }
-    if ($reserved) { throw "Major $major is reserved by release/$major. Advance main to its next major before releasing a Canary." }
+    if ($reserved) { throw "Release line $branch is reserved. Advance main to its next minor version before releasing a Canary." }
 }

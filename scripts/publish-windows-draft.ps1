@@ -11,13 +11,13 @@ if (-not $installerTest.InstallVerified -or -not $installerTest.UninstallVerifie
 if (-not (Test-Path -LiteralPath (Join-Path $EvidenceRoot 'provenance.sigstore.json') -PathType Leaf)) { throw 'Missing verified provenance bundle.' }
 $expectedInstallerHash = ($manifest.Files | Where-Object Name -CEQ $manifest.Installer).Sha256
 if ($installerTest.InstallerSha256 -cne $expectedInstallerHash) { throw 'Qualification used a different installer.' }
-if ($env:GITHUB_REPOSITORY -cne 'erik-anderson/transmog' -or $env:GITHUB_REF -cnotmatch '^refs/heads/(main|release/(0|[1-9][0-9]*))$' -or
+if ($env:GITHUB_REPOSITORY -cne 'erik-anderson/transmog' -or $env:GITHUB_REF -cnotmatch '^refs/heads/(main|release/(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$' -or
     $manifest.SourceBranch -cne $env:GITHUB_REF.Substring('refs/heads/'.Length)) { throw 'Draft publication requires an approved source branch matching the manifest.' }
 Assert-ReleaseSourceBranch $manifest.SourceBranch $manifest.Version
 $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'Transmog-draft-release' }
 $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
 $tag = 'v' + $manifest.Version
-if ($manifest.SourceBranch -ceq 'main') { Assert-CanaryMajorAvailable $manifest.Version $env:GITHUB_REPOSITORY $headers }
+if ($manifest.SourceBranch -ceq 'main') { Assert-CanaryReleaseLineAvailable $manifest.Version $env:GITHUB_REPOSITORY $headers }
 $releases = [System.Collections.Generic.List[object]]::new()
 for ($page = 1; ; $page++) {
     # Invoke-RestMethod returns a JSON array as one pipeline object; enumerate

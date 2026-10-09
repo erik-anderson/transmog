@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 async-compression.workspace = true
 bytes.workspace = true
-transmog-core = { version = "=1.0.0", path = "../proxy-core" }
+transmog-core = { version = "=0.0.1", path = "../proxy-core" }
 thiserror.workspace = true
 tokio.workspace = true
 

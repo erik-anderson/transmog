@@ -73,7 +73,7 @@ decisions. No push or tag automatically starts a release build.
    committed versions before compilation; the release manifest, installer, and
    SBOM use that version. Changing the draft's title or tag cannot change the
    version embedded in an already-built installer. Published versions, mismatched
-   branch majors/tracks, and Canaries on a reserved release major fail before builds.
+   branch lines/tracks, and Canaries on a reserved release line fail before builds.
 
 3. Open [Actions → Windows signed release](https://github.com/erik-anderson/transmog/actions/workflows/windows-release.yml),
    click **Run workflow**, select **main** (or the approved hotfix branch), and
@@ -125,40 +125,48 @@ current run's draft unpublished if it is not the candidate you want to ship.
 
 ### Branch creation, Beta-to-Stable promotion, and Canaries
 
-Use one release branch per major: `release/0` for `0.x`, `release/1` for `1.x`,
-and so on. Create it when preparing the first Beta of that major. Its version's
-major must match its name. For the current `0.x` line, after pushing this tooling:
+Use one release branch per major/minor line: `release/0.0` for `0.0.x`,
+`release/0.1` for `0.1.x`, and so on. Create it when preparing that line's first
+release. Its major and minor must match its name. The branch starts with the
+committed, next-unused version; building publishes that version and publication
+advances its patch afterward. For an initial `0.0.1` release:
 
 ```powershell
 git switch main
 git pull --ff-only
-git switch -c release/0
-git push -u origin release/0
+git switch -c release/0.0
+git push -u origin release/0.0
 ```
 
 Wait for **Maintain release and Canary versions** to finish, then pull the bot's
 initialization commit on your release branch. The creation event sets its default
-track to Beta with neutral Release branding and moves main to the next full major
-Canary version. The same major is checked again at publication as a recovery path.
+track to Beta with neutral Release branding and moves main to the next minor
+Canary version immediately. A branch already prepared as Stable keeps that track.
+Publishing or promoting a release branch does not move main. Major changes are
+always a human decision.
 
 | Event | Release branch | Main |
 | --- | --- | --- |
-| Create `release/1` while main is on major 1 or earlier | Existing version, Beta track | `2.0.0 Canary` |
-| Publish Beta `1.2.7` from `release/1` | `1.2.8`, still Beta | Later major retained |
-| Promote that published Beta to Stable | `1.2.8`, switch to Stable | Later major retained |
-| Publish Stable `1.2.8` from `release/1` | `1.2.9`, still Stable | Later major retained |
-| Publish Canary `2.0.0` from main | Unchanged | `2.0.1 Canary` |
+| Create `release/0.0` from `0.0.1` | `0.0.1`, Beta track | `0.1.0 Canary` |
+| Publish Beta `0.0.1` from `release/0.0` | `0.0.2`, still Beta | Unchanged |
+| Promote that published Beta to Stable | `0.0.2`, switch to Stable | Unchanged |
+| Publish Stable `0.0.2` from `release/0.0` | `0.0.3`, still Stable | Unchanged |
+| Publish Canary `0.2.0` from main | Unchanged | `0.2.1 Canary` |
+| Publish Canary `0.2.1` from main | Unchanged | `0.2.2 Canary` |
+| Create `release/0.2` from `0.2.2` | `0.2.2`, Beta track | `0.3.0 Canary` |
 
 The local fixture in `scripts/test-release-lifecycle.ps1` exercises these events
-against a disposable Git remote, including retries, old-major hotfixes, and deleted
+against a disposable Git remote, including retries, older-line hotfixes, and deleted
 branches. It is part of the release safety gate and does not contact GitHub or Azure.
 
-Main's reservation rule compares **major numbers**: a release branch with an equal
-or higher major moves main to `release-major + 1`, resetting its other components
-to zero. Main already on a later major is left alone. Canary publication increments
-the patch component. Canaries are rejected before building and again
-before draft creation if `release/<their-major>` exists, covering the window while
-the branch-creation hook is pending. Never rewind main to an already-reserved major.
+Main's reservation rule compares **major/minor lines**. Within the same major,
+creating a branch advances main to the smallest higher minor than the branch's
+line, resetting patch to zero. Main already on a later line remains unchanged.
+Automation never raises the major; advance it explicitly before creating a branch
+for a new major. Canary publication increments only patch. Canaries are rejected
+before building and again before draft creation if `release/<major>.<minor>`
+exists, covering the window while branch initialization is pending. Minor or patch
+overflow requires a human version choice.
 
 Promote a reviewed Beta by editing its existing published GitHub Release, clearing
 **This is a pre-release**, removing Beta from the title, and saving it. Keep the
@@ -168,21 +176,21 @@ remain Stable. Its attested manifest retains the original Beta build type as
 provenance. Alternatively, choose Stable for a new draft on that same branch.
 Canaries stay prereleases on main; stable releases come from release branches.
 
-For an urgent fix, use the existing per-major release branch, commit the fix at its
-next unused version, build/review the draft, and publish it. Older-major releases
-do not bump newer main development. Carry the bug fix back to main separately;
+For an urgent fix, use the existing release-line branch, commit the fix at its
+next unused patch, build/review the draft, and publish it. Release-branch
+publication does not change main. Carry the bug fix back to main separately;
 do not merge an old release branch's version metadata over main's newer version.
 
 The signing environment allows `main` and `release/*` with the existing required
 review and disabled administrator bypass. Workflow checks narrow that pattern to
-the matching numeric major. Azure's environment identity and profile-scoped signer
+the matching major/minor line. Azure's environment identity and profile-scoped signer
 role need no additional permissions.
 
 Repeated creation/publication events do not increment twice. Promotion persists
 Stable, and a delayed Beta event cannot reset that track. Deleted branches are
 skipped without being recreated. A reset release branch older than its published
 version fails for inspection. Concurrent pushes are retried without force-pushing;
-published tags are preserved. Patch overflow requires an explicit minor or major choice; a release branch cannot cross into another major.
+published tags are preserved. A release branch cannot cross into another minor line.
 
 The maintenance job has only `contents: write` and no signing environment or
 Azure access. It loads its implementation from `main`, then inspects the affected

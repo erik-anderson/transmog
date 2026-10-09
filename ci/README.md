@@ -3,7 +3,7 @@
 ## Signed draft releases
 
 Dispatch **Windows signed release** (`.github/workflows/windows-release.yml`)
-on `main` for Canaries, or a numeric per-major release branch such as `release/1`
+on `main` for Canaries, or a major/minor release branch such as `release/0.1`
 for Beta/Stable. It uses standard
 `windows-2025` runners and skips private repositories
 and other branches. It has no automatic push, tag, schedule, or pull-request
@@ -23,12 +23,13 @@ documents version selection, rebuilds, previews, and publication. The workflow
 checks that Cargo, Tauri, and desktop UI versions agree before compiling.
 The canonical semantic version, source channel, and release track live in `release-version.json`;
 Cargo/npm/Tauri, release tags, installer names, and product diagnostics use that same semantic version.
-Published versions, wrong branch majors/tracks, and reserved Canary majors fail
+Published versions, wrong branch lines/tracks, and reserved Canary lines fail
 before build setup. **Maintain release and Canary versions** initializes new
-release branches to Beta and reserves their major by advancing main to the next
-major Canary version. Publication advances the patch version; Beta promotion
-persists Stable on that branch without another version increment. Publication also
-checks main's major as a fallback. The job has only `contents: write`, with no
+release branches to Beta and reserves their line at branch creation by advancing
+main to the next minor Canary version. Existing later lines are preserved, and
+major increments require human action. Publication advances only the publishing
+branch's patch version; Beta promotion persists Stable without another increment.
+Release-branch publication leaves main unchanged. The job has only `contents: write`, with no
 Azure identity or signing access. Release branches use neutral Release product
 branding, so reviewed Beta assets can become Stable without another build/signing.
 

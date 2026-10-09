@@ -8,7 +8,7 @@ $state = Get-ReleaseVersionState $RepositoryRoot
 $releaseType = Resolve-ReleaseType $state $SourceBranch $RequestedType
 $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'Transmog-release-version-check' }
 if ($SourceBranch -ceq 'main') {
-    Assert-CanaryMajorAvailable $state.Version $env:GITHUB_REPOSITORY $headers
+    Assert-CanaryReleaseLineAvailable $state.Version $env:GITHUB_REPOSITORY $headers
 }
 $release = $null
 try {

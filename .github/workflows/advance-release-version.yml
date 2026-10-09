@@ -46,7 +46,7 @@ jobs:
         run: |
           $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
           rustup toolchain install $pin --profile minimal
-      - name: Reserve release majors and maintain branch versions and tracks
+      - name: Reserve release lines at branch creation and advance published patches
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/advance-release-version.ps1
