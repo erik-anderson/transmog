@@ -134,9 +134,16 @@ pub(crate) struct TraceRegistry {
     state: Arc<Mutex<State>>,
 }
 impl TraceRegistry {
+    pub(crate) fn retained_index_bytes(&self) -> u64 {
+        let state = self.lock();
+        u64::try_from(state.index_bytes.saturating_add(state.metadata_bytes)).unwrap_or(u64::MAX)
+    }
     pub(crate) fn forget_entries(&self, ids: &[ExchangeId]) {
         let mut state = self.lock();
-        let removed = ids.iter().map(|id|format!("{:032x}",id.0)).collect::<std::collections::HashSet<_>>();
+        let removed = ids
+            .iter()
+            .map(|id| format!("{:032x}", id.0))
+            .collect::<std::collections::HashSet<_>>();
         for id in ids {
             state.entries.remove(&format!("{:032x}", id.0));
         }
@@ -147,7 +154,7 @@ impl TraceRegistry {
             .collect::<std::collections::HashSet<_>>();
         state.metadata.retain(|id, _| sources.contains(id));
         for (entries, _) in &mut state.index_batches {
-            entries.retain(|id|!removed.contains(id));
+            entries.retain(|id| !removed.contains(id));
         }
         state
             .index_batches

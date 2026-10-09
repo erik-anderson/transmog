@@ -619,8 +619,10 @@ fn composer_target(value: &str) -> Result<(Target, String), AppError> {
                     false,
                 )
             })?
+    } else if scheme == "https" {
+        443
     } else {
-        if scheme == "https" { 443 } else { 80 }
+        80
     };
     let path_and_query = uri
         .path_and_query()

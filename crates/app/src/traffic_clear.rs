@@ -9,7 +9,7 @@ use transmog_core::intercept::ExchangeId;
 pub struct TrafficClearResult {
     /// Removed entry identifiers.
     pub ids: Vec<String>,
-    /// Retained body and header bytes associated with the removed entries.
+    /// Retained body, header and source-index bytes associated with the removed entries.
     pub bytes: u64,
     /// Whether the removed data can be restored.
     pub undoable: bool,
@@ -27,11 +27,21 @@ fn policy(bytes: u64) -> (bool, Option<u64>) {
 }
 pub(crate) fn clear(application: &Application) -> Result<TrafficClearResult, AppError> {
     if let Some(store) = &application.body_store {
-        store.flush().map_err(|_| AppError::new(crate::ErrorCategory::Unavailable, "Traffic cache could not be synchronized for Clear", true))?;
+        store.flush().map_err(|_| {
+            AppError::new(
+                crate::ErrorCategory::Unavailable,
+                "Traffic cache could not be synchronized for Clear",
+                true,
+            )
+        })?;
     }
     let ids = application.service.catalog().dismiss_all();
     let bytes = ids.iter().fold(
-        application.service.catalog().retained_header_bytes(&ids),
+        application
+            .service
+            .catalog()
+            .retained_header_bytes(&ids)
+            .saturating_add(application.traces.retained_index_bytes()),
         |sum, id| {
             sum.saturating_add(application.body_store.as_ref().map_or(0, |store| {
                 store
@@ -42,7 +52,14 @@ pub(crate) fn clear(application: &Application) -> Result<TrafficClearResult, App
             }))
         },
     );
-    let (undoable, undo_seconds) = policy(bytes);
+    let (undoable, undo_seconds) = if ids.is_empty() {
+        // Empty imported archives still own source metadata. There is no row
+        // to restore, so release that context immediately as part of Clear.
+        application.traces.forget_entries(&[]);
+        (false, None)
+    } else {
+        policy(bytes)
+    };
     if !undoable {
         release(application, &ids)?;
     } else if let Some(seconds) = undo_seconds {

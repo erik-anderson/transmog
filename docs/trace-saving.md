@@ -48,4 +48,5 @@ observations; SAZ conversion reports its compatibility limitations.
 Imports bound the index for each source and the combined index and metadata
 across merged files. Publication is atomic: rejected files add neither partial
 traffic nor partial source metadata. Removing an entry keeps evidence available
-for Undo, so its imported index remains retained until its viewer closes.
+for Undo, so its imported index remains retained until Clear releases it or its window
+closes. Large Clear operations expire Undo and release source context too.

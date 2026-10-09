@@ -1082,6 +1082,7 @@ impl Application {
     /// Returns a cache-worker failure while deleting owned body data.
     pub fn discard_traffic(&self) -> Result<(), AppError> {
         let ids = self.service.catalog().discard_all();
+        self.traces.forget_entries(&ids);
         if let Some(store) = &self.body_store {
             store.forget_entries(&ids).map_err(|_| {
                 AppError::new(
@@ -1091,7 +1092,6 @@ impl Application {
                 )
             })?;
         }
-        self.traces.forget_entries(&ids);
         Ok(())
     }
 

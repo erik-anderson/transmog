@@ -512,7 +512,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async clearContentSearch(refresh=true):Promise<void> {
     this.closeMatches();
     if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
-    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);
+    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;if(refresh)await this.refreshSessions(undefined,true);
   }
   startColumnDrag(id:ColumnId,event:PointerEvent):void {
     if (event.button !== 0) return;
@@ -660,7 +660,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null}>('clear_traffic');
-      const removed=new Set(result.ids);this.trafficUndo=[];
+      const removed=new Set(result.ids);this.trafficUndo=[];this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
       if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,rows:this.sessions.filter(row=>removed.has(row.id)),expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
 
       this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): 'Traffic is already empty.';
@@ -704,7 +704,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async undoTrafficRemoval():Promise<void> {
     this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
     try {
-      const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();
+      const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();if(!this.traceMetadataRows.length)this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);
       this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':'';
       this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);
       this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();

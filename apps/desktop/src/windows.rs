@@ -1253,7 +1253,11 @@ async fn start_capture(
             retryable: false,
         });
     }
-    validate_proxy_start(&state).map_err(|message| AppError {category:transmog_app::ErrorCategory::InvalidInput,message,retryable:false})?;
+    validate_proxy_start(&state).map_err(|message| AppError {
+        category: transmog_app::ErrorCategory::InvalidInput,
+        message,
+        retryable: false,
+    })?;
     let path = request.path.clone();
     let result = state.application.start_capture(request).await?;
     if let Err(error) = start_proxy_locked(
@@ -1634,10 +1638,17 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     persist_window_state(&application, &window);
                     if application.shutdown().await.is_ok()
-                        && application.discard_traffic().is_ok()
                         && host.recover_pending().is_ok()
                         && !host.recovery_pending()
                     {
+                        if let Err(error) = application.discard_traffic() {
+                            application.record_diagnostic(
+                                DiagnosticLevel::Error,
+                                "desktop",
+                                "traffic-cache-cleanup-failed",
+                                &error.message,
+                            );
+                        }
                         let _ = window.destroy();
                     } else {
                         close_guard.store(false, Ordering::Release);

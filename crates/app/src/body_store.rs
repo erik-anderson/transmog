@@ -961,11 +961,11 @@ impl BodyStore {
     }
 
     pub(crate) fn forget_entries(&self, ids: &[ExchangeId]) -> Result<(), BodyStoreError> {
-        self.flush()?;
+        let synchronized = self.flush();
         let ids = ids.iter().copied().collect::<HashSet<_>>();
         let mut state = self.lock_state();
         for id in &ids {
-            if state.exchange_modes.contains_key(id) {
+            if synchronized.is_err() || state.exchange_modes.contains_key(id) {
                 state.discarded.insert(*id);
             }
             state.exchange_modes.remove(id);
@@ -992,7 +992,7 @@ impl BodyStore {
         state
             .terminal_order
             .retain(|key| !ids.contains(&key.exchange_id));
-        Ok(())
+        synchronized
     }
 
     fn enqueue(&self, event: ObserverEvent) {
@@ -1944,6 +1944,29 @@ mod tests {
         );
         drop(store);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cleanup_releases_records_even_when_the_cache_worker_has_stopped() {
+        let root = root("failed-cleanup");
+        let store = BodyStore::new(config(root.clone(), 1024)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b"placeholder"),
+                completed(1, 4),
+            ],
+        );
+        assert!(!store.metadata(ExchangeId(1)).is_empty());
+        store.inner.sender.send(WorkerCommand::Shutdown).unwrap();
+        assert!(store.flush().is_err());
+        assert!(store.forget_entries(&[ExchangeId(1)]).is_err());
+        assert!(store.metadata(ExchangeId(1)).is_empty());
+        assert_eq!(store.counters().retained_bytes, 0);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

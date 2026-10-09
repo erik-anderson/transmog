@@ -14,11 +14,11 @@ fn error(message: &str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, true)
 }
 fn date(time: SystemTime) -> String {
-    let nanos = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    time::OffsetDateTime::from_unix_timestamp_nanos(i128::try_from(nanos).unwrap_or(0))
+    let nanos = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => i128::try_from(duration.as_nanos()).unwrap_or(0),
+        Err(error) => -i128::try_from(error.duration().as_nanos()).unwrap_or(0),
+    };
+    time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
         .ok()
         .and_then(|time| {
             time.format(&time::format_description::well_known::Rfc3339)
@@ -78,7 +78,17 @@ pub(crate) fn write(
             .ok_or_else(|| error("Choose a HAR destination"))?,
     )
     .map_err(|_| error("HAR output could not be created"))?;
-    temporary.write_all(b"{\"log\":{\"version\":\"1.2\",\"creator\":{\"name\":\"Transmog\",\"version\":\"0.1\"},\"entries\":[").map_err(|_| error("HAR output could not be written"))?;
+    temporary
+        .write_all(b"{\"log\":{\"version\":\"1.2\",\"creator\":")
+        .map_err(|_| error("HAR output could not be written"))?;
+    serde_json::to_writer(
+        &mut temporary,
+        &json!({"name":"Transmog","version":env!("CARGO_PKG_VERSION")}),
+    )
+    .map_err(|_| error("HAR output could not be written"))?;
+    temporary
+        .write_all(b",\"entries\":[")
+        .map_err(|_| error("HAR output could not be written"))?;
     let runtime = tokio::runtime::Handle::current();
     let mut incomplete = 0;
     for (position, snapshot) in sessions.iter().enumerate() {

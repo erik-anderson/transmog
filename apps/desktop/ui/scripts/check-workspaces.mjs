@@ -1724,7 +1724,10 @@ try {
   await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-compact.png')});
   assert.ok((await previewReport.boundingBox()).height<=520);await previewReport.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.metadataContext='Placeholder metadata';workspace.metadataNetworkContext='Placeholder network context';});
   await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').metadataContext),'');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').metadataNetworkContext),'');
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===0);
   await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').undoTrafficRemoval();});
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length>0);
