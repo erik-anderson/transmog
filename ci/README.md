@@ -56,6 +56,8 @@ it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
 
 Browser workspace checks run first so UI failures do not wait for Rust compilation.
+The release builder first fetches the locked Cargo dependencies, so offline UI
+Credits generation can read their metadata and license files on a fresh runner.
 The repository-wide Clippy/tests then run before optimized compilation. That full gate
 replaces the packaging wrapper's narrower test pass. Tauri forwards all four
 package selections to one Cargo release build, and sidecars are staged

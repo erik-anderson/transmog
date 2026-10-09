@@ -9,6 +9,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot 'target\releas
 Push-Location $repositoryRoot
 try {
     . (Join-Path $PSScriptRoot 'dev-env.ps1') -Check
+    # UI credits read locked Cargo metadata and dependency license files offline.
+    # Populate the cache before the first UI build on a fresh release runner.
+    & cargo fetch --locked
     # The complete deterministic repository gate runs before signing credentials exist.
     Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
     try {
