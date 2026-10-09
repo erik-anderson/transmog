@@ -114,13 +114,15 @@ try {
             }
         } finally { $zip.Dispose() }
         $pageSource = Join-Path $probeRoot 'captured-page-fixture.saz'
-        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;Promise.all([fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"beta"}).then(async r=>({status:r.status,body:await r.text()})),fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"alpha"}).then(async r=>({status:r.status,body:await r.text()}))]).then(rows=>globalThis.variantResults=rows);fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
+        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;Promise.all([fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"beta"}).then(async r=>({status:r.status,body:await r.text()})),fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"alpha"}).then(async r=>({status:r.status,body:await r.text()}))]).then(rows=>globalThis.variantResults=rows);(async()=>{const rows=[];for(let i=0;i<3;i++){rows.push(await (await fetch("/sequence")).text());}globalThis.sequenceResults=rows;})();fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
         $pageMembers = [ordered]@{}
         $pageResources = @(
             @{ Id=1; Url='https://example.invalid/captured-page'; Type='text/html'; Body=$pageHtml },
             @{ Id=2; Url='https://example.invalid/page.css'; Type='text/css'; ResponseHeaders="Vary: User-Agent`r`n"; Body='h1 { color: rgb(0, 128, 0); }' },
             @{ Id=4; Url='https://example.invalid/variant'; Method='POST'; RequestBody='alpha'; RequestHeaders="X-Preview: light`r`n"; ResponseHeaders="Vary: X-Preview`r`n"; Type='text/plain'; Body='light variant' },
             @{ Id=5; Url='https://example.invalid/variant'; Method='POST'; RequestBody='beta'; RequestHeaders="X-Preview: dark`r`n"; ResponseHeaders="Vary: X-Preview`r`n"; Type='text/plain'; Body='dark variant' },
+            @{ Id=6; Url='https://example.invalid/sequence'; Type='text/plain'; ResponseHeaders="Cache-Control: no-store`r`n"; Body='first response' },
+            @{ Id=7; Url='https://example.invalid/sequence'; Type='text/plain'; ResponseHeaders="Cache-Control: no-store`r`n"; Body='next response' },
             @{ Id=3; Url='https://example.invalid/pixel.svg'; Type='image/svg+xml'; Body='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="green"/></svg>' }
         )
         foreach ($resource in $pageResources) {

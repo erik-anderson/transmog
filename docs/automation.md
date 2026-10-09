@@ -62,7 +62,10 @@ gzip, Brotli, deflate, or zstd stack, or the user can deliberately choose
 identity output. Binary and oversized sources retain exact replay behavior.
 
 Matching uses the original client request, before request mutations. Method and
-case-sensitive exact URL are the default conditions. Methods include Any and
+case-sensitive exact URL are the default conditions. Captured response headers,
+including Vary, do not add implicit request-header or User-Agent restrictions.
+One modified response can therefore serve different browsers; add a request-header
+condition explicitly when a rule should target only one client. Methods include Any and
 custom tokens. Request-header conditions are available for every method;
 request bodies are not inspected. Exact URLs, address patterns and bounded
 regular expressions use the same backend matcher in live requests and in the

@@ -100,6 +100,12 @@ its actual effect on the user's task.
   Serve only captured responses; misses return an empty 404, and captured content
   cannot access application commands. Distinguish preview content from complete
   original data. Copy, save, edit, and export labels describe the data used.
+- Auto-response matching uses authored conditions; captured Vary headers must not
+  add implicit browser restrictions. Preview matching uses method and URL within
+  the chosen source scope, with body, browser/process, Origin/Referer, Sec- headers
+  and navigation timing as preferences. Prefer later captured responses for
+  repeated URLs during a load, reset progression on reload, and relax hints to
+  available method/URL matches instead of returning avoidable 404s.
 - Copying a request command only copies text; it never executes traffic. File
   placeholders must explain what bytes are needed and offer Save as when complete
   bytes are available. Use complete backend data for copy/replay, preserve encoded

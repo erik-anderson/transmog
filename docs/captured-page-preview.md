@@ -8,15 +8,26 @@ window; the Transmog proxy can remain stopped. Cancel or Escape stops preparatio
 The page keeps its original URL so relative CSS, images and other resources can
 resolve naturally. Resources come from the selected entry's original trace,
 including when several traces have been imported into one workspace. For each
-method and URL, the nearest captured response to the selected request is used.
-**All loaded traffic in this window** is an explicit alternative that can mix
-traces or users while keeping the selected HTML fixed. Resource matching also
-compares exact encoded request bytes and available Vary header values.
-Accept-Encoding is ignored after response decoding. The preview uses the selected
-request’s recorded User-Agent, when available, so browser-dependent styles match. Redacted or unavailable Vary,
-Vary wildcard, unavailable request bodies and unknown URLs produce empty 404s.
-Rendering a selected POST response provides its body for the initial GET used
-by the browser. Unmatched requests return **404 with an empty body**.
+method and URL, preview prefers matching request-body bytes and fetch destination,
+the recorded User-Agent and top-level process, Origin/Referer and other Sec-
+headers, then Vary and capture timing. Process identity is scoped to its capture
+so a reused PID from another file is not treated as the same process. Responses
+at or after the top-level navigation are preferred over earlier responses when
+other hints tie. When a URL is requested again, selection advances to a later
+captured response if one is available. Otherwise it reuses the closest eligible
+response. Reloading the selected document resets this per-load sequence.
+
+**All loaded traffic in this window** can mix traces or users while keeping the
+selected HTML fixed. Hints are relaxed when no perfect match exists: an available
+response for the same method and URL is still served even with different or
+unavailable bodies, Vary, UA or other headers. Source scope and complete-response
+limits still apply; unknown URLs return empty 404s. Accept-Encoding is ignored
+after response decoding. The preview keeps the selected request's recorded
+User-Agent, when available, to help scripts behave like the original browser.
+Rendering a selected POST response provides its body for initial GET navigation.
+Cache-dependent 304 responses are skipped in favor of an available captured
+representation for that URL; the preview's fresh browser profile has no original
+cache to satisfy them.
 
 This recreates captured evidence rather than a complete browser session.
 Missing, incomplete or oversized resources remain unavailable. Original response

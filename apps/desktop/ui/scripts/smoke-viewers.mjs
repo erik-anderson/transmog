@@ -235,8 +235,10 @@ try{
     if(disabledState.color!=='rgb(0, 128, 0)')process.stderr.write(JSON.stringify(await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${traffic}.previewReportLabel})`))+'\n');
     assert.equal(disabledState.script,false);assert.equal(disabledState.color,'rgb(0, 128, 0)');assert.equal(disabledState.image,20);
     assert.equal(await disabled.evaluate('navigator.userAgent'),'Placeholder/1');
+    await disabled.call('Emulation.setUserAgentOverride',{userAgent:'Placeholder/2'});
     await disabled.call('Page.reload',{ignoreCache:true});
     await waitFor(()=>disabled.evaluate("document.readyState==='complete' && document.getElementById('captured-heading') && getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 128, 0)'"),'Captured preview reload did not restore HTML and styles');
+    assert.equal(await disabled.evaluate('navigator.userAgent'),'Placeholder/2');
     const oldEnabled=(await targets()).map(target=>target.id);
     const enabledLabel=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(htmlId)},enableScripts:true,options:{scope:'all-loaded'},operationId:'native-enabled-probe'})`);
     const enabledTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>!oldEnabled.includes(target.id)&&target.url.includes('/captured-page'));},'Script-enabled preview did not navigate');
@@ -244,8 +246,15 @@ try{
     await waitFor(()=>enabled.evaluate(`globalThis.missingResult`),'Captured script did not complete its missing request');
     assert.deepEqual(await enabled.evaluate(`globalThis.missingResult`),{status:404,body:''});
     await waitFor(()=>enabled.evaluate(`globalThis.variantResults`),'Captured POST variants did not finish');
-    assert.deepEqual(await enabled.evaluate(`globalThis.variantResults`),[{status:200,body:'dark variant'},{status:404,body:''}]);
-    const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=4&&report.misses>=2);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='served'));
+    assert.deepEqual(await enabled.evaluate(`globalThis.variantResults`),[{status:200,body:'dark variant'},{status:200,body:'light variant'}]);
+    const sequence=['first response','next response','next response'];
+    await waitFor(()=>enabled.evaluate(`globalThis.sequenceResults`),'Repeated captured requests did not finish');
+    assert.deepEqual(await enabled.evaluate(`globalThis.sequenceResults`),sequence);
+    await enabled.evaluate(`globalThis.beforeSequenceReload=true`);
+    await enabled.call('Page.reload',{ignoreCache:true});
+    await waitFor(()=>enabled.evaluate(`!globalThis.beforeSequenceReload && globalThis.sequenceResults`),'Captured sequence did not restart on reload');
+    assert.deepEqual(await enabled.evaluate(`globalThis.sequenceResults`),sequence);
+    const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=5&&report.misses>=1);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='served'));
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}}).then(()=>false,()=>true)`),true,'Another window read a preview report');
     await second.evaluate(`(async()=>{const workspace=${traffic};workspace.previewReportLabel=${JSON.stringify(enabledLabel)};await workspace.showPreviewReport();})()`);
     if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-preview-report.png'),Buffer.from(image.data,'base64'));}
@@ -268,7 +277,7 @@ try{
       for await(const _ of glob('temp/transmog-captured-webview-*',{cwd:profileRoot}))return false;
       return true;
     },'Closed captured preview profiles were not cleaned up');
-    process.stdout.write('Captured HTML, CSS, image, script choice, empty misses, IPC and uncaptured egress verified.\n');
+    process.stdout.write('Captured HTML, CSS across UAs, image, script choice, response sequence/reset, empty misses, IPC and uncaptured egress verified.\n');
   }
   const beforeReopen=(await targets()).map(target=>target.id);
   await closeNative('Transmog');

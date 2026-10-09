@@ -455,11 +455,19 @@ mod tests {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
         async fn request(listener: String, url: &str, length: usize) -> (String, Vec<u8>) {
+            request_with_ua(listener, url, length, "Placeholder/1").await
+        }
+        async fn request_with_ua(
+            listener: String,
+            url: &str,
+            length: usize,
+            ua: &str,
+        ) -> (String, Vec<u8>) {
             let mut client = tokio::net::TcpStream::connect(listener).await.unwrap();
             client
                 .write_all(
                     format!(
-                        "GET {url} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                        "GET {url} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {ua}\r\nConnection: close\r\n\r\n",
                         url.strip_prefix("http://")
                             .unwrap()
                             .split('/')
@@ -515,7 +523,7 @@ mod tests {
         let origin_task = tokio::spawn(async move {
             let (mut socket, _) = origin.accept().await.unwrap();
             read_http_head(&mut socket).await;
-            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Encoding: br\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", origin_body.len()).as_bytes()).await.unwrap();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nVary: User-Agent\r\nContent-Encoding: gzip\r\nContent-Encoding: br\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", origin_body.len()).as_bytes()).await.unwrap();
             socket.write_all(&origin_body).await.unwrap();
             socket.shutdown().await.unwrap();
         });
@@ -649,6 +657,18 @@ mod tests {
             head.to_ascii_lowercase()
                 .contains(&format!("content-length: {}\r\n", edited.body_bytes))
         );
+        let (_, second_ua) = request_with_ua(
+            restarted.status().listener.unwrap(),
+            &url,
+            usize::try_from(edited.body_bytes).unwrap(),
+            "Placeholder/2",
+        )
+        .await;
+        let decoded =
+            crate::inspector::decode_content(&["gzip".to_owned(), "br".to_owned()], second_ua)
+                .await
+                .unwrap();
+        assert_eq!(decoded, b"edited response");
         restarted.shutdown().await.unwrap();
         let row = &restarted
             .query_sessions(crate::SessionQueryInput::default())

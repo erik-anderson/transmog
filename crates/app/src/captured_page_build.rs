@@ -1,8 +1,8 @@
 //! Owns finite decoded-resource and request-signature budgets while preparing
 //! an immutable preview away from the browser thread.
 use super::{
-    Candidate, CapturedPage, MAX_RESOURCE_BYTES, MAX_RESOURCES, MAX_SCENE_BYTES, ResourceVariant,
-    browser_headers, error,
+    Candidate, CapturedPage, MAX_RESOURCE_BYTES, MAX_RESOURCES, MAX_SCENE_BYTES, ProcessContext,
+    ResourceVariant, browser_headers, error,
 };
 use crate::{
     AppError, Application, BodyStore, CapturedPageDiagnostics, CapturedPageReport,
@@ -26,9 +26,11 @@ pub(super) struct SceneBuilder {
     decisions: Vec<CapturedResourceDecision>,
     primary_url: Option<String>,
     user_agent: Option<String>,
+    process: Option<ProcessContext>,
+    navigation_time: u64,
 }
 impl SceneBuilder {
-    pub(super) fn new(numeric: ExchangeId, root: tempfile::TempDir) -> Self {
+    pub(super) fn new(numeric: ExchangeId, root: tempfile::TempDir, navigation_time: u64) -> Self {
         Self {
             numeric,
             root,
@@ -40,6 +42,8 @@ impl SceneBuilder {
             decisions: Vec::new(),
             primary_url: None,
             user_agent: None,
+            process: None,
+            navigation_time,
         }
     }
     fn record(&mut self, mut row: CapturedResourceDecision, reason: &str, bytes: Option<u64>) {
@@ -105,17 +109,22 @@ impl SceneBuilder {
             self.record(row, "This HTTP status cannot be rendered", None);
             return Ok(());
         }
-        let body_sha256 = self.fingerprint(application, &row.entry_id, canceled);
-        if canceled.load(Ordering::Acquire) {
-            return Err(error("Captured page preview canceled"));
-        }
-        if !primary && (body_sha256.is_none() || candidate.vary.is_none()) {
+        if candidate.head.status == 304 {
+            if primary {
+                return Err(error(
+                    "Select a captured HTML response with body bytes; a 304 requires the original browser cache",
+                ));
+            }
             self.record(
                 row,
-                "Complete bounded request body or Vary headers unavailable",
+                "304 has no representation body; use another captured response for this URL",
                 None,
             );
             return Ok(());
+        }
+        let body_sha256 = self.fingerprint(application, &row.entry_id, canceled);
+        if canceled.load(Ordering::Acquire) {
+            return Err(error("Captured page preview canceled"));
         }
         let path = self
             .root
@@ -140,41 +149,76 @@ impl SceneBuilder {
         self.bytes += size;
         self.resources += 1;
         if primary {
-            self.user_agent.clone_from(&candidate.user_agent);
-            self.primary_url = Some(candidate.url.clone());
-            self.files
-                .entry(("GET".into(), candidate.url.clone()))
-                .or_default()
-                .push(ResourceVariant {
-                    resource: resource.clone(),
-                    entry_id: row.entry_id.clone(),
-                    body_sha256: body_sha256.clone(),
-                    vary: candidate.vary.clone(),
-                    primary: true,
-                });
+            self.add_primary(&candidate, resource.clone(), body_sha256.clone());
         }
         self.record(
             row,
             if primary {
                 "Selected HTML document; GET navigation uses these exact response bytes"
             } else {
-                "Nearest matching body and Vary variant; Accept-Encoding ignored after decoding"
+                "Available response; body, UA, process, Origin/Referer, Sec- headers, Vary and capture time guide selection"
             },
             Some(size),
         );
         if !(primary && candidate.method == "GET") {
+            let variant = Self::variant(
+                &candidate,
+                resource,
+                body_sha256,
+                self.process.as_ref(),
+                false,
+            );
             self.files
                 .entry((candidate.method, candidate.url))
                 .or_default()
-                .push(ResourceVariant {
-                    resource,
-                    entry_id: format!("{:032x}", candidate.id.0),
-                    body_sha256,
-                    vary: candidate.vary,
-                    primary: false,
-                });
+                .push(variant);
         }
         Ok(())
+    }
+    fn add_primary(
+        &mut self,
+        candidate: &Candidate,
+        resource: CapturedResource,
+        body_sha256: Option<String>,
+    ) {
+        self.user_agent.clone_from(&candidate.user_agent);
+        self.process.clone_from(&candidate.process);
+        self.primary_url = Some(candidate.url.clone());
+        self.files
+            .entry(("GET".into(), candidate.url.clone()))
+            .or_default()
+            .push(Self::variant(
+                candidate,
+                resource,
+                body_sha256,
+                self.process.as_ref(),
+                true,
+            ));
+    }
+    fn variant(
+        candidate: &Candidate,
+        resource: CapturedResource,
+        body_sha256: Option<String>,
+        process: Option<&ProcessContext>,
+        primary: bool,
+    ) -> ResourceVariant {
+        ResourceVariant {
+            resource,
+            entry_id: format!("{:032x}", candidate.id.0),
+            body_sha256,
+            vary: candidate.vary.clone(),
+            primary,
+            user_agent: candidate.user_agent.clone(),
+            same_process: candidate
+                .process
+                .as_ref()
+                .is_some_and(|candidate| Some(candidate) == process),
+            origin: candidate.origin.clone(),
+            referer: candidate.referer.clone(),
+            sec_headers: candidate.sec_headers.clone(),
+            time: candidate.time,
+            order: candidate.id.0,
+        }
     }
     pub(super) fn finish(
         self,
@@ -203,6 +247,8 @@ impl SceneBuilder {
             resources: self.resources,
             skipped: self.skipped,
             diagnostics,
+            navigation_time: self.navigation_time,
+            positions: std::sync::Mutex::new(HashMap::new()),
             files: self.files,
             _root: self.root,
         })
