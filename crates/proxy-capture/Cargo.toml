@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+tempfile.workspace = true
 aes-gcm.workspace = true
 argon2.workspace = true
 flate2.workspace = true

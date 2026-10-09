@@ -39,6 +39,7 @@ license = "MIT"
 repository = "https://github.com/erik-anderson/transmog"
 
 [workspace.dependencies]
+rpassword = "=7.5.4"
 aes-gcm = "=0.10.3"
 argon2 = "=0.5.3"
 zeroize = "=1.9.0"

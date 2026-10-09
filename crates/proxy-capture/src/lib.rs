@@ -5,6 +5,8 @@
 //! The durable schema is independent from live control messages. A valid
 //! prefix remains readable after a crash-truncated final record.
 
+mod circular;
+pub use circular::CircularCapture;
 mod encoding;
 pub use encoding::{CaptureEncoding, CapturePassword, FrameCodec};
 

@@ -1,5 +1,7 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
+mod circular;
+mod passwords;
 mod root_lifecycle;
 mod roots;
 mod support;
@@ -22,7 +24,7 @@ use std::{
 use bytes::Bytes;
 use transmog_capture::{
     CaptureBodyRetention, CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter,
-    JsonLinesExporter, RecoveredCapture, loss_record, record_from_observer, recover,
+    JsonLinesExporter, RecoveredCapture, loss_record, record_from_observer,
 };
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{
@@ -356,8 +358,43 @@ fn capture_command(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn recover_file(arguments: &[String]) -> Result<RecoveredCapture, Box<dyn Error>> {
+    Ok(recover_file_with_password(arguments)?.0)
+}
+fn recover_file_with_password(
+    arguments: &[String],
+) -> Result<(RecoveredCapture, Option<transmog_capture::CapturePassword>), Box<dyn Error>> {
     let path = required_option(arguments, "--input")?;
-    Ok(recover(File::open(path)?, CaptureLimits::default())?)
+    let password_path = if option(arguments, "--source-password-file").is_some() {
+        option(arguments, "--source-password-file")
+    } else if !arguments.iter().any(|arg| arg == "--encrypt") {
+        option(arguments, "--password-file")
+    } else {
+        None
+    };
+    let mut password = password_path.map(passwords::read_file).transpose()?;
+    loop {
+        let file = File::open(path)?;
+        let input: Box<dyn io::Read> = if path.to_ascii_lowercase().ends_with(".tmcap.gz") {
+            Box::new(flate2::read::MultiGzDecoder::new(file))
+        } else {
+            Box::new(file)
+        };
+        match transmog_capture::recover_with_password(
+            input,
+            CaptureLimits::default(),
+            password.as_ref(),
+        ) {
+            Ok(capture) => return Ok((capture, password)),
+            Err(transmog_capture::CaptureError::PasswordRequired) => {
+                password = Some(passwords::prompt(false)?);
+            }
+            Err(transmog_capture::CaptureError::InvalidPassword) if password_path.is_none() => {
+                eprintln!("The capture password was not accepted.");
+                password = Some(passwords::prompt(false)?);
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
@@ -393,7 +430,7 @@ fn capture_validate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
-    let capture = recover_file(arguments)?;
+    let (capture, password) = recover_file_with_password(arguments)?;
     if capture.sealed {
         return Err(invalid_input("capture is already sealed").into());
     }
@@ -402,21 +439,33 @@ fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         .write(true)
         .create_new(true)
         .open(&output)?;
-    write_sealed_capture(file, &capture)?;
+    write_sealed_capture_encoded(
+        file,
+        &capture,
+        &transmog_capture::CaptureEncoding { password },
+    )?;
     println!("CAPTURE={}", output.display());
     println!("RECOVERED_TAIL={}", capture.truncated_tail);
     Ok(())
 }
 
+#[cfg(test)]
 fn write_sealed_capture<W: Write>(
     output: W,
     capture: &RecoveredCapture,
 ) -> Result<(), transmog_capture::CaptureError> {
-    let mut writer = CaptureWriter::with_encoding(
+    write_sealed_capture_encoded(
         output,
-        CaptureLimits::default(),
+        capture,
         &transmog_capture::CaptureEncoding::default(),
-    )?;
+    )
+}
+fn write_sealed_capture_encoded<W: Write>(
+    output: W,
+    capture: &RecoveredCapture,
+    encoding: &transmog_capture::CaptureEncoding,
+) -> Result<(), transmog_capture::CaptureError> {
+    let mut writer = CaptureWriter::with_encoding(output, CaptureLimits::default(), encoding)?;
     for record in &capture.records {
         if !matches!(
             record.kind,
@@ -429,8 +478,12 @@ fn write_sealed_capture<W: Write>(
 }
 
 fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    let password = passwords::output(arguments)?;
     let capture = recover_file(arguments)?;
     let format = option(arguments, "--format").unwrap_or("jsonl");
+    if password.is_some() && format == "jsonl" {
+        return Err(invalid_input("JSONL does not support password encryption; choose SAZ").into());
+    }
     let output = option(arguments, "--output").unwrap_or("-");
     let report = match format {
         "jsonl" if output == "-" => {
@@ -460,6 +513,9 @@ fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
                 SazMode::Extended
             };
             let mut exporter = SazExporter::new(file, mode, SazLimits::default())?;
+            if let Some(password) = password {
+                exporter = exporter.encrypted(password)?;
+            }
             exporter.export(&capture)?
         }
         _ => return Err(invalid_input("--format must be jsonl, saz, or saz-extended").into()),
@@ -638,7 +694,7 @@ fn print_usage() {
     println!(
         "transmog-cli\n\n\
          Guided support capture (press Ctrl+C to stop and save):\n  \
-         transmog-cli record [--output trace.tmcap.gz] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context] [--request-body-limit bytes|--unlimited-request-bodies]\n  \
+         transmog-cli record [--output trace.tmcap] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context] [--request-body-limit bytes|--unlimited-request-bodies] [--circular-buffer auto|bytes|unlimited] [--encrypt [--password-file FILE]]\n  \
          [--install-root|--no-install-root] [--no-system-proxy] [--listen 127.0.0.1:0] [--allow-remote] [--route auto|h1|h2|h3]\n\n\
          Remove CLI-owned roots, including retrying canceled OS prompts:\n  \
          transmog-cli roots cleanup [--include-persistent]\n\n\
@@ -801,12 +857,13 @@ mod tests {
         let source_record = transmog_capture::loss_record(7, 2, 1, "test-gap");
         let mut source = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
         source.append(&source_record).unwrap();
-        let recovered = recover(&source.into_inner()[..], CaptureLimits::default()).unwrap();
+        let recovered =
+            transmog_capture::recover(&source.into_inner()[..], CaptureLimits::default()).unwrap();
         assert!(!recovered.sealed);
 
         let mut output = Vec::new();
         write_sealed_capture(&mut output, &recovered).unwrap();
-        let sealed = recover(&output[..], CaptureLimits::default()).unwrap();
+        let sealed = transmog_capture::recover(&output[..], CaptureLimits::default()).unwrap();
         assert!(sealed.sealed);
         assert_eq!(sealed.records.first(), Some(&source_record));
     }

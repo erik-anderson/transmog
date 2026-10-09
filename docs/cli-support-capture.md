@@ -24,7 +24,7 @@ the downloaded bytes; the trusted signature identifies the publisher.
 Save it in a folder you can write to, open PowerShell in that folder, and run:
 
 ```powershell
-.\transmog-cli.exe record --output .\support-trace.tmcap.gz
+.\transmog-cli.exe record --output .\support-trace.tmcap
 ```
 
 1. Answer **yes** when asked to install the public HTTPS interception root.
@@ -39,9 +39,9 @@ Save it in a folder you can write to, open PowerShell in that folder, and run:
    long-lived connection can keep the capture finishing; press **Ctrl+C again**
    to terminate unfinished work and save the available evidence instead.
 4. Approve the certificate removal prompt if one appears. Wait for **Trace
-   saved**, then open `support-trace.tmcap.gz` through Transmog's **Import…** or
+   saved**, then open `support-trace.tmcap` through Transmog's **Import…** or
    **Files → Open in a separate viewer…**. Review the capture and share that one
-   compressed file with your support contact.
+   chunk-compressed file with your support contact.
 
 The default captures complete headers, including cookies and credentials, and
 retains up to 25 MB (25,000,000 bytes) per request body. Response bodies and
@@ -63,8 +63,9 @@ console prints the active limit before recording. Overall file limits and
 separate bounded body-processing limits still apply.
 
 Existing files are never overwritten. Choose another filename for the next
-capture. Compression streams the saved native file; if compression fails, the
-uncompressed `.tmcap` remains available. Use an output ending in `.tmcap` when
+capture. TMCap compresses each record as it arrives and lets the desktop read body
+chunks on demand. An optional `.tmcap.gz` adds an outer wrapper at stop; if that
+wrapper fails, the chunk-compressed `.tmcap` remains available. Use an output ending in `.tmcap` when
 you want an uncompressed trace.
 
 ## Certificates and interrupted runs
@@ -171,3 +172,35 @@ interface/DNS/route context on macOS, or `ip` and `resolvectl` output on Linux.
 This is optional because adapter addresses, DNS configuration and computer names
 may be private. Collection is bounded and failures remain in Trace metadata.
 Open the saved trace and use **Trace metadata** before sharing.
+
+## Password protection and circular recording
+
+Use `record --encrypt --output support-trace.tmcap` to enable AES-256 encryption.
+The console masks the password and asks you to confirm it before certificate
+setup. Keep the password to reopen the file; Transmog cannot recover it. Share
+the password separately from the trace. Passwords are never saved in CLI
+preferences or certificate recovery metadata.
+
+For unattended captures, add `--encrypt --password-file <protected-file>`. The
+UTF-8 file is read into memory (up to 4096 bytes; a final newline is ignored).
+Protect that file yourself; Transmog does not delete or remember it. Actual
+password strings are never accepted as command-line options.
+
+Ordinary recording streams every exchange to the trace. For just the latest
+retained traffic, use `--circular-buffer auto`: the limit is half installed RAM
+and retained encoded frames stay in memory until Ctrl+C saves them. An abrupt
+process termination loses an unsaved memory buffer. Specify a custom limit such
+as `--circular-buffer 512MiB`, `2GB`, or a positive byte count (at least 1 MiB).
+Limits above half installed RAM use disk. `--circular-buffer unlimited` has no
+buffer maximum and uses disk; the separate 4 GiB finished trace budget still
+applies. Disk circular caches hold compressed frames and, for encrypted runs,
+ciphertext. Completed older exchanges are evicted first; if active traffic alone
+exceeds the quota, older active evidence can be dropped without interrupting
+forwarding. The saved trace’s metadata records eviction counts.
+
+`capture inspect` and `capture validate` ask for a password when needed, or
+accept `--password-file <protected-file>` in an unattended run. They also accept
+`.tmcap.gz`. `capture seal` preserves the input’s encryption in the recovered
+copy. `capture export --format saz --encrypt` writes AES-256 encrypted SAZ; use
+`--source-password-file` for encrypted native input and `--password-file` for
+the encrypted output. JSONL intentionally has no encryption option.

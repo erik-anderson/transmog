@@ -72,13 +72,19 @@ def main():
             kernel.SetConsoleCtrlHandler(None, False)
             kernel.FreeConsole()
 
-    def capture(name, persistent=False, crash=False):
+    def capture(name, persistent=False, crash=False, circular=None, encrypted=False):
         output = fixture / (name + ('.tmcap' if crash else '.tmcap.gz'))
         log_path = fixture / (name + '.log')
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = subprocess.SW_HIDE
         options = ['record', '--output', str(output), '--no-install-root', '--no-system-proxy']
+        password_file = fixture / 'fixture-password.txt'
+        password_file.write_text('controlled-test-password', encoding='utf-8')
+        if circular:
+            options += ['--circular-buffer', circular]
+        if encrypted:
+            options += ['--encrypt', '--password-file', str(password_file)]
         if persistent:
             options.append('--persistent-root')
         with log_path.open('wb') as log:
@@ -95,6 +101,10 @@ def main():
                 time.sleep(.05)
             else:
                 raise AssertionError('CLI did not reach Recording')
+            if circular:
+                assert not output.exists() and not output.with_suffix('').exists()
+                if circular != 'unlimited':
+                    assert not (ledger / 'circular').exists()
             assert 'press Ctrl+C once' in text
             assert '25000000 bytes per request' in text
             records = [json.loads(path.read_text()) for path in ledger.glob('root-*.json')]
@@ -127,7 +137,12 @@ def main():
                 native = fixture / (name + '-decoded.tmcap')
                 native.write_bytes(gzip.decompress(output.read_bytes()))
                 evidence = fixture / (name + '.jsonl')
-                command('capture', 'export', '--input', str(native), '--format', 'jsonl', '--output', str(evidence))
+                password_args = ['--password-file', str(password_file)] if encrypted else []
+                command('capture', 'export', '--input', str(native), '--format', 'jsonl', '--output', str(evidence), *password_args)
+                if encrypted:
+                    rejected = subprocess.run([str(executable), 'capture', 'inspect', '--input', str(native)], env=environment, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                    assert rejected.returncode != 0 and 'password' in rejected.stderr.lower()
+                    assert 'SEALED=true' in command('capture', 'inspect', '--input', str(native), '--password-file', str(password_file))
                 assert 'certificateContext' in evidence.read_text()
                 def retained_authorization(value):
                     if isinstance(value, dict):
@@ -144,6 +159,9 @@ def main():
     try:
         capture('ephemeral')
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
+        capture('circular-memory', circular='auto', encrypted=True)
+        capture('circular-disk', circular='unlimited', encrypted=True)
+        capture('encrypted-stream', encrypted=True)
         first, _ = capture('persistent-1', persistent=True)
         state = json.loads(next(ledger.glob('root-*.json')).read_text())
         assert state['lifecycle']['state'] == 'persistent-idle'
@@ -159,7 +177,7 @@ def main():
         assert 'SEALED=true' in command('capture', 'inspect', '--input', str(recovered))
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         print(json.dumps({'ephemeralMemoryOnly': True, 'persistentReuse': True,
-                          'consoleCtrlC': True, 'crashRecovery': True, 'artifacts': str(fixture)}))
+                          'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True, 'circularMemory': True, 'circularDisk': True, 'artifacts': str(fixture)}))
     finally:
         for process in processes:
             if process.poll() is None:

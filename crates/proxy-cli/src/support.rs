@@ -19,6 +19,9 @@ use transmog_session::{
 
 pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     validate_options(arguments)?;
+    let encoding = transmog_capture::CaptureEncoding {
+        password: crate::passwords::output(arguments)?,
+    };
     let output = output_path(arguments)?;
     let compressed = output
         .to_string_lossy()
@@ -61,8 +64,11 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         &ledger,
         &root,
         ca,
-        redact,
-        request_body_limit,
+        RecordingOptions {
+            redact,
+            request_body_limit,
+            encoding,
+        },
     )
     .await;
     if let Err(error) = ledger.finish_run(&root, result.is_ok()) {
@@ -203,15 +209,25 @@ async fn capture_metadata(
     Ok(metadata)
 }
 
+struct RecordingOptions {
+    redact: bool,
+    request_body_limit: Option<u64>,
+    encoding: transmog_capture::CaptureEncoding,
+}
+
 async fn run_capture(
     arguments: &[String],
     native: &Path,
     ledger: &RootLedger,
     root: &crate::roots::RootRecord,
     ca: transmog_tls::ProxyCa,
-    redact: bool,
-    request_body_limit: Option<u64>,
+    options: RecordingOptions,
 ) -> Result<(), Box<dyn Error>> {
+    let RecordingOptions {
+        redact,
+        request_body_limit,
+        encoding,
+    } = options;
     setup_root(arguments, ledger, root)?;
     println!(
         "Captured headers: {}. Captured bodies may contain private data; review the trace before sharing.",
@@ -237,7 +253,24 @@ async fn run_capture(
         },
         ..ProxyConfig::default()
     };
-    let (components, _) = crate::build_components(
+    let policy = capture_policy(redact, request_body_limit);
+    let metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
+    let circular = crate::option(arguments, "--circular-buffer")
+        .map(|value| {
+            crate::circular::CircularObserver::new(
+                value,
+                ledger.directory().join("circular"),
+                encoding.clone(),
+                policy.clone(),
+                redact,
+            )
+            .map(Arc::new)
+        })
+        .transpose()?;
+    if let Some(circular) = &circular {
+        circular.metadata(metadata.clone())?;
+    }
+    let (mut components, _) = crate::build_components(
         &config,
         ca,
         Arc::new(NoopInterceptorFactory),
@@ -245,23 +278,67 @@ async fn run_capture(
         None,
         false,
     )?;
+    if let Some(circular) = &circular {
+        components = components.with_observer(circular.clone(), circular.config());
+    }
     let proxy = ProxyServer::bind_with_components(
         config,
         crate::load_upstream_trust(arguments)?,
         service.prepare_components(components),
     )
     .await?;
-    let policy = capture_policy(redact, request_body_limit);
-    let metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
-    service
-        .start_capture(CaptureStart {
-            encoding: transmog_capture::CaptureEncoding::default(),
-            metadata: Some(metadata),
-            path: native.to_path_buf(),
-            limits: CaptureLimits::default(),
-            policy,
-        })
-        .await?;
+    if circular.is_none() {
+        service
+            .start_capture(CaptureStart {
+                encoding,
+                metadata: Some(metadata),
+                path: native.to_path_buf(),
+                limits: CaptureLimits::default(),
+                policy,
+            })
+            .await?;
+    }
+    let endpoint = start_owned_proxy(arguments, ledger, &service, proxy).await?;
+    println!("Proxy address: {endpoint}");
+    #[cfg(not(windows))]
+    println!(
+        "Set your application's HTTP and HTTPS proxy to this address. Remove that setting after recording."
+    );
+    println!("Recording. Reproduce the issue, then press Ctrl+C once to stop and save the trace.");
+    let running = wait_for_stop(&service, circular.as_deref()).await;
+    // Ensure failures still flush the recoverable prefix and restore owned host state.
+    let stopped = service.stop().await;
+    running?;
+    stopped?;
+    if let Some(circular) = circular {
+        circular.save(native)?;
+        return Ok(());
+    }
+    verify_sealed(&service, native)
+}
+
+fn verify_sealed(service: &ApplicationSessionService, native: &Path) -> Result<(), Box<dyn Error>> {
+    match service.capture().status() {
+        CaptureStatus::Sealed(_) => {}
+        CaptureStatus::Failed(failure) => {
+            return Err(io::Error::other(format!(
+                "Capture failed: {}. A recoverable native prefix remains at {}",
+                failure.message,
+                native.display()
+            ))
+            .into());
+        }
+        _ => return Err(io::Error::other("The capture did not seal successfully").into()),
+    }
+    Ok::<(), Box<dyn Error>>(())
+}
+
+async fn start_owned_proxy(
+    arguments: &[String],
+    ledger: &RootLedger,
+    service: &ApplicationSessionService,
+    proxy: ProxyServer,
+) -> Result<std::net::SocketAddr, Box<dyn Error>> {
     let endpoint;
     #[cfg(windows)]
     {
@@ -284,30 +361,8 @@ async fn run_capture(
     {
         endpoint = service.start(proxy).await?;
     }
-    println!("Proxy address: {endpoint}");
-    #[cfg(not(windows))]
-    println!(
-        "Set your application's HTTP and HTTPS proxy to this address. Remove that setting after recording."
-    );
-    println!("Recording. Reproduce the issue, then press Ctrl+C once to stop and save the trace.");
-    let running = wait_for_stop(&service).await;
-    // Ensure failures still flush the recoverable prefix and restore owned host state.
-    let stopped = service.stop().await;
-    running?;
-    stopped?;
-    match service.capture().status() {
-        CaptureStatus::Sealed(_) => {}
-        CaptureStatus::Failed(failure) => {
-            return Err(io::Error::other(format!(
-                "Capture failed: {}. A recoverable native prefix remains at {}",
-                failure.message,
-                native.display()
-            ))
-            .into());
-        }
-        _ => return Err(io::Error::other("The capture did not seal successfully").into()),
-    }
-    Ok::<(), Box<dyn Error>>(())
+
+    Ok(endpoint)
 }
 
 fn setup_root(
@@ -361,7 +416,10 @@ fn setup_root(
     Ok(())
 }
 
-async fn wait_for_stop(service: &ApplicationSessionService) -> io::Result<()> {
+async fn wait_for_stop(
+    service: &ApplicationSessionService,
+    circular: Option<&crate::circular::CircularObserver>,
+) -> io::Result<()> {
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tokio::select! {
@@ -371,7 +429,7 @@ async fn wait_for_stop(service: &ApplicationSessionService) -> io::Result<()> {
                 service.begin_drain().await.map_err(io::Error::other)?;
                 break;
             }
-            _ = tick.tick() => { check_failure(service)?; }
+            _ = tick.tick() => { check_failure(service)?; if let Some(circular)=circular {circular.check()?;} }
         }
     }
     loop {
@@ -379,6 +437,9 @@ async fn wait_for_stop(service: &ApplicationSessionService) -> io::Result<()> {
             return Ok(());
         }
         check_failure(service)?;
+        if let Some(circular) = circular {
+            circular.check()?;
+        }
         tokio::select! {
             signal = tokio::signal::ctrl_c() => {
                 signal?;
@@ -424,7 +485,7 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
     let path = crate::option(arguments, "--output").map_or_else(
         || {
             PathBuf::from(format!(
-                "Transmog-{}.tmcap.gz",
+                "Transmog-{}.tmcap",
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -440,7 +501,7 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
         && !name.ends_with(".tmcap.gz")
     {
         return Err(crate::invalid_input(
-            "--output must end in .tmcap.gz (compressed) or .tmcap",
+            "--output must end in .tmcap (chunk-compressed) or .tmcap.gz (gzip-wrapped)",
         ));
     }
     Ok(if path.is_absolute() {
@@ -453,7 +514,13 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
-            "--output" | "--listen" | "--route" | "--upstream-ca-cert" | "--request-body-limit" => {
+            "--output"
+            | "--listen"
+            | "--route"
+            | "--upstream-ca-cert"
+            | "--request-body-limit"
+            | "--password-file"
+            | "--circular-buffer" => {
                 if arguments
                     .get(index + 1)
                     .is_none_or(|arg| arg.starts_with("--"))
@@ -465,7 +532,8 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
                 }
                 index += 2;
             }
-            "--persistent-root"
+            "--encrypt"
+            | "--persistent-root"
             | "--install-root"
             | "--no-install-root"
             | "--no-system-proxy"
@@ -510,6 +578,18 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
         return Err(crate::invalid_input(
             "--request-body-limit requires a positive byte count",
         ));
+    }
+    if crate::option(arguments, "--password-file").is_some()
+        && !arguments.iter().any(|arg| arg == "--encrypt")
+    {
+        return Err(crate::invalid_input(
+            "--password-file requires --encrypt when recording",
+        ));
+    }
+    if let Some(value) = crate::option(arguments, "--circular-buffer")
+        && !["auto", "unlimited"].contains(&value)
+    {
+        crate::circular::parse_size(value)?;
     }
     let listener = ListenerConfig {
         listen_addr: crate::option(arguments, "--listen")

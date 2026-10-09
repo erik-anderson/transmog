@@ -879,6 +879,10 @@ fn import_native(
                 }
                 if kind == "trace-metadata" {
                     context = payload;
+                } else if kind == "circular-retention" {
+                    if let Some(context) = context.as_object_mut() {
+                        context.insert("circularRetention".into(), payload);
+                    }
                 } else if kind == "trace-source" {
                     let source = saved_source(payload, trace_id)?;
                     if sources.len() >= MAX_SESSIONS
