@@ -18,7 +18,7 @@ traffic-workspace { display:contents; }
 .traffic-tools select { min-height:1.85rem; max-width:11rem; padding:.25rem; font-size:.7rem; }
 .traffic-summary { display:flex; justify-content:space-between; gap:1rem; border-bottom:1px solid var(--line); background:var(--panel-subtle); }
 .trace-import-status { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.45rem .7rem; border-bottom:1px solid var(--line); font-size:.8rem; }
-.trace-import-status span { flex:1; min-width:14rem; }
+.trace-import-status span { flex:1; min-width:0; overflow-wrap:anywhere; }
 .content-search-status, .content-search-results { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; padding:.35rem .7rem; border-bottom:1px solid var(--line); font-size:.78rem; }
 .content-search-status span { flex:1; min-width:14rem; }
 .search-result-label { min-width:0; max-width:26rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

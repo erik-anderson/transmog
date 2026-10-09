@@ -34,7 +34,7 @@ public static class TransmogProbeWindow {
 '@
 $owned = [TransmogProbeWindow]::OwnedWindows($ProbeProcessId)
 $matchingWindows = @($owned.GetEnumerator() | Where-Object {
-    $_.Value -eq $WindowTitle -or ($WindowTitle -eq 'Transmog' -and $_.Value -match '^Transmog [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(?: .*)?$')
+    $_.Value -eq $WindowTitle -or ($WindowTitle -eq 'Transmog' -and $_.Value -match '^Transmog [0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?(?: .*)?$')
 })
 $match = $matchingWindows | Select-Object -First 1
 if ($WindowTitle -eq 'Transmog' -and $matchingWindows.Count -ne 1) { throw 'The isolated main window title was missing or ambiguous.' }

@@ -8,6 +8,8 @@ const soakArgument = process.argv.findIndex((value) => value === '--soak-minutes
 const soakMinutes = soakArgument >= 0 ? Number(process.argv[soakArgument + 1]) : 0;
 const screenshotArgument = process.argv.findIndex((value) => value === '--screenshot');
 const screenshotPath = screenshotArgument >= 0 ? process.argv[screenshotArgument + 1] : undefined;
+const invalidTraceArgument = process.argv.findIndex(value=>value==='--invalid-trace');
+const invalidTracePath = invalidTraceArgument >= 0 ? process.argv[invalidTraceArgument + 1] : undefined;
 const automationScreenshotArgument = process.argv.findIndex((value) => value === '--automation-screenshot');
 const automationScreenshotPath = automationScreenshotArgument >= 0
   ? process.argv[automationScreenshotArgument + 1]
@@ -495,6 +497,25 @@ try {
     await call('Emulation.clearDeviceMetricsOverride');
 
 
+  }
+  if (invalidTracePath !== undefined) {
+    await evaluate(`(() => {const shell=document.querySelector('app-shell');globalThis.__importFailureProbe=shell.traffic.importTrace(${JSON.stringify(invalidTracePath)});})()`);
+    result.importFailure=await evaluate(`(async()=>{
+      const shell=document.querySelector('app-shell'),dialog=shell.errorDialog,deadline=performance.now()+10000;
+      while(!dialog.open){if(performance.now()>deadline)throw new Error('Import error dialog did not open');await new Promise(resolve=>setTimeout(resolve,25));}
+      const close=dialog.querySelector('button');
+      if(shell.errorTitle!=='Import failed'||!shell.errorMessage.includes('capture magic is invalid')||!shell.errorMessage.includes('Traffic is unchanged'))throw new Error('Import failure details were lost');
+      if(!dialog.matches(':modal')||shell.shadowRoot.activeElement!==close)throw new Error('Import failure was not modal or focused');
+      return {modal:true,details:true,focused:true};
+    })()`);
+    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-import-error.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
+    await evaluate(`(() => {const shell=document.querySelector('app-shell'),dialog=shell.errorDialog,close=dialog.querySelector('button'),rect=close.getBoundingClientRect(),bounds=dialog.getBoundingClientRect();if(bounds.width>innerWidth||bounds.height>innerHeight||shell.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==close)throw new Error('Compact import dialog controls are unreachable');})()`);
+    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-import-error-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await evaluate(`(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.importButton.getRootNode().activeElement!==traffic.importButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`);
+    await call('Emulation.clearDeviceMetricsOverride');
   }
   if (automationScreenshotPath !== undefined) {
     const automationLayout = await evaluate(`(() => {

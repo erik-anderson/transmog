@@ -13,7 +13,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub(crate) const MAGIC: [u8; 8] = *b"TMCAP05\0";
+pub(crate) const MAGIC: [u8; 9] = *b"TMCAP001\0";
 const MAX_HEADER: usize = 4096;
 const FRAME_OVERHEAD: usize = 29;
 
@@ -76,7 +76,6 @@ struct CodecInner {
 impl fmt::Debug for FrameCodec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FrameCodec")
-            .field("compressed", &true)
             .field("encrypted", &self.inner.key.is_some())
             .finish()
     }
@@ -94,8 +93,8 @@ impl FrameCodec {
             .map_err(|_| CaptureError::Crypto("System randomness is unavailable"))?;
         let encrypted = options.password.is_some();
         let header = Header {
-            version: 5,
-            compression: "deflate".into(),
+            version: 1,
+            compression: "zstd".into(),
             cipher: if encrypted { "aes-256-gcm" } else { "none" }.into(),
             kdf: if encrypted { "argon2id" } else { "none" }.into(),
             salt,
@@ -115,7 +114,10 @@ impl FrameCodec {
         )?;
         output.write_all(&encoded)?;
         output.write_all(&proof)?;
-        Ok((codec, 12 + encoded.len() as u64 + proof.len() as u64))
+        Ok((
+            codec,
+            MAGIC.len() as u64 + 4 + encoded.len() as u64 + proof.len() as u64,
+        ))
     }
     pub(crate) fn read(
         input: &mut impl Read,
@@ -138,14 +140,17 @@ impl FrameCodec {
                 .decrypt(0, &[], &proof)
                 .map_err(|_| CaptureError::InvalidPassword)?;
         }
-        Ok((codec, 12 + length as u64 + proof.len() as u64))
+        Ok((
+            codec,
+            MAGIC.len() as u64 + 4 + length as u64 + proof.len() as u64,
+        ))
     }
     fn from_header(
         encoded: Vec<u8>,
         header: &Header,
         password: Option<&CapturePassword>,
     ) -> Result<Self, CaptureError> {
-        if header.version != 5 || header.compression != "deflate" {
+        if header.version != 1 || header.compression != "zstd" {
             return Err(CaptureError::UnsupportedEncoding);
         }
         let key = match (header.cipher.as_str(), header.kdf.as_str()) {
@@ -247,11 +252,8 @@ impl FrameCodec {
         self.encode_counter(bytes, Self::counter(index, false)?)
     }
     fn encode_counter(&self, bytes: &[u8], counter: u64) -> Result<Vec<u8>, CaptureError> {
-        let mut compressor =
-            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
-        compressor.write_all(bytes)?;
-        let compressed = compressor.finish()?;
-        // DEFLATE can expand incompressible data. Store that frame raw, retaining authenticated flag and length.
+        let compressed = zstd::bulk::compress(bytes, 3)?;
+        // Store incompressible frames raw, retaining the authenticated flag and length.
         let (flag, encoded) = if compressed.len() < bytes.len() {
             (1_u8, compressed.as_slice())
         } else {
@@ -314,16 +316,12 @@ impl FrameCodec {
             });
         }
         let decoded = self.decrypt(counter, &bytes[..13], &bytes[13..])?;
-        let mut output = Vec::new();
-        match bytes[12] {
-            0 => output = decoded,
-            1 => {
-                flate2::read::DeflateDecoder::new(decoded.as_slice())
-                    .take(expanded as u64 + 1)
-                    .read_to_end(&mut output)?;
-            }
+        let output = match bytes[12] {
+            0 => decoded,
+            // The output buffer is capped at the checked expanded length.
+            1 => zstd::bulk::decompress(&decoded, expanded)?,
             _ => return Err(CaptureError::UnsupportedEncoding),
-        }
+        };
         if output.len() != expanded {
             return Err(CaptureError::AuthenticationFailed);
         }
@@ -469,8 +467,16 @@ mod tests {
         writer.seal().unwrap();
         let bytes = writer.into_inner();
         assert!(bytes.len() < 5000);
+        assert_eq!(&bytes[..9], b"TMCAP001\0");
+        let header_bytes = u32::from_le_bytes(bytes[9..13].try_into().unwrap()) as usize;
+        let header: serde_json::Value =
+            serde_json::from_slice(&bytes[13..13 + header_bytes]).unwrap();
+        assert_eq!(header["version"], 1);
+        assert_eq!(header["compression"], "zstd");
         let mut reader = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+        assert_eq!(reader.valid_bytes(), (13 + header_bytes) as u64);
         let frame = reader.read_next().unwrap().unwrap();
+        assert_eq!(frame.offset, (13 + header_bytes) as u64);
         assert_eq!(frame.record, record());
         let decoded = read_indexed_frame_with_codec(
             Cursor::new(&bytes[usize::try_from(frame.offset).unwrap()..]),
@@ -557,6 +563,36 @@ mod tests {
         .unwrap();
         assert!(recovered.truncated_tail);
         assert_eq!(recovered.records, vec![record()]);
+    }
+    #[test]
+    fn zstd_frames_validate_expanded_length_and_truncation() {
+        let mut header = Vec::new();
+        let (codec, _) = FrameCodec::create(&mut header, &CaptureEncoding::default()).unwrap();
+        let original = vec![b'x'; 65_536];
+        let encoded = codec.encode(&original, 0).unwrap();
+        assert_eq!(encoded[12], 1);
+        assert_eq!(&encoded[13..17], &[0x28, 0xb5, 0x2f, 0xfd]);
+        assert_eq!(codec.decode(&encoded, 0, original.len()).unwrap(), original);
+
+        let mut understated = encoded.clone();
+        understated[8..12].copy_from_slice(&1024_u32.to_le_bytes());
+        assert!(codec.decode(&understated, 0, original.len()).is_err());
+
+        let mut overstated = encoded.clone();
+        overstated[8..12].copy_from_slice(&65_537_u32.to_le_bytes());
+        assert!(matches!(
+            codec.decode(&overstated, 0, 65_537),
+            Err(CaptureError::AuthenticationFailed)
+        ));
+        assert!(
+            codec
+                .decode(&encoded[..encoded.len() - 1], 0, original.len())
+                .is_err()
+        );
+
+        let raw = codec.encode(b"short payload", 0).unwrap();
+        assert_eq!(raw[12], 0);
+        assert_eq!(codec.decode(&raw, 0, 100).unwrap(), b"short payload");
     }
     #[test]
     fn expanded_frame_bound_is_enforced_before_allocation() {

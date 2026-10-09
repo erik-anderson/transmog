@@ -60,6 +60,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   saveTraceForm!:HTMLFormElement;
   @observable importingTrace=false;
   @observable importStatus='';
+  importButton!:HTMLButtonElement;
   @observable importPercent=0;
   @observable openedTraceName='';
   @observable traceMetadataRows:TraceMetadata[]=[];
@@ -252,7 +253,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private async takeOpenedTraces():Promise<void> {
     try {const paths=await invoke<string[]>('take_opened_traces');if(!this.isConnected)return;this.openedFileQueue.push(...paths.map(path=>({path,ask:!this.viewerMode})));await this.processOpenedTraces();}
-    catch(error:unknown){this.importStatus='Opened capture could not be read: '+describeError(error);}
+    catch(error:unknown){this.importStatus='Opened capture could not be read: '+describeError(error);await this.showError('Could not open capture',describeError(error));}
   }
   private async processOpenedTraces():Promise<void> {
     while(this.isConnected&&!this.importingTrace&&!this.openTraceDialog.open&&this.openedFileQueue.length){
@@ -263,7 +264,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async chooseOpenedTrace(separate:boolean):Promise<void> {
     const path=this.openedTracePath;this.openedTracePath='';this.openTraceDialog.close();
-    if(separate){try{await invoke('open_trace_viewer',{paths:[path]});}catch(error:unknown){this.importStatus='Capture viewer could not be opened: '+describeError(error);}}
+    if(separate){try{await invoke('open_trace_viewer',{paths:[path]});}catch(error:unknown){this.importStatus='Capture viewer could not be opened: '+describeError(error);await this.showError('Could not open capture viewer',describeError(error));}}
     else await this.importTrace(path);
     await this.processOpenedTraces();
   }
@@ -271,11 +272,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   async openSavedTrace(separate:boolean):Promise<void> {
     if(this.importingTrace)return;
     try {const path=await invoke<string|null>('pick_trace_path');if(!path||!this.isConnected)return;if(separate)await invoke('open_trace_viewer',{paths:[path]});else{this.openedFileQueue.push({path,ask:false});await this.processOpenedTraces();}}
-    catch(error:unknown){this.importStatus='Capture could not be opened: '+describeError(error);}
+    catch(error:unknown){this.importStatus='Capture could not be opened: '+describeError(error);await this.showError('Could not open capture',describeError(error));}
   }
   private async importTrace(path:string):Promise<void> {
     this.importingTrace=true;this.importPercent=0;this.importStatus='Indexing '+(path.split(/[\\/]/).pop()??'capture')+'…';
     const operationId=crypto.randomUUID();this.importOperation=operationId;
+    let failure:string|null=null;
     const onProgress=new Channel<TraceImportProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.importOperation===progress.operationId)this.importPercent=progress.total?Math.min(99,Math.floor(progress.completed/progress.total*100)):0;};
     try {
       const result=await this.withTracePassword('Open '+(path.split(/[\\/]/).pop()??'capture'),password=>invoke<TraceImportResult>('import_trace',{request:{path,password,operationId},onProgress}));
@@ -283,9 +285,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       if(!this.isConnected||this.importOperation!==operationId)return;
       this.importPercent=100;this.importStatus=`Imported ${result.trace.sessions} ${result.trace.sessions===1?'entry':'entries'} from ${result.trace.name}.${result.issues.length?' Some saved evidence is incomplete; see Trace metadata.':''}`;
       this.traceMetadataRows=[...this.traceMetadataRows,result.trace];this.queryRevision++;await this.refreshSessions(undefined,true);
-    }catch(error:unknown){if(this.isConnected&&this.importOperation===operationId)this.importStatus=describeError(error).includes('canceled')?'Import canceled. Traffic is unchanged.':'Import failed: '+describeError(error);}
+    }catch(error:unknown){if(this.isConnected&&this.importOperation===operationId){const message=describeError(error);if(message.includes('canceled'))this.importStatus='Import canceled. Traffic is unchanged.';else{failure=message;this.importStatus='Import failed: '+message;}}}
     finally{onProgress.onmessage=()=>{};if(this.importOperation===operationId){this.importOperation='';this.importingTrace=false;}}
+    if(failure&&this.isConnected){await this.showError('Import failed',(path.split(/[\\/]/).pop()??path)+'\n\n'+failure+'\n\nTraffic is unchanged. Choose another capture or try importing again.');if(this.isConnected&&this.view==='traffic')this.importButton.focus();}
   }
+  dismissImportStatus():void {if(this.importingTrace)return;this.importStatus='';this.importButton.focus();}
   async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
   async showTimings():Promise<void> {
     this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;
@@ -834,12 +838,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
     try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'}});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
-    catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);if(!this.saveTraceDialog.open)this.showNotice('Trace save failed',describeError(error),null,null);}}
+    catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);this.savingTrace=false;await this.showError('Trace save failed',describeError(error)+'\n\nChoose a writable destination and try saving again.');}}
     finally {this.savingTrace=false;}
   }
   async exportLiveCapture():Promise<void> {
     try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }
-    catch (error:unknown) { this.showNotice('TMCap export failed',describeError(error),null,null); }
+    catch (error:unknown) { await this.showError('TMCap export failed',describeError(error)); }
   }
   disconnectedCallback():void {
     this.clearColumnDrag();

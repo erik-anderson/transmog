@@ -1,10 +1,13 @@
 # Native capture encoding
 
-Product recordings and saved traces use `TMCAP05`, with independently encoded
+Product recordings and saved traces use `TMCAP001`, with independently encoded
 metadata/body pairs. The container version is independent of the record schema.
 
-Every logical record has a bounded JSON metadata frame, compressed with raw
-DEFLATE and optionally encrypted with AES-256-GCM. A body record's metadata holds
+The preamble is nine bytes: ASCII `TMCAP`, a three-digit container version and
+a NUL terminator. The JSON file header uses numeric version `1`.
+
+Every logical record has a bounded JSON metadata frame, compressed with zstd
+and optionally encrypted with AES-256-GCM. A body record's metadata holds
 its boundary, observed and retained sizes, completeness, SHA-256 digest and the
 following encoded payload's length. Body bytes live in a separate compressed and
 optionally encrypted frame. Incompressible frames are stored raw. All sensitive

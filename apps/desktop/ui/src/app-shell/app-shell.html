@@ -1,4 +1,4 @@
-<template shadowrootmode="open" @trace-password-request="{onTracePasswordRequest(e)}" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
+<template shadowrootmode="open" @operation-error="{onOperationError(e)}" @trace-password-request="{onTracePasswordRequest(e)}" @diagnostic="{onDiagnostic(e)}" @breakpoint-state-change="{onBreakpointState(e)}" @reset-workspace="{resetWorkspace()}" @notice="{onNotice(e)}" @dismiss-notice="{dismissNotice()}" @navigate="{onNavigate(e)}" @status-changed="{onStatus(e)}" @preferences-changed="{onPreferences(e)}" @proxy-ready="{onProxyReady()}" @proxy-operation="{onProxyOperation(e)}" @workspace-change="{onWorkspaceChange(e)}" @selection-changed="{onSelection(e)}" @autoresponse-request="{onAutoResponse(e)}" @source-traffic-request="{onSourceTraffic(e)}" @traffic-refreshed="{onTrafficRefreshed()}" @matched-rule-request="{onMatchedRule(e)}" @replay-request="{onReplay(e)}" @automation-state-change="{onAutomationState(e)}" @toggle-autoresponses="{toggleAutoresponses()}" @autoresponse-batch-request="{onAutoResponseBatch(e)}">
   <div class="shell">
     <header class="topbar">
       <div class="brand" aria-label="Transmog">
@@ -59,7 +59,7 @@
         </a></if>
       </nav>
 
-      <main>
+      <main w-ref="{workspaceContent}" tabindex="-1">
         <traffic-workspace ?viewer-mode="{{viewerMode}}" w-ref="{traffic}" view="{{activeView}}" page-size="{{pageSize}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
         <if condition="!viewerMode"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
         <if condition="!viewerMode"><automation-workspace w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}"></automation-workspace></if>
@@ -71,7 +71,13 @@
 
     <footer class="app-footer" ?hidden="{{!diagnosticText}}">
       <output class="global-diagnostics" aria-live="polite">{{diagnosticText}}</output>
+      <button type="button" class="secondary compact-button diagnostic-close" aria-label="Dismiss status message" @click="{dismissDiagnostic()}">×</button>
     </footer>
+    <dialog w-ref="{errorDialog}" class="operation-error-dialog" role="alertdialog" aria-labelledby="operation-error-title" aria-describedby="operation-error-message" @close="{operationErrorClosed()}">
+      <h2 id="operation-error-title">{{errorTitle}}</h2>
+      <p id="operation-error-message">{{errorMessage}}</p>
+      <div class="actions"><button type="button" autofocus @click="{closeOperationError()}">Close</button></div>
+    </dialog>
     <dialog w-ref="{updateDraftDialog}" class="update-drafts-dialog" aria-labelledby="update-drafts-heading" @cancel="{cancelUpdateDrafts(e)}"><h2 id="update-drafts-heading">Unsaved work</h2><p>{{updateDraftSummary}}</p><div class="actions"><button type="button" class="secondary" autofocus @click="{resolveUpdateDraftsChoice(false)}">Keep working</button><button type="button" @click="{resolveUpdateDraftsChoice(true)}">Discard drafts and update</button></div></dialog>
     <dialog w-ref="{passwordDialog}" class="trace-password-dialog" aria-labelledby="trace-password-title" @close="{tracePasswordClosed()}">
       <h2 id="trace-password-title">{{passwordTitle}}</h2>

@@ -7,6 +7,8 @@
   "lifecycleKind": "stopped",
   "listener": "Not listening",
   "diagnosticText": "",
+  "errorTitle": "",
+  "errorMessage": "",
   "proxyReady": false,
   "noticeVisible": false,
   "noticeTitleText": "Action required",
