@@ -55,6 +55,12 @@ standalone CLI and UI assets;
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
 
+Producer jobs pass immutable artifact IDs to downstream jobs, so retrying a
+failed job can retain the successful build and soak from an earlier attempt.
+Signing retries timestamp-service failures up to three times with short delays;
+permission errors and other failures stop immediately. Every attempt starts
+from the original input bytes and still requires valid signatures and timestamps.
+
 Browser workspace checks run first so UI failures do not wait for Rust compilation.
 The release builder first fetches the locked Cargo dependencies, so offline UI
 Credits generation can read their metadata and license files on a fresh runner.

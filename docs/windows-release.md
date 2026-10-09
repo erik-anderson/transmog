@@ -121,10 +121,12 @@ decisions. No push or tag automatically starts a release build.
 
 Once published, treat a version as final: the workflow refuses to overwrite it.
 Use a new patch or another unused semantic version for subsequent fixes.
-Before publication, start a fresh
-manual run or use **Re-run all jobs**; **Re-run failed jobs** alone is insufficient
-because this workflow's artifacts are specific to the run attempt. Leave the
-current run's draft unpublished if it is not the candidate you want to ship.
+Before publication, **Re-run failed jobs** can reuse successful upstream jobs:
+downstream jobs receive the immutable artifact IDs from their producer jobs.
+This lets a transient signing or qualification failure retry without rebuilding
+or repeating a successful soak. Code changes require a fresh manual run or
+**Re-run all jobs**. Leave the current draft unpublished if it is not the candidate
+you want to ship.
 
 ### Branch creation, Beta-to-Stable promotion, and Canaries
 

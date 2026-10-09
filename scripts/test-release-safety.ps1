@@ -72,5 +72,6 @@ function Invoke-EnvironmentIsolatedFixture([string]$Script) {
 Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
 Invoke-EnvironmentIsolatedFixture 'test-stable-update-release.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
+& (Join-Path $PSScriptRoot 'test-signing-retry.ps1')
 & (Join-Path $PSScriptRoot 'test-release-version.ps1')
 Invoke-EnvironmentIsolatedFixture 'test-release-lifecycle.ps1'
