@@ -1,5 +1,6 @@
 //! CLI-owned roots. Each durable identity is independent so a canceled cleanup
 //! never prevents recording a fresh ephemeral root. Ephemeral keys stay in CA memory.
+use crate::root_lifecycle::{KeyStorage, Lifecycle, RootLifecycle, millis};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
@@ -15,6 +16,8 @@ pub(crate) struct RootRecord {
     schema: u32,
     pub(crate) sha256: String,
     pub(crate) persistent: bool,
+    #[serde(default)]
+    pub(crate) lifecycle: Lifecycle,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -197,7 +200,8 @@ impl RootLedger {
             }
             let bytes = read_bounded(&entry.path(), 8192)?;
             let record: RootRecord = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if record.schema != 1
+            if !matches!(record.schema, 1 | 2)
+                || !record.lifecycle.valid()
                 || !valid_hash(&record.sha256)
                 || name != format!("root-{}.json", record.sha256)
             {
@@ -212,18 +216,54 @@ impl RootLedger {
     }
     pub(crate) fn prepare(&self, persistent: bool) -> io::Result<(ProxyCa, RootRecord)> {
         let records = self.records()?;
-        if persistent && let Some(record) = records.iter().find(|root| root.persistent) {
-            let ca = ProxyCa::from_pem(
-                &read_bounded(&self.certificate(record), 8192)?,
-                &read_bounded(&self.path(&record.sha256, "key"), 8192)?,
-            )
-            .map_err(io::Error::other)?;
-            if ca.sha256_thumbprint().map_err(io::Error::other)? != record.sha256 {
-                return Err(io::Error::other(
-                    "Persistent CLI root does not match its recorded identity",
-                ));
+        if persistent {
+            for record in records
+                .iter()
+                .filter(|record| record.persistent && !record.lifecycle.retired)
+            {
+                let ca = (|| {
+                    let ca = ProxyCa::from_pem(
+                        &read_bounded(&self.certificate(record), 8192)?,
+                        &read_bounded(&self.path(&record.sha256, "key"), 8192)?,
+                    )
+                    .map_err(io::Error::other)?;
+                    if ca.sha256_thumbprint().map_err(io::Error::other)? != record.sha256 {
+                        return Err(io::Error::other("Persistent root identity mismatch"));
+                    }
+                    if !crate::root_lifecycle::reusable(&ca)? {
+                        return Err(io::Error::other(
+                            "Persistent root expires within seven days or is not valid yet",
+                        ));
+                    }
+                    Ok(ca)
+                })();
+                match ca {
+                    Ok(ca) => {
+                        let updated =
+                            self.update(record, |updated| updated.lifecycle.begin(&ca, true))?;
+                        println!("Reusing persistent CLI root {}.", record.sha256);
+                        return Ok((ca, updated));
+                    }
+                    Err(error) => {
+                        self.update(record, |updated| {
+                            updated.lifecycle.retired = true;
+                            updated.lifecycle.state = RootLifecycle::Retired;
+                            updated.lifecycle.last_cleanup_error =
+                                Some(error.to_string().chars().take(512).collect());
+                            Ok(())
+                        })?;
+                        remove_if_present(&self.path(&record.sha256, "key"))?;
+                        self.update(record, |updated| {
+                            updated.lifecycle.key_storage = KeyStorage::Removed;
+                            Ok(())
+                        })?;
+                        println!(
+                            "Rotating persistent CLI root {}: {error}. Its public identity remains for cleanup.",
+                            record.sha256
+                        );
+                    }
+                }
             }
-            return Ok((ca, record.clone()));
         }
         if records.len() >= 128 {
             return Err(io::Error::other(
@@ -235,8 +275,14 @@ impl RootLedger {
             if persistent { 365 } else { 2 },
         )
         .map_err(io::Error::other)?;
+        self.save_new_ca(ca, persistent)
+    }
+    fn save_new_ca(&self, ca: ProxyCa, persistent: bool) -> io::Result<(ProxyCa, RootRecord)> {
+        let mut lifecycle = Lifecycle::default();
+        lifecycle.begin(&ca, persistent)?;
         let record = RootRecord {
-            schema: 1,
+            schema: 2,
+            lifecycle,
             sha256: ca.sha256_thumbprint().map_err(io::Error::other)?,
             persistent,
         };
@@ -258,21 +304,116 @@ impl RootLedger {
         }
         Ok((ca, record))
     }
+    fn update(
+        &self,
+        record: &RootRecord,
+        change: impl FnOnce(&mut RootRecord) -> io::Result<()>,
+    ) -> io::Result<RootRecord> {
+        let path = self.path(&record.sha256, "json");
+        let mut latest: RootRecord =
+            serde_json::from_slice(&read_bounded(&path, 8192)?).map_err(io::Error::other)?;
+        if latest.sha256 != record.sha256
+            || latest.persistent != record.persistent
+            || !matches!(latest.schema, 1 | 2)
+            || !latest.lifecycle.valid()
+        {
+            return Err(io::Error::other("CLI root ownership changed"));
+        }
+        change(&mut latest)?;
+        latest.schema = 2;
+        if !latest.lifecycle.valid() {
+            return Err(io::Error::other("Invalid CLI root lifecycle"));
+        }
+        let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
+        file.write_all(&serde_json::to_vec(&latest).map_err(io::Error::other)?)?;
+        file.as_file().sync_all()?;
+        file.persist(path).map_err(|error| error.error)?;
+        #[cfg(unix)]
+        File::open(&self.directory)?.sync_all()?;
+        Ok(latest)
+    }
+    pub(crate) fn mark(&self, record: &RootRecord, state: RootLifecycle) -> io::Result<()> {
+        self.update(record, |updated| {
+            updated.lifecycle.state = state;
+            if state == RootLifecycle::Installed {
+                updated.lifecycle.installed_at = Some(millis());
+            }
+            Ok(())
+        })
+        .map(|_| ())
+    }
+    pub(crate) fn finish_run(&self, record: &RootRecord, success: bool) -> io::Result<()> {
+        self.update(record, |updated| {
+            updated.lifecycle.state = if updated.persistent {
+                RootLifecycle::PersistentIdle
+            } else {
+                RootLifecycle::CaptureFinished
+            };
+            updated.lifecycle.finished_at = Some(millis());
+            updated.lifecycle.outcome = Some(
+                if success {
+                    "capture-sealed"
+                } else {
+                    "capture-failed-or-setup-incomplete"
+                }
+                .into(),
+            );
+            Ok(())
+        })
+        .map(|_| ())
+    }
     pub(crate) fn cleanup(&self, record: &RootRecord, trust: &dyn RootTrust) -> io::Result<()> {
-        // A failed OS prompt keeps public certificate + identity. A new run has
-        // its own new CA and key, rather than needing an old ephemeral key.
-        trust.remove(&self.certificate(record), &record.sha256)?;
-        remove_if_present(&self.path(&record.sha256, "key"))?;
-        remove_if_present(&self.certificate(record))?;
-        remove_if_present(&self.path(&record.sha256, "json"))
+        // Persist intent before either OS consent or key deletion. A failed/canceled
+        // prompt preserves the public identity; the next run does not reuse this key.
+        self.update(record, |updated| {
+            updated.lifecycle.retired = true;
+            updated.lifecycle.state = RootLifecycle::CleanupPending;
+            updated.lifecycle.cleanup_attempts =
+                updated.lifecycle.cleanup_attempts.saturating_add(1);
+            updated.lifecycle.last_cleanup_at = Some(millis());
+            Ok(())
+        })?;
+        let result = (|| {
+            remove_if_present(&self.path(&record.sha256, "key"))?;
+            self.update(record, |updated| {
+                updated.lifecycle.key_storage = KeyStorage::Removed;
+                Ok(())
+            })?;
+            trust.remove(&self.certificate(record), &record.sha256)?;
+            remove_if_present(&self.certificate(record))?;
+            remove_if_present(&self.path(&record.sha256, "json"))
+        })();
+        if let Err(error) = &result {
+            self.update(record, |updated| {
+                updated.lifecycle.last_cleanup_error =
+                    Some(error.to_string().chars().take(512).collect());
+                Ok(())
+            })?;
+        }
+        result
+    }
+    pub(crate) fn pending_cleanup(&self, record: &RootRecord) -> bool {
+        !record.persistent
+            || record.lifecycle.retired
+            || !self.path(&record.sha256, "key").is_file()
     }
     pub(crate) fn cleanup_ephemeral(&self, trust: &dyn RootTrust) -> io::Result<usize> {
+        self.cleanup_pending(trust, None)
+    }
+    pub(crate) fn cleanup_pending(
+        &self,
+        trust: &dyn RootTrust,
+        exclude: Option<&str>,
+    ) -> io::Result<usize> {
         let mut pending = 0;
-        for record in self
-            .records()?
-            .iter()
-            .filter(|record| !record.persistent || !self.path(&record.sha256, "key").is_file())
-        {
+        for record in self.records()?.iter().filter(|record| {
+            !record.persistent
+                || record.lifecycle.retired
+                || !self.path(&record.sha256, "key").is_file()
+        }) {
+            if exclude == Some(record.sha256.as_str()) {
+                continue;
+            }
             if let Err(error) = self.cleanup(record, trust) {
                 eprintln!("Root {} still needs cleanup: {error}", record.sha256);
                 pending += 1;
@@ -548,6 +689,109 @@ mod tests {
         );
         assert!(ledger.records().unwrap().is_empty());
     }
+    #[test]
+    fn cleanup_recovery_keeps_lifecycle_without_ephemeral_keys() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let (_, root) = ledger.prepare(false).unwrap();
+        assert_eq!(root.lifecycle.key_storage, KeyStorage::MemoryOnly);
+        assert!(root.lifecycle.expires_at.unwrap() > root.lifecycle.created_at.unwrap());
+        ledger
+            .mark(&root, RootLifecycle::InstallationRequested)
+            .unwrap();
+        ledger.mark(&root, RootLifecycle::Installed).unwrap();
+        ledger.finish_run(&root, false).unwrap();
+        assert!(ledger.cleanup(&root, &FakeTrust { fail: true }).is_err());
+        let pending = &ledger.records().unwrap()[0];
+        assert_eq!(pending.lifecycle.state, RootLifecycle::CleanupPending);
+        assert_eq!(pending.lifecycle.key_storage, KeyStorage::Removed);
+        assert_eq!(pending.lifecycle.cleanup_attempts, 1);
+        assert!(pending.lifecycle.installed_at.is_some());
+        assert!(pending.lifecycle.finished_at.is_some());
+        assert_eq!(
+            pending.lifecycle.outcome.as_deref(),
+            Some("capture-failed-or-setup-incomplete")
+        );
+        assert!(
+            pending
+                .lifecycle
+                .last_cleanup_error
+                .as_deref()
+                .unwrap()
+                .contains("canceled")
+        );
+        drop(ledger);
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let (_, next) = ledger.prepare(false).unwrap();
+        assert_ne!(next.sha256, root.sha256);
+        assert_ne!(next.lifecycle.run_id, root.lifecycle.run_id);
+        ledger
+            .cleanup_pending(&FakeTrust { fail: false }, Some(&next.sha256))
+            .unwrap();
+        assert_eq!(ledger.records().unwrap().len(), 1);
+        assert!(!ledger.path(&next.sha256, "key").exists());
+    }
+    #[test]
+    fn persistent_near_expiry_rotates_and_canceled_old_removal_does_not_block_reuse() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let (_, old) = ledger
+            .save_new_ca(ProxyCa::generate("Expiry fixture", 2).unwrap(), true)
+            .unwrap();
+        let (_, fresh) = ledger.prepare(true).unwrap();
+        assert_ne!(old.sha256, fresh.sha256);
+        assert!(!ledger.path(&old.sha256, "key").exists());
+        assert!(
+            ledger
+                .records()
+                .unwrap()
+                .iter()
+                .find(|record| record.sha256 == old.sha256)
+                .unwrap()
+                .lifecycle
+                .retired
+        );
+        assert_eq!(
+            ledger
+                .cleanup_pending(&FakeTrust { fail: true }, Some(&fresh.sha256))
+                .unwrap(),
+            1
+        );
+        assert_eq!(ledger.prepare(true).unwrap().1.sha256, fresh.sha256);
+        ledger
+            .cleanup_pending(&FakeTrust { fail: false }, Some(&fresh.sha256))
+            .unwrap();
+        assert_eq!(ledger.records().unwrap().len(), 1);
+    }
+    #[test]
+    fn legacy_owned_root_is_migrated_on_reuse_and_unknown_schema_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = RootLedger::open(directory.path().into()).unwrap();
+        let (_, root) = ledger.prepare(true).unwrap();
+        let path = ledger.path(&root.sha256, "json");
+        fs::write(
+            &path,
+            serde_json::to_vec(
+                &serde_json::json!({"schema":1,"sha256":root.sha256,"persistent":true}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let (_, migrated) = ledger.prepare(true).unwrap();
+        assert_eq!(migrated.sha256, root.sha256);
+        assert_eq!(migrated.schema, 2);
+        assert!(migrated.lifecycle.created_at.is_some());
+        fs::write(
+            &path,
+            serde_json::to_vec(
+                &serde_json::json!({"schema":99,"sha256":root.sha256,"persistent":true}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(ledger.records().is_err());
+    }
+
     #[test]
     fn redaction_choice_persists_across_runs_and_can_be_reversed() {
         let directory = tempfile::tempdir().unwrap();

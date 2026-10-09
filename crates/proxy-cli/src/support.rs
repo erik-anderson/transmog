@@ -38,19 +38,11 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
     let (redact, request_body_limit) = recording_preferences(arguments, &ledger)?;
+    recover_proxy(&ledger)?;
     if ledger.cleanup_ephemeral(&trust)? > 0 {
         eprintln!(
             "Previous roots still need removal. Their identities are preserved; this capture will use a new root."
         );
-    }
-    #[cfg(windows)]
-    {
-        let host = transmog_host_windows::WindowsProxyIntegration::system(
-            ledger.directory().join("proxy-recovery.json"),
-        );
-        if host.recover_pending()? {
-            println!("Restored Windows proxy settings from an interrupted CLI capture.");
-        }
     }
     let persistent = arguments.iter().any(|arg| arg == "--persistent-root");
     let (ca, root) = ledger.prepare(persistent)?;
@@ -73,6 +65,11 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         request_body_limit,
     )
     .await;
+    if let Err(error) = ledger.finish_run(&root, result.is_ok()) {
+        eprintln!(
+            "CLI lifecycle metadata could not be updated: {error}. Continuing certificate cleanup."
+        );
+    }
     // Always attempt removal after setup/start/record errors too. Metadata stays
     // on disk until OS removal succeeds; ephemeral private keys never do.
     let cleanup = if persistent {
@@ -90,6 +87,11 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             ledger.directory().display()
         );
     }
+    if ledger.cleanup_pending(&trust, Some(&root.sha256))? > 0 {
+        eprintln!(
+            "Previous or rotated roots still need cleanup. Run transmog-cli roots cleanup; public recovery records are retained."
+        );
+    }
     if result.is_err() && native.is_file() {
         eprintln!(
             "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
@@ -105,6 +107,21 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Trace saved: {}", output.display());
     println!("Open it in Transmog to review it, then share this file with your support contact.");
     cleanup?;
+    Ok(())
+}
+
+fn recover_proxy(ledger: &RootLedger) -> Result<(), Box<dyn Error>> {
+    #[cfg(not(windows))]
+    let _ = ledger;
+    #[cfg(windows)]
+    {
+        let host = transmog_host_windows::WindowsProxyIntegration::system(
+            ledger.directory().join("proxy-recovery.json"),
+        );
+        if host.recover_pending()? {
+            println!("Restored Windows proxy settings from an interrupted CLI capture.");
+        }
+    }
     Ok(())
 }
 
@@ -148,7 +165,9 @@ async fn original_trace_context(arguments: &[String]) -> serde_json::Value {
         .any(|arg| arg == "--include-network-context")
     {
         println!("Collecting network configuration for the trace…");
-        Some(transmog_network::context::collect().await)
+        let mut network = transmog_network::context::collect().await;
+        network.collector = format!("Transmog CLI {}", env!("CARGO_PKG_VERSION"));
+        Some(network)
     } else {
         None
     };
@@ -164,6 +183,24 @@ fn capture_policy(redact: bool, request_body_limit: Option<u64>) -> CapturePolic
     policy.retain_body_samples = true;
     policy.request_body_limit = request_body_limit;
     policy
+}
+
+async fn capture_metadata(
+    arguments: &[String],
+    ledger: &RootLedger,
+    root: &crate::roots::RootRecord,
+    request_body_limit: Option<u64>,
+) -> Result<serde_json::Value, Box<dyn Error>> {
+    let mut metadata = original_trace_context(arguments).await;
+    metadata["requestBodyLimit"] = serde_json::json!(request_body_limit);
+    metadata["certificateContext"] = serde_json::to_value(
+        ledger
+            .records()?
+            .into_iter()
+            .find(|record| record.sha256 == root.sha256)
+            .ok_or_else(|| io::Error::other("CLI root recovery metadata is unavailable"))?,
+    )?;
+    Ok(metadata)
 }
 
 async fn run_capture(
@@ -215,8 +252,7 @@ async fn run_capture(
     )
     .await?;
     let policy = capture_policy(redact, request_body_limit);
-    let mut metadata = original_trace_context(arguments).await;
-    metadata["requestBodyLimit"] = serde_json::json!(request_body_limit);
+    let metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
     service
         .start_capture(CaptureStart {
             metadata: Some(metadata),
@@ -290,9 +326,14 @@ fn setup_root(
         )?
     };
     if install {
+        ledger.mark(
+            root,
+            crate::root_lifecycle::RootLifecycle::InstallationRequested,
+        )?;
         loop {
             match trust.install(&ledger.certificate(root), &root.sha256) {
                 Ok(()) => {
+                    ledger.mark(root, crate::root_lifecycle::RootLifecycle::Installed)?;
                     println!("HTTPS certificate setup completed. No relaunch is needed.");
                     break;
                 }
@@ -309,6 +350,7 @@ fn setup_root(
             }
         }
     } else {
+        ledger.mark(root, crate::root_lifecycle::RootLifecycle::Manual)?;
         println!(
             "HTTPS clients must trust this public root manually: {}",
             ledger.certificate(root).display()
@@ -501,12 +543,13 @@ pub(crate) fn cleanup_roots(arguments: &[String]) -> Result<(), Box<dyn Error>> 
         );
     }
     let ledger = RootLedger::open(state_directory()?)?;
+    recover_proxy(&ledger)?;
     let all = arguments.iter().any(|arg| arg == "--include-persistent");
     let mut pending = 0;
     for root in ledger
         .records()?
         .iter()
-        .filter(|root| all || !root.persistent)
+        .filter(|root| all || ledger.pending_cleanup(root))
     {
         if let Err(error) = ledger.cleanup(root, &SystemRootTrust) {
             eprintln!("Root {} still needs cleanup: {error}", root.sha256);

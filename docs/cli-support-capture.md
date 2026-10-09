@@ -1,8 +1,27 @@
 # Record a trace for support
 
 Download the separate signed `transmog-cli.exe` from the release assets. It is
-not installed with the desktop app. Save it in a folder you can write to, open
-PowerShell in that folder, and run:
+not installed with the desktop app. Download it from the project's official
+release page. Right-click **transmog-cli.exe → Properties → Digital Signatures**,
+open the signature's details and confirm Windows says it is valid. Compare the
+signer with the publisher named in that release's notes. Resolve a missing or
+invalid signature, or a different publisher, with your support contact first.
+
+For a console check:
+
+```powershell
+$signature = Get-AuthenticodeSignature -LiteralPath .\transmog-cli.exe
+$signature.Status
+$signature.SignerCertificate.GetNameInfo(
+  [System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+```
+
+The status should be **Valid**, with the release's expected publisher. If you
+also downloaded the release checksums, compare SHA-256 using
+`Get-FileHash -Algorithm SHA256 .\transmog-cli.exe`. A matching checksum checks
+the downloaded bytes; the trusted signature identifies the publisher.
+
+Save it in a folder you can write to, open PowerShell in that folder, and run:
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap.gz
@@ -51,7 +70,9 @@ you want an uncompressed trace.
 ## Certificates and interrupted runs
 
 The default root is ephemeral: its private key stays in memory and is never
-written to disk. The CLI removes its trusted public certificate after the
+written to disk. Public recovery records include run identity, certificate validity,
+trust-store scope, lifecycle state, key-storage mode and cleanup attempts/outcome.
+They contain no private-key bytes. The CLI removes its trusted public certificate after the
 capture, including after setup or recording failures. Public certificate and
 ownership records live separately from the desktop in
 `%LOCALAPPDATA%\Transmog-cli`. Windows proxy recovery also has its own CLI journal.
@@ -72,8 +93,13 @@ For repeated captures on your own test machine, explicitly opt into persistence:
 .\transmog-cli.exe record --persistent-root --output .\next-trace.tmcap.gz
 ```
 
-This retains a protected private key and reuses the same CLI root on subsequent
-`--persistent-root` runs. Ordinary ephemeral runs still use a fresh root. To
+This retains a protected private key and reuses a valid CLI root on subsequent
+`--persistent-root` runs. A root expiring within seven days, not yet valid, or
+missing/mismatched key material is retired and replaced. Its key is removed;
+its public identity stays available until OS cleanup succeeds. Ordinary
+ephemeral runs still use a fresh root. Older pending/retired roots are retried at
+startup and completion without immediately repeating a canceled prompt for the
+root used by the current capture. To
 remove persistent roots and their keys too:
 
 ```powershell
@@ -82,6 +108,38 @@ remove persistent roots and their keys too:
 
 The CLI state directory is restricted to the current user before private
 material is created. Do not share it with a support contact.
+
+## Recover an interrupted capture
+
+If the console or computer closed unexpectedly, keep the leftover native
+`support-trace.tmcap` beside the intended `.tmcap.gz` output. A gzip file left
+mid-compression may be incomplete; the native file is kept until compression
+finishes successfully. Restore CLI-owned proxy/certificate state first:
+
+```powershell
+.\transmog-cli.exe roots cleanup
+```
+
+This restores an interrupted Windows proxy journal before certificate prompts.
+Persistent roots require `--include-persistent` to remove them. If cleanup is
+canceled, public recovery metadata stays available for another attempt.
+
+In Transmog, use **Import…** to open the leftover `.tmcap`. The viewer recovers
+the valid prefix without changing the original and explains incomplete evidence
+in **Trace metadata**. Use **Save trace…**, leave **Compress for sharing** checked,
+and choose a new filename such as `recovered-trace.tmcap.gz`. Review it, then
+share the recovered copy. Missing bytes cannot be reconstructed.
+
+For support staff who prefer console recovery:
+
+```powershell
+.\transmog-cli.exe capture inspect --input .\support-trace.tmcap
+.\transmog-cli.exe capture seal --input .\support-trace.tmcap --output .\recovered-trace.tmcap
+```
+
+Run `seal` only when inspection reports an unsealed capture. It writes a new
+file from complete records and omits an interrupted tail. Already sealed native
+files can be imported directly and saved as a compressed copy in the desktop.
 
 ## Other platforms and manual setup
 

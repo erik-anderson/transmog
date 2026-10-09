@@ -255,10 +255,21 @@ qualified baseline, not completion of the complete plan.
     remain finite. All 114 app and 16 SAZ tests pass, including real file
     conversions, redaction, lazy binary reads and CRC checks; strict Clippy passes.
 
+26. CLI roots use a backwards-readable, atomic public lifecycle ledger with
+    run/validity/install/finish/cleanup timestamps, trust-store scope and key mode.
+    Persistent roots nearing expiry or missing/mismatched material are retired
+    and rotated; old keys are removed while exact public identities survive
+    canceled OS cleanup. Proxy crash recovery runs before certificate prompts,
+    including explicit roots cleanup. Older pending roots retry at completion
+    without repeating the current root’s canceled prompt. Public certificate
+    context joins capture metadata. Twelve CLI tests and strict Clippy pass.
+    Real hidden-console tests verify Ctrl+C, sealed gzip, memory-only ephemeral
+    keys, persistent reuse, forced interruption and native prefix recovery, with
+    isolated profiles and loopback traffic. The guide includes signature/publisher
+    checks and ready-to-copy recovery commands.
+
 Remaining isolated phases:
 
-- CLI lifecycle: persistent-root expiry/rotation, richer recovery ledger,
-  cleanup retries at completion and interruption/crash recovery instructions.
 - Final qualification: updated support guide with download authenticity and
   recovery steps, full product/browser/native/interoperability checks and
   protected signed-release qualification where credentials permit.

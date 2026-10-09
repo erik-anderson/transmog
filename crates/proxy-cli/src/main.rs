@@ -1,5 +1,6 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
+mod root_lifecycle;
 mod roots;
 mod support;
 
