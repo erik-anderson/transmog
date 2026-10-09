@@ -35,6 +35,9 @@ try {
     $env:TRANSMOG_SAZ_INTEROP_DIR = $fixtureRoot
     & cargo test --locked -p transmog-saz encrypted_saz_round_trips_and_produces_interop_fixtures
     if ($LASTEXITCODE) { throw 'Encrypted SAZ fixture generation failed.' }
+    & cargo test --locked -p transmog-saz classic_metadata_required_dates_preserve_unavailable_and_original_times
+    if ($LASTEXITCODE) { throw 'SAZ timer fixture generation failed.' }
+    & (Join-Path $PSScriptRoot 'test-saz-metadata.ps1') -FixtureDirectory $fixtureRoot
     foreach ($profile in @('strict','extended')) {
         $encrypted = Join-Path $fixtureRoot "$profile-encrypted.saz"
         & $SevenZipPath t $encrypted '-pTransmog-interop-password' | Out-Host

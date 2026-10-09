@@ -127,12 +127,28 @@ pub(crate) fn render(
             }
         }
     }
+    // Classic's LoadMetadata passes these six attributes directly to
+    // XmlConvert.ToDateTime, even when no timing was measured. Match Fiddler's
+    // serialization of an unset DateTime instead of omitting a required field
+    // or borrowing a timestamp from a different observation.
+    for name in [
+        "ClientConnected",
+        "ClientDoneRequest",
+        "ServerGotRequest",
+        "ServerDoneResponse",
+        "ClientBeginResponse",
+        "ClientDoneResponse",
+    ] {
+        timers
+            .entry(name.into())
+            .or_insert_with(|| "0001-01-01T00:00:00".into());
+    }
     let mut attributes = String::new();
     for (name, value) in &timers {
         let _ = write!(attributes, " {name}=\"{}\"", xml(value));
     }
     let mut flags = BTreeMap::new();
-    flags.insert("x-transmog-timer-semantics", "Local proxy observations; ClientBeginRequest means complete headers and ClientDoneResponse means processing ended, not peer receipt.".into());
+    flags.insert("x-transmog-timer-semantics", "Local proxy observations; ClientBeginRequest means complete headers and ClientDoneResponse means processing ended, not peer receipt. Unmeasured required timers use DateTime.MinValue (0001-01-01T00:00:00).".into());
     if let Some(addr) = session
         .evidence
         .client_addr

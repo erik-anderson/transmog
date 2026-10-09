@@ -73,6 +73,19 @@ proxy processing do not imply first client send or remote receipt. Original
 imported timer attributes remain unchanged. The timer vocabulary follows
 [Telerik SessionMetrics](https://www.telerik.com/fiddler/fiddlercore/documentation/api/fiddler.sessionmetrics).
 
+Fiddler Classic's `Session.LoadMetadata` unconditionally converts six
+`SessionTimers` attributes with `XmlConvert.ToDateTime`: `ClientConnected`,
+`ClientDoneRequest`, `ServerGotRequest`, `ServerDoneResponse`,
+`ClientBeginResponse`, and `ClientDoneResponse`. Omitting any of these passes
+null into the XML date parser and prevents metadata from loading. Both export
+profiles always write these attributes; an unmeasured value uses
+`0001-01-01T00:00:00`, the XML representation of Fiddler's unset
+`DateTime.MinValue`. This sentinel is unavailable evidence, not a measured time.
+Recorded and original imported values take precedence, and optional unmeasured
+timers and durations stay absent. The
+[LoadMetadata API documentation](https://www.telerik.com/fiddler/fiddlercore/documentation/api/fiddler.session)
+describes the metadata stream as XML.
+
 Redacted fields are omitted from raw headers. When body bytes were not retained,
 observer delivery was lost, or an exchange did not complete cleanly, conventional
 `log-drop-request-body` or `log-drop-response-body` flags disclose that the wire
@@ -100,4 +113,5 @@ Run `scripts/test-saz-interop.ps1` to check exports with the independent native
 compares every decrypted file to its unencrypted reference, rejects a wrong
 password, and checks Transmog importing a 7-Zip ZipCrypto binary fixture. Windows
 can use the checksummed official portable tooling; no installation is required.
-This gate runs before signing credentials are available.
+This gate runs before signing credentials are available. It also checks required
+session timers and XML date parsing through .NET.

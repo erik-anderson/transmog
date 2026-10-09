@@ -1014,6 +1014,110 @@ mod tests {
     }
 
     #[test]
+    fn classic_metadata_required_dates_preserve_unavailable_and_original_times() {
+        use transmog_core::performance::{Milestone, PerformanceEvidence, TimingPoint};
+
+        for case in ["missing", "partial", "imported"] {
+            let mut source = capture(true, true);
+            if case != "missing" {
+                source.records.push(CaptureRecord {
+                    sequence: 6,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::Performance(PerformanceEvidence {
+                        points: vec![
+                            TimingPoint {
+                                milestone: Milestone::RequestHeaders,
+                                unix_millis: 1_800_000_000_000,
+                                offset_micros: 0,
+                            },
+                            TimingPoint {
+                                milestone: Milestone::ExchangeDone,
+                                unix_millis: 1_800_000_000_015,
+                                offset_micros: 15_000,
+                            },
+                        ],
+                        ..PerformanceEvidence::default()
+                    }),
+                });
+            }
+            let original = serde_json::json!({
+                "ClientConnected": "2026-10-08T23:23:35.3381234-07:00",
+                "ClientBeginRequest": "2026-10-08T23:23:35.339-07:00",
+                "ServerGotRequest": "2026-10-08T23:23:35.340-07:00",
+                "ClientDoneRequest": "0001-01-01T00:00:00",
+                "DNSTime": "12",
+                "CustomTimer": "original & unavailable"
+            });
+            if case == "imported" {
+                source.records.push(CaptureRecord {
+                    sequence: 7,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::Unknown {
+                        kind: "entry-provenance".into(),
+                        payload: serde_json::json!({"source": {"timings": original}}),
+                    },
+                });
+            }
+            for (profile, mode) in [("strict", SazMode::Strict), ("extended", SazMode::Extended)] {
+                let (bytes, _) = export(mode, &source);
+                if let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") {
+                    std::fs::write(
+                        std::path::PathBuf::from(directory)
+                            .join(format!("{profile}-{case}-plain.saz")),
+                        &bytes,
+                    )
+                    .unwrap();
+                }
+                let mut archive =
+                    SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                let timers = &index.sessions[0].metadata.timers;
+                for name in [
+                    "ClientConnected",
+                    "ClientDoneRequest",
+                    "ServerGotRequest",
+                    "ServerDoneResponse",
+                    "ClientBeginResponse",
+                    "ClientDoneResponse",
+                ] {
+                    let expected = if case == "imported" && original.get(name).is_some() {
+                        original[name].as_str().unwrap()
+                    } else if case != "missing" && name == "ClientDoneResponse" {
+                        "2027-01-15T08:00:00.015Z"
+                    } else {
+                        "0001-01-01T00:00:00"
+                    };
+                    assert_eq!(timers[name], expected, "{profile}/{case}/{name}");
+                }
+                assert!(!timers.contains_key("ServerBeginResponse"));
+                assert!(!timers.contains_key("TCPConnectTime"));
+                if case == "imported" {
+                    for (name, value) in original.as_object().unwrap() {
+                        assert_eq!(&timers[name], value.as_str().unwrap());
+                    }
+                    if mode == SazMode::Extended {
+                        assert_eq!(
+                            index.sessions[0]
+                                .evidence
+                                .as_ref()
+                                .unwrap()
+                                .provenance
+                                .as_ref()
+                                .unwrap()["source"]["timings"],
+                            original
+                        );
+                    }
+                } else if case == "partial" {
+                    assert_eq!(timers["ClientBeginRequest"], "2027-01-15T08:00:00.000Z");
+                    assert_eq!(timers["GotRequestHeaders"], timers["ClientBeginRequest"]);
+                } else {
+                    assert_eq!(timers.len(), 6);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn original_optional_trace_context_survives_both_saz_profiles() {
         for mode in [SazMode::Strict, SazMode::Extended] {
             let mut source = capture(true, true);
