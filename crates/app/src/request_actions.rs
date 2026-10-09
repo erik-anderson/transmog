@@ -377,7 +377,14 @@ pub(crate) fn copy_all_headers(
             .protocols
             .iter()
             .find(|item| item.boundary == "client-request")
-            .map_or(protocol(head.source_version), |item| item.version.as_str())
+            .map_or(
+                if snapshot.imported {
+                    "HTTP/[unavailable]"
+                } else {
+                    protocol(head.source_version)
+                },
+                |item| item.version.as_str()
+            )
     );
     append_headers(&mut out, &head.headers)?;
     let response = snapshot
@@ -394,6 +401,9 @@ pub(crate) fn copy_all_headers(
         let reason = observed
             .and_then(|item| item.reason.as_deref())
             .or_else(|| {
+                if snapshot.imported || observed.is_some() {
+                    return None;
+                }
                 http::StatusCode::from_u16(response.head.status)
                     .ok()
                     .and_then(|status| status.canonical_reason())
@@ -403,9 +413,14 @@ pub(crate) fn copy_all_headers(
         write!(
             out,
             "\r\n\r\n\r\n{} {}",
-            observed.map_or(protocol(response.head.source_version), |item| item
-                .version
-                .as_str()),
+            observed.map_or(
+                if snapshot.imported {
+                    "HTTP/[unavailable]"
+                } else {
+                    protocol(response.head.source_version)
+                },
+                |item| item.version.as_str()
+            ),
             response.head.status
         )
         .expect("string write");

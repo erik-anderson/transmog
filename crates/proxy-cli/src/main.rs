@@ -120,6 +120,10 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             allow_remote_clients,
         },
         route_policy,
+        limits: transmog_runtime::RuntimeLimits {
+            max_request_body_bytes: usize::MAX,
+            ..transmog_runtime::RuntimeLimits::default()
+        },
         ..ProxyConfig::default()
     };
     let (components, capture) = build_components(

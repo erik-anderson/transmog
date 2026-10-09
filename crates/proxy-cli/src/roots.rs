@@ -406,11 +406,11 @@ impl RootLedger {
         exclude: Option<&str>,
     ) -> io::Result<usize> {
         let mut pending = 0;
-        for record in self.records()?.iter().filter(|record| {
-            !record.persistent
-                || record.lifecycle.retired
-                || !self.path(&record.sha256, "key").is_file()
-        }) {
+        for record in self
+            .records()?
+            .iter()
+            .filter(|record| self.pending_cleanup(record))
+        {
             if exclude == Some(record.sha256.as_str()) {
                 continue;
             }

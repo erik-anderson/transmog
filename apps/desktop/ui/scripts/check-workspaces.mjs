@@ -529,6 +529,7 @@ try {
   await requestHeaders.getByText('Showing 1–512 of 703 headers',{exact:true}).waitFor({state:'visible'});
   assert.equal(await requestHeaders.getByText('PROXY AUTH',{exact:true}).isVisible(),true);
   assert.match(await requestHeaders.locator('.headers-table tbody tr').first().textContent(),/Cookie.*4.9 KB/);
+  assert.match(await requestHeaders.locator('.headers-table tbody tr').first().locator('td').nth(2).getAttribute('title'),/5,000 bytes/);
   await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).click();
   await requestHeaders.getByRole('button',{name:'Next headers',exact:true}).click();
   await requestHeaders.getByText('Showing 513–703 of 703 headers',{exact:true}).waitFor({state:'visible'});
@@ -1428,6 +1429,16 @@ try {
   await timing.getByText('Request waterfall',{exact:true}).waitFor({state:'visible'});
   assert.equal(await timing.locator('.waterfall-bar').first().evaluate(node=>node.namespaceURI),'http://www.w3.org/2000/svg');
   assert.ok(await timing.locator('.waterfall-span[data-repeated]').count()>0);
+  await page.evaluate(()=>globalThis.__workspaceFixture.performance.transports.push({leg:'upstream',connectionId:'failed-quic-fixture',shared:false,outcome:'tls-failed',sampledOffsetMicros:3000,peer:null,local:null,dnsMicros:null,tcpMicros:null,tlsMicros:1000,setupTimings:[{phase:'quic',beganOffsetMicros:1000,endedOffsetMicros:2000,requestWaitMicros:1000}],tlsVersion:null,tlsResumed:null,cipher:null,alpn:null,bytesRead:null,bytesWritten:null,quic:null}));
+  await timing.getByRole('button',{name:'Refresh measurements',exact:true}).click();
+  await timing.getByText('QUIC / TLS wait for this request',{exact:true}).waitFor({state:'attached'});
+  assert.equal(await timing.getByText('TCP wait for this request',{exact:true}).count(),1);
+  await timing.getByText('Proxy ↔ upstream',{exact:true}).last().click();
+  await timing.getByText('QUIC / TLS wait for this request',{exact:true}).waitFor({state:'visible'});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-failed-quic.png')});
+  await page.evaluate(()=>globalThis.__workspaceFixture.performance.transports.pop());
+  await timing.getByRole('button',{name:'Refresh measurements',exact:true}).click();
+  await timing.getByText('QUIC / TLS wait for this request',{exact:true}).waitFor({state:'detached'});
   const beforeTimingCopyExecutions=await page.evaluate(()=>globalThis.__workspaceFixture.calls.execute_composer??0);
   await timing.getByRole('button',{name:'Copy report',exact:true}).click();
   await timing.getByText('Timing report copied.',{exact:true}).waitFor({state:'visible'});

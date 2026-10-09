@@ -48,7 +48,7 @@ pub fn sample(socket: std::os::windows::io::BorrowedSocket<'_>) -> Option<TcpObs
     })
 }
 
-/// Samples Linux TCP_INFO on a borrowed descriptor; missing fields remain unavailable.
+/// Samples Linux `TCP_INFO` on a borrowed descriptor; missing fields remain unavailable.
 #[cfg(target_os = "linux")]
 pub fn sample(socket: std::os::fd::BorrowedFd<'_>) -> Option<TcpObservation> {
     use std::{mem::size_of, os::fd::AsRawFd, ptr};

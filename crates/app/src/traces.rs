@@ -608,10 +608,15 @@ fn import_saz(
             id,
             target,
             client,
-            if client_ip.is_some_and(|ip| !ip.is_loopback()) {
-                ClientIdentity::Remote
-            } else {
+            if match client.ip() {
+                IpAddr::V6(ip) => ip
+                    .to_ipv4_mapped()
+                    .map_or(ip.is_loopback(), |ip| ip.is_loopback()),
+                IpAddr::V4(ip) => ip.is_loopback(),
+            } {
                 ClientIdentity::default()
+            } else {
+                ClientIdentity::Remote
             },
             version,
             started,
@@ -2279,6 +2284,9 @@ mod tests {
             .id
             .clone();
         assert!(!app.composer_source(&id).unwrap().body_available);
+        let copied = app.copy_all_headers(&id).unwrap();
+        assert!(copied.contains("HTTP/[unavailable] 204"));
+        assert!(!copied.contains("No Content"));
         let command = app
             .request_command(&id, RequestCommandFormat::Curl)
             .unwrap();

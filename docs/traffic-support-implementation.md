@@ -268,6 +268,16 @@ qualified baseline, not completion of the complete plan.
     isolated profiles and loopback traffic. The guide includes signature/publisher
     checks and ready-to-copy recovery commands.
 
+27. Final clarity review adds exact byte counts to header/total size tooltips,
+    recognizes QUIC setup even when statistics are absent, and marks unrecorded
+    copied protocols/reasons without inventing evidence. Mapped loopback imports
+    retain local identity. The legacy serve path also forwards large requests
+    independently of capture limits. All 454 workspace Rust tests and strict
+    Clippy pass, plus renderer/default contracts, full browser interactions and
+    native main/saved-viewer flows. Reviewed populated/compact header and timing
+    screenshots. Release safety, publication, version lifecycle and compiled
+    isolated SAZ registration fixtures pass.
+
 Remaining isolated phases:
 
 - Final qualification: updated support guide with download authenticity and

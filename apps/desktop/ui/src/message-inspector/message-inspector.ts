@@ -7,6 +7,7 @@ import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
+const exactHeaderBytes=(value:number|null|undefined):string=>value==null?'Size unavailable':value.toLocaleString()+(value===1?' byte':' bytes');
 export class MessageInspector extends WebUIElement {
   @attr side = 'response';
   @attr split = '35';
@@ -14,7 +15,8 @@ export class MessageInspector extends WebUIElement {
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
   @observable boundary = '';
-  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string}> = [];
+  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
+  @observable headersSummaryTitle='';
   @observable headersSummary = '';
   @observable largestFirst = false;
   @observable authorizationPresent = false;
@@ -75,9 +77,10 @@ export class MessageInspector extends WebUIElement {
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
   nextHeaders():void {if(this.headerNextOffset!==null)void this.loadHeaderPage(this.headerNextOffset);}
   private renderHeaders(fields:HeadView['headers'],summary?:HeaderSummary,offset=0):void {
-    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
+    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),sizeTitle:exactHeaderBytes(header.fieldBytes)+' · Field name, colon-space, original value and CRLF',valueSizeTitle:exactHeaderBytes(header.valueBytes)+' · Original field value before redaction',valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
     const total=summary?.totalFields??fields.length, measured=fields.every(header=>header.fieldBytes!=null);
     const bytes=summary?summary.serializedBytes:measured?this.headerRows.reduce((sum,row)=>sum+row.bytes,2):null;
+    this.headersSummaryTitle=exactHeaderBytes(bytes)+' · Sum of original serialized fields and final CRLF, before redaction; HTTP/1 equivalent';
     this.headersSummary=fields.length||summary?total+' fields · '+(bytes===null?'size unavailable':formatBytes(bytes)+' including final CRLF')+' · HTTP/1 equivalent':'';
     this.authorizationState=summary?.authorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='authorization')?'present':'absent':'unknown');
     this.proxyAuthorizationState=summary?.proxyAuthorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='proxy-authorization')?'present':'absent':'unknown');

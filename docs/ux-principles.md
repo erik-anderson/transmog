@@ -167,7 +167,8 @@ Present measured local milestones and overlapping latency phases. Distinguish
 zero from unavailable, shared connection setup from per-request work, and bytes
 queued by the proxy from delivery to the client. Response wait does not identify
 server CPU time. Keep original imported timers available with their own labels
-and clocks, without inventing missing measurements.
+and clocks, without inventing missing measurements. Copied heads mark unrecorded versions
+as HTTP/[unavailable]; replay commands explain their compatible fallback.
 
 
 For a UI change, walk through the affected task with representative populated
