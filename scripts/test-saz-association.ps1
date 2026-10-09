@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 if (-not $MakensisPath) { $MakensisPath = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe' }
 if (-not (Test-Path -LiteralPath $MakensisPath -PathType Leaf)) { throw 'Compile a development NSIS bundle first, or pass MakensisPath.' }
+& (Join-Path $PSScriptRoot 'test-release-uninstall.ps1') -MakensisPath $MakensisPath
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $id = [Guid]::NewGuid().ToString('N')
 $fixtureRoot = Join-Path $repositoryRoot "artifacts\saz-association-$id"

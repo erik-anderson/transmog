@@ -164,6 +164,7 @@ jobs:
       - name: Verify and install signed bundle without Azure credentials
         run: ./scripts/test-signed-windows-installer.ps1 -ReleaseRoot artifacts/windows-signed -ReportPath artifacts/release-evidence/installer-test.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: windows-release-installer-test-${{ github.run_attempt }}
           path: artifacts/release-evidence/
