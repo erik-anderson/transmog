@@ -437,7 +437,15 @@ fn append_event(
         capture.retention.apply(&mut record, &capture.policy);
         capture.writer.append(&record)?;
     }
-    capture.last_sequences.insert(exchange_id, event.sequence);
+    if matches!(
+        event.kind,
+        transmog_core::observe::ObserverEventKind::Completed(_)
+            | transmog_core::observe::ObserverEventKind::Failed(_)
+    ) {
+        capture.last_sequences.remove(&exchange_id);
+    } else {
+        capture.last_sequences.insert(exchange_id, event.sequence);
+    }
     Ok(())
 }
 
@@ -524,6 +532,44 @@ mod tests {
             sequence,
             kind: ObserverEventKind::ExchangeStarted { metadata },
         }
+    }
+
+    #[test]
+    fn terminal_exchanges_release_sequence_accounting() {
+        let path = temp_path();
+        let file = File::create(&path).unwrap();
+        let mut capture = ActiveCapture {
+            path: path.clone(),
+            writer: CaptureWriter::new(file, CaptureLimits::default()).unwrap(),
+            policy: CapturePolicy::default(),
+            retention: CaptureBodyRetention::default(),
+            last_sequences: HashMap::new(),
+        };
+        for id in 1..=100 {
+            let mut event = start_event(1);
+            event.exchange_id = ExchangeId(id);
+            let ObserverEventKind::ExchangeStarted { metadata } = event.kind.clone() else {
+                unreachable!()
+            };
+            append_event(&mut capture, &event).unwrap();
+            event.sequence = 2;
+            event.kind = ObserverEventKind::Failed(transmog_core::intercept::ExchangeFailure {
+                metadata,
+                stage: transmog_core::intercept::ExchangeStage::Upstream,
+                kind: transmog_core::intercept::ExchangeFailureKind::Upstream,
+                request_committed: false,
+                response_committed: false,
+                message: "fixture failure".into(),
+            });
+            append_event(&mut capture, &event).unwrap();
+        }
+        let pending = capture.last_sequences.len();
+        drop(capture);
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(
+            pending, 0,
+            "Finished traffic still consumes recording memory"
+        );
     }
 
     #[tokio::test]

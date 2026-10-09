@@ -316,7 +316,11 @@ await page.addInitScript((workspace) => {
         case 'diagnostics_report': return {applicationVersion:'0.1.0',runtime:{operatingSystem:'Windows fixture',architecture:'x64',webviewVersion:'test'},events:[{level:'warning',message:'safe fixture'}],privacyNotice:'Traffic bodies and credentials are omitted'};
         case 'create_support_bundle': state.supportInput=structuredClone(args);return {destination:args.destination,bytes:4096,includedRecentPaths:args.includeRecentPaths};
         case 'prepare_update_handoff': state.lifecycle='stopped';return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
-        case 'capture_status': return structuredClone(state.capture??{state:'idle'});
+        case 'capture_status': {
+          const status=structuredClone(state.capture??{state:'idle'});
+          if(state.deferCaptureStatus){state.captureStatusPending=true;await new Promise(resolve=>state.releaseCaptureStatus=resolve);delete state.deferCaptureStatus;if(state.captureStatusError)throw new Error('Fixture stale capture status failed');}
+          return status;
+        }
         case 'start_capture': state.lastCaptureRequest=structuredClone(args.request);state.capture={state:'active',path:args.request.path,bytesWritten:2048};return structuredClone(state.capture);
         case 'stop_capture': state.capture={...state.capture,state:'sealed'};return structuredClone(state.capture);
         case 'pick_capture_path': state.lastCapturePick=structuredClone(args);return state.capturePick??null;
@@ -1234,6 +1238,16 @@ try {
   assert.equal(await page.evaluate(()=>Object.hasOwn(globalThis.__workspaceFixture.lastCaptureRequest,'maxFileBytes')),false);
   assert.equal(await captures.getByRole('button',{name:'Start recording…',exact:true}).isDisabled(),true);
   await captures.getByRole('button',{name:'Stop recording',exact:true}).click();await captureIdle();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').refreshPending);
+  await page.evaluate(()=>{const capture=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');clearTimeout(capture.timer);globalThis.__workspaceFixture.deferCaptureStatus=true;void capture.refreshCapture();});
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.captureStatusPending);
+  await captures.getByRole('button',{name:'Start recording…',exact:true}).click();await captureIdle();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.captureStatusError=true;globalThis.__workspaceFixture.releaseCaptureStatus();});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').refreshPending);
+  assert.equal(await captures.locator('.capture-error').isVisible(),false,'A stale status failure replaced a successful recording action');
+  assert.equal(await captures.getByRole('button',{name:'Stop recording',exact:true}).isEnabled(),true);
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.captureStatusError;delete globalThis.__workspaceFixture.captureStatusPending;});
+  await captures.getByRole('button',{name:'Stop recording',exact:true}).click();await captureIdle();
   await page.screenshot({path:resolve(root,'../../../target/ui-check/record-unlimited-wide.png')});
   await captures.locator('.capture-tabs').getByRole('button',{name:'Inspect / recover',exact:true}).click();
   await captures.getByRole('button',{name:'Inspect file',exact:true}).click();await captureIdle();
@@ -1247,7 +1261,9 @@ try {
   await page.evaluate(()=>delete globalThis.__workspaceFixture.captureInspectionError);
   await captures.getByRole('button',{name:'Inspect file',exact:true}).click();await captureIdle();
   assert.match(await captures.locator('.capture-receipt').textContent(),/Interrupted tail; valid prefix recovered/);
+  await captures.getByLabel('TMCap file',{exact:true}).fill('uninspected.tmcap');
   await captures.getByRole('button',{name:'Export a recovered copy…',exact:true}).click();
+  assert.equal(await captures.getByLabel('Source capture',{exact:true}).inputValue(),inspectedSource,'Recovery used an edited filename instead of the inspected capture');
   assert.equal(await captures.getByLabel('New export file',{exact:true}).inputValue(),'session.recovered.tmcap');
   await captures.getByLabel('Format',{exact:true}).selectOption('json-lines');
   assert.equal(await captures.getByLabel('New export file',{exact:true}).inputValue(),'session.recovered.jsonl');

@@ -194,9 +194,13 @@ impl Observer for CircularObserver {
                 state.sequences.insert(id, event.sequence);
                 if state.ring.evicted_exchanges() != evicted {
                     let State {
-                        ring, sequences, ..
+                        ring,
+                        sequences,
+                        retention,
+                        ..
                     } = &mut *state;
                     sequences.retain(|id, _| ring.retains_exchange(*id));
+                    retention.retain_exchanges(|id| ring.retains_exchange(id));
                 }
                 Ok(())
             })

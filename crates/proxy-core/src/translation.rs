@@ -9,6 +9,7 @@ const FIXED_HOP_BY_HOP: &[&str] = &[
     "proxy-connection",
     "keep-alive",
     "transfer-encoding",
+    "te",
     "upgrade",
 ];
 
@@ -65,8 +66,8 @@ pub fn body_semantics(request_method: &str, response_status: u16) -> BodySemanti
 ///
 /// # Panics
 ///
-/// Panics only if the compile-time constant `accept-encoding: identity` header
-/// ceases to satisfy the `http` crate's header grammar.
+/// Panics only if the compile-time constant headers cease to satisfy the `http`
+/// crate's header grammar.
 pub fn prepare_headers(
     source: &HeaderBlock,
     options: TranslationOptions,
@@ -104,6 +105,21 @@ pub fn prepare_headers(
             HeaderField::try_new("accept-encoding", "identity").expect("static header is valid"),
         );
     }
+    // Transfer-coding preferences describe the incoming hop. Multiplexed
+    // transports support trailers independently, including for streaming RPCs.
+    if options.kind == MessageKind::Request
+        && matches!(
+            options.destination,
+            HttpLegVersion::Http2 | HttpLegVersion::Http3
+        )
+        && source.values("te").any(|value| {
+            value
+                .split(|byte| *byte == b',')
+                .any(|token| trim_ascii(token).eq_ignore_ascii_case(b"trailers"))
+        })
+    {
+        output.push(HeaderField::try_new("te", "trailers").expect("static header is valid"));
+    }
     Ok(output)
 }
 
@@ -113,6 +129,9 @@ fn validate_framing(headers: &HeaderBlock) -> Result<(), TranslationError> {
         let first = lengths[0];
         if lengths.iter().any(|value| *value != first) {
             return Err(TranslationError::ConflictingContentLength);
+        }
+        if first.is_empty() || !first.iter().all(u8::is_ascii_digit) {
+            return Err(TranslationError::InvalidContentLength);
         }
         let text =
             std::str::from_utf8(first).map_err(|_| TranslationError::InvalidContentLength)?;
@@ -244,6 +263,78 @@ mod tests {
                     },
                 );
                 assert_eq!(result.is_ok(), left == right, "pair {left:?}, {right:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_non_decimal_content_lengths() {
+        for value in ["+1", "", "1, 1", "-1", "0x10", "18446744073709551616"] {
+            assert_eq!(
+                prepare_headers(
+                    &block(&[("Content-Length", value)]),
+                    TranslationOptions {
+                        destination: HttpLegVersion::Http1,
+                        kind: MessageKind::Request,
+                        body_modified: false,
+                        force_identity_encoding: false,
+                    },
+                ),
+                Err(TranslationError::InvalidContentLength),
+                "value {value:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn transfer_encoding_preferences_do_not_cross_hops() {
+        for destination in [
+            HttpLegVersion::Http1,
+            HttpLegVersion::Http2,
+            HttpLegVersion::Http3,
+        ] {
+            for kind in [MessageKind::Request, MessageKind::Response] {
+                let result = prepare_headers(
+                    &block(&[("TE", "gzip"), ("X-End-To-End", "retained")]),
+                    TranslationOptions {
+                        destination,
+                        kind,
+                        body_modified: false,
+                        force_identity_encoding: false,
+                    },
+                )
+                .unwrap();
+                assert!(
+                    result.values("te").next().is_none(),
+                    "{destination:?} {kind:?}"
+                );
+                assert_eq!(
+                    result.values("x-end-to-end").next(),
+                    Some(b"retained".as_slice())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn multiplexed_requests_advertise_only_supported_trailers() {
+        for destination in [HttpLegVersion::Http2, HttpLegVersion::Http3] {
+            for value in ["trailers", "TRAILERS", "gzip, trailers"] {
+                let result = prepare_headers(
+                    &block(&[("Connection", "TE"), ("TE", value)]),
+                    TranslationOptions {
+                        destination,
+                        kind: MessageKind::Request,
+                        body_modified: false,
+                        force_identity_encoding: false,
+                    },
+                )
+                .unwrap();
+                assert_eq!(
+                    result.values("te").collect::<Vec<_>>(),
+                    vec![b"trailers".as_slice()]
+                );
+                assert!(result.values("connection").next().is_none());
             }
         }
     }

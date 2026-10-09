@@ -30,7 +30,10 @@ impl FromStr for ConnectAuthority {
     type Err = AuthorityError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if input.is_empty() || input.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        if input.is_empty()
+            || input.contains('@')
+            || input.bytes().any(|byte| byte.is_ascii_whitespace())
+        {
             return Err(AuthorityError::Malformed);
         }
         let parsed =
@@ -43,6 +46,14 @@ impl FromStr for ConnectAuthority {
         // literals. Keep the stored host canonical so it is suitable for SNI,
         // certificate SAN matching, and socket address construction.
         let raw_host = parsed.host();
+        if raw_host.starts_with('[')
+            && raw_host
+                .strip_prefix('[')
+                .and_then(|host| host.strip_suffix(']'))
+                .is_none_or(|host| host.parse::<std::net::Ipv6Addr>().is_err())
+        {
+            return Err(AuthorityError::Malformed);
+        }
         let host = raw_host
             .strip_prefix('[')
             .and_then(|host| host.strip_suffix(']'))
@@ -107,5 +118,19 @@ mod tests {
             Err(AuthorityError::InvalidPort)
         );
         assert!("example.com:443:80".parse::<ConnectAuthority>().is_err());
+    }
+
+    #[test]
+    fn rejects_userinfo_and_invalid_ip_literals() {
+        for value in [
+            "user@example.com:443",
+            "user:password@example.com:443",
+            "[not-an-ip]:443",
+        ] {
+            assert!(
+                value.parse::<ConnectAuthority>().is_err(),
+                "accepted {value}"
+            );
+        }
     }
 }

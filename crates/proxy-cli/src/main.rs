@@ -1,5 +1,6 @@
 //! Operator entry point for the runnable explicit proxy and CA generation.
 
+mod arguments;
 mod circular;
 mod passwords;
 mod root_lifecycle;
@@ -97,6 +98,19 @@ async fn run() -> Result<(), Box<dyn Error>> {
 }
 
 async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &[
+            "--ca-cert",
+            "--ca-key",
+            "--upstream-ca-cert",
+            "--listen",
+            "--route",
+            "--proof-id",
+            "--capture",
+        ],
+        &["--capture-bodies", "--allow-remote"],
+    )?;
     let certificate_path = required_option(arguments, "--ca-cert")?;
     let key_path = required_option(arguments, "--ca-key")?;
     let listen_addr = option(arguments, "--listen")
@@ -329,7 +343,15 @@ fn append_observer_event(
         state.retention.apply(&mut record, policy);
         state.writer.append(&record)?;
     }
-    state.last_sequences.insert(exchange_id, event.sequence);
+    if matches!(
+        event.kind,
+        transmog_core::observe::ObserverEventKind::Completed(_)
+            | transmog_core::observe::ObserverEventKind::Failed(_)
+    ) {
+        state.last_sequences.remove(&exchange_id);
+    } else {
+        state.last_sequences.insert(exchange_id, event.sequence);
+    }
     Ok(())
 }
 
@@ -396,6 +418,11 @@ fn recover_file_with_password(
 }
 
 fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &["--input", "--password-file", "--source-password-file"],
+        &[],
+    )?;
     let capture = recover_file(arguments)?;
     let summary = capture.summary();
     println!(
@@ -413,6 +440,11 @@ fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn capture_validate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &["--input", "--password-file", "--source-password-file"],
+        &[],
+    )?;
     let capture = recover_file(arguments)?;
     if capture.truncated_tail {
         return Err(
@@ -428,6 +460,16 @@ fn capture_validate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &[
+            "--input",
+            "--output",
+            "--password-file",
+            "--source-password-file",
+        ],
+        &[],
+    )?;
     let (capture, password) = recover_file_with_password(arguments)?;
     if capture.sealed {
         return Err(invalid_input("capture is already sealed").into());
@@ -476,6 +518,17 @@ fn write_sealed_capture_encoded<W: Write>(
 }
 
 fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &[
+            "--input",
+            "--output",
+            "--format",
+            "--password-file",
+            "--source-password-file",
+        ],
+        &["--encrypt"],
+    )?;
     let password = passwords::output(arguments)?;
     let capture = recover_file(arguments)?;
     let format = option(arguments, "--format").unwrap_or("jsonl");
@@ -616,6 +669,7 @@ fn protocol_alpn(version: transmog_core::HttpLegVersion) -> &'static str {
 }
 
 fn generate_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(arguments, &["--cert", "--key", "--name"], &[])?;
     let certificate_path = PathBuf::from(required_option(arguments, "--cert")?);
     let key_path = PathBuf::from(required_option(arguments, "--key")?);
     let common_name = option(arguments, "--name").unwrap_or("Transmog local interception CA");
@@ -646,6 +700,7 @@ fn load_ca(certificate: &[u8], key_path: &Path) -> Result<ProxyCa, Box<dyn Error
 }
 
 fn protect_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(arguments, &["--ca-cert", "--ca-key"], &[])?;
     let certificate = required_option(arguments, "--ca-cert")?;
     let key = required_option(arguments, "--ca-key")?;
     let ca = load_ca(&fs::read(certificate)?, Path::new(key))?;
@@ -655,6 +710,18 @@ fn protect_ca(arguments: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn issue_certificate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    arguments::validate(
+        arguments,
+        &[
+            "--ca-cert",
+            "--ca-key",
+            "--identity",
+            "--cert",
+            "--key",
+            "--days",
+        ],
+        &[],
+    )?;
     let ca_certificate_path = required_option(arguments, "--ca-cert")?;
     let ca_key_path = required_option(arguments, "--ca-key")?;
     let identity = EndpointIdentity::parse(required_option(arguments, "--identity")?)?;
@@ -684,6 +751,7 @@ fn option<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
     arguments
         .windows(2)
         .find(|pair| pair[0] == name)
+        .filter(|pair| !pair[1].is_empty() && !pair[1].starts_with("--"))
         .map(|pair| pair[1].as_str())
 }
 
@@ -849,6 +917,23 @@ fn find_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn required_values_cannot_consume_another_option() {
+        let arguments = vec!["--input".into(), "--output".into(), "copy.tmcap".into()];
+        assert!(required_option(&arguments, "--input").is_err());
+    }
+
+    #[test]
+    fn capture_options_are_validated_before_opening_files() {
+        let arguments = vec![
+            "--input".into(),
+            "missing.tmcap".into(),
+            "--encrypton".into(),
+        ];
+        let error = capture_export(&arguments).unwrap_err().to_string();
+        assert!(error.contains("--encrypton"), "unexpected error: {error}");
+    }
 
     #[test]
     fn html_proof_prefers_head_but_supports_minimal_html() {

@@ -501,44 +501,30 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
     })
 }
 fn validate_options(arguments: &[String]) -> io::Result<()> {
-    let mut index = 0;
-    while index < arguments.len() {
-        match arguments[index].as_str() {
-            "--output"
-            | "--listen"
-            | "--route"
-            | "--upstream-ca-cert"
-            | "--request-body-limit"
-            | "--password-file"
-            | "--circular-buffer" => {
-                if arguments
-                    .get(index + 1)
-                    .is_none_or(|arg| arg.starts_with("--"))
-                {
-                    return Err(crate::invalid_input(format!(
-                        "{} requires a value",
-                        arguments[index]
-                    )));
-                }
-                index += 2;
-            }
-            "--encrypt"
-            | "--persistent-root"
-            | "--install-root"
-            | "--no-install-root"
-            | "--no-system-proxy"
-            | "--redact"
-            | "--retain-sensitive"
-            | "--allow-remote"
-            | "--include-network-context"
-            | "--unlimited-request-bodies" => index += 1,
-            unknown => {
-                return Err(crate::invalid_input(format!(
-                    "Unknown record option {unknown}"
-                )));
-            }
-        }
-    }
+    crate::arguments::validate(
+        arguments,
+        &[
+            "--output",
+            "--listen",
+            "--route",
+            "--upstream-ca-cert",
+            "--request-body-limit",
+            "--password-file",
+            "--circular-buffer",
+        ],
+        &[
+            "--encrypt",
+            "--persistent-root",
+            "--install-root",
+            "--no-install-root",
+            "--no-system-proxy",
+            "--redact",
+            "--retain-sensitive",
+            "--allow-remote",
+            "--include-network-context",
+            "--unlimited-request-bodies",
+        ],
+    )?;
     if arguments.iter().any(|arg| arg == "--install-root")
         && arguments.iter().any(|arg| arg == "--no-install-root")
     {
@@ -651,6 +637,7 @@ mod tests {
     fn guided_options_reject_ambiguous_or_missing_values() {
         for args in [
             vec!["--output"],
+            vec!["--output", "one.tmcap", "--output", "two.tmcap"],
             vec!["--install-root", "--no-install-root"],
             vec!["--unknown"],
             vec!["--request-body-limit", "0"],

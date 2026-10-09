@@ -128,6 +128,11 @@ pub struct CaptureBodyRetention {
     request_bytes: HashMap<(u128, bool), u64>,
 }
 impl CaptureBodyRetention {
+    /// Releases accounting for exchanges evicted before their terminal event.
+    pub fn retain_exchanges(&mut self, mut retained: impl FnMut(u128) -> bool) {
+        self.request_bytes.retain(|(id, _), _| retained(*id));
+    }
+
     /// Clips request samples to the configured prefix without altering observed
     /// byte counts. Terminal records release per-exchange accounting.
     pub fn apply(&mut self, record: &mut CaptureRecord, policy: &CapturePolicy) {
@@ -2059,6 +2064,45 @@ mod tests {
         retention.apply(&mut unlimited, &policy);
         assert!(
             matches!(&unlimited.kind,CaptureRecordKind::BodySegment {bytes:Some(bytes),truncated:false,..} if bytes.len()==20)
+        );
+    }
+
+    #[test]
+    fn evicted_requests_release_accounting_without_losing_active_limits() {
+        let policy = CapturePolicy {
+            retain_body_samples: true,
+            request_body_limit: Some(2),
+            ..CapturePolicy::default()
+        };
+        let mut retention = CaptureBodyRetention::default();
+        for id in 1..=100 {
+            let mut sample = CaptureRecord {
+                exchange_id: id,
+                sequence: 1,
+                kind: CaptureRecordKind::BodySegment {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 2,
+                    bytes: Some(vec![1; 2]),
+                    truncated: false,
+                },
+            };
+            retention.apply(&mut sample, &policy);
+        }
+        retention.retain_exchanges(|id| id == 100);
+        assert_eq!(retention.request_bytes.len(), 1);
+        let mut sample = CaptureRecord {
+            exchange_id: 100,
+            sequence: 2,
+            kind: CaptureRecordKind::BodySegment {
+                boundary: ExchangeBoundary::ClientRequest,
+                byte_count: 2,
+                bytes: Some(vec![2; 2]),
+                truncated: false,
+            },
+        };
+        retention.apply(&mut sample, &policy);
+        assert!(
+            matches!(&sample.kind, CaptureRecordKind::BodySegment {bytes: Some(bytes), truncated: true, ..} if bytes.is_empty())
         );
     }
 
