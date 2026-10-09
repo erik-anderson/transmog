@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-transmog-capture = { version = "=0.1.0", path = "../proxy-capture" }
-transmog-core = { version = "=0.1.0", path = "../proxy-core" }
+transmog-capture = { version = "=0.1.1", path = "../proxy-capture" }
+transmog-core = { version = "=0.1.1", path = "../proxy-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

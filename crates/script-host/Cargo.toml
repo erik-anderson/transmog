@@ -12,8 +12,8 @@ build = "build.rs"
 deno_core.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
-transmog-process-sandbox = { version = "=0.1.0", path = "../process-sandbox" }
-transmog-script = { version = "=0.1.0", path = "../proxy-script" }
+transmog-process-sandbox = { version = "=0.1.1", path = "../process-sandbox" }
+transmog-script = { version = "=0.1.1", path = "../proxy-script" }
 
 [dev-dependencies]
-transmog-script-supervisor = { version = "=0.1.0", path = "../script-supervisor" }
+transmog-script-supervisor = { version = "=0.1.1", path = "../script-supervisor" }
