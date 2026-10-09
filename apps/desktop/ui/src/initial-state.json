@@ -653,6 +653,7 @@
   "captureFacts": [],
   "canExportInspected": false,
   "settingsSection": "preferences",
+  "entryLimitEnabled": false,
   "settingsDirty": false,
   "settingsBusy": false,
   "settingsText": "",

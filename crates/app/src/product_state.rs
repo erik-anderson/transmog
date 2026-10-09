@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 5;
+const CURRENT_SCHEMA: u32 = 6;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -87,6 +87,8 @@ pub struct PrivacySettings {
     /// Aggregate circular buffer limit and memory/disk policy.
     #[serde(default)]
     pub buffer_limit: crate::BufferLimit,
+    /// Optional maximum live entries; older completed entries drop off first.
+    pub max_live_entries: Option<usize>,
     /// Retain request bodies for command generation and replay.
     #[serde(default = "default_true")]
     pub retain_request_bodies: bool,
@@ -114,6 +116,7 @@ impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
             buffer_limit: crate::BufferLimit::Automatic,
+            max_live_entries: None,
             retain_request_bodies: true,
             request_body_limit: default_request_body_limit(),
             redact_sensitive_headers: false,
@@ -189,17 +192,6 @@ impl Default for ProductState {
             workspace: WorkspacePreferences::default(),
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ProductStateV1 {
-    schema_version: u32,
-    window_width: u32,
-    window_height: u32,
-    remember_recent_artifacts: bool,
-    #[serde(default)]
-    recent_artifacts: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -307,6 +299,10 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
             state.privacy.buffer_limit,
             crate::BufferLimit::Custom { bytes: 0 }
         )
+        || state
+            .privacy
+            .max_live_entries
+            .is_some_and(|limit| limit == 0 || limit as u64 > 9_007_199_254_740_991)
         || state.privacy.request_body_limit == Some(0)
         || !state.workspace.is_valid()
     {
@@ -370,41 +366,10 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    let state = match schema {
-        1 => {
-            let old: ProductStateV1 = serde_json::from_value(value).map_err(|_| ())?;
-            if old.schema_version != 1 {
-                return Err(());
-            }
-            ProductState {
-                window: WindowState {
-                    width: old.window_width,
-                    height: old.window_height,
-                    ..WindowState::default()
-                },
-                privacy: PrivacySettings {
-                    remember_recent_artifacts: old.remember_recent_artifacts,
-                    ..PrivacySettings::default()
-                },
-                recent_artifacts: old
-                    .recent_artifacts
-                    .into_iter()
-                    .map(|path| RecentArtifact {
-                        path,
-                        kind: ArtifactKind::NativeCapture,
-                    })
-                    .collect(),
-                ..ProductState::default()
-            }
-        }
-        2..=4 => {
-            let mut state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
-            state.schema_version = CURRENT_SCHEMA;
-            state
-        }
-        5 => serde_json::from_value(value).map_err(|_| ())?,
-        _ => return Err(()),
-    };
+    if schema != u64::from(CURRENT_SCHEMA) {
+        return Err(());
+    }
+    let state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
     validate(state).map_err(|_| ())
 }
 
@@ -531,16 +496,35 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_newest_falls_back_and_v1_migrates() {
+    fn corrupt_newest_falls_back_to_a_current_generation() {
         let path = prefix("recovery");
         cleanup(&path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(generation_path(&path, 1), br#"{"schemaVersion":1,"windowWidth":900,"windowHeight":700,"rememberRecentArtifacts":true,"recentArtifacts":["one.tmcap"]}"#).unwrap();
+        let mut current = ProductState::default();
+        current.window.width = 900;
+        fs::write(
+            generation_path(&path, 1),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
         fs::write(generation_path(&path, 2), b"{broken").unwrap();
         let (store, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_some());
         assert_eq!(store.snapshot().window.width, 900);
         assert_eq!(store.snapshot().schema_version, CURRENT_SCHEMA);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn prior_product_state_schemas_are_rejected_without_migration() {
+        let mut value = serde_json::to_value(ProductState::default()).unwrap();
+        value["schemaVersion"] = 5.into();
+        let path = prefix("prior-schema");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let generation = generation_path(&path, 1);
+        fs::write(&generation, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(read_state(&generation).is_err());
         cleanup(&path);
     }
 
@@ -572,26 +556,9 @@ mod tests {
     }
 
     #[test]
-    fn old_state_gains_defaults_and_layout_survives_stale_settings_save() {
+    fn current_state_layout_survives_stale_settings_save() {
         let path = prefix("workspace");
         cleanup(&path);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let mut old = serde_json::to_value(ProductState::default()).unwrap();
-        old["schemaVersion"] = 3.into();
-        old.as_object_mut().unwrap().remove("workspace");
-        old["privacy"]
-            .as_object_mut()
-            .unwrap()
-            .remove("requestBodyLimit");
-        old["privacy"]
-            .as_object_mut()
-            .unwrap()
-            .remove("retainRequestBodies");
-        old["privacy"]
-            .as_object_mut()
-            .unwrap()
-            .remove("redactSensitiveHeaders");
-        fs::write(generation_path(&path, 1), serde_json::to_vec(&old).unwrap()).unwrap();
         let (store, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_none());
         let mut stale = store.snapshot();

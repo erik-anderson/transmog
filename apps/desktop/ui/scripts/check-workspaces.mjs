@@ -110,7 +110,7 @@ await page.addInitScript((workspace) => {
           state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
         }
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
+        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
@@ -1213,6 +1213,9 @@ try {
   const caIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').proxyPending);
   await page.locator('.settings-tabs').getByRole('button',{name:'Preferences',exact:true}).click();
   const preferences=page.locator('settings-workspace');
+  assert.equal(await preferences.getByLabel('Limit number of live entries',{exact:true}).isChecked(),false);
+  await preferences.getByLabel('Limit number of live entries',{exact:true}).check();
+  await preferences.getByLabel('Maximum live entries',{exact:true}).fill('25000');
   await preferences.getByLabel('Circular buffer limit',{exact:true}).selectOption('custom');
   await preferences.getByLabel('Maximum size (GiB)',{exact:true}).fill('2');
   assert.equal(await preferences.getByLabel('Maximum size (GiB)',{exact:true}).isVisible(),true);
@@ -1221,6 +1224,7 @@ try {
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct)).privacy.bufferLimit.mode,'unlimited');
+  assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct)).privacy.maxLiveEntries,25000);
   await preferences.getByLabel('Circular buffer limit',{exact:true}).selectOption('automatic');
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);

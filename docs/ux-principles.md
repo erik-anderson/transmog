@@ -155,6 +155,11 @@ finish; idle clients do not delay shutdown. Keep **Start proxy** available durin
 this state so turning it back on resumes the same run without disrupting work.
 Reject stale shutdown and status results after a new state transition.
 
+Live entries have no count limit by default. Offer an optional maximum that drops
+older completed live entries, preserves imported entries and lets active requests
+finish before eviction. Changing this limit applies immediately. Body bytes have
+a separate budget; the body limit is not a total application memory ceiling.
+
 Live body retention uses a configurable circular buffer. Automatic chooses half
 installed physical RAM, stored in memory. Custom limits up to that threshold
 also stay in memory; larger limits and **No max size (writes to disk)** use an

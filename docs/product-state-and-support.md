@@ -25,8 +25,7 @@ Windows' non-replacing `rename` behavior without creating a corrupt window
 between removing and replacing one canonical file. Startup validates the
 256-KiB file bound and every field before use. A bad newest generation is
 quarantined and an older valid generation is used; if none is valid, safe
-defaults are loaded. Versions 1 through 4 migrate to the current schema while
-preserving saved choices.
+defaults are loaded. Only the current schema is accepted; prior development schemas are not migrated.
 
 New installations retain request and response bodies in the memory-first buffer,
 and default to including bodies in explicitly started recordings. Sensitive header values are collected by default. Settings →
@@ -97,3 +96,7 @@ destination.
 
 Product-state generations, operational logs, and support bundles are not
 capture databases. Native `.tmcap` remains the durable traffic format.
+
+Live-entry retention defaults to no count limit. An optional persisted maximum
+evicts oldest completed live entries, leaving imported entries and active requests
+intact. This limit is separate from the body-byte buffer budget.

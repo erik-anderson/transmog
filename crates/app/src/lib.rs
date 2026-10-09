@@ -275,6 +275,7 @@ pub struct Application {
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
     buffer_preferences: bool,
+    entry_preferences: bool,
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
     scripts: scripts::ScriptRegistry,
@@ -323,6 +324,7 @@ impl Application {
         )?;
         let previews = preview::PreviewService::new(config.preview_worker_executable);
         let build_id = Arc::clone(&config.service.control_build_id);
+        let entry_preferences = config.service.sessions.max_sessions.is_none();
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
         diagnostics.record(
@@ -334,6 +336,15 @@ impl Application {
         service.set_redact_sensitive_headers(
             product_state.snapshot().privacy.redact_sensitive_headers,
         );
+        if entry_preferences {
+            service.catalog().set_live_entry_limit(
+                product_state
+                    .snapshot()
+                    .privacy
+                    .max_live_entries
+                    .and_then(std::num::NonZeroUsize::new),
+            );
+        }
         if let Some(store) = &body_store {
             let privacy = product_state.snapshot().privacy;
             if apply_buffer_preferences {
@@ -375,6 +386,7 @@ impl Application {
             diagnostics,
             body_store,
             buffer_preferences: apply_buffer_preferences,
+            entry_preferences,
             automation,
             response_assets,
             scripts,
@@ -420,6 +432,16 @@ impl Application {
         if let Ok(state) = &result {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
+        }
+        if let Ok(state) = &result
+            && self.entry_preferences
+        {
+            self.service.catalog().set_live_entry_limit(
+                state
+                    .privacy
+                    .max_live_entries
+                    .and_then(std::num::NonZeroUsize::new),
+            );
         }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
             if self.buffer_preferences {
@@ -1514,6 +1536,34 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_entry_preference_persists_and_is_applied_after_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("preferences");
+        let make_app = || {
+            Application::new(AppConfig {
+                product_state_path: Some(path.clone()),
+                ..AppConfig::default()
+            })
+            .unwrap()
+        };
+        let app = make_app();
+        assert!(app.service.catalog().live_entry_limit().is_none());
+        let mut state = app.product_state();
+        state.privacy.max_live_entries = Some(2);
+        app.save_product_state(state).unwrap();
+        assert_eq!(app.service.catalog().live_entry_limit().unwrap().get(), 2);
+        let reloaded = make_app();
+        assert_eq!(
+            reloaded.service.catalog().live_entry_limit().unwrap().get(),
+            2
+        );
+        let mut state = reloaded.product_state();
+        state.privacy.max_live_entries = None;
+        reloaded.save_product_state(state).unwrap();
+        assert!(reloaded.service.catalog().live_entry_limit().is_none());
+    }
 
     #[test]
     fn embedding_buffer_limit_is_not_replaced_by_product_defaults() {

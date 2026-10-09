@@ -393,3 +393,10 @@ release environment; no signed release or publication was performed locally.
     A counted-read test verifies that a one-MiB incompressible encrypted or plain
     body is never read while indexing; a corrupt skipped body fails on access.
     Circular recording preserves complete metadata/body pairs and nonce domains.
+
+36. The live catalog defaults to no entry cap. An optional persisted Settings
+    maximum drops oldest completed live entries immediately and after completion,
+    preserves imported traffic and permits temporary active-request overflow.
+    Product state accepts only its current schema; earlier development layouts
+    are rejected without migration. Browser checks cover choosing and saving
+    the maximum; catalog tests cover more than 10,000 rows and limit transitions.
