@@ -1348,6 +1348,7 @@ pub fn run() {
                 workspaces::open_trace_viewer,
                 workspaces::open_main_window,
                 captured_preview::open_captured_page,
+                captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
                 workspaces::take_opened_traces,
                 workspaces::pick_trace_path,

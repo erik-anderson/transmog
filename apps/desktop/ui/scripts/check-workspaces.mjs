@@ -75,6 +75,7 @@ await page.addInitScript((workspace) => {
         case 'pick_trace_path': return state.pickedTrace??null;
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
+        case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;state.releasePagePreview?.();return;
         case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap.gz',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
@@ -1483,9 +1484,17 @@ try {
   assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferPagePreview=false;globalThis.__workspaceFixture.pagePreviewCanceled=false;});
   await page.getByRole('button',{name:'Preview page…',exact:true}).click();
+  await pageWarning.getByLabel('Resource source',{exact:true}).selectOption('all-loaded');await pageWarning.getByText(/may mix content from different captures/).waitFor();
   await pageWarning.getByLabel('Enable scripts for this preview',{exact:true}).check();await pageWarning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').previewPageBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),true);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options),{scope:'all-loaded'});
   assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
+  await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).click();const previewReport=page.locator('.captured-preview-report[open]');
+  await previewReport.getByText(/3 frozen variants.*1 skipped.*4 served.*2 empty 404s.*Scripts enabled/).waitFor();
+  await previewReport.getByText('Captured resource versions',{exact:true}).click();await previewReport.getByText('POST · fixture.saz',{exact:true}).waitFor();
+  await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-compact.png')});
+  assert.ok((await previewReport.boundingBox()).height<=520);await previewReport.getByRole('button',{name:'Close',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

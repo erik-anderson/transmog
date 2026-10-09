@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+sha2.workspace = true
 webview2-com = "=0.39.1"
 windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 

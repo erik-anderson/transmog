@@ -3,19 +3,20 @@ use webview2_com::{
     BasicAuthenticationRequestedEventHandler, DownloadStartingEventHandler,
     Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL, ICoreWebView2_4, ICoreWebView2_10,
         ICoreWebView2_22, ICoreWebView2Controller, ICoreWebView2Environment,
-        ICoreWebView2Settings4, ICoreWebView2Settings5, ICoreWebView2WebResourceRequestedEventArgs,
-        ICoreWebView2WebResourceResponse,
+        ICoreWebView2Settings4, ICoreWebView2Settings5, ICoreWebView2WebResourceRequest,
+        ICoreWebView2WebResourceRequestedEventArgs, ICoreWebView2WebResourceResponse,
     },
     NewWindowRequestedEventHandler, PermissionRequestedEventHandler,
     WebResourceRequestedEventHandler, take_pwstr,
 };
 use windows::{
     Win32::{
-        Foundation::HWND,
+        Foundation::{E_POINTER, HWND},
         System::{
-            Com::{IStream, STGM_READ, STGM_SHARE_DENY_NONE},
+            Com::{IStream, STGM_READ, STGM_SHARE_DENY_NONE, STREAM_SEEK_SET},
             Threading::GetCurrentThreadId,
         },
         UI::{Shell::SHCreateStreamOnFileEx, WindowsAndMessaging::GetWindowThreadProcessId},
@@ -36,7 +37,22 @@ pub struct CapturedResponse {
     pub body_path: PathBuf,
 }
 /// Pure lookup. It must not perform I/O, access live app state or execute traffic.
-pub type Lookup = Arc<dyn Fn(&str, &str) -> Option<CapturedResponse> + Send + Sync>;
+pub type Lookup = Arc<dyn Fn(&PreviewRequest) -> Option<CapturedResponse> + Send + Sync>;
+/// Bounded request facts obtained before any network request is permitted.
+#[derive(Clone, Debug)]
+pub struct PreviewRequest {
+    /// Requested method.
+    pub method: String,
+    /// Original browser URL.
+    pub url: String,
+    /// Available request headers; none means native inspection failed or exceeded budget.
+    pub headers: Option<Vec<(String, String)>>,
+    /// SHA-256 of complete encoded body bytes; none means unavailable/over budget.
+    pub body_sha256: Option<String>,
+    /// True for a document request, including frame navigation.
+    pub document: bool,
+}
+const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 
 /// Installs fail-closed resource interception before navigating from about:blank.
 ///
@@ -175,7 +191,16 @@ fn resource_response(
         let uri = take_pwstr(uri);
         request.Method(&raw mut method)?;
         let method = take_pwstr(method);
-        let Some(resource) = lookup(&method, &uri) else {
+        let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
+        args.ResourceContext(&raw mut context)?;
+        let facts = PreviewRequest {
+            method: method.clone(),
+            url: uri,
+            headers: request_headers(&request).ok(),
+            body_sha256: request_body_hash(&request, &method).ok().flatten(),
+            document: context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+        };
+        let Some(resource) = lookup(&facts) else {
             return empty_response(environment);
         };
         if !(200..=599).contains(&resource.status)
@@ -213,5 +238,83 @@ fn empty_response(
             &HSTRING::from("Not Found"),
             &HSTRING::from("Content-Length: 0\r\nCache-Control: no-store\r\n"),
         )
+    }
+}
+
+fn request_headers(request: &ICoreWebView2WebResourceRequest) -> Result<Vec<(String, String)>> {
+    // SAFETY: Request and iterator belong to this UI-thread callback. Output
+    // slots are initialized; each CoTaskMem string is copied/freed once, even
+    // when an iterator getter fails. No COM interface crosses threads.
+    unsafe {
+        let iterator = request.Headers()?.GetIterator()?;
+        let mut has = windows::core::BOOL::default();
+        iterator.HasCurrentHeader(&raw mut has)?;
+        let mut result = Vec::new();
+        let mut bytes = 0;
+        while has.as_bool() {
+            let mut name = PWSTR::null();
+            let mut value = PWSTR::null();
+            let status = iterator.GetCurrentHeader(&raw mut name, &raw mut value);
+            let name = take_pwstr(name);
+            let value = take_pwstr(value);
+            status?;
+            bytes += name.len() + value.len();
+            if bytes > 64 * 1024 || result.len() >= 512 {
+                return Err(windows::core::Error::from_hresult(E_POINTER));
+            }
+            result.push((name, value));
+            iterator.MoveNext(&raw mut has)?;
+        }
+        Ok(result)
+    }
+}
+fn request_body_hash(
+    request: &ICoreWebView2WebResourceRequest,
+    method: &str,
+) -> Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    // SAFETY: The request is used only on its owning UI thread. A cloned stream
+    // has its own seek position. If cloning is unsupported we may consume the
+    // original: every path supplies a synthetic response or stops navigation;
+    // the body is never forwarded to a network endpoint.
+    // Read receives initialized, correctly sized writable storage and a live
+    // byte-count slot. The returned count is checked before slicing. Inspection
+    // is bounded, and failures produce no signature (therefore an empty 404).
+    unsafe {
+        let content = match request.Content() {
+            Ok(content) => content,
+            Err(error) if error.code() == E_POINTER || matches!(method, "GET" | "HEAD") => {
+                return Ok(Some(format!("{:x}", Sha256::digest([]))));
+            }
+            Err(error) => return Err(error),
+        };
+        let stream = content.Clone().unwrap_or(content);
+        let _ = stream.Seek(0, STREAM_SEEK_SET, None);
+        let mut digest = Sha256::new();
+        let mut bytes = 0;
+        let mut buffer = vec![0_u8; 16 * 1024];
+        loop {
+            let mut count = 0_u32;
+            stream
+                .Read(
+                    buffer.as_mut_ptr().cast(),
+                    u32::try_from(buffer.len()).expect("bounded buffer"),
+                    Some(&raw mut count),
+                )
+                .ok()?;
+            let count = usize::try_from(count).expect("bounded native count");
+            if count > buffer.len() {
+                return Ok(None);
+            }
+            if count == 0 {
+                break;
+            }
+            bytes += count;
+            if bytes > MAX_REQUEST_BYTES {
+                return Ok(None);
+            }
+            digest.update(&buffer[..count]);
+        }
+        Ok(Some(format!("{:x}", digest.finalize())))
     }
 }

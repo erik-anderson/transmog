@@ -191,13 +191,23 @@ try{
     const disabled=await connect(disabledTarget);
     await waitFor(()=>disabled.evaluate(`document.readyState==='complete' && document.getElementById('captured-heading')?.textContent==='Captured page fixture'`),'Captured HTML and resources did not finish rendering');
     const disabledState=await disabled.evaluate(`({script:globalThis.capturedScriptRan===true,color:getComputedStyle(document.getElementById('captured-heading')).color,image:document.getElementById('captured-image').naturalWidth})`);
+    if(disabledState.color!=='rgb(0, 128, 0)')process.stderr.write(JSON.stringify(await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${traffic}.previewReportLabel})`))+'\n');
     assert.equal(disabledState.script,false);assert.equal(disabledState.color,'rgb(0, 128, 0)');assert.equal(disabledState.image,20);
     const oldEnabled=(await targets()).map(target=>target.id);
-    await second.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(htmlId)},enableScripts:true,operationId:'native-enabled-probe'})`);
+    const enabledLabel=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(htmlId)},enableScripts:true,options:{scope:'all-loaded'},operationId:'native-enabled-probe'})`);
     const enabledTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>!oldEnabled.includes(target.id)&&target.url.includes('/captured-page'));},'Script-enabled preview did not navigate');
     const enabled=await connect(enabledTarget);
     await waitFor(()=>enabled.evaluate(`globalThis.missingResult`),'Captured script did not complete its missing request');
     assert.deepEqual(await enabled.evaluate(`globalThis.missingResult`),{status:404,body:''});
+    await waitFor(()=>enabled.evaluate(`globalThis.variantResults`),'Captured POST variants did not finish');
+    assert.deepEqual(await enabled.evaluate(`globalThis.variantResults`),[{status:200,body:'dark variant'},{status:404,body:''}]);
+    const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=4&&report.misses>=2);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='served'));
+    assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}}).then(()=>false,()=>true)`),true,'Another window read a preview report');
+    await second.evaluate(`(async()=>{const workspace=${traffic};workspace.previewReportLabel=${JSON.stringify(enabledLabel)};await workspace.showPreviewReport();})()`);
+    if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-preview-report.png'),Buffer.from(image.data,'base64'));}
+    await second.call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});assert.ok(await second.evaluate(`${traffic}.previewReportDialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight`));
+    if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-preview-report-compact.png'),Buffer.from(image.data,'base64'));}
+    await second.call('Emulation.clearDeviceMetricsOverride');await second.evaluate(`${traffic}.closePreviewReport()`);
     assert.equal(await enabled.evaluate(`(()=>{try{new RTCPeerConnection();return false;}catch{return true;}})()`),true);
     assert.equal(await enabled.evaluate(`(()=>{try{new WebSocket('ws://127.0.0.1:9');return false;}catch{return true;}})()`),true);
     const denied=await enabled.evaluate(`Promise.race([Promise.resolve().then(()=>window.__TAURI_INTERNALS__.invoke('app_status')).then(()=>false,()=>true),new Promise(resolve=>setTimeout(()=>resolve(true),500))])`);

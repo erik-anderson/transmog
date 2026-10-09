@@ -98,6 +98,43 @@ impl RequestFile {
         )
     }
 
+    /// Hashes complete encoded bytes under a finite preview budget without
+    /// retaining them in memory. None means the preview body budget was exceeded.
+    pub(crate) fn fingerprint(
+        mut self,
+        max_bytes: u64,
+        canceled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Option<(String, u64)>, AppError> {
+        use sha2::{Digest, Sha256};
+        if self.bytes > max_bytes {
+            return Ok(None);
+        }
+        let mut digest = Sha256::new();
+        let mut total = 0_u64;
+        let mut buffer = vec![0; 64 * 1024];
+        loop {
+            if canceled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(unavailable("Captured page preview canceled"));
+            }
+            let count = self
+                .reader
+                .read(&mut buffer)
+                .map_err(|_| unavailable("Captured request bytes could not be read"))?;
+            if count == 0 {
+                break;
+            }
+            total = total.saturating_add(count as u64);
+            if total > max_bytes {
+                return Ok(None);
+            }
+            digest.update(&buffer[..count]);
+        }
+        if self.length_known && total != self.bytes {
+            return Err(unavailable("Captured request body is incomplete"));
+        }
+        Ok(Some((format!("{:x}", digest.finalize()), total)))
+    }
+
     /// Stages a retained request in an anonymous, automatically removed file for
     /// streamed replay, keeping an eviction lease until copying finishes.
     ///

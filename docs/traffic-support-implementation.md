@@ -218,10 +218,26 @@ qualified baseline, not completion of the complete plan.
     browser keyboard/focus and compact layouts, and saved-viewer native match
     import/API/highlighting with the proxy stopped.
 
+23. Captured-page preview defaults to its original trace/current capture and
+    explicitly offers all traffic loaded in its owner window. Frozen variants
+    match exact request-body hashes and response Vary fields; selected HTML is
+    fixed for initial GET navigation. Accept-Encoding is ignored after decoding.
+    Bounded owner-only reports show preparation/version decisions, source links,
+    browser hit/miss counts and script choice, and remain available after close.
+    Header values and body bytes never enter diagnostics. WebView2 peeks or
+    consumes only intercepted request streams; every path supplies a synthetic
+    response or stops navigation, with a separate deny-only network fallback.
+    Request bodies are bounded to 32 MiB for preview matching, with 256 MiB total
+    signature and decoded-resource budgets and at most 2,048 response variants.
+    These preview limits do not change capture or Composer limits. Portable
+    scene tests cover body/header variants, source scope, wildcard omissions,
+    original-document priority and bounded counters. Native tests cover matching
+    and mismatched POST variants, CSS/images, disabled/enabled scripts, report
+    ownership, compact diagnostics and continued IPC/network denial. Browser
+    layout and keyboard/focus reviews cover source choices and diagnostics.
+
 Remaining isolated phases:
 
-- Captured-page preview: selectable source scope, resource/version decisions,
-  missing-resource diagnostics and request variants while retaining isolation.
 - Trace exports: opt-in export redaction without changing retained evidence,
   clearer collector provenance and original-versus-save network context.
 - SAZ fidelity: trailers, conventional timers, extended evidence and merged

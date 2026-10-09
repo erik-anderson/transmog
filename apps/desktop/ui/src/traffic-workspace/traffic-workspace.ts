@@ -8,7 +8,7 @@ import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
-import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch } from '../models.js';
+import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
@@ -37,6 +37,19 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewPageBusy=false;
   @observable previewPageUrl='';
   @observable previewPageStatus='';
+  @observable previewPageScope='original-trace';
+  @observable previewReportAvailable=false;
+  @observable previewReportBusy=false;
+  @observable previewReportError='';
+  @observable previewReportSummary='';
+  @observable previewReportUrl='';
+  @observable previewResourceRows:Array<{id:string;sourceId:string;sourceAvailable:boolean;method:string;url:string;source:string;size:string;time:string;decision:string}>=[];
+  @observable previewRequestRows:Array<{id:string;method:string;url:string;outcome:string;reason:string}>=[];
+  previewReportDialog!:HTMLDialogElement;
+  private previewReportLabel='';
+  private previewReportGeneration=0;
+  private previewReportFocus:HTMLElement|null=null;
+
   previewPageDialog!:HTMLDialogElement;
   previewPageScripts!:HTMLInputElement;
   private previewPageId='';
@@ -314,7 +327,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$flushUpdates();if(generation===this.metadataGeneration)this.metadataSelector.value=id;
   }
   changeMetadataTrace(event:Event):void {void this.loadTraceMetadata((event.currentTarget as HTMLSelectElement).value);}
-  closeMetadata():void {this.matchGeneration++;this.metadataGeneration++;this.metadataDialog.close();}
+  closeMetadata():void {this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;this.metadataDialog.close();}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
   pageSizeChanged():void {
     this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
@@ -793,13 +806,25 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   showCapturedPage():void {
     this.trafficMenu.hidePopover();const detail=this.selectedDetail;if(!detail||!this.previewPageAvailable||this.previewPageBusy)return;
-    this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageStatus='';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
+    this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageStatus='';this.previewPageScope='original-trace';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
   }
+  setPreviewScope(event:Event):void {this.previewPageScope=(event.currentTarget as HTMLSelectElement).value;}
+  async showPreviewReport():Promise<void> {this.previewReportFocus=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.previewReportDialog.showModal();await this.refreshPreviewReport();}
+  async refreshPreviewReport():Promise<void> {
+    const label=this.previewReportLabel,generation=++this.previewReportGeneration;this.previewReportBusy=true;this.previewReportError='';
+    try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
+      this.previewReportUrl=report.url;this.previewReportSummary=(report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' empty 404s'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
+      this.previewResourceRows=report.resources.map((row,index)=>({id:String(index),sourceId:row.entryId,sourceAvailable:row.sourceAvailable!==false,method:row.method,url:row.url,source:row.source,size:row.bytes==null?'Unavailable':row.bytes.toLocaleString()+' bytes',time:row.unixMillis==null||!Number.isFinite(new Date(row.unixMillis).getTime())?'Time unavailable':new Date(row.unixMillis).toISOString(),decision:row.decision}));
+      this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='served'?'Served':'Empty 404',reason:row.reason}));
+    }catch(error:unknown){if(generation===this.previewReportGeneration)this.previewReportError='Preview diagnostics could not be read: '+describeError(error);}finally{if(generation===this.previewReportGeneration)this.previewReportBusy=false;}
+  }
+  async showPreviewSource(id:string):Promise<void> {try{await invoke('session_detail',{id});this.closePreviewReport();await this.revealSession(id);}catch{this.previewReportError='The source entry is no longer retained. Its resource decision remains in this report.';}}
+  closePreviewReport(event?:Event):void {event?.preventDefault();this.previewReportGeneration++;this.previewReportBusy=false;this.previewReportDialog.close();this.previewReportFocus?.focus();this.previewReportFocus=null;}
   closeCapturedPageWarning():void {if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});this.previewPageDialog.close();}
   async openCapturedPage():Promise<void> {
     if(this.previewPageBusy)return;this.previewPageBusy=true;this.previewPageStatus='Preparing captured responses…';
     const id=this.previewPageId,enableScripts=this.previewPageScripts.checked,operationId=crypto.randomUUID();this.previewPageOperation=operationId;
-    try{await invoke('open_captured_page',{id,enableScripts,operationId});if(this.isConnected){this.previewPageDialog.close();this.diagnostic='Captured page preview opened in a separate window.';}}
+    try{const label=await invoke<string>('open_captured_page',{id,enableScripts,operationId,options:{scope:this.previewPageScope}});this.previewReportLabel=label;this.previewReportAvailable=true;if(this.isConnected){this.previewPageDialog.close();this.diagnostic='Captured page preview opened. Preview diagnostics show resource choices and missing requests.';}}
     catch(error:unknown){if(this.isConnected){this.previewPageStatus='Preview could not be opened: '+describeError(error);if(!this.previewPageDialog.open&&!describeError(error).includes('canceled'))this.showNotice('Captured page preview failed',describeError(error),null,null);}}
     finally {this.previewPageBusy=false;this.previewPageOperation='';}
   }
@@ -817,7 +842,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   disconnectedCallback():void {
     this.clearColumnDrag();
-    for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.metadataGeneration++;
+    for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
     if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});
     this.inspectionGeneration++; super.disconnectedCallback();

@@ -6438,6 +6438,7 @@ dependencies = [
 name = "transmog-webview-preview-windows"
 version = "0.1.0+0"
 dependencies = [
+ "sha2 0.10.9",
  "webview2-com",
  "windows",
 ]

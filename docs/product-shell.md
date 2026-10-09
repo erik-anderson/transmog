@@ -250,3 +250,29 @@ Only the first 200 occurrences per entry are presented; refining the search
 finds later locations. Locations are read on demand using the saved query, so
 changed or removed evidence asks the user to search again. Captured content is
 always text in this view, including HTML and script fragments.
+
+Captured page preview defaults to the selected entry's original trace (or the
+current live capture). All loaded traffic in this window is an explicit choice
+that can mix captures or users; the selected HTML remains fixed. Responses are
+frozen in nearest timestamp order, with deterministic ID order when time is
+unavailable. Resource matching uses method, canonical URL, exact encoded request
+body and available Vary header values. Accept-Encoding is ignored after response
+content decoding. Redacted/unknown Vary, Vary wildcard, unavailable/oversized
+request bodies, and unknown URLs produce empty 404s rather than live requests.
+The selected HTML overrides initial GET document navigation to allow previewing
+an HTML response originally obtained by another method.
+
+Last preview diagnostics lives in the trusted workbench, scoped to its owner
+window. It shows preparation/version decisions, links to retained source
+traffic, actual served/missing counts, and the script choice. Reports remain
+readable after preview close; bounded retention keeps eight recent reports.
+Only 256 preparation rows and the last 256 request observations are shown, while
+counters include all intercepted requests. URLs are shortened in diagnostics;
+headers and request bodies are excluded. Refresh after navigating the preview.
+Preview request-body matching has a 32 MiB per-body and 256 MiB total hashing
+budget. Decoded resources have a separate 32 MiB per-resource, 256 MiB total
+budget and 2,048-variant limit. These limits preserve UI responsiveness and do
+not constrain capture or file-based Composer replay. Request stream handling
+follows [WebView2's request API](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2webresourcerequest)
+and [IStream clone semantics](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-istream-clone);
+unsupported clones are consumed only for synthetic, fully intercepted replies.

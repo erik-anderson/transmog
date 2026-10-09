@@ -12,6 +12,7 @@ mod autoresponse_batch;
 mod body_store;
 mod breakpoints;
 mod captured_page;
+mod captured_page_report;
 mod composer;
 mod diagnostics;
 mod inspector;
@@ -50,6 +51,10 @@ pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
 };
 pub use captured_page::{CapturedPage, CapturedResource};
+pub use captured_page_report::{
+    CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport, CapturedPageScope,
+    CapturedPreviewRequest, CapturedResourceDecision,
+};
 pub use composer::{
     ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,
     ComposerSnapshot, SystemReplayExecutor,
@@ -1136,7 +1141,20 @@ impl Application {
         id: String,
         canceled: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<CapturedPage, AppError> {
-        captured_page::prepare(self.clone(), id, canceled).await
+        captured_page::prepare(self.clone(), id, CapturedPageOptions::default(), canceled).await
+    }
+
+    /// Freezes response variants within an explicit captured resource scope.
+    ///
+    /// # Errors
+    /// Returns unavailable HTML, request signatures, decoding or storage failures.
+    pub async fn prepare_captured_page_with_options(
+        &self,
+        id: String,
+        options: CapturedPageOptions,
+        canceled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<CapturedPage, AppError> {
+        captured_page::prepare(self.clone(), id, options, canceled).await
     }
 
     /// Saves every retained Traffic entry with its original trace association.

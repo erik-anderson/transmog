@@ -755,5 +755,13 @@
   "matchHasNext": false,
   "matchHasPreviousEntry": false,
   "matchHasNextEntry": false,
-  "matchHasLocation": false
+  "matchHasLocation": false,
+  "previewPageScope": "original-trace",
+  "previewReportAvailable": false,
+  "previewReportBusy": false,
+  "previewReportError": "",
+  "previewReportSummary": "",
+  "previewReportUrl": "",
+  "previewResourceRows": [],
+  "previewRequestRows": []
 }

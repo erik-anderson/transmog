@@ -111,18 +111,23 @@ try {
             }
         } finally { $zip.Dispose() }
         $pageSource = Join-Path $probeRoot 'captured-page-fixture.saz'
-        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
+        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;Promise.all([fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"beta"}).then(async r=>({status:r.status,body:await r.text()})),fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"alpha"}).then(async r=>({status:r.status,body:await r.text()}))]).then(rows=>globalThis.variantResults=rows);fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
         $pageMembers = [ordered]@{}
         $pageResources = @(
             @{ Id=1; Url='https://example.invalid/captured-page'; Type='text/html'; Body=$pageHtml },
             @{ Id=2; Url='https://example.invalid/page.css'; Type='text/css'; Body='h1 { color: rgb(0, 128, 0); }' },
+            @{ Id=4; Url='https://example.invalid/variant'; Method='POST'; RequestBody='alpha'; RequestHeaders="X-Preview: light`r`n"; ResponseHeaders="Vary: X-Preview`r`n"; Type='text/plain'; Body='light variant' },
+            @{ Id=5; Url='https://example.invalid/variant'; Method='POST'; RequestBody='beta'; RequestHeaders="X-Preview: dark`r`n"; ResponseHeaders="Vary: X-Preview`r`n"; Type='text/plain'; Body='dark variant' },
             @{ Id=3; Url='https://example.invalid/pixel.svg'; Type='image/svg+xml'; Body='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="green"/></svg>' }
         )
         foreach ($resource in $pageResources) {
             $number = $resource.Id
-            $pageMembers["raw/${number}_c.txt"] = "GET $($resource.Url) HTTP/1.1`r`nHost: example.invalid`r`n`r`n"
+            $method = if ($resource.Method) { $resource.Method } else { 'GET' }
+            $requestBody = if ($resource.RequestBody) { $resource.RequestBody } else { '' }
+            $requestLength = [Text.Encoding]::UTF8.GetByteCount($requestBody)
+            $pageMembers["raw/${number}_c.txt"] = "$method $($resource.Url) HTTP/1.1`r`nHost: example.invalid`r`n$($resource.RequestHeaders)Content-Length: $requestLength`r`n`r`n$requestBody"
             $length = [Text.Encoding]::UTF8.GetByteCount($resource.Body)
-            $pageMembers["raw/${number}_s.txt"] = "HTTP/1.1 200 OK`r`nContent-Type: $($resource.Type)`r`nContent-Length: $length`r`n`r`n$($resource.Body)"
+            $pageMembers["raw/${number}_s.txt"] = "HTTP/1.1 200 OK`r`nContent-Type: $($resource.Type)`r`n$($resource.ResponseHeaders)Content-Length: $length`r`n`r`n$($resource.Body)"
             $pageMembers["raw/${number}_m.xml"] = '<Session><SessionTimers ClientBeginRequest="2026-10-08T19:00:00Z" ClientDoneResponse="2026-10-08T19:00:00.025Z"/></Session>'
         }
         $zip = [IO.Compression.ZipFile]::Open($pageSource, [IO.Compression.ZipArchiveMode]::Create)

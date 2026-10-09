@@ -37,7 +37,44 @@ use std::{
     time::Duration,
 };
 use tauri::{Manager, WebviewWindowBuilder, utils::config::WebviewUrl};
-use transmog_app::{AppError, CapturedPage, ErrorCategory};
+use transmog_app::{
+    AppError, CapturedPage, CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport,
+    ErrorCategory,
+};
+static REPORTS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::VecDeque<(String, String, CapturedPageDiagnostics)>>,
+> = std::sync::OnceLock::new();
+fn reports()
+-> &'static std::sync::Mutex<std::collections::VecDeque<(String, String, CapturedPageDiagnostics)>>
+{
+    REPORTS.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
+}
+#[tauri::command]
+pub(super) fn captured_page_report(
+    label: String,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<CapturedPageReport, AppError> {
+    let application = state.window_application(&window)?;
+    let report = reports()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .find(|(owner, id, _)| owner == window.label() && id == &label)
+        .map(|(_, _, report)| report.clone())
+        .ok_or_else(|| error("This preview report is unavailable or belongs to another window"))?;
+    let retained = application
+        .session_service()
+        .catalog()
+        .project_retained(|snapshot| format!("{:032x}", snapshot.exchange_id.0))
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let mut report = report.snapshot();
+    for resource in &mut report.resources {
+        resource.source_available = retained.contains(&resource.entry_id);
+    }
+    Ok(report)
+}
 
 const HARDENING: &str = r"(() => {
   const blocked = class { constructor() { throw new DOMException('Unavailable in a captured preview', 'NotSupportedError'); } };
@@ -88,6 +125,7 @@ impl Drop for PreviewProfile {
 pub(super) async fn open_captured_page(
     id: String,
     enable_scripts: bool,
+    options: Option<CapturedPageOptions>,
     operation_id: String,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, DesktopState>,
@@ -95,7 +133,7 @@ pub(super) async fn open_captured_page(
     let application = state.window_application(&window)?;
     let (_operation, canceled) = register_operation(&window, &operation_id)?;
     let page = application
-        .prepare_captured_page(id, canceled.clone())
+        .prepare_captured_page_with_options(id, options.unwrap_or_default(), canceled.clone())
         .await?;
     let app = window.app_handle().clone();
     let profile = tempfile::Builder::new()
@@ -110,6 +148,7 @@ pub(super) async fn open_captured_page(
         profile: PreviewProfile(Some(profile)),
         _firewall: firewall,
     });
+    owner.page.diagnostics().script_choice(enable_scripts);
     let creation_owner = owner.clone();
     let creation_app = app.clone();
     let label = format!(
@@ -135,7 +174,7 @@ pub(super) async fn open_captured_page(
     let original_url = owner.page.url.clone();
     let lookup_owner = owner.clone();
     if browser.with_webview(move|native|{
-        let lookup:transmog_webview_preview_windows::Lookup=Arc::new(move|method,url|lookup_owner.page.resource(method,url).map(|resource|transmog_webview_preview_windows::CapturedResponse{status:resource.status,reason:resource.reason,headers:resource.headers,body_path:resource.body_path}));
+        let lookup:transmog_webview_preview_windows::Lookup=Arc::new(move|request|lookup_owner.page.resolve(&request.method,&request.url,request.headers.as_deref(),request.body_sha256.as_deref(),request.document).map(|resource|transmog_webview_preview_windows::CapturedResponse{status:resource.status,reason:resource.reason,headers:resource.headers,body_path:resource.body_path}));
         let result=transmog_webview_preview_windows::attach(&native.controller(),&native.environment(),lookup,enable_scripts,&original_url);
         let _=ready.send(result.map_err(|_|error("Captured preview needs a WebView2 runtime with complete resource interception. Update the runtime and try again.")));
     }).is_err(){let _=browser.destroy();return Err(error("Captured preview initialization failed"));}
@@ -149,6 +188,17 @@ pub(super) async fn open_captured_page(
                 let _ = browser.destroy();
                 return Err(error("Captured preview could not be shown"));
             }
+            let mut reports = reports()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if reports.len() == 8 {
+                reports.pop_front();
+            }
+            reports.push_back((
+                window.label().into(),
+                label.clone(),
+                owner.page.diagnostics(),
+            ));
             Ok(label)
         }
         result => {
