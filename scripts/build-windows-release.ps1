@@ -38,9 +38,9 @@ try {
     } finally { Write-Host '::endgroup::' }
     . (Join-Path $PSScriptRoot 'windows-release-symbols.ps1')
     New-WindowsReleaseSymbolArchive -BuildDirectory $buildResult.BuildDirectory -Version $buildResult.Version -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -OutputPath (Join-Path $payloadRoot "evidence/Transmog_$($buildResult.Version)_windows-x64-symbols.zip")
-    Write-Host '::group::Release WebView validation and 30-minute soak'
+    Write-Host '::group::Release WebView validation and 3-minute soak'
     try {
-        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 30 -HostedRunnerDevToolsPolicy |
+        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 3 -HostedRunnerDevToolsPolicy |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
     } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM

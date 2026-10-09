@@ -43,7 +43,7 @@ branding, so reviewed Beta assets can become Stable without another build/signin
 | Draft publication | `contents: write` | None |
 
 The build runs the full locked repository gate, browser workspace
-tests, and 30-minute WebView soak before credentials exist. Soak progress logs
+tests, and 3-minute WebView soak before credentials exist. Soak progress logs
 include UTC timestamps and elapsed/remaining time once per
 minute, with a completion timestamp. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The

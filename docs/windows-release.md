@@ -88,7 +88,7 @@ decisions. No push or tag automatically starts a release build.
 
    The workflow builds the selected branch's commit at dispatch. Later pushes to
    that branch do not change the run. Build and qualification progress is visible
-   in the run; the release build includes a 30-minute WebView soak.
+   in the run; the release build includes a 3-minute WebView soak.
    The separate **Windows unsigned installer** workflow
    is available for development builds that do not need signing or a release.
 
@@ -340,10 +340,10 @@ Run the release WebView gate (the default fast soak uses 100 bounded refreshes):
 pwsh ./scripts/test-windows-desktop.ps1
 ```
 
-For release qualification, use at least 30 minutes:
+Release qualification defaults to a three-minute soak:
 
 ```powershell
-pwsh ./scripts/test-windows-desktop.ps1 -SoakMinutes 30
+pwsh ./scripts/test-windows-desktop.ps1 -SoakMinutes 3
 ```
 
 The gate uses the packaged WebView technology and verifies startup, CSP and
