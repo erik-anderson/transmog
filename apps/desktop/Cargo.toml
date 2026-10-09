@@ -17,9 +17,9 @@ name = "transmog"
 path = "src/main.rs"
 
 [dependencies]
-transmog-app = { version = "=0.0.1", path = "../../crates/app" }
-transmog-app-webui = { version = "=0.0.1", path = "../../crates/app-webui" }
-transmog-session = { version = "=0.0.1", path = "../../crates/proxy-session" }
+transmog-app = { version = "=0.1.0", path = "../../crates/app" }
+transmog-app-webui = { version = "=0.1.0", path = "../../crates/app-webui" }
+transmog-session = { version = "=0.1.0", path = "../../crates/proxy-session" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -30,12 +30,12 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-transmog-webview-preview-windows = { version = "=0.0.1", path = "../../crates/webview-preview-windows" }
+transmog-webview-preview-windows = { version = "=0.1.0", path = "../../crates/webview-preview-windows" }
 rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.4.5"
 tauri-plugin-updater = { version = "=2.13.2", default-features = false, features = ["rustls-tls", "system-proxy"] }
-transmog-host-windows = { version = "=0.0.1", path = "../../crates/host-windows" }
+transmog-host-windows = { version = "=0.1.0", path = "../../crates/host-windows" }
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }

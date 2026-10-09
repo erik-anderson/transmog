@@ -11,7 +11,7 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-transmog-session = { version = "=0.0.1", path = "../proxy-session" }
+transmog-session = { version = "=0.1.0", path = "../proxy-session" }
 
 [lints]
 workspace = true
