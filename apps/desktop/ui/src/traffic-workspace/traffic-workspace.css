@@ -85,6 +85,7 @@ traffic-workspace { display:contents; }
 .cell-value[data-tone="failed"], .status-badge[data-tone="failed"] { color:var(--danger); background:var(--danger-soft); }
 .cell-value[data-tone="not-modified"], .status-badge[data-tone="not-modified"], .cell-value[data-tone="pending"] { color:var(--muted); background:var(--panel-raised); }
 .auto-badge { display:inline-block; margin-left:.2rem; color:var(--accent-strong); font-size:.55rem; font-weight:750; }
+.navigation-badge { display:inline-block; margin-inline-end:.4rem; padding:.08rem .3rem; border:1px solid var(--line); border-radius:.25rem; color:var(--muted); font-size:.62rem; font-weight:600; vertical-align:baseline; }
 .details-pane { container-type:inline-size; grid-template-rows:auto auto minmax(0,1fr); }
 .details-pane > .selection-bar { grid-row:1; }
 .details-pane > .inspector-side-tabs { grid-row:2; }

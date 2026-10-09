@@ -42,7 +42,7 @@ await page.route('https://workspace.test/**', async (route) => {
 });
 await page.addInitScript((workspace) => {
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
-  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
+  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
@@ -374,6 +374,9 @@ try {
   assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
   assert.equal(await page.locator('tr[data-session-id="cached"]').getAttribute('data-tone'),'not-modified');
+  assert.equal(await page.locator('tr[data-session-id="first"] .navigation-badge').textContent(),'Page');
+  assert.match(await page.locator('tr[data-session-id="first"]').getAttribute('aria-label'),/^Top-level navigation:/);
+  assert.equal(await page.locator('tr[data-session-id="second"] .navigation-badge').count(),0);
   assert.equal(await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.timingDialog.showModal();workspace.closeTimings();workspace.timingDialog.showModal();const generation=workspace.timingGeneration;await new Promise(resolve=>setTimeout(resolve,20));const stable=workspace.timingGeneration===generation;workspace.closeTimings();return stable;}),true,'A stale close event invalidated reopened timings');
   const toggle = page.getByRole('button',{name:'Toggle navigation labels'});
   await toggle.click();

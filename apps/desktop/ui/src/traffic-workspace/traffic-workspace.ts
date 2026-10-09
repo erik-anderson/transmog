@@ -354,7 +354,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(this.sessions);
   }
   private rebuildRows(rows:SessionSummary[]):void {
-    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:row.method+' '+row.host+row.path,
+    this.sessions = rows.map((row) => ({...row,tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path,
       cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))}));
     for(const row of rows)if(this.trafficSelection.ids.has(row.id))this.selectedTraffic.set(row.id,row);
     this.selectedTrafficCount=this.trafficSelection.ids.size;
@@ -570,7 +570,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   fitColumn(id:ColumnId):void {
     const context = new OffscreenCanvas(1,1).getContext('2d');
     if (!context) return; context.font = getComputedStyle(this.trafficTable).font || '13px Segoe UI';
-    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width))+38;
+    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)))+38;
     this.setColumnWidth(id,width,true);
   }
   private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(32,Math.min(1200,width)))} : column)},committed); }

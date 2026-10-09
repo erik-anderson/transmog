@@ -220,6 +220,9 @@ try{
   if(pageSource){
     await second.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
     await waitFor(()=>second.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page') && !${traffic}.importingTrace`),'HTML fixture import did not finish');
+    const navigation=await second.evaluate(`(()=>{const workspace=${traffic};return {pages:workspace.sessions.filter(row=>row.topLevelNavigation).map(row=>row.path),badges:workspace.getRootNode().querySelectorAll('.navigation-badge').length};})()`);
+    assert.deepEqual(navigation,{pages:['/captured-page'],badges:1});
+    if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-navigation.png'),Buffer.from(image.data,'base64'));}
     const htmlId=await second.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/captured-page');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
     await waitFor(()=>second.evaluate(`${traffic}.selectedDetail?.id===${JSON.stringify(htmlId)} && ${traffic}.previewPageAvailable`),'Selected HTML inspection did not finish');
     await second.evaluate(`${traffic}.showCapturedPage()`);

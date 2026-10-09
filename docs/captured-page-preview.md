@@ -5,6 +5,13 @@ Read the warning and choose whether to **Enable scripts for this preview**.
 Scripts start disabled each time. **Open preview** opens a separate WebView2
 window; the Transmog proxy can remain stopped. Cancel or Escape stops preparation.
 
+Traffic marks identifiable top-level navigations with a subtle **Page** badge
+beside the path. This uses the original request's `Sec-Fetch-Dest: document`
+and, when present, `Sec-Fetch-Mode: navigate` as defined by
+[Fetch Metadata](https://www.w3.org/TR/fetch-metadata/#sec-fetch-dest-header).
+Iframe requests and entries without clear fetch metadata remain unmarked;
+HTML content alone does not identify a top-level navigation.
+
 The page keeps its original URL so relative CSS, images and other resources can
 resolve naturally. Resources come from the selected entry's original trace,
 including when several traces have been imported into one workspace. For each

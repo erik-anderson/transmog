@@ -169,6 +169,10 @@ pub struct SessionSummary {
     pub started_at: u64,
     /// Client-facing response content type, without parameters.
     pub content_type: Option<String>,
+    /// Original client fetch metadata identifies a top-level document navigation.
+    pub top_level_navigation: bool,
+    /// Original client Sec-Fetch-Dest value, when unambiguous and recorded.
+    pub fetch_destination: Option<String>,
 }
 
 /// Presentation-safe caller identity for one downstream connection.
@@ -391,6 +395,7 @@ pub(crate) fn subscribe(
 }
 
 fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> SessionSummary {
+    let (fetch_destination, top_level_navigation) = fetch_context(snapshot);
     let target = snapshot.metadata.original_target.as_target();
     let request = snapshot.request_heads.last().map(|head| &head.head);
     let end = snapshot
@@ -432,6 +437,8 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         None => "active",
     };
     SessionSummary {
+        top_level_navigation,
+        fetch_destination,
         trace_id: None,
         url: format!(
             "{}://{}{}{}",
@@ -452,21 +459,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
                 .as_millis(),
         )
         .unwrap_or(u64::MAX),
-        content_type: snapshot
-            .response_heads
-            .iter()
-            .rev()
-            .find(|head| head.boundary == transmog_core::observe::ExchangeBoundary::ClientResponse)
-            .or_else(|| snapshot.response_heads.last())
-            .and_then(|head| head.head.headers.values("content-type").next())
-            .and_then(|value| std::str::from_utf8(value).ok())
-            .map(|mime| {
-                mime.split(';')
-                    .next()
-                    .unwrap_or(mime)
-                    .trim()
-                    .to_ascii_lowercase()
-            }),
+        content_type: response_content_type(snapshot),
         id: format!("{:032x}", snapshot.exchange_id.0),
         caller: client_identity_view(&snapshot.metadata.client_identity),
         method: request.map_or_else(|| "—".to_owned(), |head| head.method.clone()),
@@ -489,6 +482,49 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         capturing: capturing && !snapshot.imported,
         auto_response: auto_response_match(snapshot),
     }
+}
+
+fn response_content_type(snapshot: &SessionSnapshot) -> Option<String> {
+    snapshot
+        .response_heads
+        .iter()
+        .rev()
+        .find(|head| head.boundary == transmog_core::observe::ExchangeBoundary::ClientResponse)
+        .or_else(|| snapshot.response_heads.last())
+        .and_then(|head| head.head.headers.values("content-type").next())
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .map(|mime| {
+            mime.split(';')
+                .next()
+                .unwrap_or(mime)
+                .trim()
+                .to_ascii_lowercase()
+        })
+}
+
+fn fetch_context(snapshot: &SessionSnapshot) -> (Option<String>, bool) {
+    let Some(request) = snapshot
+        .request_heads
+        .iter()
+        .find(|head| head.boundary == transmog_core::observe::ExchangeBoundary::ClientRequest)
+    else {
+        return (None, false);
+    };
+    let headers = &request.head.headers;
+    let destination = single_header(headers, "sec-fetch-dest")
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .filter(|value| !value.is_empty() && value.len() <= 64)
+        .map(str::to_owned);
+    let navigation = destination.as_deref() == Some("document")
+        && (!headers.iter().any(|field| field.name_eq("sec-fetch-mode"))
+            || single_header(headers, "sec-fetch-mode") == Some(b"navigate"));
+    (destination, navigation)
+}
+
+fn single_header<'a>(headers: &'a transmog_core::HeaderBlock, name: &str) -> Option<&'a [u8]> {
+    let mut fields = headers.iter().filter(|field| field.name_eq(name));
+    let field = fields.next()?;
+    (!field.is_redacted() && fields.next().is_none()).then(|| field.value().trim_ascii())
 }
 
 fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
@@ -936,6 +972,130 @@ mod tests {
                 .as_millis(),
             0
         );
+    }
+
+    type NavigationCase = (&'static str, Vec<(&'static str, &'static str)>, bool);
+
+    fn navigation_cases() -> Vec<NavigationCase> {
+        let mut cases = vec![
+            (
+                "GET",
+                vec![
+                    ("Sec-Fetch-Dest", "document"),
+                    ("Sec-Fetch-Mode", "navigate"),
+                ],
+                true,
+            ),
+            ("POST", vec![("Sec-Fetch-Dest", "document")], true),
+            ("GET", vec![("sEc-FeTcH-dEsT", " document \t")], true),
+            (
+                "GET",
+                vec![("Sec-Fetch-Dest", "iframe"), ("Sec-Fetch-Mode", "navigate")],
+                false,
+            ),
+            ("GET", vec![("Sec-Fetch-Dest", "frame")], false),
+            ("GET", vec![("Sec-Fetch-Dest", "image")], false),
+            (
+                "GET",
+                vec![("Sec-Fetch-Mode", "navigate"), ("Accept", "text/html")],
+                false,
+            ),
+            (
+                "GET",
+                vec![("Sec-Fetch-Dest", "document"), ("Sec-Fetch-Mode", "cors")],
+                false,
+            ),
+            (
+                "GET",
+                vec![("Sec-Fetch-Dest", "document"), ("Sec-Fetch-Dest", "iframe")],
+                false,
+            ),
+            (
+                "GET",
+                vec![
+                    ("Sec-Fetch-Dest", "document"),
+                    ("Sec-Fetch-Mode", "navigate"),
+                    ("Sec-Fetch-Mode", "cors"),
+                ],
+                false,
+            ),
+            ("GET", vec![], false),
+        ];
+        // Upstream automation must not make a subresource appear to be a navigation.
+        cases.push(("GET", vec![("Sec-Fetch-Dest", "script")], false));
+        cases
+    }
+
+    fn observe_request(
+        service: &ApplicationSessionService,
+        id: u128,
+        sequence: u64,
+        boundary: transmog_core::observe::ExchangeBoundary,
+        method: &str,
+        headers: transmog_core::HeaderBlock,
+    ) {
+        let target = service
+            .catalog()
+            .get(ExchangeId(id))
+            .unwrap()
+            .metadata
+            .original_target
+            .as_target()
+            .clone();
+        service.catalog().apply(ObserverEvent {
+            exchange_id: ExchangeId(id),
+            sequence,
+            kind: ObserverEventKind::RequestHeadObserved {
+                boundary,
+                head: transmog_core::RequestHead {
+                    method: method.into(),
+                    target,
+                    source_version: HttpLegVersion::Http1,
+                    headers,
+                },
+            },
+        });
+    }
+
+    #[test]
+    fn navigation_markers_require_original_unambiguous_client_fetch_metadata() {
+        use transmog_core::{HeaderBlock, HeaderField, observe::ExchangeBoundary};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let cases = navigation_cases();
+        for (index, (method, headers, expected)) in cases.into_iter().enumerate() {
+            let id = index as u128 + 1;
+            service.catalog().apply(started(id));
+            for (sequence, boundary, fields) in [
+                (2, ExchangeBoundary::ClientRequest, headers),
+                (
+                    3,
+                    ExchangeBoundary::UpstreamRequest,
+                    vec![("Sec-Fetch-Dest", "document")],
+                ),
+            ] {
+                observe_request(
+                    &service,
+                    id,
+                    sequence,
+                    boundary,
+                    method,
+                    HeaderBlock::from_fields(
+                        fields
+                            .into_iter()
+                            .map(|(name, value)| HeaderField::try_new(name, value).unwrap())
+                            .collect(),
+                    ),
+                );
+            }
+            let snapshot = service.catalog().get(ExchangeId(id)).unwrap();
+            let row = summarize(&snapshot, SystemTime::now(), false);
+            assert_eq!(row.top_level_navigation, expected, "case {index}");
+            assert_eq!(
+                serde_json::to_value(row).unwrap()["topLevelNavigation"],
+                expected
+            );
+        }
     }
 
     #[test]

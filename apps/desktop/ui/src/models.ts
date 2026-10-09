@@ -45,6 +45,8 @@ export interface SessionSummary {
   url: string;
   startedAt: number;
   contentType: string | null;
+  topLevelNavigation: boolean;
+  fetchDestination: string | null;
 }
 
 export interface SessionPage {

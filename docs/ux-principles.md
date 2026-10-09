@@ -38,6 +38,9 @@ its actual effect on the user's task.
   labels, values, buttons, and table cells; centering their boxes is insufficient
   when font sizes or padding differ. Align checkbox text naturally with its
   control and keep labels close to their fields.
+- Identify top-level navigations with a small neutral Page badge beside the
+  traffic path and an accessible label. Use original client fetch metadata;
+  do not infer navigation from HTML content, method or URL alone.
 - Give important labels room to wrap or reflow. Secondary URLs and metadata may
   use deliberate abbreviation or ellipsis when the complete value is readily
   available. A tooltip alone should not be necessary to discover an action's
