@@ -6,7 +6,12 @@ Undo a removal before saving if those entries should be included. The file dialo
 confirms overwriting, and an existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact.
 
-The Save trace dialog offers TMCap and HAR. HAR 1.2 preserves HTTP exchanges,
+The Save trace dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
+fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
+extended fidelity** to preserve original source associations and additional
+evidence. SAZ supports optional encryption and network context; ZIP member names
+remain visible. Exchanges missing a request or response head cannot be saved as
+SAZ; choose TMCap to preserve them. HAR 1.2 preserves HTTP exchanges,
 original headers, decoded response bodies and available timings. HAR has no
 password encryption or computer network-context option. Missing bodies are
 disclosed; binary request bodies use a Transmog extension. See
@@ -44,6 +49,12 @@ Optional capture-level context also survives conventional and extended SAZ
 conversions in a namespaced JSON member ignored by ordinary SAZ readers. Native
 files preserve the full original source associations and measured transport
 observations; SAZ conversion reports its compatibility limitations.
+
+**Captures → Inspect / recover** offers a trace drop target and picker that import
+into Traffic, plus a separate **Import trace** button for a typed source path.
+**Inspect trace metadata** reads the file's original context and shows its full
+path without adding Traffic entries. **Captures → Convert/Export** converts native
+files to TMCap, JSONL or SAZ and suggests filenames containing `exported`.
 
 Imports bound the index for each source and the combined index and metadata
 across merged files. Publication is atomic: rejected files add neither partial

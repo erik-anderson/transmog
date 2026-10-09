@@ -202,6 +202,7 @@ export class AppShell extends WebUIElement {
   onProxyReady(): void { this.proxyReady = true; }
   onSelection(event: CustomEvent<SelectedResponse | null>): void { this.selection = event.detail; }
   onNavigate(event:CustomEvent<ViewName>):void {if(event.detail==='settings')void this.openConnectionSettings();else void this.activateView(event.detail);}
+  async onTraceImport(event:CustomEvent<{paths:string[]}>):Promise<void> {event.stopPropagation();if(await this.activateView('traffic'))await this.traffic.importPaths(event.detail.paths);}
   showView(event: Event): void {
     event.preventDefault();
     const view = (event.currentTarget as HTMLAnchorElement).dataset.view;

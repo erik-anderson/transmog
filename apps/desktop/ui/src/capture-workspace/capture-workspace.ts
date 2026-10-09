@@ -2,7 +2,7 @@ import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { CaptureReadModel, CaptureSummaryView, CaptureExportResult, ProductState } from '../models.js';
+import type { CaptureReadModel, TraceInspection, TraceImportIntent, CaptureExportResult, ProductState } from '../models.js';
 import { describeError } from '../utilities.js';
 
 export const storageSize=(bytes:number):string=>{const units=['B','KiB','MiB','GiB'];let value=bytes,index=0;while(value>=1024&&index<units.length-1){value/=1024;index++;}return value.toLocaleString(undefined,{maximumFractionDigits:1})+' '+units[index];};
@@ -19,6 +19,7 @@ export class CaptureWorkspace extends WorkspaceElement {
  @observable capturePathText='';
  @observable captureDetails='';
  @observable captureFacts:Array<{label:string;value:string}>=[];
+ @observable captureMetadataExpanded=false;
  @observable canExportInspected=false;
  captureForm!:HTMLFormElement;
  inspectionForm!:HTMLFormElement;
@@ -35,6 +36,7 @@ export class CaptureWorkspace extends WorkspaceElement {
  private generation=0;
  private exportExtension='tmcap';
  private inspectedPath='';
+ captureMetadataToggled(event:Event):void {this.captureMetadataExpanded=(event.target as HTMLDetailsElement).open;}
  exportFormatChanged():void {const format=String(new FormData(this.exportForm).get('format'));this.exportCanEncrypt=format!=='json-lines';const extension=format==='native'?'tmcap':format==='json-lines'?'jsonl':'saz';const input=this.exportForm.elements.namedItem('destination') as HTMLInputElement;if(input.value.toLowerCase().endsWith('.'+this.exportExtension))input.value=input.value.slice(0,-this.exportExtension.length)+extension;this.exportExtension=extension;}
  protected hydratedCallback():void {void this.refreshCapture();void this.loadRecordingDefaults();}
  viewChanged():void {if(this.view==='captures'){void this.refreshCapture();void this.loadRecordingDefaults();}else window.clearTimeout(this.timer);}
@@ -46,8 +48,20 @@ export class CaptureWorkspace extends WorkspaceElement {
  async startCapture(event:Event):Promise<void> {event.preventDefault();await this.runCapture('Recording could not start',async()=>{const path=await invoke<string|null>('pick_capture_path',{kind:'record',format:'native'});if(path===null){this.captureText='Recording canceled.';return;}const data=new FormData(this.captureForm);const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt recording',true):null;if(data.get('encrypt')==='on'&&password===null){this.captureText='Recording canceled.';return;}const status=await invoke<CaptureReadModel>('start_capture',{request:{password,path,retainBodySamples:data.get('bodies')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on',includeNetworkContext:data.get('networkContext')==='on'}});this.renderCapture(status);this.captureText='Recording to '+(status.path??path)+'. Traffic is not retained in the list during this recording.';this.$emit('status-changed',await invoke('app_status'));});}
  async stopCapture():Promise<void> {await this.runCapture('Recording could not stop',async()=>{const status=await invoke<CaptureReadModel>('stop_capture');this.renderCapture(status);this.captureText='Saved recording: '+(status.path??'')+'.';this.$emit('status-changed',await invoke('app_status'));});}
  async refreshCapture():Promise<void> {if(this.refreshPending||this.captureBusy)return;this.refreshPending=true;const generation=this.generation;try{const status=await invoke<CaptureReadModel>('capture_status');if(this.isConnected&&generation===this.generation)this.renderCapture(status);}catch(error:unknown){if(this.isConnected&&generation===this.generation)this.captureError='Capture status unavailable: '+describeError(error);}finally{this.refreshPending=false;window.clearTimeout(this.timer);if(this.isConnected&&this.view==='captures')this.timer=window.setTimeout(()=>void this.refreshCapture(),1000);}}
- async inspectCapture(event:Event):Promise<void> {event.preventDefault();await this.runCapture('Capture inspection failed',async()=>{const path=String(new FormData(this.inspectionForm).get('source')??'');this.canExportInspected=false;this.inspectedPath='';const summary=await this.withTracePassword('Inspect '+(path.split(/[\\/]/).pop()??'capture'),password=>invoke<CaptureSummaryView>('import_capture',{request:{path,password}}));if(summary===null){this.captureText='Inspection canceled.';return;}this.captureFacts=[{label:'Source capture',value:path},{label:'Exchanges',value:summary.exchanges.toLocaleString()},{label:'Records',value:summary.records.toLocaleString()},{label:'Retained body samples',value:storageSize(summary.retainedBodyBytes)},{label:'Missing-event markers',value:summary.lossMarkers.toLocaleString()},{label:'File state',value:summary.sealed?'Sealed':summary.truncatedTail?'Interrupted tail; valid prefix recovered':'Unsealed'}];this.captureDetails=JSON.stringify(summary,null,2);this.inspectedPath=path;this.canExportInspected=true;this.captureText=summary.truncatedTail?'Inspection recovered the valid prefix. Export a TMCap copy to save it; the original file is unchanged.':'Capture inspected.';});}
- useInspectedForExport():void {if(!this.canExportInspected)return;const source=this.inspectedPath;(this.exportForm.elements.namedItem('source') as HTMLInputElement).value=source;(this.exportForm.elements.namedItem('destination') as HTMLInputElement).value=source.replace(/\.tmcap$/i,'')+'.recovered.tmcap';(this.exportForm.elements.namedItem('format') as HTMLSelectElement).value='native';this.exportExtension='tmcap';this.exportCanEncrypt=true;this.captureTask='export';}
+ async inspectCapture(event:Event):Promise<void> {
+  event.preventDefault();await this.runCapture('Trace metadata inspection failed',async()=>{
+   const path=String(new FormData(this.inspectionForm).get('source')??'');this.canExportInspected=false;this.inspectedPath='';
+   const metadata=await this.withTracePassword('Inspect trace metadata',password=>invoke<TraceInspection>('inspect_trace_metadata',{request:{path,password}}));
+   if(metadata===null){this.captureText='Inspection canceled.';return;}
+   this.captureFacts=[{label:'Full path',value:metadata.path},{label:'Format',value:metadata.format.toUpperCase()},{label:'Exchanges',value:metadata.sessions.toLocaleString()},{label:'File size',value:storageSize(metadata.bytes)}];
+   this.captureDetails=JSON.stringify({context:metadata.context,sources:metadata.sources,notes:metadata.notes},null,2);
+   this.captureMetadataExpanded=true;
+   this.inspectedPath=metadata.path;this.canExportInspected=metadata.format==='native';this.captureText='Trace metadata inspected. Traffic is unchanged.';
+  });
+ }
+ async chooseInspectionPath():Promise<void> {await this.runCapture('Could not choose trace',async()=>{const path=await invoke<string|null>('pick_trace_path');if(path){const input=this.inspectionForm.elements.namedItem('source') as HTMLInputElement;input.value=path;input.focus();}});}
+ importInspectionTrace():void {if(this.captureBusy)return;const input=this.inspectionForm.elements.namedItem('source') as HTMLInputElement;if(input.reportValidity())this.$emit('trace-import-request',{paths:[input.value]} satisfies TraceImportIntent);}
+ useInspectedForExport():void {if(!this.canExportInspected)return;const source=this.inspectedPath;(this.exportForm.elements.namedItem('source') as HTMLInputElement).value=source;(this.exportForm.elements.namedItem('destination') as HTMLInputElement).value=source.replace(/\.tmcap$/i,'')+'.exported.tmcap';(this.exportForm.elements.namedItem('format') as HTMLSelectElement).value='native';this.exportExtension='tmcap';this.exportCanEncrypt=true;this.captureTask='export';}
  async exportCapture(event:Event):Promise<void> {event.preventDefault();await this.runCapture('Capture export failed',async()=>{const data=new FormData(this.exportForm);const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt export',true):null;if(data.get('encrypt')==='on'&&password===null){this.captureText='Export canceled.';return;}const report=await this.withTracePassword('Open source capture',sourcePassword=>invoke<CaptureExportResult>('export_capture',{request:{password,sourcePassword,source:String(data.get('source')??''),destination:String(data.get('destination')??''),format:String(data.get('format')??'native'),redactSensitiveHeaders:data.get('redactHeaders')==='on'}}));if(report===null){this.captureText='Export canceled.';return;}this.captureFacts=[{label:'Saved to',value:report.destination},{label:'Output size',value:storageSize(report.bytes)},{label:'Records / exchanges',value:report.records.toLocaleString()},{label:'Format fidelity',value:report.fidelity},{label:'Source state',value:report.sourceSealed?'Sealed':report.sourceTruncatedTail?'Recovered valid prefix':'Unsealed'}];this.captureDetails=JSON.stringify(report,null,2);this.captureText='Export saved to a new file.';});}
  dismissCaptureError():void {this.captureError='';const form=this.captureTask==='record'?this.captureForm:this.captureTask==='inspect'?this.inspectionForm:this.exportForm;(form.elements.namedItem('source') as HTMLInputElement|null)?.focus();}
  disconnectedCallback():void {this.generation++;window.clearTimeout(this.timer);super.disconnectedCallback();}

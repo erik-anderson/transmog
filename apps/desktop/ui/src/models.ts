@@ -163,6 +163,8 @@ export interface CaptureSummaryView {records:number;exchanges:number;lossMarkers
 export interface CaptureExportResult {destination:string;records:number;bytes:number;sourceSealed:boolean;sourceTruncatedTail:boolean;fidelity:string;}
 export interface TraceMetadata {id:string;name:string;format:string;path:string;sessions:number;importedAt:number;context:unknown;notes:string[];}
 export interface TraceImportResult {trace:TraceMetadata;issues:string[];}
+export interface TraceImportIntent {paths:string[];}
+export interface TraceInspection {path:string;format:string;sessions:number;bytes:number;context:unknown;sources:TraceMetadata[];notes:string[];}
 export interface TraceImportProgress {operationId:string;completed:number;total:number;}
 export interface CapturedPageReport {url:string;scope:string;source:string;scriptsEnabled?:boolean|null;available:number;skipped:number;bytes:number;hits:number;misses:number;resources:Array<{entryId:string;source:string;sourceAvailable?:boolean;method:string;url:string;unixMillis:number|null;bytes:number|null;decision:string}>;requests:Array<{id:number;method:string;url:string;outcome:string;entryId:string|null;reason:string}>;}
 export interface TrafficSearchMatch {boundary:string;field:string;startUtf16:number;endUtf16:number;before:string;matched:string;after:string;shortened:boolean;}

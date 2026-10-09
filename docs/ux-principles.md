@@ -161,6 +161,15 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+Trace drop targets name the accepted formats (TMCap, SAZ, HAR, and NetLog), offer
+a click/keyboard file picker, and highlight the actual accepting region during
+a supported file drag. Unsupported files, inactive workspaces, and busy imports
+do not show an accepting state. Captures' Inspect / recover workspace offers the
+same import target and a separate Import trace action; both bring the file into
+Traffic. Inspect trace metadata is read-only, shows the absolute source path and
+original context, and does not add Traffic entries. Convert/Export uses
+`exported` in suggested filenames, including recovered native prefixes.
+
 Desktop traffic is transient. Closing a main window releases its retained traffic
 and body cache; saved files remain. **Clear all** affects the whole window and
 retains Undo for small removals. For at least 100 MB, Undo expires after five
@@ -172,6 +181,10 @@ run. It does not populate Traffic; Stop restores routing and seals that file.
 **Save trace** saves every retained entry in the current window, across the list and
 search results, excluding entries removed from Traffic. Save native traces as
 `.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
+Offer SAZ compatibility and extended-fidelity choices alongside TMCap and HAR in
+Save trace. Extended SAZ preserves original source associations. SAZ cannot
+represent exchanges missing a request or response head; explain the failure and
+offer TMCap instead of silently omitting those entries.
 Preserve original source metadata and request associations when saving merged
 captures. Network configuration from the saving computer is
 an explicit, unchecked option and stays separate from imported source context;

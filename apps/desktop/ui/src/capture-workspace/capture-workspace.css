@@ -5,3 +5,5 @@ capture-workspace { display:contents; }
 @media (max-width:1050px) { .capture-content { grid-template-columns:minmax(0,1fr); }.capture-state { margin-left:0; } }
 .capture-feedback .capture-error { display:flex; align-items:baseline; gap:.5rem; }
 .capture-error .field-error { flex:1; min-width:0; overflow-wrap:anywhere; }
+
+.capture-content trace-drop-target { margin-bottom:.75rem; }

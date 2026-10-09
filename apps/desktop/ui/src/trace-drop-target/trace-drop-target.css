@@ -1,0 +1,14 @@
+:host { display:block; min-width:0; min-height:0; color:var(--text); }
+:host([variant="region"]) { display:flex; }
+.trace-drop-region { position:relative; min-width:0; min-height:0; }
+.trace-drop-region[data-region] { display:flex; flex-direction:column; flex:1; }
+::slotted(*) { min-height:0; flex:1; }
+.trace-drop-button { box-sizing:border-box; width:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.35rem; padding:1rem; border:2px dashed var(--line); border-radius:.4rem; background:var(--panel); color:var(--text); font:inherit; font-size:.85rem; cursor:pointer; }
+.trace-drop-button:hover, .trace-drop-button:focus-visible { border-color:var(--accent); background:var(--accent-soft); }
+.trace-drop-button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.trace-drop-button:disabled { color:var(--muted); cursor:default; }
+.trace-drop-formats { color:var(--muted); font-size:.75rem; }
+[data-region] > .trace-drop-button { flex-direction:row; flex-wrap:wrap; padding:.35rem .6rem; border-width:1px; border-radius:0; font-size:.75rem; }
+.trace-drop-region[data-drag-active] { outline:3px solid var(--accent); outline-offset:-3px; }
+.trace-drop-highlight { position:absolute; inset:0; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.5rem; padding:1rem; background:var(--accent-soft); color:var(--accent-strong); border:3px dashed var(--accent); pointer-events:none; text-align:center; }
+@media (forced-colors:active) { .trace-drop-highlight { background:Canvas; color:CanvasText; border-color:Highlight; }.trace-drop-region[data-drag-active] {outline-color:Highlight;} }

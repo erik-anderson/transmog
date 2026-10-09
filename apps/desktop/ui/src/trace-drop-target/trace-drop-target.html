@@ -1,0 +1,10 @@
+<template shadowrootmode="open">
+  <section w-ref="{dropRegion}" class="trace-drop-region" ?data-region="{{variant == 'region'}}" ?data-drag-active="{{traceDragActive}}">
+    <button type="button" class="trace-drop-button" @click="{chooseTrace()}" ?disabled="{{busy || pickingTrace}}">
+      <strong><if condition="!pickingTrace">Drop traces here or click to import</if><if condition="pickingTrace">Choose a trace…</if></strong>
+      <span class="trace-drop-formats">TMCap, SAZ, HAR · also NetLog (.netlog, .json)</span>
+    </button>
+    <slot></slot>
+    <if condition="traceDragActive"><div class="trace-drop-highlight" role="status"><strong>Drop to import into Traffic</strong><span>TMCap, SAZ, HAR · NetLog</span></div></if>
+  </section>
+</template>

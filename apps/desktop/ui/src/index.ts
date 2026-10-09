@@ -1,6 +1,7 @@
 import '@microsoft/webui-framework/lazy-hydration.js';
 import './proxy-toggle/proxy-toggle.js';
 import './pane-divider/pane-divider.js';
+import './trace-drop-target/trace-drop-target.js';
 import './app-shell/app-shell.js';
 import './traffic-workspace/traffic-workspace.js';
 import './message-inspector/message-inspector.js';

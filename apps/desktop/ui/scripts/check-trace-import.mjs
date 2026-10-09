@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+
+export async function checkTraceImport(page, root, view) {
+  await view('traffic');
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.beforeDrop={sessions:structuredClone(state.sessions),traces:structuredClone(state.traces??[])};});
+  const trafficDrop=page.locator('traffic-workspace trace-drop-target');
+  const drag=async(target,type,paths=[],inside=true)=>target.evaluate((element,{type,paths,inside})=>{
+    const bounds=element.dropRegion.getBoundingClientRect();
+    const position={x:(inside?bounds.left+bounds.width/2:bounds.left-20)*devicePixelRatio,y:(bounds.top+bounds.height/2)*devicePixelRatio};
+    element.handleNativeDrag(type==='leave'?{type}:{type,paths,position});
+  },{type,paths,inside});
+  await drag(trafficDrop,'enter',['C:/captures/drop.SAZ']);
+  await trafficDrop.locator('[data-drag-active]').waitFor();
+  assert.match(await trafficDrop.locator('.trace-drop-highlight').innerText(),/TMCap, SAZ, HAR/);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-drop-hover.png')});
+  await drag(trafficDrop,'over',[],false);
+  assert.equal(await trafficDrop.locator('[data-drag-active]').count(),0);
+  await drag(trafficDrop,'over');
+  await trafficDrop.locator('[data-drag-active]').waitFor();
+  await drag(trafficDrop,'leave');
+  await drag(trafficDrop,'enter',['C:/captures/not-a-trace.txt']);
+  assert.equal(await trafficDrop.locator('[data-drag-active]').count(),0);
+  const importsBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0);
+  await drag(trafficDrop,'drop',['C:/captures/not-a-trace.txt']);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
+  await drag(trafficDrop,'drop',['C:/captures/drop.saz']);
+  await page.waitForFunction(count=>globalThis.__workspaceFixture.calls.import_trace>count,importsBefore);
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+
+  await view('captures');
+  const captures=page.locator('capture-workspace');
+  await captures.getByRole('button',{name:'Inspect / recover',exact:true}).click();
+  const input=captures.getByLabel('Trace file',{exact:true});
+  await input.fill('C:/captures/original.har');
+  const priorImports=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace);
+  await captures.getByRole('button',{name:'Inspect trace metadata',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').captureBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace),priorImports,'Inspecting metadata imported traffic');
+  assert.match(await captures.locator('.capture-receipt').innerText(),/C:\/captures\/original.har/);
+  await captures.getByText('Trace metadata and technical details',{exact:true}).click();
+  await captures.getByRole('button',{name:'Inspect trace metadata',exact:true}).click();
+  await captures.locator('.capture-receipt details[open]').waitFor();
+  await captures.getByRole('button',{name:'Import trace',exact:true}).click();
+  await page.locator('#traffic').waitFor({state:'visible'});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastImport.path),'C:/captures/original.har');
+
+  await view('captures');
+  const captureDrop=captures.locator('trace-drop-target');
+  await drag(captureDrop,'enter',['C:/captures/dropped.tmcap']);
+  await captureDrop.locator('[data-drag-active]').waitFor();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/capture-drop-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/capture-drop-small.png')});
+  await page.setViewportSize({width:1280,height:800});
+  await drag(captureDrop,'drop',['C:/captures/dropped.tmcap']);
+  await page.locator('#traffic').waitFor({state:'visible'});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastImport.path),'C:/captures/dropped.tmcap');
+  await view('captures');
+  await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/chosen.saz');
+  await captureDrop.getByRole('button',{name:/Drop traces here/}).focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#traffic').waitFor({state:'visible'});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastImport.path),'C:/captures/chosen.saz');
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.beforeDrop.sessions;state.traces=state.beforeDrop.traces;state.pickedTrace=null;delete state.beforeDrop;const traffic=document.querySelector('app-shell').traffic;traffic.traceMetadataRows=structuredClone(state.traces);traffic.importStatus='';await traffic.refreshSessions(undefined,true);});
+  console.log('Trace drop highlighting, supported formats, metadata inspection, picker and Traffic import verified.');
+}

@@ -101,7 +101,9 @@ pub use sessions::{
 };
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
-pub use traces::{TraceImportProgress, TraceImportRequest, TraceImportResult, TraceMetadataView};
+pub use traces::{
+    TraceImportProgress, TraceImportRequest, TraceImportResult, TraceInspection, TraceMetadataView,
+};
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
@@ -1613,6 +1615,17 @@ impl Application {
         request: ImportRequest,
     ) -> Result<CaptureSummaryView, AppError> {
         artifacts::import_capture(request).await
+    }
+
+    /// Inspects original trace metadata without publishing entries into Traffic.
+    ///
+    /// # Errors
+    /// Returns unsupported, unreadable, encrypted, or malformed source failures.
+    pub async fn inspect_trace_metadata(
+        &self,
+        request: ImportRequest,
+    ) -> Result<TraceInspection, AppError> {
+        traces::inspect(request).await
     }
 
     /// Exports a recovered native capture to streaming JSONL or finalized SAZ.

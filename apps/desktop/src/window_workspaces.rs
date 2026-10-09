@@ -92,6 +92,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "cancel_trace_import"
             | "trace_metadata_list"
             | "trace_metadata"
+            | "inspect_trace_metadata"
             | "pick_trace_path"
             | "open_trace_viewer"
             | "open_main_window"

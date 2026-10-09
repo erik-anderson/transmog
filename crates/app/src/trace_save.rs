@@ -16,7 +16,7 @@ use transmog_session::{SessionSnapshot, SessionTerminal};
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceSaveOptions {
-    /// Native trace or standard HTTP Archive.
+    /// Native trace, SAZ archive, or standard HTTP Archive.
     #[serde(default)]
     pub format: TraceSaveFormat,
     /// Password for opt-in per-frame AES-256-GCM encryption.
@@ -38,6 +38,10 @@ pub enum TraceSaveFormat {
     Native,
     /// HAR 1.2 HTTP exchanges and decoded response bodies.
     Har,
+    /// Conventional SAZ for compatibility with other tools.
+    SazStrict,
+    /// SAZ with original source associations and additional evidence.
+    SazExtended,
 }
 /// Result of saving the whole retained workspace.
 #[derive(Clone, Debug, Serialize)]
@@ -61,6 +65,7 @@ pub(crate) async fn save(
     let expected = match options.format {
         TraceSaveFormat::Native => "tmcap",
         TraceSaveFormat::Har => "har",
+        TraceSaveFormat::SazStrict | TraceSaveFormat::SazExtended => "saz",
     };
     if !destination
         .extension()
@@ -89,6 +94,7 @@ pub(crate) async fn save(
             network.as_ref(),
             options.redact_sensitive_headers,
             options.password,
+            options.format,
         )
     })
     .await
@@ -100,26 +106,18 @@ fn write(
     network: Option<&transmog_network::context::NetworkContext>,
     redact: bool,
     password: Option<transmog_capture::CapturePassword>,
+    format: TraceSaveFormat,
 ) -> Result<TraceSaveResult, AppError> {
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
     }
-    if destination
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("har"))
-    {
+    if format == TraceSaveFormat::Har {
         if password.is_some() || network.is_some() {
             return Err(error(
                 "HAR has no encryption or network-configuration option; choose TMCap for those options",
             ));
         }
         return crate::trace_har::write(application, destination, redact);
-    }
-    if !destination
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("tmcap"))
-    {
-        return Err(error("Trace filename must end in .tmcap or .har"));
     }
     let store = application
         .body_store
@@ -140,15 +138,28 @@ fn write(
         .ok_or_else(|| error("Choose a trace destination"))?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .map_err(|_| error("Trace output could not be created"))?;
+    let mut native = if matches!(
+        format,
+        TraceSaveFormat::SazStrict | TraceSaveFormat::SazExtended
+    ) {
+        Some(tempfile::tempfile().map_err(|_| error("SAZ staging file could not be created"))?)
+    } else {
+        None
+    };
     let incomplete = write_records(
-        temporary.as_file_mut(),
+        native.as_mut().unwrap_or_else(|| temporary.as_file_mut()),
         application,
         store,
         &sessions,
         network,
         redact,
-        &transmog_capture::CaptureEncoding { password },
+        &transmog_capture::CaptureEncoding {
+            password: password.clone(),
+        },
     )?;
+    if let Some(native) = native {
+        write_saz(native, temporary.as_file_mut(), format, password)?;
+    }
     temporary
         .as_file()
         .sync_all()
@@ -170,6 +181,50 @@ fn write(
         incomplete_bodies: incomplete,
     })
 }
+fn write_saz(
+    mut native: std::fs::File,
+    output: &mut std::fs::File,
+    format: TraceSaveFormat,
+    password: Option<transmog_capture::CapturePassword>,
+) -> Result<(), AppError> {
+    use std::io::Seek as _;
+    use transmog_capture::CaptureExporter as _;
+    native
+        .rewind()
+        .map_err(|_| error("SAZ staging file could not be read"))?;
+    let capture = transmog_capture::recover_with_password(
+        native,
+        CaptureLimits {
+            max_file_bytes: u64::MAX,
+            max_record_bytes: 8 * 1024 * 1024,
+            max_records: usize::MAX,
+        },
+        password.as_ref(),
+    )
+    .map_err(AppError::from)?;
+    let mode = if format == TraceSaveFormat::SazStrict {
+        transmog_saz::SazMode::Strict
+    } else {
+        transmog_saz::SazMode::Extended
+    };
+    let mut exporter =
+        transmog_saz::SazExporter::new(output, mode, transmog_saz::SazLimits::default())
+            .map_err(AppError::from)?;
+    if let Some(password) = password {
+        exporter = exporter.encrypted(password).map_err(AppError::from)?;
+    }
+    exporter.export(&capture).map_err(AppError::from)?;
+    if exporter
+        .report()
+        .is_some_and(|report| report.skipped_incomplete > 0)
+    {
+        return Err(error(
+            "SAZ cannot save entries without both request and response headers. Choose TMCap to preserve those entries.",
+        ));
+    }
+    Ok(())
+}
+
 fn write_records(
     output: &mut std::fs::File,
     application: &Application,

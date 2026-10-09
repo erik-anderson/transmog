@@ -104,6 +104,49 @@ pub struct TraceImportResult {
     pub issues: Vec<String>,
 }
 
+/// Read-only inspection of a saved trace and its original source metadata.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceInspection {
+    /// Absolute path of the inspected file.
+    pub path: PathBuf,
+    /// Detected trace format.
+    pub format: &'static str,
+    /// Number of saved exchanges.
+    pub sessions: usize,
+    /// Original file size in bytes.
+    pub bytes: u64,
+    /// Original capture-level context.
+    pub context: Value,
+    /// Original sources preserved by a merged trace.
+    pub sources: Vec<TraceMetadataView>,
+    /// Recovery and fidelity notes.
+    pub notes: Vec<String>,
+}
+
+pub(crate) async fn inspect(request: crate::ImportRequest) -> Result<TraceInspection, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let request = TraceImportRequest {
+            path: request.path,
+            password: request.password,
+            max_file_bytes: request.max_file_bytes,
+            operation_id: "metadata-inspection".into(),
+        };
+        let (data, trace, bytes) = TraceRegistry::read(&request, &AtomicBool::new(false), &|_| {})?;
+        Ok(TraceInspection {
+            path: trace.path,
+            format: trace.format,
+            sessions: trace.sessions,
+            bytes,
+            context: trace.context,
+            sources: data.sources.into_values().collect(),
+            notes: trace.notes,
+        })
+    })
+    .await
+    .map_err(|_| unavailable("Trace metadata inspection failed"))?
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TraceEntry {
@@ -234,8 +277,19 @@ impl TraceRegistry {
         canceled: &AtomicBool,
         progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
     ) -> Result<TraceImportResult, AppError> {
-        let file = File::open(&request.path)
-            .map_err(|_| invalid("The selected trace file is unreadable"))?;
+        let (imported, trace, _) = Self::read(request, canceled, progress)?;
+        self.publish_import(imported, service, store, trace)
+    }
+
+    fn read(
+        request: &TraceImportRequest,
+        canceled: &AtomicBool,
+        progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
+    ) -> Result<(ImportData, TraceMetadataView, u64), AppError> {
+        let path = std::path::absolute(&request.path)
+            .map_err(|_| unavailable("Trace path could not be resolved"))?;
+        let file =
+            File::open(&path).map_err(|_| invalid("The selected trace file is unreadable"))?;
         let bytes = file
             .metadata()
             .map_err(|_| invalid("The selected trace file is unavailable"))?
@@ -261,7 +315,7 @@ impl TraceRegistry {
                 total,
             });
         };
-        let mut imported = match crate::detect_trace_format(&request.path) {
+        let mut imported = match crate::detect_trace_format(&path) {
             Some(crate::TraceFormat::Saz) => import_saz(
                 reader,
                 prefix,
@@ -292,7 +346,7 @@ impl TraceRegistry {
             id: trace_id.clone(),
             name,
             format: imported.format,
-            path: request.path.clone(),
+            path,
             sessions: imported.sessions.len(),
             imported_at: millis(SystemTime::now()),
             context: std::mem::take(&mut imported.context),
@@ -302,7 +356,7 @@ impl TraceRegistry {
                     .chain(imported.issues.iter().cloned()),
             ),
         };
-        self.publish_import(imported, service, store, trace)
+        Ok((imported, trace, bytes))
     }
 
     fn publish_import(
@@ -1612,6 +1666,165 @@ mod tests {
             path,
             operation_id: operation_id.into(),
             max_file_bytes: 64 * 1024 * 1024,
+        }
+    }
+
+    #[tokio::test]
+    async fn metadata_inspection_never_imports_traffic() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = app(root.path());
+        for (name, format, count) in [
+            ("trace.tmcap", "native", 1),
+            ("trace.saz", "saz", 1),
+            ("trace.har", "har", 0),
+        ] {
+            let path = root.path().join(name);
+            match format {
+                "native" => native(&path, Some(vec![1, 2, 3]), 3),
+                "saz" => saz(&path),
+                _ => std::fs::write(&path, r#"{"log":{"version":"1.2","entries":[]}}"#).unwrap(),
+            }
+            let metadata = workspace
+                .inspect_trace_metadata(crate::ImportRequest {
+                    password: None,
+                    path: path.clone(),
+                    max_file_bytes: u64::MAX,
+                })
+                .await
+                .unwrap();
+            assert_eq!(metadata.path, path);
+            assert!(metadata.path.is_absolute());
+            assert_eq!(metadata.format, format);
+            assert_eq!(metadata.sessions, count);
+            if format == "native" {
+                assert_eq!(metadata.context["networkContext"], "original machine");
+            }
+            assert!(
+                workspace
+                    .query_sessions(SessionQueryInput::default())
+                    .unwrap()
+                    .sessions
+                    .is_empty()
+            );
+            assert!(workspace.trace_metadata_list().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn saz_save_keeps_existing_destination_when_an_exchange_has_no_response_head() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("incomplete.tmcap");
+        native(&source, Some(vec![1, 2, 3]), 3);
+        let capture =
+            transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for record in &capture.records {
+            if !matches!(
+                record.kind,
+                CaptureRecordKind::ResponseHead { .. } | CaptureRecordKind::Seal { .. }
+            ) {
+                writer.append(record).unwrap();
+            }
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "incomplete"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let destination = root.path().join("existing.saz");
+        std::fs::write(&destination, b"keep existing destination").unwrap();
+        let error = workspace
+            .save_traffic_trace(
+                destination.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::SazStrict,
+                    ..crate::TraceSaveOptions::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("TMCap"));
+        assert_eq!(
+            std::fs::read(destination).unwrap(),
+            b"keep existing destination"
+        );
+    }
+
+    #[tokio::test]
+    async fn save_traffic_as_saz_round_trips_and_preserves_encryption_and_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.saz");
+        saz(&source);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        for (format, encrypted) in [
+            (crate::TraceSaveFormat::SazStrict, false),
+            (crate::TraceSaveFormat::SazExtended, true),
+        ] {
+            let path = root.path().join(if encrypted {
+                "encrypted.saz"
+            } else {
+                "strict.saz"
+            });
+            let password =
+                encrypted.then(|| transmog_capture::CapturePassword::new("fixture-secret".into()));
+            let saved = workspace
+                .save_traffic_trace(
+                    path.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        password: password.clone(),
+                        ..crate::TraceSaveOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, 1);
+            assert_eq!(saved.incomplete_bodies, 0);
+            let reopened = app(&root
+                .path()
+                .join(if encrypted { "encrypted" } else { "strict" }));
+            let mut input = request(path, "reopen");
+            if encrypted {
+                assert_eq!(
+                    reopened
+                        .import_trace(input.clone(), Arc::new(|_| {}))
+                        .await
+                        .unwrap_err()
+                        .category,
+                    crate::ErrorCategory::PasswordRequired
+                );
+            }
+            input.password = password;
+            reopened
+                .import_trace(input, Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let rows = reopened
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].status, Some(404));
+            assert_eq!(
+                reopened.composer_source(&rows[0].id).unwrap().body,
+                "616263"
+            );
+            if encrypted {
+                assert!(
+                    reopened
+                        .trace_metadata_list()
+                        .iter()
+                        .any(|trace| trace.name == "source.saz")
+                );
+            }
         }
     }
     fn native(path: &std::path::Path, bytes: Option<Vec<u8>>, count: usize) {

@@ -1179,30 +1179,25 @@ async fn save_traffic_trace(
     state: State<'_, DesktopState>,
 ) -> Result<Option<TraceSaveResult>, AppError> {
     let application = state.window_application(&window)?;
-    let har = options.format == transmog_app::TraceSaveFormat::Har;
+    let (extension, kind) = match options.format {
+        transmog_app::TraceSaveFormat::Native => ("tmcap", ArtifactKind::NativeCapture),
+        transmog_app::TraceSaveFormat::Har => ("har", ArtifactKind::Har),
+        transmog_app::TraceSaveFormat::SazStrict | transmog_app::TraceSaveFormat::SazExtended => {
+            ("saz", ArtifactKind::Saz)
+        }
+    };
     let picker = rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Save traffic trace")
-        .set_file_name(if har {
-            "Transmog-trace.har"
-        } else {
-            "Transmog-trace.tmcap"
-        })
-        .add_filter("Traffic traces", &[if har { "har" } else { "tmcap" }]);
+        .set_file_name(format!("Transmog-trace.{extension}"))
+        .add_filter("Traffic traces", &[extension]);
     let Some(file) = picker.save_file().await else {
         return Ok(None);
     };
     let result = application
         .save_traffic_trace(file.path().to_owned(), options)
         .await?;
-    application.remember_artifact(
-        result.destination.clone(),
-        if har {
-            ArtifactKind::Har
-        } else {
-            ArtifactKind::NativeCapture
-        },
-    );
+    application.remember_artifact(result.destination.clone(), kind);
     Ok(Some(result))
 }
 
@@ -1404,6 +1399,18 @@ async fn import_capture(
         .application
         .remember_artifact(path, ArtifactKind::NativeCapture);
     Ok(result)
+}
+
+#[tauri::command]
+async fn inspect_trace_metadata(
+    request: ImportRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TraceInspection, AppError> {
+    state
+        .window_application(&window)?
+        .inspect_trace_metadata(request)
+        .await
 }
 
 #[tauri::command]
@@ -1685,6 +1692,7 @@ pub fn run() {
                 stop_capture,
                 capture_status,
                 import_capture,
+                inspect_trace_metadata,
                 export_capture,
                 export_live_capture
             ];

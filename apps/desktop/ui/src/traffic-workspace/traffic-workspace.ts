@@ -2,7 +2,6 @@ import {timingView, type TimingRow, type TimelineRow, type TransportView, type W
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
@@ -267,15 +266,6 @@ export class TrafficWorkspace extends WorkspaceElement {
     try {
       const opened=await listen('trace-open-request',()=>{void this.takeOpenedTraces();});
       if(!this.isConnected){opened();return;}this.nativeUnlisteners.push(opened);
-      const dropped=await getCurrentWebview().onDragDropEvent(event=>{
-        if(event.payload.type!=='drop'||this.view!=='traffic')return;
-        const point=event.payload.position, bounds=this.sessionScroller.getBoundingClientRect(), scale=window.devicePixelRatio;
-        if(point.x/scale<bounds.left||point.x/scale>bounds.right||point.y/scale<bounds.top||point.y/scale>bounds.bottom)return;
-        const paths=event.payload.paths;
-        this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));
-        void this.processOpenedTraces();
-      });
-      if(!this.isConnected){dropped();return;}this.nativeUnlisteners.push(dropped);
     } catch { /* Browser-hosted verification has no native file events. */ }
     await this.takeOpenedTraces();
   }
@@ -290,6 +280,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       await this.importTrace(file.path);
     }
   }
+  async importPaths(paths:string[]):Promise<void> {this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));await this.processOpenedTraces();}
   async chooseOpenedTrace(separate:boolean):Promise<void> {
     const path=this.openedTracePath;this.openedTracePath='';this.openTraceDialog.close();
     if(separate){try{await invoke('open_trace_viewer',{paths:[path]});}catch(error:unknown){this.importStatus='Capture viewer could not be opened: '+describeError(error);await this.showError('Could not open capture viewer',describeError(error));}}

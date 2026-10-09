@@ -39,7 +39,7 @@ pub(crate) async fn pick_capture_path(
             dialog
                 .set_title("Choose a new export file")
                 .add_filter(label, &[extension])
-                .set_file_name(format!("session-copy.{extension}"))
+                .set_file_name(format!("session.exported.{extension}"))
                 .save_file()
                 .await
         }

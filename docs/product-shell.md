@@ -57,8 +57,10 @@ and request-copy behavior, and [request timings](request-timings.md) for how to
 interpret latency and shared transport measurements.
 
 **Import…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
-the traffic list always imports them there. Each entry retains its source trace,
-with **Trace metadata** leading to the original machine's network context and
+the traffic list always imports them there. The list's drop target highlights
+accepted files, names the formats, and opens a picker with a click or keyboard.
+Each entry retains its source trace, with **Trace metadata** leading to the
+original machine's network context and
 capture metadata. Imported bodies are read on demand from pinned source files;
 they are independent of live buffer eviction.
 
@@ -71,9 +73,14 @@ asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
 **Save trace…** saves retained traffic across the entire list and searches, with optional
-password encryption, export-only header redaction and network context for TMCap,
-or HAR output for HTTP archive interchange. File-only
-recording, recovery and native/JSONL/SAZ export are in Captures. Record chooses a
+password encryption, export-only header redaction and network context for TMCap
+or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and
+extended-fidelity choices. File-only recording and conversion are in Captures.
+Inspect / recover offers a drop/picker target and Import trace action that bring
+TMCap, SAZ or HAR files into Traffic. Inspect trace metadata reads the original
+context and displays the full path without importing entries. Convert/Export
+converts native recordings, using `exported` in suggested filenames. Record
+chooses a
 destination before starting its proxy and writes requests directly to that file
 without retaining them in Traffic. Stop recording seals the file and restores
 Windows proxy settings. See
