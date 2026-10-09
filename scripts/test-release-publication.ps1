@@ -82,6 +82,7 @@ try {
             $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }
             & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot
             if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 9) { throw 'Wrong release track flags or asset count.' }
+            if ($publicationFixture.Body.body -match '(?is)(?:checklist.{0,120}defer|defer.{0,120}checklist)') { throw 'Release notes contain an internal checklist deferral.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }

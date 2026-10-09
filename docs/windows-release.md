@@ -116,6 +116,9 @@ decisions. No push or tag automatically starts a release build.
    another Azure signing request. GitHub creates the version tag at the pinned
    commit if it does not already exist; there is no need to create a tag first.
 
+   Keep internal checklist status in qualification reports. Omit checklist
+   deferrals from release notes, which describe shipped changes and supported platforms.
+
 Once published, treat a version as final: the workflow refuses to overwrite it.
 Use a new patch or another unused semantic version for subsequent fixes.
 Before publication, start a fresh
