@@ -12,6 +12,8 @@
 *.pdb
 *.key
 *.pem
+/session.tmcap
+/transmog-support.zip
 e2e/playwright/node_modules/
 e2e/playwright/test-results/
 e2e/playwright/playwright-report/
