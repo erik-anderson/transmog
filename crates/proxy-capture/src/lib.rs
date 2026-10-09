@@ -26,13 +26,13 @@ use transmog_core::{
     observe::{ExchangeBoundary, ObserverEvent, ObserverEventKind},
 };
 
-const MAGIC: [u8; 8] = encoding::MAGIC;
+const MAGIC: [u8; 9] = encoding::MAGIC;
 const FRAME_HEADER_BYTES: usize = 8;
 
 /// Default retained request-body limit (25 decimal MB); file budgets still apply.
 pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 
-/// Native capture format revision.
+/// Durable record schema revision, independent of the container header version.
 pub const CAPTURE_FORMAT_REVISION: u32 = 3;
 
 /// Writer/recovery limits; artifact size and record count default to no maximum.

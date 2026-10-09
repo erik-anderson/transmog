@@ -172,9 +172,11 @@ try {
     }
 
     $startingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
+    $invalidTrace = Join-Path $probeRoot 'invalid.tmcap'
+    [IO.File]::WriteAllText($invalidTrace, 'Invalid capture fixture')
     Push-Location $desktopUi
     try {
-        $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', "$SoakMinutes")
+        $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', "$SoakMinutes", '--invalid-trace', $invalidTrace)
         if ($ScreenshotPath) {
             $smokeArguments += @('--screenshot', $ScreenshotPath)
         }

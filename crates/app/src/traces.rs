@@ -1769,6 +1769,7 @@ mod tests {
             .unwrap();
         assert_eq!(saved.entries, 2);
         assert_eq!(saved.incomplete_bodies, 0);
+        assert_eq!(&std::fs::read(&path).unwrap()[..9], b"TMCAP001\0");
         let reopened = app(&root.path().join("reopened"));
         reopened
             .import_trace(request(path, "merged"), Arc::new(|_| {}))

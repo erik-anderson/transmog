@@ -3,7 +3,7 @@ import {writeFile, readFile, glob} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {deflateRawSync} from 'node:zlib';
+import {zstdCompressSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 
 // Native probes use the current plain indexed container; encrypted I/O is covered
@@ -11,15 +11,15 @@ import {createHash} from 'node:crypto';
 function nativeFixture(records, exchangeId) {
   const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
   const encode=(bytes,counter)=>{
-    const compressed=deflateRawSync(bytes),useCompressed=compressed.length<bytes.length;
+    const compressed=zstdCompressSync(bytes),useCompressed=compressed.length<bytes.length;
     const prefix=Buffer.alloc(13);prefix.writeBigUInt64LE(BigInt(counter));prefix.writeUInt32LE(bytes.length,8);prefix[12]=Number(useCompressed);
     const payload=Buffer.concat([prefix,useCompressed?compressed:bytes]);
     const envelope=Buffer.alloc(8);envelope.writeUInt32LE(payload.length);envelope.writeUInt32LE(crc(payload),4);
     return Buffer.concat([envelope,payload]);
   };
-  const header=Buffer.from(JSON.stringify({version:5,compression:'deflate',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
+  const header=Buffer.from(JSON.stringify({version:1,compression:'zstd',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
   const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
-  const frames=[Buffer.from('TMCAP05\0'),size,header];
+  const frames=[Buffer.from('TMCAP001\0'),size,header];
   for(const [index,original] of [...records,{kind:'seal',payload:{record_count:records.length}}].entries()) {
     const record={revision:3,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
     let body;

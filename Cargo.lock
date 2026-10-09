@@ -6722,7 +6722,6 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "crc32fast",
- "flate2",
  "getrandom 0.4.3",
  "serde",
  "serde_json",
@@ -6731,6 +6730,7 @@ dependencies = [
  "thiserror 2.0.21",
  "transmog-core",
  "zeroize",
+ "zstd",
 ]
 
 [[package]]

@@ -297,3 +297,4 @@ export interface ComposerSource {method:string;url:string;headers:Array<{name:st
 export interface Notice { title: string; message: string; actionLabel: string | null; action: NoticeAction; }
 
 export interface TracePasswordPrompt {title:string;confirm:boolean;message:string;resolve:(password:string|null)=>void;}
+export interface OperationError {title:string;message:string;resolve:()=>void;}

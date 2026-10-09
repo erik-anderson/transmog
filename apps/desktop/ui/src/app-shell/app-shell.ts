@@ -3,7 +3,7 @@ import '../autoresponse-switch/autoresponse-switch.js';
 import '../app-updates/app-updates.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt } from '../models.js';
+import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -21,6 +21,25 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable errorTitle=initialState.errorTitle;
+  @observable errorMessage=initialState.errorMessage;
+  errorDialog!:HTMLDialogElement;
+  workspaceContent!:HTMLElement;
+  private operationErrors:OperationError[]=[];
+  onOperationError(event:CustomEvent<OperationError>):void {
+    event.stopPropagation();this.operationErrors.push(event.detail);
+    if(this.operationErrors.length===1)this.showOperationError();
+  }
+  private showOperationError():void {
+    const error=this.operationErrors[0];if(!error||!this.isConnected)return;
+    this.errorTitle=error.title;this.errorMessage=error.message;this.$flushUpdates();this.errorDialog.showModal();
+  }
+  closeOperationError():void {this.errorDialog.close();}
+  operationErrorClosed():void {
+    if(this.errorDialog.open)return;
+    this.operationErrors.shift()?.resolve();this.errorTitle='';this.errorMessage='';this.showOperationError();
+  }
+  dismissDiagnostic():void {this.diagnosticText='';this.workspaceContent.focus();}
   @observable passwordTitle='Capture password';
   @observable passwordConfirm=false;
   @observable passwordVisible=false;
@@ -243,7 +262,7 @@ export class AppShell extends WebUIElement {
   async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
   }
-  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); super.disconnectedCallback(); }
+  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); for(const error of this.operationErrors)error.resolve();this.operationErrors=[];super.disconnectedCallback(); }
 
 }
 

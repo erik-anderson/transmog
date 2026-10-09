@@ -1,10 +1,13 @@
 import { WebUIElement } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { NoticeAction, ViewName, TracePasswordPrompt } from './models.js';
+import type { NoticeAction, ViewName, TracePasswordPrompt, OperationError } from './models.js';
 import { describeError } from './utilities.js';
 
 /** Typed events keep workspace components independent of their containing shell. */
 export abstract class WorkspaceElement extends WebUIElement {
+  protected showError(title:string,message:string):Promise<void> {
+    return new Promise(resolve=>this.$emit('operation-error',{title,message,resolve} satisfies OperationError));
+  }
   protected promptTracePassword(title:string,confirm=false,message=''):Promise<string|null> {
     return new Promise(resolve=>this.$emit('trace-password-request',{title,confirm,message,resolve} satisfies TracePasswordPrompt));
   }

@@ -178,6 +178,12 @@ tbody tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; 
 
 .app-footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-width: 0; padding: 0 .55rem; border-top: 1px solid var(--line); color: var(--muted); background: var(--panel-subtle); font-size: .66rem; }
 .global-diagnostics { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diagnostic-close { flex:none; min-height:1.5rem; padding:0 .35rem; font-size:1rem; line-height:1; }
+.operation-error-dialog { box-sizing:border-box; width:min(32rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; padding:1.25rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--text); background:var(--panel); }
+.operation-error-dialog::backdrop { background:rgb(0 0 0 / .4); }
+.operation-error-dialog h2 { margin:0; font-size:1.1rem; }
+.operation-error-dialog p { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.85rem; line-height:1.5; }
+.operation-error-dialog .actions { justify-content:flex-end; }
 .status-refresh { min-height: 0; padding: 0; border: 0; color: var(--muted); background: transparent; font-size: .66rem; font-weight: 600; }
 
 .section-label { margin: 0 0 .45rem; color: var(--accent-strong); font-size: .7rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }

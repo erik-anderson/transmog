@@ -85,6 +85,12 @@ its actual effect on the user's task.
 - Put progress, success, and actionable errors near the action that produced
   them. Keep shared status for conditions that matter across workspaces. A
   refresh must preserve an error instead of reporting success from stale state.
+- Significant failures of explicit actions, including opening, importing, saving
+  and exporting captures, open a modal error dialog with a clear title, failure
+  details and a Close action. Escape dismisses it and returns focus to the task.
+  Retained status and error messages have a dismiss control once work completes.
+  Cancellation is ordinary feedback, and background refresh errors do not
+  repeatedly interrupt the user.
 - Make empty, unavailable, incomplete, truncated, redacted, and expired states
   distinguishable. Explain the next useful step. Disable an unavailable action
   with an accessible explanation rather than presenting a broken interaction.
