@@ -11,8 +11,165 @@ use std::{
     },
 };
 use transmog_core::{intercept::ExchangeId, observe::ExchangeBoundary};
-use transmog_session::ApplicationSessionService;
+use transmog_session::{ApplicationSessionService, SessionSnapshot};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+
+fn enabled() -> bool {
+    true
+}
+fn metadata_text(snapshot: &SessionSnapshot) -> String {
+    let target = snapshot.metadata.original_target.as_target();
+    format!(
+        "{}://{}{}{}\n{:?}\n{}\n{}",
+        target.scheme,
+        target.authority,
+        target.path,
+        target
+            .query
+            .as_ref()
+            .map_or_else(String::new, |query| format!("?{query}")),
+        snapshot.metadata.client_identity,
+        snapshot
+            .request_heads
+            .last()
+            .map_or("", |head| head.head.method.as_str()),
+        snapshot
+            .response_heads
+            .last()
+            .map_or_else(String::new, |head| head.head.status.to_string())
+    )
+}
+fn header_text(field: &transmog_core::HeaderField) -> String {
+    format!(
+        "{}: {}",
+        String::from_utf8_lossy(field.name()),
+        if field.is_redacted() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(field.value()).into_owned()
+        }
+    )
+}
+fn scoped_headers<'a>(
+    snapshot: &'a SessionSnapshot,
+    request: &TrafficSearchRequest,
+) -> Vec<(String, &'a transmog_core::HeaderBlock)> {
+    snapshot
+        .request_heads
+        .iter()
+        .filter(|_| request.request_headers)
+        .map(|head| (inspector::boundary(head.boundary), &head.head.headers))
+        .chain(
+            snapshot
+                .response_heads
+                .iter()
+                .filter(|_| request.response_headers)
+                .map(|head| (inspector::boundary(head.boundary), &head.head.headers)),
+        )
+        .collect()
+}
+
+/// Highlighted occurrence in original decoded text, never in its normalized copy.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficSearchMatch {
+    /// Original HTTP boundary, or metadata.
+    pub boundary: String,
+    /// Header name and stable original field index, or body/metadata label.
+    pub field: String,
+    /// UTF-16 start offset in this field, matching browser string indexing.
+    pub start_utf16: usize,
+    /// UTF-16 end offset; a zero-width regex can have equal offsets.
+    pub end_utf16: usize,
+    /// Original text immediately before the match (bounded context).
+    pub before: String,
+    /// Original matched text, bounded to 160 Unicode scalars.
+    pub matched: String,
+    /// Original text immediately after the match (bounded context).
+    pub after: String,
+    /// A long match has been shortened for presentation only.
+    pub shortened: bool,
+}
+/// Bounded, on-demand locations for one entry in a saved search result.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficSearchEntry {
+    /// Workspace traffic entry identity.
+    pub entry_id: String,
+    /// At most 200 highlighted occurrences, in document order.
+    pub matches: Vec<TrafficSearchMatch>,
+    /// More occurrences exist beyond the presentation budget.
+    pub more_matches: bool,
+}
+const MAX_ENTRY_MATCHES: usize = 200;
+
+#[path = "search_locations.rs"]
+mod locations;
+
+async fn entry_matches(
+    id: ExchangeId,
+    request: &TrafficSearchRequest,
+    service: &ApplicationSessionService,
+    store: Option<&BodyStore>,
+) -> Result<TrafficSearchEntry, AppError> {
+    let snapshot = service
+        .catalog()
+        .get(id)
+        .ok_or_else(|| unavailable("This entry is no longer retained"))?;
+    let engine = Matcher::new(request)?;
+    let mut matches = Vec::new();
+    if request.metadata {
+        matches.extend(engine.locations(
+            &metadata_text(&snapshot),
+            "metadata",
+            "URL, method, process, PID and status",
+            MAX_ENTRY_MATCHES + 1,
+        ));
+    }
+    if request.headers {
+        for (boundary, headers) in scoped_headers(&snapshot, request) {
+            for (index, field) in headers.iter().enumerate() {
+                if matches.len() > MAX_ENTRY_MATCHES {
+                    break;
+                }
+                matches.extend(engine.locations(
+                    &header_text(field),
+                    &boundary,
+                    &format!(
+                        "{} · field {}",
+                        String::from_utf8_lossy(field.name()).chars().take(128).collect::<String>(),
+                        index + 1
+                    ),
+                    MAX_ENTRY_MATCHES + 1 - matches.len(),
+                ));
+            }
+        }
+    }
+    for (enabled, direction) in [
+        (request.request_bodies, true),
+        (request.response_bodies, false),
+    ] {
+        if enabled
+            && matches.len() <= MAX_ENTRY_MATCHES
+            && let BodyText::Text(boundary, text) =
+                search_body(id, store, &AtomicBool::new(false), direction).await
+        {
+            matches.extend(engine.locations(
+                &text,
+                &boundary,
+                "Decoded text body",
+                MAX_ENTRY_MATCHES + 1 - matches.len(),
+            ));
+        }
+    }
+    let more_matches = matches.len() > MAX_ENTRY_MATCHES;
+    matches.truncate(MAX_ENTRY_MATCHES);
+    Ok(TrafficSearchEntry {
+        entry_id: format!("{:032x}", id.0),
+        matches,
+        more_matches,
+    })
+}
 
 const MAX_PATTERN: usize = 4096;
 const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
@@ -46,6 +203,15 @@ pub struct TrafficSearchRequest {
     pub metadata: bool,
     /// Include full retained request and response headers.
     pub headers: bool,
+    /// Search request headers when the legacy headers scope is enabled.
+    #[serde(default = "enabled")]
+    pub request_headers: bool,
+    /// Search response headers when the legacy headers scope is enabled.
+    #[serde(default = "enabled")]
+    pub response_headers: bool,
+    /// Include decoded original request bodies (falling back to upstream bodies).
+    #[serde(default)]
+    pub request_bodies: bool,
     /// Include decoded text client-response bodies.
     pub response_bodies: bool,
 }
@@ -81,7 +247,7 @@ pub struct TrafficSearchResult {
 #[derive(Default)]
 struct SearchState {
     operations: HashMap<String, Arc<AtomicBool>>,
-    results: VecDeque<(String, Arc<HashSet<String>>)>,
+    results: VecDeque<(String, Arc<HashSet<String>>, TrafficSearchRequest)>,
 }
 #[derive(Clone, Default)]
 pub(crate) struct SearchRegistry {
@@ -106,11 +272,35 @@ impl SearchRegistry {
             self.lock()
                 .results
                 .iter()
-                .find(|(token, _)| token == id)
-                .map(|(_, ids)| ids.clone())
+                .find(|(token, _, _)| token == id)
+                .map(|(_, ids, _)| ids.clone())
                 .ok_or_else(|| unavailable("Search results expired. Run the search again."))
         })
         .transpose()
+    }
+    pub(crate) async fn entry(
+        &self,
+        search_id: &str,
+        id: &str,
+        service: ApplicationSessionService,
+        store: Option<BodyStore>,
+    ) -> Result<TrafficSearchEntry, AppError> {
+        let request = self
+            .lock()
+            .results
+            .iter()
+            .find(|(token, ids, _)| token == search_id && ids.contains(id))
+            .map(|(_, _, request)| request.clone())
+            .ok_or_else(|| {
+                unavailable("This entry is not in the saved search result, or the search expired")
+            })?;
+        let id = ExchangeId(inspector::parse_session_id(id)?);
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            runtime.block_on(entry_matches(id, &request, &service, store.as_ref()))
+        })
+        .await
+        .map_err(|_| unavailable("Match details worker failed"))?
     }
     pub(crate) async fn search(
         &self,
@@ -122,7 +312,10 @@ impl SearchRegistry {
         let matcher = Matcher::new(&request)?;
         if request.operation_id.is_empty()
             || request.operation_id.len() > 128
-            || !(request.metadata || request.headers || request.response_bodies)
+            || !(request.metadata
+                || request.headers && (request.request_headers || request.response_headers)
+                || request.request_bodies
+                || request.response_bodies)
         {
             return Err(invalid("Choose search fields and a valid operation"));
         }
@@ -146,6 +339,7 @@ impl SearchRegistry {
         }
         let registry = self.clone();
         let operation = request.operation_id.clone();
+        let saved_request = request.clone();
         let runtime = tokio::runtime::Handle::current();
         let result = tokio::task::spawn_blocking(move || {
             runtime.block_on(scan(
@@ -171,6 +365,7 @@ impl SearchRegistry {
         state.results.push_back((
             result.id.clone(),
             Arc::new(result.ids.iter().cloned().collect()),
+            saved_request,
         ));
         Ok(result)
     }
@@ -282,57 +477,26 @@ async fn scan(
         let Some(snapshot) = service.catalog().get(*id) else {
             continue;
         };
-        let target = snapshot.metadata.original_target.as_target();
-        let mut found = request.metadata
-            && matcher.matches(&format!(
-                "{}://{}{}{}\n{:?}\n{}\n{}",
-                target.scheme,
-                target.authority,
-                target.path,
-                target
-                    .query
-                    .as_ref()
-                    .map_or_else(String::new, |query| format!("?{query}")),
-                snapshot.metadata.client_identity,
-                snapshot
-                    .request_heads
-                    .last()
-                    .map_or("", |head| head.head.method.as_str()),
-                snapshot
-                    .response_heads
-                    .last()
-                    .map_or_else(String::new, |head| head.head.status.to_string())
-            ));
+        let mut found = request.metadata && matcher.matches(&metadata_text(&snapshot));
         if !found && request.headers {
-            found = snapshot
-                .request_heads
+            found = scoped_headers(&snapshot, request)
                 .iter()
-                .map(|head| &head.head.headers)
-                .chain(
-                    snapshot
-                        .response_heads
+                .any(|(_, headers)| {
+                    headers
                         .iter()
-                        .map(|head| &head.head.headers),
-                )
-                .any(|headers| {
-                    headers.iter().any(|field| {
-                        matcher.matches(&format!(
-                            "{}: {}",
-                            String::from_utf8_lossy(field.name()),
-                            if field.is_redacted() {
-                                String::new()
-                            } else {
-                                String::from_utf8_lossy(field.value()).into_owned()
-                            }
-                        ))
-                    })
+                        .any(|field| matcher.matches(&header_text(field)))
                 });
         }
-        if !found && request.response_bodies {
-            match search_body(*id, store, canceled).await {
-                BodyText::Text(text) => found = matcher.matches(&text),
-                BodyText::Binary => result.binary_bodies += 1,
-                BodyText::Unavailable => result.unavailable_bodies += 1,
+        for (enabled, direction) in [
+            (request.request_bodies, true),
+            (request.response_bodies, false),
+        ] {
+            if !found && enabled {
+                match search_body(*id, store, canceled, direction).await {
+                    BodyText::Text(_, text) => found = matcher.matches(&text),
+                    BodyText::Binary => result.binary_bodies += 1,
+                    BodyText::Unavailable => result.unavailable_bodies += 1,
+                }
             }
         }
         if found {
@@ -352,30 +516,37 @@ async fn scan(
     Ok(result)
 }
 enum BodyText {
-    Text(String),
+    Text(String, String),
     Binary,
     Unavailable,
 }
-async fn search_body(id: ExchangeId, store: Option<&BodyStore>, canceled: &AtomicBool) -> BodyText {
+async fn search_body(
+    id: ExchangeId,
+    store: Option<&BodyStore>,
+    canceled: &AtomicBool,
+    request_body: bool,
+) -> BodyText {
     let Some(store) = store else {
         return BodyText::Unavailable;
     };
     let bodies = store.metadata(id);
+    let (primary, fallback) = if request_body {
+        ("client-request", "upstream-request")
+    } else {
+        ("client-response", "upstream-response")
+    };
     let Some(metadata) = bodies
         .iter()
-        .find(|body| body.boundary == "client-response")
-        .or_else(|| {
-            bodies
-                .iter()
-                .find(|body| body.boundary == "upstream-response")
-        })
+        .find(|body| body.boundary == primary)
+        .or_else(|| bodies.iter().find(|body| body.boundary == fallback))
     else {
         return BodyText::Unavailable;
     };
-    let boundary = if metadata.boundary == "client-response" {
-        ExchangeBoundary::ClientResponse
-    } else {
-        ExchangeBoundary::UpstreamResponse
+    let boundary = match metadata.boundary {
+        "client-request" => ExchangeBoundary::ClientRequest,
+        "upstream-request" => ExchangeBoundary::UpstreamRequest,
+        "client-response" => ExchangeBoundary::ClientResponse,
+        _ => ExchangeBoundary::UpstreamResponse,
     };
     if metadata
         .media_type
@@ -429,7 +600,7 @@ async fn search_body(id: ExchangeId, store: Option<&BodyStore>, canceled: &Atomi
                 BodyText::Binary
             }
         },
-        BodyText::Text,
+        |text| BodyText::Text(metadata.boundary.into(), text),
     )
 }
 fn invalid(message: &str) -> AppError {
@@ -454,6 +625,9 @@ mod tests {
             ignore_diacritics: false,
             metadata: false,
             headers: false,
+            request_headers: true,
+            response_headers: true,
+            request_bodies: false,
             response_bodies: true,
         }
     }
@@ -479,9 +653,11 @@ mod tests {
         let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
         for (index, (mime, bytes, coding)) in payloads.into_iter().enumerate() {
             let source = index + 1;
+            let upload = "Upload Café";
             let request = format!(
-                "GET https://example.invalid/{source} HTTP/1.1\r\nX-Long: {}END-NEEDLE\r\n\r\n",
-                "x".repeat(7000)
+                "POST https://example.invalid/{source} HTTP/1.1\r\nX-Long: {}END-NEEDLE\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{upload}",
+                "x".repeat(7000),
+                upload.len()
             );
             let mut response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\n{coding}Content-Length: {}\r\n\r\n",
@@ -587,6 +763,67 @@ mod tests {
             3
         );
     }
+    #[tokio::test]
+    async fn request_response_scopes_and_saved_query_locations_keep_original_text() {
+        let root = tempfile::tempdir().unwrap();
+        let app = fixture(root.path()).await;
+        let mut input = request("END-NEEDLE");
+        input.headers = true;
+        input.response_bodies = false;
+        input.request_headers = false;
+        assert!(
+            app.search_traffic(input.clone(), Arc::new(|_| {}))
+                .await
+                .unwrap()
+                .ids
+                .is_empty()
+        );
+        input.request_headers = true;
+        input.response_headers = false;
+        let result = app.search_traffic(input, Arc::new(|_| {})).await.unwrap();
+        assert_eq!(result.ids.len(), 3);
+        let entry = app
+            .traffic_search_entry(&result.id, &result.ids[0])
+            .await
+            .unwrap();
+        assert_eq!(entry.matches[0].boundary, "client-request");
+        assert_eq!(entry.matches[0].matched, "END-NEEDLE");
+        assert_eq!(entry.matches[0].start_utf16, 7008);
+        let mut input = request("cafe");
+        input.ignore_diacritics = true;
+        let result = app.search_traffic(input, Arc::new(|_| {})).await.unwrap();
+        let entry = app
+            .traffic_search_entry(&result.id, &result.ids[0])
+            .await
+            .unwrap();
+        assert_eq!(entry.matches[0].matched, "Café");
+        assert_eq!(entry.matches[0].boundary, "client-response");
+        let mut upload = request("upload");
+        upload.response_bodies = false;
+        upload.request_bodies = true;
+        let upload_result = app.search_traffic(upload, Arc::new(|_| {})).await.unwrap();
+        assert_eq!(upload_result.ids.len(), 3);
+        let entry = app
+            .traffic_search_entry(&upload_result.id, &upload_result.ids[0])
+            .await
+            .unwrap();
+        assert_eq!(entry.matches[0].boundary, "client-request");
+        assert_eq!(entry.matches[0].matched, "Upload");
+        let rows = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        let binary = rows
+            .iter()
+            .find(|row| !result.ids.contains(&row.id))
+            .unwrap();
+        assert!(
+            app.traffic_search_entry(&result.id, &binary.id)
+                .await
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn cancellation_has_no_partial_result_and_unselected_removal_ignores_paging() {
         let root = tempfile::tempdir().unwrap();

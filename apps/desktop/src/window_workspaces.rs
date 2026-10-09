@@ -79,6 +79,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "remove_traffic_entries"
             | "remove_unselected_traffic_entries"
             | "search_traffic"
+            | "traffic_search_entry"
             | "matching_traffic_ids"
             | "cancel_traffic_search"
             | "import_trace"

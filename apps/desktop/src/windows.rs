@@ -220,6 +220,19 @@ async fn search_traffic(
 }
 
 #[tauri::command]
+async fn traffic_search_entry(
+    search_id: String,
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficSearchEntry, AppError> {
+    state
+        .window_application(&window)?
+        .traffic_search_entry(&search_id, &id)
+        .await
+}
+
+#[tauri::command]
 fn matching_traffic_ids(
     query: SessionQueryInput,
     window: tauri::WebviewWindow,
@@ -1352,6 +1365,7 @@ pub fn run() {
                 remove_traffic_entries,
                 remove_unselected_traffic_entries,
                 search_traffic,
+                traffic_search_entry,
                 matching_traffic_ids,
                 cancel_traffic_search,
                 set_autoresponses_enabled,

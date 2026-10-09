@@ -75,7 +75,8 @@ pub use response_assets::{
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
 pub use search::{
-    TrafficSearchMode, TrafficSearchProgress, TrafficSearchRequest, TrafficSearchResult,
+    TrafficSearchEntry, TrafficSearchMatch, TrafficSearchMode, TrafficSearchProgress,
+    TrafficSearchRequest, TrafficSearchResult,
 };
 use serde::Serialize;
 pub use sessions::{
@@ -922,6 +923,20 @@ impl Application {
                 self.body_store.clone(),
                 progress,
             )
+            .await
+    }
+
+    /// Returns bounded highlighted original-text locations for one saved result.
+    ///
+    /// # Errors
+    /// Returns expired search, missing entry, invalid identity or decoder failures.
+    pub async fn traffic_search_entry(
+        &self,
+        search_id: &str,
+        id: &str,
+    ) -> Result<TrafficSearchEntry, AppError> {
+        self.searches
+            .entry(search_id, id, self.service.clone(), self.body_store.clone())
             .await
     }
 

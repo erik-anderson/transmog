@@ -26,6 +26,9 @@ its actual effect on the user's task.
   recovery actions when recovery is needed, and credential or replay risk
   acknowledgements when the request requires them.
 
+- Name counts for what they count. Traffic search counts matching entries;
+  occurrence counts within an entry belong in the match view.
+
 ## Increase density without losing readability
 
 - Remove repeated headings, duplicate status lines, oversized spacing, and

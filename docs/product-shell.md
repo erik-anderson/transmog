@@ -234,3 +234,19 @@ silently changes a captured replay into an empty request. Replay uses the
 canonical verifying HTTP adapters even when the proxy is stopped. Response
 previews disclose display truncation. PowerShell's .NET fallback uses a file
 stream, while Invoke-WebRequest uses InFile for file bodies.
+
+Traffic search scopes separate request and response headers and decoded bodies.
+Binary bodies are skipped silently; unavailable or over-budget text contributes
+one summary count. Successful result and selection updates are committed
+only after paging and filtered matching IDs succeed. Failure and cancellation
+preserve prior results and selections, including a late successful backend
+reply after cancellation. Select all matches remains active for the next search.
+
+View matches opens bounded snippets of original decoded evidence, with field
+identity and UTF-16 offsets. It preserves composed and decomposed accents when
+matching ignores them, and highlights zero-width regex positions. Previous/next
+match (F3 / Shift+F3) and entry navigation keep traffic multiselection intact.
+Only the first 200 occurrences per entry are presented; refining the search
+finds later locations. Locations are read on demand using the saved query, so
+changed or removed evidence asks the user to search again. Captured content is
+always text in this view, including HTML and script fragments.

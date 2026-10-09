@@ -8,7 +8,7 @@ import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
-import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress } from '../models.js';
+import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
@@ -134,7 +134,31 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable searchCaseSensitive=false;
   @observable searchIgnoreAccents=false;
   @observable searchMetadata=true;
-  @observable searchHeaders=true;
+  @observable searchRequestHeaders=true;
+  @observable searchResponseHeaders=true;
+  @observable searchRequestBodies=false;
+  @observable matchBusy=false;
+  @observable matchHasLocation=false;
+  @observable matchError='';
+  @observable matchEntryLabel='';
+  @observable matchPosition='';
+  @observable matchField='';
+  @observable matchBefore='';
+  @observable matchText='';
+  @observable matchAfter='';
+  @observable matchNote='';
+  @observable matchHasPrevious=false;
+  @observable matchHasNext=false;
+  @observable matchHasPreviousEntry=false;
+  @observable matchHasNextEntry=false;
+  matchDialog!:HTMLDialogElement;
+  private matchGeneration=0;
+  private matchLocations:TrafficSearchMatch[]=[];
+  private matchIndex=0;
+  private matchEntryId='';
+  private matchMore=false;
+  private matchReturnFocus:HTMLElement|null=null;
+  private searchCancelRequested=false;
   @observable searchBodies=true;
   @observable selectSearchMatches=false;
   @observable contentSearchStatus='';
@@ -290,7 +314,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$flushUpdates();if(generation===this.metadataGeneration)this.metadataSelector.value=id;
   }
   changeMetadataTrace(event:Event):void {void this.loadTraceMetadata((event.currentTarget as HTMLSelectElement).value);}
-  closeMetadata():void {this.metadataGeneration++;this.metadataDialog.close();}
+  closeMetadata():void {this.matchGeneration++;this.metadataGeneration++;this.metadataDialog.close();}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
   pageSizeChanged():void {
     this.pageLimit = Math.max(10,Math.min(200,Number(this.pageSize)||100));
@@ -399,25 +423,59 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.searchText=(event.currentTarget as HTMLInputElement).value;
     // Content decoding starts on Search/Enter, rather than on each keystroke.
   }
-  setSearchOption(option:'searchCaseSensitive'|'searchIgnoreAccents'|'searchMetadata'|'searchHeaders'|'searchBodies'|'selectSearchMatches',event:Event):void {this[option]=(event.currentTarget as HTMLInputElement).checked;}
+  setSearchOption(option:'searchCaseSensitive'|'searchIgnoreAccents'|'searchMetadata'|'searchRequestHeaders'|'searchResponseHeaders'|'searchRequestBodies'|'searchBodies'|'selectSearchMatches',event:Event):void {this[option]=(event.currentTarget as HTMLInputElement).checked;}
   setSearchMode(event:Event):void {this.searchMode=(event.currentTarget as HTMLSelectElement).value;}
   async runContentSearch(event?:Event):Promise<void> {
     event?.preventDefault();if(this.searchingTraffic)return;
-    const pattern=this.searchInput.value;this.searchText=pattern;this.clearTrafficSelection();
+    const pattern=this.searchInput.value;this.searchText=pattern;
     if(!pattern){await this.clearContentSearch();return;}
-    this.searchingTraffic=true;this.contentSearchStatus='Searching captured traffic…';
+    this.searchingTraffic=true;this.searchCancelRequested=false;this.contentSearchStatus='Searching captured traffic…';
     const operationId=crypto.randomUUID();this.searchOperation=operationId;
     const onProgress=new Channel<TrafficSearchProgress>();onProgress.onmessage=progress=>{if(this.isConnected&&this.searchOperation===progress.operationId)this.contentSearchStatus=`Searching captured traffic · ${progress.completed} of ${progress.total} entries checked…`;};
     try{
-      const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,headers:this.searchHeaders,responseBodies:this.searchBodies},onProgress});
+      const result=await invoke<TrafficSearchResult>('search_traffic',{request:{operationId,pattern,mode:this.searchMode,caseSensitive:this.searchCaseSensitive,ignoreDiacritics:this.searchMode==='text'&&this.searchIgnoreAccents,metadata:this.searchMetadata,headers:this.searchRequestHeaders||this.searchResponseHeaders,requestHeaders:this.searchRequestHeaders,responseHeaders:this.searchResponseHeaders,requestBodies:this.searchRequestBodies,responseBodies:this.searchBodies},onProgress});
       if(!this.isConnected||this.searchOperation!==operationId)return;
-      this.searchResultId=result.id;this.searchMatchIds=result.ids;this.contentMatchCount=result.ids.length;this.contentSearchActive=true;this.contentSearchLabel=pattern;
-      this.contentSearchStatus=`${result.ids.length} ${result.ids.length===1?'match':'matches'} in ${result.examined} entries.${result.unavailableBodies?` ${result.unavailableBodies} text bodies were unavailable or beyond the search limit.`:''}`;
-      this.pageIndex=0;this.followLatest=false;this.queryRevision++;await this.refreshSessions(undefined,true);
+      const query={searchResultId:result.id,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort,offset:0,limit:this.pageLimit};
+      const [page,ids]=await Promise.all([invoke<SessionPage>('query_sessions',{query}),invoke<string[]>('matching_traffic_ids',{query})]);
+      if(!this.isConnected||this.searchOperation!==operationId)return;
+      if(this.searchCancelRequested){this.contentSearchStatus='Search canceled. Previous results and selections are unchanged.';return;}
+      this.closeMatches();this.searchResultId=result.id;this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.contentSearchActive=true;this.contentSearchLabel=pattern;
+      this.contentSearchStatus=ids.length+' matching '+(ids.length===1?'entry':'entries')+' in '+result.examined+' searched entries.'+(result.unavailableBodies?' '+result.unavailableBodies+' text bodies were unavailable or beyond the search limit.':'');
+      this.pageIndex=0;this.followLatest=false;this.queryRevision++;this.matchRevision=this.queryRevision;
+      this.totalMatched=page.totalMatched??page.sessions.length;this.pageEnd=Math.min(this.totalMatched,page.sessions.length);this.displayedMatched=this.totalMatched;this.pendingRows=[];this.updatesPending=false;this.newTrafficCount=0;
+      if(this.selectSearchMatches)this.trafficSelection.ids=new Set(ids);else this.clearTrafficSelection();
+      this.rebuildRows(page.sessions);this.queryLoaded=true;this.queryError='';this.renderSessionState();this.renderFollowState();this.$flushUpdates();this.measurePinnedColumns();this.$emit('traffic-refreshed');
       if(this.selectSearchMatches)this.applySearchSelection();
-    }catch(error:unknown){if(this.isConnected&&this.searchOperation===operationId)this.contentSearchStatus=describeError(error).includes('canceled')?'Search canceled. Previous results are unchanged.':'Search failed: '+describeError(error)+(this.contentSearchActive?' Previous results are still shown.':'');}
+    }catch(error:unknown){if(this.isConnected&&this.searchOperation===operationId)this.contentSearchStatus=describeError(error).includes('canceled')?'Search canceled. Previous results and selections are unchanged.':'Search failed: '+describeError(error)+(this.contentSearchActive?' Previous results are still shown.':'');}
     finally{onProgress.onmessage=()=>{};if(this.searchOperation===operationId){this.searchOperation='';this.searchingTraffic=false;}}
   }
+  async showMatches():Promise<void> {
+    if(!this.contentSearchActive||!this.searchMatchIds.length)return;
+    this.matchReturnFocus=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;
+    const id=this.selectedSessionId&&this.searchMatchIds.includes(this.selectedSessionId)?this.selectedSessionId:this.searchMatchIds[0];if(!id)return;
+    this.matchDialog.showModal();await this.loadMatchEntry(id);
+  }
+  async loadMatchEntry(id:string):Promise<void> {
+    const generation=++this.matchGeneration,search=this.searchResultId;this.matchBusy=true;this.matchError='';this.matchEntryId=id;
+    try {
+      const [locations,detail]=await Promise.all([invoke<TrafficSearchEntry>('traffic_search_entry',{searchId:search,id}),invoke<SessionDetail>('session_detail',{id})]);
+      if(generation!==this.matchGeneration||search!==this.searchResultId||!this.isConnected)return;
+      this.matchLocations=locations.matches;this.matchIndex=0;this.matchMore=locations.moreMatches;this.matchEntryLabel=(detail.requests[0]?.method??'Request')+' '+(detail.requests[0]?.target??id);this.renderMatch();
+    }catch(error:unknown){if(generation===this.matchGeneration){this.matchError='Matches could not be shown: '+describeError(error);this.matchLocations=[];this.renderMatch();}}finally{if(generation===this.matchGeneration)this.matchBusy=false;}
+  }
+  private renderMatch():void {
+    const match=this.matchLocations[this.matchIndex],entry=this.searchMatchIds.indexOf(this.matchEntryId);
+    this.matchHasLocation=!!match;this.matchPosition='Entry '+(entry+1)+' of '+this.searchMatchIds.length+' · '+(match?'Match '+(this.matchIndex+1)+' of '+this.matchLocations.length+(this.matchMore?'+':''):'No current occurrences');
+    const boundaries:Record<string,string>={'metadata':'Entry metadata','client-request':'Client request','upstream-request':'Upstream request','upstream-response':'Upstream response','client-response':'Client response'};
+    this.matchField=match?(boundaries[match.boundary]??match.boundary)+' · '+match.field:'';this.matchBefore=match?.before??'';this.matchText=match?.matched??'';this.matchAfter=match?.after??'';
+    this.matchNote=match?'Original decoded text · UTF-16 offsets '+match.startUtf16+'–'+match.endUtf16+(match.shortened?' · Long match shortened for display.':'')+(this.matchMore?' · First 200 occurrences shown; refine your search for later matches.':''):'The retained evidence may have changed since the search. Search again to refresh results.';
+    this.matchHasPrevious=this.matchIndex>0;this.matchHasNext=this.matchIndex+1<this.matchLocations.length;this.matchHasPreviousEntry=entry>0;this.matchHasNextEntry=entry>=0&&entry+1<this.searchMatchIds.length;
+  }
+  moveMatch(step:number):void {if(this.matchBusy)return;const next=this.matchIndex+step;if(next<0||next>=this.matchLocations.length)return;this.matchIndex=next;this.renderMatch();}
+  async moveMatchEntry(step:number):Promise<void> {if(this.matchBusy)return;const id=this.searchMatchIds[this.searchMatchIds.indexOf(this.matchEntryId)+step];if(id)await this.loadMatchEntry(id);}
+  matchKeyboard(event:KeyboardEvent):void {if(event.key==='F3'){event.preventDefault();this.moveMatch(event.shiftKey?-1:1);}}
+  closeMatches(event?:Event):void {event?.preventDefault();this.matchGeneration++;this.matchBusy=false;if(this.matchDialog?.open){this.matchDialog.close();this.matchReturnFocus?.focus();}this.matchReturnFocus=null;}
+
   private applySearchSelection():void {
     this.trafficSelection.ids=new Set(this.searchMatchIds);this.selectedTraffic.clear();this.trafficSelection.focused=this.sessions.find(row=>this.trafficSelection.ids.has(row.id))?.id??null;this.trafficSelection.anchor=this.trafficSelection.focused;this.updateTrafficSelection();
     const first=this.sessions.find(row=>this.trafficSelection.ids.has(row.id));if(first)void this.inspectSession(first,true);
@@ -430,8 +488,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
   }
-  async cancelContentSearch():Promise<void> {if(this.searchOperation){this.contentSearchStatus='Canceling search…';try{await invoke('cancel_traffic_search',{operationId:this.searchOperation});}catch(error:unknown){this.contentSearchStatus='Cancel failed: '+describeError(error);}}}
+  async cancelContentSearch():Promise<void> {if(this.searchOperation){this.searchCancelRequested=true;this.contentSearchStatus='Canceling search…';try{await invoke('cancel_traffic_search',{operationId:this.searchOperation});}catch(error:unknown){this.contentSearchStatus='Cancel failed: '+describeError(error);}}}
   async clearContentSearch():Promise<void> {
+    this.closeMatches();
     if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
     this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);
   }

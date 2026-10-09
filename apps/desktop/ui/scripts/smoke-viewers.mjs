@@ -143,6 +143,16 @@ try{
     assert.ok(await viewer.evaluate(`${composer}.composerForm.getBoundingClientRect().width<760`));
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer-compact.png'),Buffer.from(image.data,'base64'));}
     await viewer.call('Emulation.clearDeviceMetricsOverride');
+    await viewer.evaluate(`(async()=>{await ${root}.activateView('traffic');const workspace=${traffic};workspace.searchInput.value='Content-Length';workspace.searchMetadata=false;workspace.searchRequestHeaders=true;workspace.searchResponseHeaders=false;workspace.searchBodies=false;workspace.searchRequestBodies=false;workspace.selectSearchMatches=true;await workspace.runContentSearch();})()`);
+    assert.ok(await viewer.evaluate(`${traffic}.searchMatchIds.includes(${JSON.stringify(replayId)})`),'Native scoped search did not find the retained request header');
+    await viewer.evaluate(`${traffic}.showMatches()`);
+    assert.equal(await viewer.evaluate(`${traffic}.matchText`),'Content-Length');
+    assert.ok(await viewer.evaluate(`${traffic}.matchField.startsWith('Client request') && ${traffic}.matchDialog.querySelector('mark').textContent==='Content-Length'`));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-matches.png'),Buffer.from(image.data,'base64'));}
+    await viewer.call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
+    assert.ok(await viewer.evaluate(`(()=>{const dialog=${traffic}.matchDialog;return dialog.getBoundingClientRect().width<=760&&dialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight;})()`));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-matches-compact.png'),Buffer.from(image.data,'base64'));}
+    await viewer.call('Emulation.clearDeviceMetricsOverride');await viewer.evaluate(`(async()=>{${traffic}.closeMatches();await ${traffic}.clearContentSearch();})()`);
     await viewer.evaluate(`(async()=>{await ${root}.activateView('traffic');await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(replayId)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
     process.stdout.write('Viewer streamed captured binary replay, original trace association and history verified.\n');
   }finally{replayServer.closeAllConnections();await new Promise(resolve=>replayServer.close(resolve));}

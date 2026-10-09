@@ -117,13 +117,14 @@ await page.addInitScript((workspace) => {
           const request=args.request;state.lastContentSearch=structuredClone(request);state.searchCanceled=false;
           args.onProgress.onmessage({operationId:request.operationId,completed:0,total:state.sessions.length});
           if(state.deferSearch)await new Promise(resolve=>state.releaseSearch=resolve);
-          if(state.searchCanceled)throw new Error('Traffic search canceled');
+          if(state.searchCanceled&&!state.ignoreSearchCancel)throw new Error('Traffic search canceled');
           const normalize=text=>{text=String(text);if(request.ignoreDiacritics)text=text.normalize('NFD').replace(/\p{M}/gu,'');return request.caseSensitive?text:text.toLowerCase();};
           const regex=request.mode==='regex'?new RegExp(request.pattern,request.caseSensitive?'u':'iu'):null;
           const match=text=>regex?regex.test(String(text)):normalize(text).includes(normalize(request.pattern));
           const ids=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)).filter(row=>request.metadata&&match(row.url+' '+row.method+' '+row.caller.processName+' '+row.caller.processId+' '+row.status)||request.headers&&match('X-Support: HeaderNeedle '+row.id)||request.responseBodies&&row.contentType!=='image/webp'&&match(row.searchBody??('body for '+row.id))).map(row=>row.id);
           const id='search-'+(state.searchResults?.length??0);(state.searchResults??=[]).push({id,ids});return {id,operationId:request.operationId,ids,examined:state.sessions.length,binaryBodies:1,unavailableBodies:0};
         }
+        case 'traffic_search_entry': return {entryId:args.id,moreMatches:false,matches:[{boundary:'client-response',field:'Decoded text body',startUtf16:3,endUtf16:7,before:'😀 ',matched:'Café',after:' marker <script>globalThis.matchUnsafe=true</script>',shortened:false},{boundary:'client-response',field:'Decoded text body',startUtf16:10,endUtf16:15,before:'Café / ',matched:'Café',after:' again',shortened:false}]};
         case 'cancel_traffic_search': state.searchCanceled=true;return;
         case 'matching_traffic_ids': {
           const result=state.searchResults?.find(result=>result.id===args.query.searchResultId);let rows=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)&&(!result||result.ids.includes(row.id)));
@@ -135,6 +136,7 @@ await page.addInitScript((workspace) => {
         }
         case 'watch_sessions': state.channel = args.onEvent; return;
         case 'query_sessions': {
+          if(state.searchQueryFailure&&args.query.searchResultId===state.searchResults?.at(-1)?.id)throw new Error('Fixture result paging failed');
           if (state.queryError) throw new Error('Fixture query failure');
           if (state.deferFocus && args.query.focusId) { state.deferFocus=false; state.focusPending=true; await new Promise(resolve=>state.releaseFocus=resolve); }
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
@@ -1295,15 +1297,27 @@ try {
   const searchOptions=page.locator('#traffic-search-options');
   await page.getByRole('button',{name:'Search options',exact:true}).click();
   await searchOptions.getByLabel('URL, method, process, PID and status',{exact:true}).uncheck();
-  await searchOptions.getByLabel('Request and response headers',{exact:true}).uncheck();
+  await searchOptions.getByLabel('Request headers',{exact:true}).uncheck();await searchOptions.getByLabel('Response headers',{exact:true}).uncheck();
   await searchOptions.getByLabel('Ignore accents (text mode)',{exact:true}).check();
   await searchOptions.getByLabel('Select all matches after searching',{exact:true}).check();
   await page.getByLabel('Search traffic',{exact:true}).fill('cafe');
   await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
-  await page.getByRole('button',{name:'Select all 2 matches',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Select all 2 entries',exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount===2);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastContentSearch.ignoreDiacritics),true);
   assert.doesNotMatch(await page.locator('.content-search-status').textContent(),/binary|image/i);
+  await page.getByRole('button',{name:'View matches…',exact:true}).click();
+  const matchDialog=page.locator('.search-match-dialog[open]');
+  await matchDialog.getByText(/Entry [12] of 2 · Match 1 of 2/).waitFor();
+  const initialMatchEntry=await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').matchEntryId);
+  assert.equal(await matchDialog.locator('mark').textContent(),'Café');assert.equal(await page.evaluate(()=>globalThis.matchUnsafe),undefined);
+  await matchDialog.getByRole('button',{name:'Next match',exact:false}).click();assert.equal(await matchDialog.locator('mark').textContent(),'Café');
+  await matchDialog.press('Shift+F3');assert.equal(await matchDialog.locator('mark').textContent(),'Café');
+  const nextEntry=matchDialog.getByRole('button',{name:'Next entry',exact:true});if(await nextEntry.isEnabled())await nextEntry.click();else await matchDialog.getByRole('button',{name:'Previous entry',exact:true}).click();await page.waitForFunction(previous=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').matchEntryId!==previous,initialMatchEntry);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/search-matches-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/search-matches-compact.png')});
+  const matchBounds=await matchDialog.boundingBox();assert.ok(matchBounds.width<=760&&matchBounds.height<=520);
+  await matchDialog.getByRole('button',{name:'Close',exact:true}).click();assert.equal(await page.getByRole('button',{name:'View matches…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);await page.setViewportSize({width:1280,height:800});
+
   await page.screenshot({path:resolve(root,'../../../target/ui-check/content-search-wide.png')});
   await page.getByLabel('Search traffic',{exact:true}).fill('marker');
   await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
@@ -1320,22 +1334,39 @@ try {
   assert.equal(await searchOptions.getByLabel('Ignore accents (text mode)',{exact:true}).isDisabled(),true);
   await page.getByLabel('Search traffic',{exact:true}).fill('caf[ée]');
   await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
-  await page.getByRole('button',{name:'Select all 2 matches',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Select all 2 entries',exact:true}).waitFor();
+  const searchFailureSelection=await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids));
   await page.getByLabel('Search traffic',{exact:true}).fill('(');
   await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
   await page.locator('.content-search-status').getByText(/Search failed:/).waitFor();
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),0);
+  assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids)),searchFailureSelection);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').selectedTrafficCount),2);
+  const searchCancelSelection=await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids));
   await page.evaluate(()=>globalThis.__workspaceFixture.deferSearch=true);
   await page.getByLabel('Search traffic',{exact:true}).fill('body');
   await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
   await page.getByRole('button',{name:'Cancel search',exact:true}).click();
   await page.evaluate(()=>{globalThis.__workspaceFixture.releaseSearch();globalThis.__workspaceFixture.deferSearch=false;});
-  await page.locator('.content-search-status').getByText('Search canceled. Previous results are unchanged.',{exact:true}).waitFor();
+  await page.locator('.content-search-status').getByText('Search canceled. Previous results and selections are unchanged.',{exact:true}).waitFor();
+  assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids)),searchCancelSelection);
+  const previousSearchToken=await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').searchResultId);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferSearch=true;globalThis.__workspaceFixture.ignoreSearchCancel=true;});
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();await page.getByRole('button',{name:'Cancel search',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.releaseSearch();globalThis.__workspaceFixture.deferSearch=false;});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').searchingTraffic);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').searchResultId),previousSearchToken,'A late successful canceled search replaced the old result');
+  assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids)),searchCancelSelection);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.ignoreSearchCancel=false;globalThis.__workspaceFixture.searchQueryFailure=true;});
+  await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();await page.locator('.content-search-status').getByText(/Search failed: Fixture result paging failed/).waitFor();
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').searchResultId),previousSearchToken);
+  assert.deepEqual(await page.evaluate(()=>Array.from(document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficSelection.ids)),searchCancelSelection);
+  await page.evaluate(()=>globalThis.__workspaceFixture.searchQueryFailure=false);
+
   await page.getByRole('button',{name:'Clear search',exact:true}).click();
   await page.getByRole('button',{name:'Search options',exact:true}).click();
   await searchOptions.getByLabel('Match mode',{exact:true}).selectOption('text');
   await searchOptions.getByLabel('URL, method, process, PID and status',{exact:true}).check();
-  await searchOptions.getByLabel('Request and response headers',{exact:true}).check();
+  await searchOptions.getByLabel('Request headers',{exact:true}).check();await searchOptions.getByLabel('Response headers',{exact:true}).check();
   await searchOptions.getByLabel('Select all matches after searching',{exact:true}).uncheck();
   await page.getByRole('button',{name:'Search options',exact:true}).click();
   await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/support.saz');

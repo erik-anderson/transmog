@@ -159,6 +159,8 @@ export interface CaptureExportResult {destination:string;records:number;bytes:nu
 export interface TraceMetadata {id:string;name:string;format:string;path:string;sessions:number;importedAt:number;context:unknown;notes:string[];}
 export interface TraceImportResult {trace:TraceMetadata;issues:string[];}
 export interface TraceImportProgress {operationId:string;completed:number;total:number;}
+export interface TrafficSearchMatch {boundary:string;field:string;startUtf16:number;endUtf16:number;before:string;matched:string;after:string;shortened:boolean;}
+export interface TrafficSearchEntry {entryId:string;matches:TrafficSearchMatch[];moreMatches:boolean;}
 export interface TrafficSearchResult {id:string;operationId:string;ids:string[];examined:number;binaryBodies:number;unavailableBodies:number;}
 export interface TrafficSearchProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {

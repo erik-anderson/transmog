@@ -205,10 +205,21 @@ qualified baseline, not completion of the complete plan.
     unavailable adapters, clipboard commands under PowerShell 5.1/7, body mode
     transitions and wide/compact and native viewer UX.
 
+22. Search adds independent request/response header and decoded body scopes.
+    Saved queries support bounded original-text occurrence views, including
+    header identity, Unicode-normalized offsets, accented highlights and
+    previous/next occurrence or entry navigation. Zero-width regexes stay
+    visible. Locating normalization uses bounded range storage instead of a
+    per-character body map. Search commits new results and selection only after
+    both result queries succeed; canceled, failed or stale operations preserve
+    previous selections. Binary bodies remain quietly skipped. Tests cover
+    compressed/UTF-16 text, request scope, off-page results, composed/decomposed
+    accents, surrogate pairs, case expansions, zero-width regexes and clipping,
+    browser keyboard/focus and compact layouts, and saved-viewer native match
+    import/API/highlighting with the proxy stopped.
+
 Remaining isolated phases:
 
-- Search: request/response scopes, match locations and highlighted occurrence
-  navigation, normalized-character mapping, cancellation preserving selections.
 - Captured-page preview: selectable source scope, resource/version decisions,
   missing-resource diagnostics and request variants while retaining isolation.
 - Trace exports: opt-in export redaction without changing retained evidence,
