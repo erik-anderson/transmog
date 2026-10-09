@@ -21,7 +21,11 @@ self.MonacoEnvironment = {
   getWorker(_moduleId: string, label: string): Worker {
     const source = label === 'typescript' || label === 'javascript'
       ? '/monaco-ts.worker.js'
+      : label==='json'?'/monaco-json.worker.js'
+      : ['css','scss','less'].includes(label)?'/monaco-css.worker.js'
+      : ['html','handlebars','razor'].includes(label)?'/monaco-html.worker.js'
       : '/monaco-editor.worker.js';
-    return new Worker(source, { type: 'module', name: `transmog-${label}-worker` });
+    const trustedSource=monacoPolicy?.createScriptURL(source) ?? source;
+    return new Worker(trustedSource as unknown as string, { type: 'module', name: `transmog-${label}-worker` });
   },
 };
