@@ -45,8 +45,9 @@ Undo. Column filters remain applicable to search results and bulk selection.
   CA generation is create-new and never overwrites either file. Start verifies
   the files, recorded SHA-256 identity, and current trust state before binding.
 - Desktop Start always journals the exact current-user Windows proxy registry
-  values, starts an automatic bounded native capture, binds the listener, and
-  then applies the loopback proxy. Stop and normal/OS-requested exit restore the
+  values, binds the listener, and
+  then applies the loopback proxy. Traffic stays in the configured buffer; recording
+  starts explicitly. Stop and normal/OS-requested exit restore the
   exact prior values. Stop restores routing first, then shows **Finishing
   requests** until admitted HTTP responses, TLS handshakes and upgraded relays
   finish. Idle clients do not delay shutdown. **Start proxy** during this state

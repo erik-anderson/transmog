@@ -2,7 +2,7 @@ import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { CaptureReadModel, CaptureSummaryView, CaptureExportResult } from '../models.js';
+import type { CaptureReadModel, CaptureSummaryView, CaptureExportResult, ProductState } from '../models.js';
 import { describeError } from '../utilities.js';
 
 export const storageSize=(bytes:number):string=>{const units=['B','KiB','MiB','GiB'];let value=bytes,index=0;while(value>=1024&&index<units.length-1){value/=1024;index++;}return value.toLocaleString(undefined,{maximumFractionDigits:1})+' '+units[index];};
@@ -22,13 +22,20 @@ export class CaptureWorkspace extends WorkspaceElement {
  captureForm!:HTMLFormElement;
  inspectionForm!:HTMLFormElement;
  exportForm!:HTMLFormElement;
+ private bodyChoiceTouched=false;
+ private defaultRevision=0;
+ recordBodiesChanged():void {this.bodyChoiceTouched=true;}
+ private async loadRecordingDefaults():Promise<void> {
+  const revision=++this.defaultRevision;
+  try {const state=await invoke<ProductState>('product_state');if(this.isConnected&&revision===this.defaultRevision&&!this.bodyChoiceTouched&&!this.captureActive&&!this.captureBusy)(this.captureForm.elements.namedItem('bodies') as HTMLInputElement).checked=state.privacy.retainBodySamples;}catch { /* The form remains usable if preferences cannot be read. */ }
+ }
  private timer:number|undefined;
  private refreshPending=false;
  private generation=0;
  private exportExtension='tmcap';
  exportFormatChanged():void {const format=String(new FormData(this.exportForm).get('format'));this.exportCanEncrypt=format!=='json-lines';const extension=format==='native'?'tmcap':format==='json-lines'?'jsonl':'saz';const input=this.exportForm.elements.namedItem('destination') as HTMLInputElement;if(input.value.toLowerCase().endsWith('.'+this.exportExtension))input.value=input.value.slice(0,-this.exportExtension.length)+extension;this.exportExtension=extension;}
- protected hydratedCallback():void {void this.refreshCapture();}
- viewChanged():void {if(this.view==='captures')void this.refreshCapture();else window.clearTimeout(this.timer);}
+ protected hydratedCallback():void {void this.refreshCapture();void this.loadRecordingDefaults();}
+ viewChanged():void {if(this.view==='captures'){void this.refreshCapture();void this.loadRecordingDefaults();}else window.clearTimeout(this.timer);}
  showCaptureTask(task:string):void {this.captureTask=task;this.captureError='';}
  private renderCapture(status:CaptureReadModel):void {this.captureActive=status.state==='active';this.capturePathText=status.path??'';this.captureStateText=status.state==='active'?'Recording · '+storageSize(status.bytesWritten??0)+' written':status.state==='sealed'?'Saved · '+storageSize(status.bytesWritten??0):status.state==='failed'?'Recording stopped: '+(status.message??'capture failed'):status.state==='shutdown'?'Capture service stopped':'Not recording';}
  private async runCapture(operation:()=>Promise<void>):Promise<void> {if(this.captureBusy)return;this.captureBusy=true;this.captureError='';this.generation++;try{await operation();}catch(error:unknown){this.captureError=describeError(error);}finally{this.captureBusy=false;if(this.view==='captures')void this.refreshCapture();}}

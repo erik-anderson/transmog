@@ -110,7 +110,7 @@ await page.addInitScript((workspace) => {
           state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
         }
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
+        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 4, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
@@ -1146,6 +1146,11 @@ try {
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length === 1);
   await view('captures');
   const captures=page.locator('capture-workspace');
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.recordingDefaultBodies=true;await document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').loadRecordingDefaults();});
+  assert.equal(await captures.getByLabel('Include request and response bodies',{exact:true}).isChecked(),true);
+  await captures.getByLabel('Include request and response bodies',{exact:true}).uncheck();
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').loadRecordingDefaults();delete globalThis.__workspaceFixture.recordingDefaultBodies;});
+  assert.equal(await captures.getByLabel('Include request and response bodies',{exact:true}).isChecked(),false,'Loading defaults overwrote an explicit recording choice');
   const captureIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').captureBusy);
   await captures.getByLabel('New capture file',{exact:true}).fill('kept.tmcap');
   await captures.getByRole('button',{name:'Choose…',exact:true}).filter({visible:true}).click();await captureIdle();

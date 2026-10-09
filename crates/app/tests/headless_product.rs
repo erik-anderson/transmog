@@ -698,6 +698,7 @@ impl TestWorkspace {
             diagnostics_log_path: Some(self.root.join("diagnostics.jsonl")),
             body_store: Some(BodyStoreConfig {
                 storage: transmog_app::BufferStorage::Memory,
+                use_product_preferences: false,
                 root: self.root.join("body-cache"),
                 mode: RetentionMode::Circular,
                 max_bytes: BODY_STORE_BYTES,

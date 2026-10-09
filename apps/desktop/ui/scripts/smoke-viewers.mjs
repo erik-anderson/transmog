@@ -136,6 +136,7 @@ try{
     const replayResult=await viewer.evaluate(`({status:${composer}.composerResult?.status,body:${composer}.composerResult?.body,source:${composer}.composerResult?.source,error:${composer}.composerError})`);
     assert.equal(replayResult.error,'');assert.equal(replayResult.status,200);assert.equal(replayResult.body,'received '+replayLength);assert.equal(replayResult.source.entryId,replayId);assert.ok(replayResult.source.traceId);
     await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.composerPane='request';const details=workspace.shadowRoot?.querySelector('.composer-history')??workspace.querySelector('.composer-history');details.open=true;await workspace.refreshHistory();})()`);
+    await waitFor(()=>viewer.evaluate(`${composer}.composerHistory.length>0 && !${composer}.composerHistoryBusy`),'Latest Composer history refresh did not complete');
     assert.equal(await viewer.evaluate(`${composer}.composerHistory[0].sourceId`),replayId);
     assert.ok(await viewer.evaluate(`${composer}.composerHistory[0].sourceLabel.startsWith('replay-fixture.tmcap')`));
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer.png'),Buffer.from(image.data,'base64'));}
@@ -159,7 +160,7 @@ try{
 
   await viewer.evaluate(`${traffic}.showSaveTrace()`);
   const saveChoices=await viewer.evaluate(`({open:${traffic}.saveTraceDialog.open, compressed:${traffic}.saveTraceForm.elements.namedItem('compress').checked,network:${traffic}.saveTraceForm.elements.namedItem('networkContext').checked,redact:${traffic}.saveTraceForm.elements.namedItem('redactHeaders').checked})`);
-  assert.ok(saveChoices.open);assert.ok(saveChoices.compressed);assert.equal(saveChoices.network,false);assert.equal(saveChoices.redact,false);
+  assert.ok(saveChoices.open);assert.equal(saveChoices.compressed,false);assert.equal(saveChoices.network,false);assert.equal(saveChoices.redact,false);
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-save.png'),Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeSaveTrace()`);
   const before=(await targets()).map(target=>target.id);

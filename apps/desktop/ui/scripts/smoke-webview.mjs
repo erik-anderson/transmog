@@ -425,6 +425,20 @@ try {
     return { cycles: 2, lifecycle: after.lifecycle, listener: after.listener };
   })()`);
 
+
+  result.recordingDefaults=await evaluate(`(async()=>{
+    const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="captures"]').click();
+    await customElements.whenDefined('capture-workspace');
+    const workspace=shell.shadowRoot.querySelector('capture-workspace');await workspace.loadRecordingDefaults();
+    const preference=await window.__TAURI_INTERNALS__.invoke('product_state');
+    const input=workspace.captureForm.elements.namedItem('bodies');
+    if(input.checked!==preference.privacy.retainBodySamples)throw new Error('Recording did not honor saved body defaults');
+    const before=input.checked;const touched=workspace.bodyChoiceTouched;
+    try {input.checked=!before;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.checked!==!before)throw new Error('Recording defaults overwrote a draft');}
+    finally {input.checked=before;workspace.bodyChoiceTouched=touched;}
+    shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
+    return {savedDefault:true,draftPreserved:true};
+  })()`);
   if (screenshotPath !== undefined) {
     const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));

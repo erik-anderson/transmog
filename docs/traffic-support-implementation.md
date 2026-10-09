@@ -321,12 +321,14 @@ is implemented but was not qualified on a Linux host in this Windows run.
 The primary checkout's independent updater changes remain preserved. All feature
 work is committed on the attached managed worktree branch.
 
-## Additional storage and encryption work (in progress)
+## Additional storage and encryption work (completed)
 
 29. Configurable memory-first circular buffer; Automatic is half installed RAM.
 30. Independently compressed and authenticated encrypted TMCap chunks with lazy reads.
 31. Password-protected SAZ import and opt-in AES-256 export.
-32. Desktop password flows and streaming/circular CLI recording; populated UX and end-to-end qualification.
+32. Desktop password flows and populated UX qualification.
+33. Streaming and circular CLI recording with transient passwords.
+34. Final storage defaults, explicit embedding limits and end-to-end qualification.
 
 Ordinary CLI recording streams every entry. Circular CLI recording saves only newest retained traffic at stop.
 
@@ -339,3 +341,46 @@ Phase 31 completed: password-aware ZIP import (ZipCrypto and WinZip AES variants
 Phase 32 completed: shared masked transient password dialog, confirmed encryption choices for Save trace / recording / native and SAZ exports, typed password retry and Cancel for imports and inspection, chunk-compressed default saves with optional outer gzip. Production browser flow checks and real WebView2 wide/compact masking, confirmation, cancellation, focus and screenshot review passed. Native review found and fixed dynamic input type masking.
 
 Phase 33 completed: CLI streaming records compress/encrypt on arrival; optional exchange-group circular retention uses half installed RAM automatically, custom byte/unit limits and unlimited disk. Memory circular creates no trace/cache file before stop; disk circular stores compressed ciphertext when encrypted. Passwords use masked console input or an explicitly protected file, never argv text or preferences; native recovery preserves encryption. Default CLI output is now chunk-compressed .tmcap, with legacy gzip still supported. Validation: capture/CLI tests and strict Clippy; owned hidden-console Ctrl+C tests verify encrypted streaming, memory/disk circular output, persistent root reuse and crash recovery without changing real host proxy or trust.
+
+Phase 34 completed: explicit embedding body-store limits survive application
+initialization and preference saves. Desktop recording honors the saved body
+choice without overwriting a draft during asynchronous refresh. Crypto metadata
+inspection preserves case-distinct feature names. Native viewer checks wait for
+the current Composer history refresh, and save-copy expectations reflect the
+chunk-compressed default. Documentation now describes explicit recording rather
+than an automatic on-disk desktop journal.
+
+Final qualification for phases 29–34:
+
+- All **469 Rust workspace tests** pass with no failures; strict workspace Clippy
+  passes. The separately enabled Docker product test and all eight protocol and
+  browser interoperability cases pass. The crypto dependency guard passes.
+- Production-template type/build and browser workspace checks pass, including
+  password retry/cancel, recording defaults and preservation of explicit drafts.
+  Real Windows main-window and saved-viewer checks pass. Main-window coverage
+  includes accessibility, forced colors, DPI and long labels; viewer coverage
+  includes independent catalogs, proxy permissions, binary replay, trace
+  provenance and captured-page script/network isolation. Populated wide/compact
+  password and Settings layouts were inspected.
+- Real CLI Ctrl+C console tests pass for encrypted streaming and memory/disk
+  circular captures, ephemeral memory-only keys, persistent root reuse and crash
+  recovery. Independent native 7-Zip authenticates both AES-256 SAZ export
+  profiles, verifies every decrypted member against its plaintext reference,
+  rejects a wrong password and creates a ZipCrypto fixture imported by Transmog.
+
+Native payloads use indexed seeks into independently compressed/authenticated
+frames rather than mapping the entire file; bodies are decoded on demand.
+Password-protected native files do not expand to a plaintext temporary trace.
+SAZ import supports the pinned ZIP library's ZipCrypto and WinZip AES schemes;
+AES-256 is the encrypted export choice. Legacy native/gzip traces remain readable.
+
+Automatic buffer size is half installed RAM. Custom sizes at or below that
+threshold retain new bodies in memory; larger or unlimited buffers use disk.
+Imported bodies remain lazy references to their original files. Unlimited buffer
+and per-request settings do not remove the existing **4 GiB saved-trace budget**;
+recording/output budgets remain separately enforced. Ordinary CLI capture streams
+records, while circular CLI capture writes the newest retained exchanges at stop.
+
+All phases are committed in the managed worktree. Production signing and the
+maintainer's protected release checklist remain qualification steps for the
+release environment; no signed release or publication was performed locally.

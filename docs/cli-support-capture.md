@@ -127,8 +127,9 @@ canceled, public recovery metadata stays available for another attempt.
 
 In Transmog, use **Import…** to open the leftover `.tmcap`. The viewer recovers
 the valid prefix without changing the original and explains incomplete evidence
-in **Trace metadata**. Use **Save trace…**, leave **Compress for sharing** checked,
-and choose a new filename such as `recovered-trace.tmcap.gz`. Review it, then
+in **Trace metadata**. Use **Save trace…** and choose a new filename such as
+`recovered-trace.tmcap`; each chunk is already compressed. Choose password
+encryption when the recovered copy also needs protection. Review it, then
 share the recovered copy. Missing bytes cannot be reconstructed.
 
 For support staff who prefer console recovery:
@@ -144,7 +145,7 @@ files can be imported directly and saved as a compressed copy in the desktop.
 
 ## Other platforms and manual setup
 
-Run `transmog-cli record --output support-trace.tmcap.gz` in a terminal. Configure
+Run `transmog-cli record --output support-trace.tmcap` in a terminal. Configure
 the affected application's HTTP and HTTPS proxy with the printed address, then
 remove that configuration after stopping. Automatic host proxy configuration
 currently applies to Windows; `--no-system-proxy` keeps Windows setup manual too.

@@ -121,6 +121,9 @@ pub fn installed_ram() -> Option<u64> {
 pub struct BodyStoreConfig {
     /// Application-owned directory containing only ephemeral body-cache files.
     pub root: PathBuf,
+    /// Apply persisted product buffer choices when an application creates this store.
+    /// Explicit embedding configurations can keep their construction quota instead.
+    pub use_product_preferences: bool,
     /// Initial retention behavior.
     pub mode: RetentionMode,
     /// Storage location for new bodies.
@@ -129,7 +132,7 @@ pub struct BodyStoreConfig {
     pub max_bytes: u64,
     /// Per-boundary retained-byte quota.
     pub max_body_bytes: u64,
-    /// Finite queue between the observer callback and disk worker.
+    /// Finite queue between the observer callback and storage worker.
     pub queue_capacity: NonZeroUsize,
     /// Maximum bytes accepted in one range read.
     pub max_read_bytes: usize,
@@ -142,6 +145,7 @@ impl BodyStoreConfig {
     pub fn product_default(root: PathBuf) -> Self {
         Self {
             root,
+            use_product_preferences: true,
             mode: RetentionMode::Circular,
             storage: BufferStorage::Memory,
             max_bytes: BufferLimit::Automatic
@@ -271,7 +275,7 @@ pub struct BodyStoreCounters {
     pub retained_bytes: u64,
     /// Terminal blobs removed by circular eviction.
     pub evicted_bodies: u64,
-    /// Observer events rejected by the finite disk queue.
+    /// Observer events rejected by the finite storage queue.
     pub dropped_events: u64,
     /// Filesystem operations that failed.
     pub storage_failures: u64,
@@ -298,7 +302,7 @@ pub enum BodyStoreError {
     /// The retained file disappeared or could not be read.
     #[error("retained body bytes are unavailable")]
     ReadUnavailable,
-    /// The disk worker is no longer available.
+    /// The storage worker is no longer available.
     #[error("body-store worker is unavailable")]
     WorkerUnavailable,
 }
@@ -573,7 +577,7 @@ impl BodyStore {
             (!complete).then(|| "The saved trace did not retain a complete body".into());
     }
     /// Creates the cache, removes stale temporary files, and starts its bounded
-    /// disk worker.
+    /// storage worker.
     ///
     /// # Errors
     ///
@@ -901,7 +905,7 @@ impl BodyStore {
     }
 
     /// Waits until all observer events accepted before this call have reached
-    /// the disk worker.
+    /// the storage worker.
     ///
     /// # Errors
     ///
@@ -1478,6 +1482,7 @@ mod tests {
         BodyStoreConfig {
             root,
             storage: BufferStorage::Disk,
+            use_product_preferences: false,
             mode: RetentionMode::Circular,
             max_bytes,
             max_body_bytes: max_bytes,

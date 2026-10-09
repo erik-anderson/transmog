@@ -28,8 +28,8 @@ quarantined and an older valid generation is used; if none is valid, safe
 defaults are loaded. Versions 1 through 4 migrate to the current schema while
 preserving saved choices.
 
-New installations retain request and response bodies and bounded automatic
-capture samples. Sensitive header values are collected by default. Settings →
+New installations retain request and response bodies in the memory-first buffer,
+and default to including bodies in explicitly started recordings. Sensitive header values are collected by default. Settings →
 Preferences offers a persistent option to redact Authorization,
 Proxy-Authorization, Cookie and Set-Cookie values in newly received headers.
 Redaction preserves their names, order, duplicates and original byte lengths,

@@ -1298,6 +1298,7 @@ mod tests {
         let body_store = BodyStore::new(BodyStoreConfig {
             root: body_root,
             storage: crate::BufferStorage::Memory,
+            use_product_preferences: false,
             mode: RetentionMode::Circular,
             max_bytes: 1024,
             max_body_bytes: 1024,

@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
-$metadata = cargo metadata --format-version 1 --locked | ConvertFrom-Json
+$metadata = cargo metadata --format-version 1 --locked | ConvertFrom-Json -AsHashtable
 $normalIds = [System.Collections.Generic.HashSet[string]]::new()
 $queue = [System.Collections.Generic.Queue[string]]::new()
 foreach ($member in $metadata.workspace_members) { $queue.Enqueue($member) }

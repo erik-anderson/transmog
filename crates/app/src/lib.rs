@@ -4,7 +4,7 @@
 //!
 //! This crate is the application boundary shared by the desktop shell and
 //! future command-line frontends. It deliberately has no Tauri, `WebUI`,
-//! `WebView`, or operating-system dependency.
+//! `WebView` dependency. Portable system information resolves memory budgets.
 
 mod artifacts;
 mod automation;
@@ -274,6 +274,7 @@ pub struct Application {
     product_state: product_state::ProductStateManager,
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
+    buffer_preferences: bool,
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
     scripts: scripts::ScriptRegistry,
@@ -300,6 +301,10 @@ impl Application {
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
+        let apply_buffer_preferences = config
+            .body_store
+            .as_ref()
+            .is_some_and(|config| config.use_product_preferences);
         let body_store = config
             .body_store
             .map(BodyStore::new)
@@ -331,11 +336,13 @@ impl Application {
         );
         if let Some(store) = &body_store {
             let privacy = product_state.snapshot().privacy;
-            store
-                .set_buffer_limit(privacy.buffer_limit)
-                .map_err(|error| {
-                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
-                })?;
+            if apply_buffer_preferences {
+                store
+                    .set_buffer_limit(privacy.buffer_limit)
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                    })?;
+            }
             store.set_request_body_limit(privacy.request_body_limit);
             store.set_privacy(
                 privacy.retain_request_bodies,
@@ -367,6 +374,7 @@ impl Application {
             product_state,
             diagnostics,
             body_store,
+            buffer_preferences: apply_buffer_preferences,
             automation,
             response_assets,
             scripts,
@@ -399,7 +407,9 @@ impl Application {
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
         let state = product_state::validate(state)?;
-        if let Some(store) = &self.body_store {
+        if self.buffer_preferences
+            && let Some(store) = &self.body_store
+        {
             store
                 .prepare_buffer_limit(state.privacy.buffer_limit)
                 .map_err(|error| {
@@ -412,11 +422,13 @@ impl Application {
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
         }
         if let (Ok(state), Some(store)) = (&result, &self.body_store) {
-            store
-                .set_buffer_limit(state.privacy.buffer_limit)
-                .map_err(|error| {
-                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
-                })?;
+            if self.buffer_preferences {
+                store
+                    .set_buffer_limit(state.privacy.buffer_limit)
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                    })?;
+            }
             store.set_request_body_limit(state.privacy.request_body_limit);
             store.set_privacy(
                 state.privacy.retain_request_bodies,
@@ -1502,6 +1514,32 @@ impl Application {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_buffer_limit_is_not_replaced_by_product_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = BodyStoreConfig::product_default(root.path().join("cache"));
+        config.use_product_preferences = false;
+        config.max_bytes = 1024;
+        config.max_body_bytes = 1024;
+        let app = Application::new(AppConfig {
+            body_store: Some(config),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        assert_eq!(
+            app.body_store().unwrap().buffer_status().max_bytes,
+            Some(1024)
+        );
+        let mut preferences = app.product_state();
+        preferences.preferences.theme = ThemePreference::Dark;
+        app.save_product_state(preferences).unwrap();
+        assert_eq!(
+            app.body_store().unwrap().buffer_status().max_bytes,
+            Some(1024)
+        );
+        assert!(!root.path().join("cache").exists());
+    }
 
     #[test]
     fn default_application_is_stopped_and_ui_neutral() {
