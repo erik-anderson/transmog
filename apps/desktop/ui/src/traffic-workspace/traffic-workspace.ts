@@ -21,6 +21,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable timingBusy=false;
   @observable timingPhases:TimingRow[]=[];
   @observable timingWaterfall:WaterfallRow[]=[];
+  @observable timingMinor:WaterfallRow[]=[];
   @observable timingWork:TimingRow[]=[];
   @observable timingRange="";
   @observable timingReportText="";
@@ -117,7 +118,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   trafficUndoButton!:HTMLButtonElement;
   private trafficSelection=new ListSelection();
   private selectedTraffic=new Map<string,SessionSummary>();
-  private trafficUndo:Array<{ids:string[];rows:SessionSummary[]}>=[];
+  private trafficUndoTimer:number|undefined;
+  @observable private trafficUndo:Array<{ids:string[];rows:SessionSummary[];expiresAt?:number|undefined}>=[];
   @observable selectedDetail:SessionDetail | null = null;
   @observable selectedMethodText = '—';
   @observable selectedUrlText = 'Select a request';
@@ -243,7 +245,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(event.payload.type!=='drop'||this.view!=='traffic')return;
         const point=event.payload.position, bounds=this.sessionScroller.getBoundingClientRect(), scale=window.devicePixelRatio;
         if(point.x/scale<bounds.left||point.x/scale>bounds.right||point.y/scale<bounds.top||point.y/scale>bounds.bottom)return;
-        const paths=event.payload.paths.filter(path=>/\.(saz|tmcap)$/i.test(path));
+        const paths=event.payload.paths;
         this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));
         void this.processOpenedTraces();
       });
@@ -293,11 +295,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
   async showTimings():Promise<void> {
     this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;
-    this.timingId=id;this.timingWaterfall=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
+    this.timingId=id;this.timingWaterfall=[];this.timingMinor=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
   }
   async refreshTimings():Promise<void> {
     const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
-    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
     catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
     finally {if(generation===this.timingGeneration)this.timingBusy=false;}
   }
@@ -507,7 +509,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
   }
   async cancelContentSearch():Promise<void> {if(this.searchOperation){this.searchCancelRequested=true;this.contentSearchStatus='Canceling search…';try{await invoke('cancel_traffic_search',{operationId:this.searchOperation});}catch(error:unknown){this.contentSearchStatus='Cancel failed: '+describeError(error);}}}
-  async clearContentSearch():Promise<void> {
+  async clearContentSearch(refresh=true):Promise<void> {
     this.closeMatches();
     if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
     this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.pageIndex=0;this.queryRevision++;await this.refreshSessions(undefined,true);
@@ -539,7 +541,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       event.preventDefault(); this.suppressMenuUntil = performance.now()+250;
       if (drag.target) this.reorderColumn(drag.id,drag.target);
     }
-    this.clearColumnDrag();
+    this.clearColumnDrag();window.clearTimeout(this.trafficUndoTimer);
   }
   cancelColumnDrag(event:PointerEvent|KeyboardEvent):void {
     if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
@@ -653,13 +655,32 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.positionTrafficMenu(event);this.trafficMenu.showPopover();
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
+  private pushTrafficUndo(action:{ids:string[];rows:SessionSummary[];expiresAt?:number|undefined}):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];this.scheduleTrafficUndoExpiry();}
+  async clearTraffic():Promise<void> {
+    if(this.removingTraffic)return;this.removingTraffic=true;
+    try {
+      const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null}>('clear_traffic');
+      const removed=new Set(result.ids);this.trafficUndo=[];
+      if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,rows:this.sessions.filter(row=>removed.has(row.id)),expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
+
+      this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): 'Traffic is already empty.';
+      this.scheduleTrafficUndoExpiry();void this.clearContentSearch(false);this.followLatest=true;this.pageIndex=0;this.renderFollowState();this.clearTrafficSelection();this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.selectedMethodText='—';this.selectedUrlText='Select a request';this.selectedStatusText='No response';this.$emit('selection-changed',null);
+      this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);
+    }catch(error:unknown){await this.showError('Traffic could not be cleared',describeError(error));}
+    finally{this.removingTraffic=false;}
+  }
+  private scheduleTrafficUndoExpiry():void {
+    window.clearTimeout(this.trafficUndoTimer);
+    const expiry=Math.min(...this.trafficUndo.flatMap(action=>action.expiresAt?[action.expiresAt]:[]));
+    if(Number.isFinite(expiry))this.trafficUndoTimer=window.setTimeout(()=>{this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());this.trafficUndoText='Clear Undo expired; retained data was released.';this.scheduleTrafficUndoExpiry();},Math.max(0,expiry-Date.now()));
+  }
   async removeUnselectedTraffic():Promise<void> {
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const removed=await invoke<string[]>('remove_unselected_traffic_entries',{ids:[...this.trafficSelection.ids]});
       if(!removed.length){this.diagnostic='There are no unselected entries to remove.';return;}
       const removedIds=new Set(removed);
-      this.trafficUndo.push({ids:removed,rows:this.sessions.filter(row=>removedIds.has(row.id))});if(this.trafficUndo.length>20)this.trafficUndo.shift();this.trafficUndoText=`Removed ${removed.length} unselected ${removed.length===1?'entry':'entries'} from Traffic.`;
+      this.pushTrafficUndo({ids:removed,rows:this.sessions.filter(row=>removedIds.has(row.id))});this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
       if(this.selectedSessionId&&removedIds.has(this.selectedSessionId)){this.inspectionGeneration++;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);}
       this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);this.updateTrafficSelection();this.trafficMenu.hidePopover();
     }catch(error:unknown){this.diagnostic='Traffic removal failed: '+describeError(error);}
@@ -670,7 +691,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     const ids=[...this.trafficSelection.ids],rows=[...this.selectedTraffic.values()];const index=this.sessions.findIndex(row=>row.id===this.trafficSelection.focused);
     try {
       const removed=await invoke<string[]>('remove_traffic_entries',{ids,restore:false});
-      this.trafficUndo.push({ids:removed,rows});if(this.trafficUndo.length>20)this.trafficUndo.shift();
+      this.pushTrafficUndo({ids:removed,rows});
       this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
       this.clearTrafficSelection();this.queryRevision++;this.pendingRows=[];await this.refreshSessions(undefined,true);
       const next=this.sessions[Math.max(0,Math.min(index,this.sessions.length-1))];
@@ -681,9 +702,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     finally{this.removingTraffic=false;}
   }
   async undoTrafficRemoval():Promise<void> {
-    const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
+    this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
     try {
-      const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo.pop();
+      const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();
       this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':'';
       this.trafficSelection.ids=new Set(restored);for(const row of action.rows)if(restored.includes(row.id))this.selectedTraffic.set(row.id,row);
       this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();
@@ -833,11 +854,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch(error:unknown){if(this.isConnected){this.previewPageStatus='Preview could not be opened: '+describeError(error);if(!this.previewPageDialog.open&&!describeError(error).includes('canceled'))this.showNotice('Captured page preview failed',describeError(error),null,null);}}
     finally {this.previewPageBusy=false;this.previewPageOperation='';}
   }
+  @observable saveTraceFormat='native';
+  changeSaveTraceFormat(event:Event):void {this.saveTraceFormat=(event.target as HTMLSelectElement).value;}
   showSaveTrace():void {if(this.savingTrace)return;this.saveTraceStatus='';this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
-    try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'}});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
+    try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'}});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
     catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);this.savingTrace=false;await this.showError('Trace save failed',describeError(error)+'\n\nChoose a writable destination and try saving again.');}}
     finally {this.savingTrace=false;}
   }

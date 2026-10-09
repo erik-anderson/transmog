@@ -7,4 +7,8 @@ breakpoint-workspace { display:contents; }
 .paused-table { width:100%; min-width:0; font-size:.8125rem; }.paused-table th { font-size:.75rem; text-transform:none; letter-spacing:0; }.paused-table th:nth-child(2) { width:8rem; }.paused-table th:last-child { width:6rem; }.paused-table td { white-space:normal; overflow-wrap:anywhere; height:auto; vertical-align:baseline; padding:.4rem .5rem; }.paused-table tr[data-selected] { background:var(--accent-soft); }.paused-table tr:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 .paused-detail { min-width:0; min-height:0; overflow:auto; border-left:1px solid var(--line); --panel-editor-height:max(12rem,calc(100dvh - 15rem)); --panel-editor-min-height:12rem; }.paused-detail-header { display:flex; align-items:baseline; flex-wrap:wrap; gap:.4rem; padding:.35rem .5rem; }.queue-back { display:none; }
 .phases-popover { inset:5rem 1rem auto auto; }.phases-popover form { margin:0; }.phases-popover fieldset { min-width:0; margin:0; padding:0; border:0; display:grid; gap:.4rem; }.phases-popover p { font-size:.75rem; line-height:1.4; }
+[popovertarget="breakpoint-phases"] { anchor-name:--breakpoint-phases; }
+@supports (anchor-name:--breakpoint-phases) {
+  .phases-popover { position-anchor:--breakpoint-phases; inset:auto; position-area:block-end span-inline-end; margin:.25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
+}
 @container (max-width:52rem) { .breakpoint-manager { grid-template-columns:minmax(0,1fr); }.breakpoint-manager:not([data-detail]) .paused-detail { display:none; }.breakpoint-manager[data-detail] .paused-queue { display:none; }.paused-detail { border:0; }.queue-back { display:inline-block; } }

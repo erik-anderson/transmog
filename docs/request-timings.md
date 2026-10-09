@@ -28,7 +28,9 @@ adapter observations and queue acceptance. Zero means a measured zero;
 unavailable means there is no measurement.
 
 Named operation rows show breakpoint decisions, hook/script callbacks, codec
-work and forwarding-channel waits. Repeated callback windows have dashed borders;
+work and forwarding-channel waits. Local measurements below 1 ms are in the
+collapsed **Proxy operations under 1 ms** section; expand it to inspect them. Latency phase
+details and the event timeline are also expandable. Repeated callback windows have dashed borders;
 their call time sums observed invocations and excludes gaps. It includes nested
 work and waits, so it is not CPU time and rows need not add up to total duration.
 

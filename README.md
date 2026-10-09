@@ -54,7 +54,10 @@ the Transmog UI.
 Transmog is intentionally conservative around privileged behavior. It binds to
 loopback by default, guides the user through HTTPS interception setup, verifies
 the selected root certificate before starting, and restores the previous
-per-user Windows proxy settings when it stops. Abrupt-exit recovery is journaled
+per-user Windows proxy settings when it stops. Desktop traffic is transient unless
+you save a trace or explicitly record to a file. Desktop sensitive-header
+redaction is off by default; Privacy can redact newly received headers, and
+Save trace can redact just the exported copy. Abrupt-exit recovery is journaled
 for the next launch.
 
 ## Try the Windows app

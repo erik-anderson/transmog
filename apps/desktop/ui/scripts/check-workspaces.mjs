@@ -138,8 +138,8 @@ await page.addInitScript((workspace) => {
         case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
-        case 'start_proxy': await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
-        case 'stop_application': await new Promise(resolve => setTimeout(resolve,80));if(state.testDrain){state.lifecycle='draining';return {lifecycle:'draining',listener:'127.0.0.1:8888',summary:'Finishing 1 active request/connection',hostRestorePending:false};}state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
+        case 'start_proxy': if(state.holdProxyStart)await new Promise(resolve=>state.releaseProxyStart=resolve);else await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
+        case 'stop_application': if(state.holdProxyStop)await new Promise(resolve=>state.releaseProxyStop=resolve);else await new Promise(resolve => setTimeout(resolve,80));if(state.testDrain){state.lifecycle='draining';return {lifecycle:'draining',listener:'127.0.0.1:8888',summary:'Finishing 1 active request/connection',hostRestorePending:false};}state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
         case 'resume_application': state.lifecycle='running';return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy resumed',hostRestorePending:false};
         case 'search_traffic': {
           const request=args.request;state.lastContentSearch=structuredClone(request);state.searchCanceled=false;
@@ -260,6 +260,7 @@ await page.addInitScript((workspace) => {
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
+        case 'clear_traffic': {const ids=state.sessions.map(row=>row.id);state.dismissedIds=[...ids];return {ids,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};}
         case 'remove_traffic_entries': {
           const dismissed=new Set(state.dismissedIds??[]);const changed=[];
           for(const id of args.ids)if(state.sessions.some(row=>row.id===id) && (args.restore?dismissed.has(id):!dismissed.has(id))) {if(args.restore)dismissed.delete(id);else dismissed.add(id);changed.push(id);}
@@ -425,7 +426,7 @@ try {
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelectorAll('.traffic-table tbody tr[data-session-id]').length===1);
   assert.equal(await page.locator('.traffic-table tbody tr[data-session-id]').getAttribute('data-session-id'),'cached');
   await page.getByRole('button',{name:'Clear filters',exact:true}).click();
-  await page.getByRole('button',{name:'Follow live',exact:true}).click();
+  await page.getByRole('button',{name:'Follow newest',exact:true}).click();
   const listDivider = page.getByRole('separator',{name:'Resize traffic list and inspector',exact:true});
   const listBefore = await page.locator('.session-list-pane').evaluate(pane=>pane.getBoundingClientRect().height);
   await listDivider.focus(); await page.keyboard.press('ArrowDown');
@@ -449,16 +450,20 @@ try {
     });
     return proxy.evaluate(button => getComputedStyle(button).backgroundColor);
   };
+  await page.evaluate(()=>globalThis.__workspaceFixture.holdProxyStart=true);
   await proxy.click();
   await page.getByRole('button',{name:'Starting…',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Starting proxy\./);
   assert.equal(await proxy.isEnabled(),false);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdProxyStart=false;globalThis.__workspaceFixture.releaseProxyStart();});
   await page.getByRole('button',{name:'Stop proxy',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Proxy running\./);
   const runningColor=await proxyBackground('running');
+  await page.evaluate(()=>globalThis.__workspaceFixture.holdProxyStop=true);
   await proxy.click();
   await page.getByRole('button',{name:'Stopping…',exact:true}).first().waitFor({state:'visible'});
   assert.match(await page.locator('.session-status').textContent(),/^Stopping proxy\./);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdProxyStop=false;globalThis.__workspaceFixture.releaseProxyStop();});
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
   assert.notEqual(await proxyBackground('stopped'),runningColor);
   await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
@@ -1110,6 +1115,7 @@ try {
   assert.equal(await page.locator('.auto-response-editor input[name="name"]').inputValue(), 'Preserved draft');
   await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').sourceEditor !== null);
+  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.tokenize('const placeholder: string = "value";', 'typescript')[0].some(token=>token.type.startsWith('keyword')));
   const sourceSurface=page.locator('script-editor editor-surface').first();
   assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=320,'Source editor is too short');
   await sourceSurface.getByRole('button',{name:'Expand editor',exact:true}).click();
@@ -1149,6 +1155,11 @@ try {
     globalThis.__workspaceFixture.paused = Array.from({ length: 20 }, (_, index) => ({ decisionId: index + 1, exchangeId: 'paused-' + index, phase: index%2?'response-head':'request-head', requestHead: { method: 'GET',target:'https://example.test/paused/'+index }, responseHead: index%2?{status:200,headers:[]}:null, bodyHex: null, hookId: 'fixture', expiresAtUnixMs:Date.now()+60000 }));
   });
   await view('breakpoints');
+  await page.getByRole('button',{name:'Phases',exact:true}).click();
+  const phaseButton=await page.getByRole('button',{name:'Phases',exact:true}).boundingBox();
+  const phaseMenu=await page.locator('#breakpoint-phases').boundingBox();
+  assert.ok(phaseMenu.x<phaseButton.x+phaseButton.width&&phaseMenu.x+phaseMenu.width>phaseButton.x&&Math.abs(phaseMenu.y-phaseButton.y-phaseButton.height)<12,'Phases menu is detached from its button');
+  await page.keyboard.press('Escape');
   await page.locator('paused-exchange').first().getByRole('button', { name: 'Continue', exact: true }).waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange')?.editorReady);
   await page.setViewportSize({width:760,height:520});
@@ -1182,18 +1193,13 @@ try {
   await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').loadRecordingDefaults();delete globalThis.__workspaceFixture.recordingDefaultBodies;});
   assert.equal(await captures.getByLabel('Include request and response bodies',{exact:true}).isChecked(),false,'Loading defaults overwrote an explicit recording choice');
   const captureIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').captureBusy);
-  await captures.getByLabel('New capture file',{exact:true}).fill('kept.tmcap');
-  await captures.getByRole('button',{name:'Choose…',exact:true}).filter({visible:true}).click();await captureIdle();
-  assert.equal(await captures.getByLabel('New capture file',{exact:true}).inputValue(),'kept.tmcap','Canceling the picker changed a path');
-  await captures.getByRole('button',{name:'Start recording',exact:true}).click();
+  await page.evaluate(()=>globalThis.__workspaceFixture.capturePick='C:/captures/placeholder.tmcap');
+  await captures.getByRole('button',{name:'Start recording…',exact:true}).click();await captureIdle();
   await captures.locator('.capture-state').getByText('Recording · 2 KiB written',{exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.evaluate(()=>Object.hasOwn(globalThis.__workspaceFixture.lastCaptureRequest,'maxFileBytes')),false,'Recording imposed an implicit file ceiling');
-  assert.equal(await captures.getByRole('button',{name:'Start recording',exact:true}).isDisabled(),true);
+  assert.equal(await page.evaluate(()=>Object.hasOwn(globalThis.__workspaceFixture.lastCaptureRequest,'maxFileBytes')),false);
+  assert.equal(await captures.getByRole('button',{name:'Start recording…',exact:true}).isDisabled(),true);
   await captures.getByRole('button',{name:'Stop recording',exact:true}).click();await captureIdle();
   await page.screenshot({path:resolve(root,'../../../target/ui-check/record-unlimited-wide.png')});
-  await page.setViewportSize({width:760,height:520});
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/record-unlimited-small.png')});
-  await page.setViewportSize({width:1280,height:800});
   await captures.locator('.capture-tabs').getByRole('button',{name:'Inspect / recover',exact:true}).click();
   await captures.getByRole('button',{name:'Inspect file',exact:true}).click();await captureIdle();
   const inspectedSource=await captures.getByLabel('TMCap file',{exact:true}).inputValue();
@@ -1300,13 +1306,22 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/settings-small.png')});
   await page.setViewportSize({width:1280,height:800});
   await page.locator('.settings-tabs').getByRole('button',{name:'Support',exact:true}).click();
-  assert.equal(await preferences.getByLabel('Include recent artifact paths',{exact:true}).isDisabled(),true);
+  assert.equal(await preferences.getByLabel('Include remembered capture and export file locations',{exact:true}).isDisabled(),true);
   await preferences.getByRole('button',{name:'Refresh diagnostics',exact:true}).click();
   await preferences.getByText('Diagnostics refreshed.',{exact:true}).waitFor({state:'visible'});
   assert.match(await preferences.locator('.support-facts').textContent(),/Windows fixture/);
-  await preferences.getByRole('button',{name:'Create support bundle',exact:true}).click();
+  await page.evaluate(()=>globalThis.__workspaceFixture.supportPick='C:/captures/placeholder-support.zip');
+  await preferences.getByRole('button',{name:'Create support bundle…',exact:true}).click();
   await preferences.getByText('Support bundle saved.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.supportInput.includeRecentPaths),false);
+  await preferences.getByRole('button',{name:'Credits',exact:true}).click();
+  const credits=page.locator('.credits-dialog[open]');
+  await credits.locator('details').nth(1).waitFor();
+  assert.ok(await credits.locator('details').count()>100,'Credits omitted the dependency inventory');
+  await credits.locator('details').first().locator('summary').click();
+  assert.match(await credits.locator('details').first().textContent(),/license|copyright|permission/i);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/credits-wide.png')});
+  await page.keyboard.press('Escape');assert.equal(await credits.count(),0);
   await page.locator('.settings-tabs').getByRole('button',{name:'Connection',exact:true}).click();
   await preferences.locator('.connection-advanced summary').click();
   // Legacy, partial, and missing material all offer recovery without attempting
@@ -1425,6 +1440,9 @@ try {
   await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');await traffic.clearFilters();const state=globalThis.__workspaceFixture;state.sessions.find(row=>row.id==='first').searchBody='Café marker';state.sessions.find(row=>row.id==='second').searchBody='CAFE other';});
   const searchOptions=page.locator('#traffic-search-options');
   await page.getByRole('button',{name:'Search options',exact:true}).click();
+  const searchButton=await page.getByRole('button',{name:'Search options',exact:true}).boundingBox();
+  const searchMenu=await searchOptions.boundingBox();
+  assert.ok(searchMenu.x<searchButton.x+searchButton.width&&searchMenu.x+searchMenu.width>searchButton.x&&Math.abs(searchMenu.y-searchButton.y-searchButton.height)<12,'Search options menu is detached from its button');
   await searchOptions.getByLabel('URL, method, process, PID and status',{exact:true}).uncheck();
   await searchOptions.getByLabel('Request headers',{exact:true}).uncheck();await searchOptions.getByLabel('Response headers',{exact:true}).uncheck();
   await searchOptions.getByLabel('Ignore accents (text mode)',{exact:true}).check();
@@ -1578,6 +1596,10 @@ try {
   await page.evaluate(rows=>{const state=globalThis.__workspaceFixture;state.sessions=rows;delete state.importPassword;state.traces.pop();},passwordRowsBefore);
   await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   const saveTrace=page.locator('.trace-save-dialog[open]');
+  await saveTrace.getByLabel('Format',{exact:true}).selectOption('har');
+  assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),true);
+  assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isDisabled(),true);
+  await saveTrace.getByLabel('Format',{exact:true}).selectOption('native');
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isChecked(),false);
   assert.equal(await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).isChecked(),false);
   await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
@@ -1602,7 +1624,7 @@ try {
   assert.equal(await page.locator('.trace-password-dialog input[name="password"]').inputValue(),'');
   await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).uncheck();
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
-  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{password:null,includeNetworkContext:true,redactSensitiveHeaders:true}});
+  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true}});
   await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
   await page.locator('.trace-save-dialog[open]').getByRole('button',{name:'Save as…',exact:true}).click();
@@ -1620,7 +1642,7 @@ try {
   assert.match(await timing.textContent(),/Negative offsets/);
   await timing.getByText('Request waterfall',{exact:true}).waitFor({state:'visible'});
   assert.equal(await timing.locator('.waterfall-bar').first().evaluate(node=>node.namespaceURI),'http://www.w3.org/2000/svg');
-  assert.ok(await timing.locator('.waterfall-span[data-repeated]').count()>0);
+  const minor=timing.locator('details').filter({has:page.getByText(/Proxy operations under 1 ms/)});assert.equal(await minor.evaluate(node=>node.open),false);await minor.locator('summary').click();assert.ok(await minor.locator('.waterfall-span[data-repeated]').count()>0);await minor.locator('summary').click();
   await page.evaluate(()=>globalThis.__workspaceFixture.performance.transports.push({leg:'upstream',connectionId:'failed-quic-fixture',shared:false,outcome:'tls-failed',sampledOffsetMicros:3000,peer:null,local:null,dnsMicros:null,tcpMicros:null,tlsMicros:1000,setupTimings:[{phase:'quic',beganOffsetMicros:1000,endedOffsetMicros:2000,requestWaitMicros:1000}],tlsVersion:null,tlsResumed:null,cipher:null,alpn:null,bytesRead:null,bytesWritten:null,quic:null}));
   await timing.getByRole('button',{name:'Refresh measurements',exact:true}).click();
   await timing.getByText('QUIC / TLS wait for this request',{exact:true}).waitFor({state:'attached'});
@@ -1702,6 +1724,17 @@ try {
   await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-compact.png')});
   assert.ok((await previewReport.boundingBox()).height<=520);await previewReport.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===0);
+  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').undoTrafficRemoval();});
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length>0);
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.clearBytes=100000000;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
+  assert.ok(await page.evaluate(()=>{const action=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.at(-1);return action.expiresAt>Date.now()+299000&&action.expiresAt<=Date.now()+300000;}));
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.trafficUndo=workspace.trafficUndo.map(action=>({...action,expiresAt:Date.now()-1}));workspace.scheduleTrafficUndoExpiry();});
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length===0);
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.clearBytes=1000000000;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
+  assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

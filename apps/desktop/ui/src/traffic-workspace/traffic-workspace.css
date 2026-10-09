@@ -14,7 +14,7 @@ traffic-workspace { display:contents; }
 .traffic-view .filters { display:flex; align-items:baseline; flex:1 1 15rem; min-width:13rem; max-width:none; margin:0; }
 .traffic-search { width:100%; }
 .traffic-search input { width:100%; font-size:.78rem; }
-.traffic-tools { display:flex; align-items:baseline; gap:.35rem; margin-left:auto; }
+.traffic-tools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem; margin-left:auto; }
 .traffic-tools select { min-height:1.85rem; max-width:11rem; padding:.25rem; font-size:.7rem; }
 .traffic-summary { display:flex; justify-content:space-between; gap:1rem; border-bottom:1px solid var(--line); background:var(--panel-subtle); }
 .trace-import-status { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.45rem .7rem; border-bottom:1px solid var(--line); font-size:.8rem; }
@@ -23,6 +23,12 @@ traffic-workspace { display:contents; }
 .content-search-status span { flex:1; min-width:14rem; }
 .search-result-label { min-width:0; max-width:26rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .search-options { min-width:min(23rem,calc(100vw - 2rem)); }
+.search-actions { display:inline-flex; gap:0; white-space:nowrap; }
+.search-actions > button:first-child { border-start-end-radius:0; border-end-end-radius:0; }
+.search-options-trigger { border-start-start-radius:0; border-end-start-radius:0; margin-left:-1px; anchor-name:--search-options; }
+@supports (anchor-name:--search-options) {
+  .search-options { position-anchor:--search-options; inset:auto; position-area:block-end span-inline-start; margin:.25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
+}
 .search-options label { display:flex; gap:.45rem; align-items:center; margin:.4rem 0; }
 .search-options select { flex:1; min-width:0; }
 .trace-import-status progress { width:8rem; }
@@ -48,6 +54,11 @@ traffic-workspace { display:contents; }
 .traffic-table td { height:2.6rem; padding:.55rem .65rem; }
 .traffic-table[data-compact] td { height:2.05rem; padding:.35rem .65rem; }
 .traffic-table [data-numeric] { text-align:right; font-variant-numeric:tabular-nums; }
+.traffic-table [data-column-id="status"], .traffic-table [data-column-id="status"] .column-trigger { text-align:center; justify-content:center; }
+.traffic-table tr:focus-visible { outline:none; }
+.traffic-table tr:focus-visible td { box-shadow:inset 0 2px var(--focus),inset 0 -2px var(--focus); }
+.traffic-table tr:focus-visible td:first-child { box-shadow:inset 2px 0 var(--focus),inset 0 2px var(--focus),inset 0 -2px var(--focus); }
+.traffic-table tr:focus-visible td:last-child { box-shadow:inset -2px 0 var(--focus),inset 0 2px var(--focus),inset 0 -2px var(--focus); }
 .traffic-table [data-pinned] { position:sticky; z-index:1; background:var(--panel); }
 .traffic-table th[data-pinned] { z-index:3; }
 .traffic-table tr[data-selected] td, .traffic-table tr[data-selected] [data-pinned] { background:var(--accent-soft); }
@@ -148,3 +159,5 @@ traffic-workspace { display:contents; }
 .captured-preview-report { box-sizing:border-box; width:min(58rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); padding:1rem; border:1px solid var(--line); border-radius:.45rem; color:var(--text); background:var(--panel); }.captured-preview-report[open] { display:flex; flex-direction:column; gap:.6rem; }.captured-preview-report::backdrop { background:rgb(0 0 0 / .25); }.captured-preview-report h3 { margin:0; font-size:1rem; }.preview-report-scroll { min-height:0; overflow:auto; font-size:.82rem; }.preview-report-scroll .full-value { overflow-wrap:anywhere; }.preview-request-list > div { display:grid; gap:.25rem; padding:.5rem 0; border-bottom:1px solid var(--line); }.preview-request-list small { color:var(--muted); }.captured-preview-report footer { flex-shrink:0; }
 
 .preview-request-list > div > button { justify-self:start; }
+
+@media (forced-colors:active) { .traffic-table tr:focus-visible td {border-block:2px solid Highlight;} .traffic-table tr:focus-visible td:first-child {border-inline-start:2px solid Highlight;} .traffic-table tr:focus-visible td:last-child {border-inline-end:2px solid Highlight;} }

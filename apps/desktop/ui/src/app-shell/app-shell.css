@@ -261,7 +261,7 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .field-error { color: var(--danger); font-size: .78rem; overflow-wrap: anywhere; }
 .auto-response-undo { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .65rem 0 0; font-size: .78rem; }
 .autoresponse-switch { white-space: nowrap; }
-.autoresponse-switch[data-on] { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.shell[data-lifecycle="running"] .autoresponse-switch[data-on] { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
 .match-editor { display: grid; gap: .55rem; min-width: 0; }
 .match-mode-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; }
 .match-editor input[name="url"] { font-family: "Cascadia Mono", Consolas, monospace; }

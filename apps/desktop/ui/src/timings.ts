@@ -1,6 +1,6 @@
 import type { SessionDetail } from './models.js';
 export interface TimingRow {id:string;label:string;value:string;note:string;}
-export interface WaterfallRow {id:string;label:string;start:number;width:number;value:string;note:string;repeated:boolean;}
+export interface WaterfallRow {id:string;label:string;start:number;width:number;value:string;note:string;repeated:boolean;minor:boolean;}
 export interface TimelineRow {id:string;label:string;time:string;offset:string;}
 export interface TransportView {id:string;title:string;summary:string;fields:TimingRow[];}
 const labels:Record<string,string>={
@@ -8,7 +8,7 @@ const labels:Record<string,string>={
  'client-connected':'Client TCP accepted','client-first-byte':'First client socket read','client-identity-done':'Client identification finished','client-tls-begin':'Client TLS handshake began','client-tls-done':'Client TLS handshake finished','request-headers':'Client request headers received','client-request-done':'Client request body received','route-begin':'Routing began','route-done':'Routing finished','upstream-begin':'Request submitted upstream','upstream-connected':'Upstream connection assigned','upstream-request-consumed':'Outgoing body consumed by HTTP adapter','response-headers':'Upstream response headers received','upstream-response-done':'Upstream response body received','client-response-begin':'Client response headers committed','client-response-queued':'Client response body queued','exchange-done':'Exchange processing finished'};
 export function milliseconds(micros:number|null|undefined):string {return micros==null?'Unavailable':(micros/1000).toLocaleString(undefined,{maximumFractionDigits:3})+' ms';}
 function bytes(value:number|null|undefined):string {return value==null?'Unavailable':value.toLocaleString()+' bytes';}
-export function timingView(detail:SessionDetail):{summary:string;phases:TimingRow[];timeline:TimelineRow[];transports:TransportView[];saved:TimingRow[];waterfall:WaterfallRow[];work:TimingRow[];range:string;report:string} {
+export function timingView(detail:SessionDetail):{summary:string;phases:TimingRow[];timeline:TimelineRow[];transports:TransportView[];saved:TimingRow[];waterfall:WaterfallRow[];work:TimingRow[];minor:WaterfallRow[];range:string;report:string} {
  const points=detail.performance?.points??[], transports=detail.performance?.transports??[];
  const point=(id:string)=>points.find(p=>p.milestone===id)?.offsetMicros;
  const span=(a:string,b:string)=>{const begin=point(a),end=point(b);return begin==null||end==null||end<begin?undefined:end-begin;};
@@ -20,9 +20,9 @@ export function timingView(detail:SessionDetail):{summary:string;phases:TimingRo
   {id:'wait',label:'Response header wait',value:(()=>{const headers=point('response-headers'),assigned=point('upstream-connected'),sent=point('upstream-request-consumed');return milliseconds(headers==null||assigned==null||sent==null||headers<Math.max(assigned,sent)?undefined:headers-Math.max(assigned,sent));})(),note:'After assignment and body consumption. Includes network, server and queueing time.'},
   {id:'receive',label:'Upstream response transfer',value:milliseconds(span('response-headers','upstream-response-done')),note:'Includes backpressure and local body processing.'},
   {id:'forward',label:'Client response queueing',value:milliseconds(span('client-response-begin','client-response-queued')),note:'Includes streaming wait; queued bytes may still be in transport buffers.'}];
- const work=(detail.performance?.work??[]).map(row=>({id:row.kind+':'+row.label,label:row.label,value:milliseconds(row.busyNanos/1000),note:row.calls.toLocaleString()+' measured '+(row.calls===1?'call. ':'calls. ')+(row.calls>1?'Window includes gaps between calls. ':'')+'Measured call time includes nested work and waits; it is not CPU time.'}));
- const intervals:Array<{id:string;label:string;begin:number;end:number;value:string;note:string;repeated:boolean}>=[];
- const interval=(id:string,label:string,a:string,b:string,note:string)=>{const begin=point(a),end=point(b);if(begin!=null&&end!=null&&end>=begin)intervals.push({id,label,begin,end,value:milliseconds(end-begin),note,repeated:false});};
+ const work=(detail.performance?.work??[]).map(row=>({id:row.kind+':'+row.label,label:row.label,value:milliseconds(row.busyNanos/1000),note:row.calls.toLocaleString()+(row.calls===1?' call':' calls')}));
+ const intervals:Array<{id:string;label:string;begin:number;end:number;value:string;note:string;repeated:boolean;minor?:boolean}>=[];
+ const interval=(id:string,label:string,a:string,b:string,note:string)=>{const begin=point(a),end=point(b);if(begin!=null&&end!=null&&end>=begin)intervals.push({id,label,begin,end,value:milliseconds(end-begin),note,repeated:false,minor:id==='route'&&end-begin<1000});};
  interval('total','Proxy processing','request-headers','exchange-done','Ends at local processing completion; client receipt is not confirmed.');
  interval('upload','Client upload','request-headers','client-request-done','May overlap forwarding upstream.');
  interval('route','Routing','route-begin','route-done','Proxy policy selection.');
@@ -32,9 +32,9 @@ export function timingView(detail:SessionDetail):{summary:string;phases:TimingRo
  if(headers!=null&&assigned!=null&&sent!=null&&headers>=Math.max(assigned,sent))intervals.push({id:'wait',label:'Response header wait',begin:Math.max(assigned,sent),end:headers,value:milliseconds(headers-Math.max(assigned,sent)),note:'Includes network and server/queueing time; cannot isolate server CPU.',repeated:false});
  interval('receive','Upstream transfer','response-headers','upstream-response-done','Includes backpressure and body processing.');
  interval('forward','Client queueing','client-response-begin','client-response-queued','Queued to the client HTTP adapter; transport delivery may finish later.');
- for(const row of detail.performance?.work??[])intervals.push({id:'work:'+row.kind+':'+row.label,label:row.label,begin:row.beganOffsetMicros,end:row.endedOffsetMicros,value:milliseconds(row.busyNanos/1000)+' / '+row.calls.toLocaleString()+(row.calls===1?' call':' calls'),note:'Measured call time. '+(row.calls>1?'The dashed window includes gaps between calls. ':'')+'Can overlap other rows; includes waits within the operation.',repeated:row.calls>1});
+ for(const row of detail.performance?.work??[])intervals.push({minor:row.busyNanos<1000000,id:'work:'+row.kind+':'+row.label,label:row.label,begin:row.beganOffsetMicros,end:row.endedOffsetMicros,value:milliseconds(row.busyNanos/1000)+' / '+row.calls.toLocaleString()+(row.calls===1?' call':' calls'),note:'Measured call time. '+(row.calls>1?'The dashed window includes gaps between calls. ':'')+'Can overlap other rows; includes waits within the operation.',repeated:row.calls>1});
  const maximum=Math.max(0,...points.map(point=>point.offsetMicros),...intervals.map(interval=>interval.end)),scale=Math.max(1,maximum);
- const waterfall=intervals.filter(interval=>interval.end>=0).map(row=>({id:row.id,label:row.label,start:Math.max(0,row.begin)/scale*1000,width:Math.max(0,row.end-Math.max(0,row.begin))/scale*1000,value:row.value,note:row.note,repeated:row.repeated}));
+ const waterfall=intervals.filter(interval=>interval.end>=0).map(row=>({id:row.id,label:row.label,start:Math.max(0,row.begin)/scale*1000,width:Math.max(0,row.end-Math.max(0,row.begin))/scale*1000,value:row.value,note:row.note,repeated:row.repeated,minor:row.minor??false}));
  const timeline=points.slice().sort((a,b)=>a.offsetMicros-b.offsetMicros).map(p=>{const date=new Date(p.unixMillis);return {id:p.milestone,label:labels[p.milestone]??p.milestone,time:p.unixMillis>0&&Number.isFinite(date.getTime())?date.toISOString():'Unavailable',offset:milliseconds(p.offsetMicros)};});
  const views=transports.map(t=>{
  const fields:TimingRow[]=[];const add=(label:string,value:string,note='')=>fields.push({id:label,label,value,note});
@@ -55,10 +55,10 @@ export function timingView(detail:SessionDetail):{summary:string;phases:TimingRo
   if(tcp.connectionAgeMillis!=null)add('Kernel connection age',milliseconds(tcp.connectionAgeMillis*1000));
  }else if(!quic)add('TCP statistics','Unavailable','This platform, socket, or capture did not expose kernel TCP statistics.');
  if(t.quic){add('Smoothed round trip',milliseconds(t.quic.rttMicros));add('Congestion window',bytes(t.quic.congestionWindow));add('Packets sent / received',t.quic.packetsSent.toLocaleString()+' / '+t.quic.packetsReceived.toLocaleString());add('Packets declared lost',t.quic.packetsLost.toLocaleString());add('Retransmitted stream data',bytes(t.quic.retransmittedBytes));}
- return {id:t.leg+':'+t.connectionId,title:t.leg==='client'?'Client ↔ proxy':'Proxy ↔ upstream',summary:(t.shared?'Reused / shared connection':'First observed exchange on connection')+' · '+t.outcome.replaceAll('-',' ')+' · sample at '+milliseconds(t.sampledOffsetMicros)+' · '+t.connectionId,fields};});
+ return {id:t.leg+':'+t.connectionId,title:t.leg==='client'?'Client ↔ proxy':'Proxy ↔ upstream',summary:(detail.savedEvidence?.['NetLog source']?'Imported Chromium connection':t.shared?'Reused / shared connection':'First observed exchange on connection')+' · '+t.outcome.replaceAll('-',' ')+' · sample at '+milliseconds(t.sampledOffsetMicros)+' · '+t.connectionId,fields};});
  const saved=Object.entries(detail.savedEvidence??{}).map(([label,value])=>({id:label,label,value,note:''}));
  const summary=points.length?'Times use one monotonic clock, relative to complete client request headers. Negative offsets belong to earlier connection events. Wall times are UTC. Setup costs show this request’s wait after upstream admission; completed reused phases cost zero.':'This capture has no measured proxy timeline. Original imported timers, when present, are shown below.';
  const request=detail.requests[0],response=detail.responses[0];
  const report=[(request?.method??'Request')+' '+(request?.target??'')+' → '+(response?.status??'No response'),...(detail.traceId?['Source trace: '+detail.traceId]:[]),'Entry: '+(detail.originalId??detail.id),summary,'','Latency phases',...phases.map(row=>row.label+': '+row.value+' — '+row.note),'','Measured proxy work',...(work.length?work.map(row=>row.label+': '+row.value+' — '+row.note):['No measured operation records.']),'','Proxy timeline',...timeline.map(row=>row.label+': '+row.time+' ('+row.offset+')'),...views.flatMap(view=>['',view.title,view.summary,...view.fields.map(row=>row.label+': '+row.value+(row.note?' — '+row.note:''))]),...(saved.length?['','Original imported evidence',...saved.map(row=>row.label+': '+row.value)]:[])].join('\r\n');
- return {summary,phases,timeline,transports:views,saved,waterfall,work,range:milliseconds(maximum),report};
+ return {summary,phases,timeline,transports:views,saved,waterfall:waterfall.filter(row=>!row.minor),minor:waterfall.filter(row=>row.minor),work,range:milliseconds(maximum),report};
 }
