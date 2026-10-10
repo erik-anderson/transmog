@@ -140,6 +140,15 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
+    /// Updates admission for newly created outbound connections. Executors that
+    /// expose their own routing policy may keep the default no-op implementation.
+    /// Existing connections continue serving requests until they close.
+    fn set_outbound_protocols(
+        &self,
+        _allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+    ) {
+    }
+
     /// Executes a file body from its current position. The caller validates its
     /// length and repairs framing before dispatch. Implementations explicitly
     /// provide streaming support or return a capability error.

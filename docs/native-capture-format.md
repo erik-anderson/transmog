@@ -26,6 +26,12 @@ path, trust snapshot, offered policy and negotiation errors, including rejected
 handshakes. The available peer path remains labeled when a full trust path could
 not be constructed.
 
+Performance records preserve the actual HTTP version at each client and upstream
+request/response boundary, including the HTTP/1 minor version. Browser and origin
+legs may use different protocols. Import restores both the exact recorded version
+and each message head's protocol family; saving and reopening retain all four
+boundaries. Older records without this evidence show the protocol as unavailable.
+
 The desktop indexes a native trace by reading and authenticating metadata only,
 then seeking over body payloads without reading, decrypting or decompressing them.
 The index retains

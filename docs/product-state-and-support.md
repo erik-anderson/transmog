@@ -17,8 +17,9 @@ Both always block pending host restoration.
 Advanced network settings contains the enabled-default caller-process isolation
 toggle, allowed outbound protocols and HTTPS decryption choice. Isolation falls
 back to source IP and also separates downstream HTTP/2 sessions. Protocol changes
-apply to new origin connections; established connections continue serving requests
-until they close. Saving preserves explicit manual routing and does not restart
+apply to new origin connections, including Composer in already-open capture
+viewers; established connections continue serving requests until they close.
+Saving preserves explicit manual routing and does not restart
 the proxy. Embedders can supply their own network-isolation key computation.
 
 HTTPS decryption changes apply at the next proxy start. When disabled, CONNECT

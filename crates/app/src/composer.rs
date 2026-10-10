@@ -13,6 +13,7 @@ use transmog_core::{
     HttpLegVersion, RequestHead, StreamingRequest, Target, intercept::ExchangeCancellation,
 };
 use transmog_http::{HyperEgressMode, HyperOriginClient};
+use transmog_network::HappyEyeballsConfig;
 use transmog_session::{
     ApplicationSessionService, BoxReplayFuture, ReplayCredentialPolicy, ReplayExecutionError,
     ReplayExecutor, ReplayLimits, ReplayRequest, ReplayResponse, ReplayRisk,
@@ -154,6 +155,22 @@ pub(crate) struct ComposerManager {
 }
 
 impl ComposerManager {
+    pub(crate) fn with_protocols(
+        executor: Option<Arc<dyn ReplayExecutor>>,
+        allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+    ) -> Self {
+        let manager = Self::new(executor);
+        manager.set_outbound_protocols(allowed);
+        manager
+    }
+    pub(crate) fn set_outbound_protocols(
+        &self,
+        allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+    ) {
+        if let Some(executor) = &self.executor {
+            executor.set_outbound_protocols(allowed);
+        }
+    }
     pub(crate) fn new(executor: Option<Arc<dyn ReplayExecutor>>) -> Self {
         Self {
             executor,
@@ -378,6 +395,7 @@ impl ReplayExecutor for FileReplayExecutor {
 pub struct SystemReplayExecutor {
     client: HyperOriginClient,
     mode: HyperEgressMode,
+    protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
 }
 
 impl SystemReplayExecutor {
@@ -406,18 +424,34 @@ impl SystemReplayExecutor {
             )
         })?);
         let factory = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
-        let client = HyperOriginClient::new(&factory).map_err(|_| {
+        let protocols = transmog_core::connection_policy::OutboundProtocolPolicy::default();
+        let client = HyperOriginClient::with_connection_policy(
+            &factory,
+            HappyEyeballsConfig::default(),
+            protocols.clone(),
+        )
+        .map_err(|_| {
             AppError::new(
                 ErrorCategory::Unavailable,
                 "canonical replay TLS client could not be created",
                 true,
             )
         })?;
-        Ok(Self { client, mode })
+        Ok(Self {
+            client,
+            mode,
+            protocols,
+        })
     }
 }
 
 impl ReplayExecutor for SystemReplayExecutor {
+    fn set_outbound_protocols(
+        &self,
+        allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+    ) {
+        self.protocols.set(allowed);
+    }
     fn execute_file(
         &self,
         request: ValidatedReplayRequest,
@@ -935,6 +969,95 @@ mod tests {
         assert_eq!(manager.history()[0].source, Some(origin));
         assert!(manager.history()[0].target.ends_with("/edited"));
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn composer_protocol_preferences_preserve_existing_sockets_and_block_new_ones() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = origin.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            for _ in 0..2 {
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(socket.read_u8().await.unwrap());
+                }
+                socket
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    .await
+                    .unwrap();
+            }
+        });
+        let root = tempfile::tempdir().unwrap();
+        let preferences = root.path().join("preferences.json");
+        let application = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(
+                SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+            )),
+            product_state_path: Some(preferences.clone()),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        let input = ComposerRequest {
+            method: "GET".into(),
+            url: format!("http://{address}/"),
+            headers: vec![],
+            body: String::new(),
+            body_is_hex: false,
+            body_source: None,
+            source_entry_id: None,
+            acknowledge_non_idempotent: false,
+            acknowledge_credentials: false,
+        };
+        assert_eq!(
+            application
+                .execute_composer(input.clone())
+                .await
+                .unwrap()
+                .body,
+            "ok"
+        );
+        let mut state = application.product_state();
+        state.preferences.allowed_outbound_protocols =
+            transmog_core::connection_policy::AllowedHttpProtocols {
+                http1: false,
+                http2: false,
+                http3: false,
+            };
+        application.save_product_state(state).unwrap();
+        assert_eq!(
+            application
+                .execute_composer(input.clone())
+                .await
+                .unwrap()
+                .body,
+            "ok"
+        );
+        server.await.unwrap();
+        let denied_origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let denied = ComposerRequest {
+            url: format!("http://{}/", denied_origin.local_addr().unwrap()),
+            ..input
+        };
+        assert!(application.execute_composer(denied.clone()).await.is_err());
+        let reopened = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(
+                SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+            )),
+            product_state_path: Some(preferences),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        assert!(reopened.execute_composer(denied).await.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), denied_origin.accept())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

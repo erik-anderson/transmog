@@ -111,6 +111,7 @@ pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
 pub use traces::{
     TraceImportProgress, TraceImportRequest, TraceImportResult, TraceInspection, TraceMetadataView,
 };
+pub use transmog_core::connection_policy::AllowedHttpProtocols;
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
@@ -321,6 +322,7 @@ impl Application {
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
+        let initial_state = product_state.snapshot();
         let apply_buffer_preferences = config
             .body_store
             .as_ref()
@@ -352,20 +354,17 @@ impl Application {
             "startup",
             "Transmog application initialized",
         );
-        service.set_redact_sensitive_headers(
-            product_state.snapshot().privacy.redact_sensitive_headers,
-        );
+        service.set_redact_sensitive_headers(initial_state.privacy.redact_sensitive_headers);
         if entry_preferences {
             service.catalog().set_live_entry_limit(
-                product_state
-                    .snapshot()
+                initial_state
                     .privacy
                     .max_live_entries
                     .and_then(std::num::NonZeroUsize::new),
             );
         }
         if let Some(store) = &body_store {
-            let privacy = product_state.snapshot().privacy;
+            let privacy = initial_state.privacy;
             if apply_buffer_preferences {
                 store
                     .set_buffer_limit(privacy.buffer_limit)
@@ -400,7 +399,10 @@ impl Application {
             runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
             breakpoints: breakpoints::BreakpointManager::new(service, build_id),
-            composer: composer::ComposerManager::new(config.replay_executor),
+            composer: composer::ComposerManager::with_protocols(
+                config.replay_executor,
+                initial_state.preferences.allowed_outbound_protocols,
+            ),
             product_state,
             diagnostics,
             body_store,
@@ -419,6 +421,16 @@ impl Application {
     /// Returns validated product preferences and window/artifact state.
     pub fn product_state(&self) -> ProductState {
         self.product_state.snapshot()
+    }
+
+    /// Applies the owning desktop's protocol policy to this window's replay
+    /// executor without replacing its independent workspace preferences.
+    /// Existing connections remain usable until close.
+    pub fn set_replay_outbound_protocols(
+        &self,
+        allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+    ) {
+        self.composer.set_outbound_protocols(allowed);
     }
 
     /// Saves non-sensitive workspace presentation without overwriting other settings.
@@ -450,6 +462,8 @@ impl Application {
         }
         let result = self.product_state.save(state);
         if let Ok(state) = &result {
+            self.composer
+                .set_outbound_protocols(state.preferences.allowed_outbound_protocols);
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
             if let Some(control) = self.service.proxy_control() {

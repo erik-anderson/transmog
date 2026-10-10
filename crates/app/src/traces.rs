@@ -1286,6 +1286,20 @@ fn append_native(
             .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
     }
     snapshot.performance = row.performance;
+    for observed in &mut snapshot.request_heads {
+        restore_native_version(
+            &snapshot.performance,
+            observed.boundary,
+            &mut observed.head.source_version,
+        );
+    }
+    for observed in &mut snapshot.response_heads {
+        restore_native_version(
+            &snapshot.performance,
+            observed.boundary,
+            &mut observed.head.source_version,
+        );
+    }
     if !row.completed || row.failed {
         snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
     }
@@ -1450,6 +1464,25 @@ fn native_headers(headers: Vec<CapturedHeader>) -> Result<HeaderBlock, AppError>
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| invalid("Saved trace contains an invalid header"))?,
     ))
+}
+
+fn restore_native_version(
+    performance: &transmog_core::performance::PerformanceEvidence,
+    boundary: ExchangeBoundary,
+    version: &mut HttpLegVersion,
+) {
+    if let Some(observed) = performance
+        .protocols
+        .iter()
+        .find(|item| item.boundary == crate::inspector::boundary(boundary))
+    {
+        *version = match observed.version.as_str() {
+            "HTTP/2" | "HTTP/2.0" => HttpLegVersion::Http2,
+            "HTTP/3" | "HTTP/3.0" => HttpLegVersion::Http3,
+            "HTTP/0.9" | "HTTP/1.0" | "HTTP/1.1" => HttpLegVersion::Http1,
+            _ => return,
+        };
+    }
 }
 
 fn native_request(
@@ -2311,6 +2344,162 @@ mod tests {
                 .unwrap()
                 .contains("HTTP/1.0 204 Custom phrase")
         );
+    }
+
+    fn native_protocol_fixture(
+        root: &std::path::Path,
+        index: usize,
+        client: &str,
+        origin: &str,
+    ) -> (
+        PathBuf,
+        Vec<transmog_core::performance::ProtocolObservation>,
+    ) {
+        use transmog_core::performance::{PerformanceEvidence, ProtocolObservation};
+        let path = root.join(format!("source-{index}.tmcap"));
+        native(&path, Some(vec![1]), 1);
+        let recovered =
+            transmog_capture::recover(File::open(&path).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let measured = root.join(format!("measured-{index}.tmcap"));
+        let mut writer =
+            CaptureWriter::new(File::create(&measured).unwrap(), CaptureLimits::default()).unwrap();
+        let mut sequence = 0;
+        for original in recovered
+            .records
+            .into_iter()
+            .filter(|record| !matches!(record.kind, CaptureRecordKind::Seal { .. }))
+        {
+            let mut record = original;
+            sequence += 1;
+            record.sequence = sequence;
+            writer.append(&record).unwrap();
+            let mut upstream = record.clone();
+            match &mut upstream.kind {
+                CaptureRecordKind::RequestHead { boundary, .. } => {
+                    *boundary = ExchangeBoundary::UpstreamRequest;
+                }
+                CaptureRecordKind::ResponseHead { boundary, .. } => {
+                    *boundary = ExchangeBoundary::UpstreamResponse;
+                }
+                _ => continue,
+            }
+            sequence += 1;
+            upstream.sequence = sequence;
+            writer.append(&upstream).unwrap();
+        }
+        let protocols = [
+            ("client-request", client),
+            ("client-response", client),
+            ("upstream-request", origin),
+            ("upstream-response", origin),
+        ]
+        .map(|(boundary, version)| ProtocolObservation {
+            boundary: boundary.into(),
+            version: version.into(),
+            reason: None,
+        })
+        .to_vec();
+        writer
+            .append(&CaptureRecord {
+                sequence: sequence + 1,
+                exchange_id: 7,
+                kind: CaptureRecordKind::Performance(PerformanceEvidence {
+                    protocols: protocols.clone(),
+                    ..PerformanceEvidence::default()
+                }),
+            })
+            .unwrap();
+        writer.seal().unwrap();
+        (measured, protocols)
+    }
+
+    #[tokio::test]
+    async fn native_save_reopen_preserves_each_protocol_boundary_and_head_family() {
+        let root = tempfile::tempdir().unwrap();
+        for (index, client, origin) in [
+            (0, "HTTP/1.0", "HTTP/3"),
+            (1, "HTTP/2", "HTTP/1.1"),
+            (2, "HTTP/3", "HTTP/2"),
+            (3, "HTTP/2.0", "HTTP/1.1"),
+            (4, "HTTP/3.0", "HTTP/2.0"),
+        ] {
+            let (measured, protocols) = native_protocol_fixture(root.path(), index, client, origin);
+            let application = app(root.path());
+            application
+                .import_trace(request(measured, "protocols"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let id = application
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions[0]
+                .id
+                .clone();
+            let snapshot = application
+                .service
+                .catalog()
+                .get(ExchangeId(crate::inspector::parse_session_id(&id).unwrap()))
+                .unwrap();
+            assert_eq!(snapshot.performance.protocols, protocols);
+            let family = |version| match version {
+                "HTTP/2" | "HTTP/2.0" => HttpLegVersion::Http2,
+                "HTTP/3" | "HTTP/3.0" => HttpLegVersion::Http3,
+                _ => HttpLegVersion::Http1,
+            };
+            for head in &snapshot.request_heads {
+                assert_eq!(
+                    head.head.source_version,
+                    family(if head.boundary == ExchangeBoundary::ClientRequest {
+                        client
+                    } else {
+                        origin
+                    })
+                );
+            }
+            for head in &snapshot.response_heads {
+                assert_eq!(
+                    head.head.source_version,
+                    family(if head.boundary == ExchangeBoundary::ClientResponse {
+                        client
+                    } else {
+                        origin
+                    })
+                );
+            }
+            let saved = root.path().join(format!("saved-{index}.tmcap"));
+            application
+                .save_traffic_trace(
+                    saved.clone(),
+                    crate::TraceSaveOptions {
+                        format: crate::TraceSaveFormat::Native,
+                        password: None,
+                        redact_sensitive_headers: false,
+                        include_network_context: false,
+                    },
+                )
+                .await
+                .unwrap();
+            let reopened = app(root.path());
+            reopened
+                .import_trace(request(saved, "reopened"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let row = reopened
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions
+                .remove(0);
+            assert_eq!(row.protocol, client);
+            assert_eq!(
+                reopened
+                    .session_detail(&row.id)
+                    .unwrap()
+                    .performance
+                    .protocols,
+                protocols
+            );
+        }
     }
 
     #[tokio::test]

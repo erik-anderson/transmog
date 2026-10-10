@@ -24,6 +24,16 @@ pub(super) struct WindowWorkspaces {
     pending: Mutex<HashMap<String, Vec<PathBuf>>>,
 }
 impl WindowWorkspaces {
+    pub fn set_outbound_protocols(&self, allowed: transmog_app::AllowedHttpProtocols) {
+        for viewer in self
+            .viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+        {
+            viewer.application.set_replay_outbound_protocols(allowed);
+        }
+    }
     pub fn application(&self, main: &Application, label: &str) -> Result<Application, AppError> {
         if label == "main" {
             return Ok(main.clone());
@@ -294,6 +304,88 @@ fn error(message: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn protocol_updates_reach_open_viewers_without_replacing_their_workspace() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        use transmog_app::{AllowedHttpProtocols, ComposerRequest};
+        let workspaces = WindowWorkspaces::default();
+        let mut applications = Vec::new();
+        for index in 0..2 {
+            let application = Application::new(AppConfig {
+                replay_executor: Some(Arc::new(
+                    SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+                )),
+                ..AppConfig::default()
+            })
+            .unwrap();
+            workspaces.viewers.lock().unwrap().insert(
+                format!("viewer-{index}"),
+                Viewer {
+                    application: application.clone(),
+                    _root: tempfile::tempdir().unwrap(),
+                },
+            );
+            applications.push((application.clone(), application.product_state()));
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let input = ComposerRequest {
+            method: "GET".into(),
+            url: format!("http://{}/", listener.local_addr().unwrap()),
+            headers: vec![],
+            body: String::new(),
+            body_is_hex: false,
+            body_source: None,
+            source_entry_id: None,
+            acknowledge_non_idempotent: false,
+            acknowledge_credentials: false,
+        };
+        workspaces.set_outbound_protocols(AllowedHttpProtocols {
+            http1: false,
+            http2: false,
+            http3: false,
+        });
+        for (application, original) in &applications {
+            assert!(application.execute_composer(input.clone()).await.is_err());
+            assert_eq!(&application.product_state(), original);
+        }
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(socket.read_u8().await.unwrap());
+                }
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        workspaces.set_outbound_protocols(AllowedHttpProtocols::default());
+        for (application, original) in applications {
+            assert_eq!(
+                application
+                    .execute_composer(input.clone())
+                    .await
+                    .unwrap()
+                    .body,
+                "ok"
+            );
+            assert_eq!(application.product_state(), original);
+        }
+        server.await.unwrap();
+    }
+
     #[test]
     fn viewer_permissions_exclude_every_proxy_and_certificate_mutation() {
         for command in [

@@ -242,7 +242,11 @@ async fn save_product_state(
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     let _certificate_operation = state.certificate_operation.lock().await;
-    state.application.save_product_state(product_state)
+    let saved = state.application.save_product_state(product_state)?;
+    state
+        .workspaces
+        .set_outbound_protocols(saved.preferences.allowed_outbound_protocols);
+    Ok(saved)
 }
 
 #[tauri::command]
