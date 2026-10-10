@@ -42,6 +42,13 @@ its shutdown flow; a journal restores interrupted host configuration on the next
 launch after a hard termination. Setup and recovery actions are in Settings →
 Connection. Certificate paths and exact removal are in Advanced.
 
+**Settings → Preferences → Advanced network settings** offers HTTPS decryption,
+caller-process connection isolation and allowed outbound HTTP protocols. Isolation
+and protocol changes do not restart the proxy; existing protocol connections remain
+usable until they close. Decryption changes apply on the next start. Turning it off
+requires no interception certificate setup and presents opaque CONNECT destination
+and transport evidence in Traffic.
+
 ## Live traffic and saved viewers
 
 Traffic follows new exchanges until the user selects an entry or scrolls back.

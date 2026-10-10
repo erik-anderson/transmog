@@ -1,6 +1,11 @@
 //! Protocol-neutral upstream-service adapter for Hyper.
 
-use std::{num::NonZeroUsize, time::Duration};
+use std::{
+    collections::HashMap,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use transmog_core::{
     StreamingRequest,
@@ -11,6 +16,11 @@ use transmog_core::{
 
 use crate::{HyperEgressMode, HyperOriginClient, HyperOriginError};
 
+type IsolatedClients = HashMap<
+    transmog_core::connection_policy::NetworkIsolationKey,
+    (Arc<HyperOriginClient>, Instant),
+>;
+
 /// A pooled HTTP/1.1 and HTTP/2 client exposed through the canonical upstream
 /// service boundary.
 ///
@@ -19,6 +29,7 @@ use crate::{HyperEgressMode, HyperOriginClient, HyperOriginError};
 /// then causing the transport adapter to connect to another.
 #[derive(Clone)]
 pub struct HyperUpstreamService {
+    partitions: Arc<Mutex<IsolatedClients>>,
     client: HyperOriginClient,
     max_response_bytes: usize,
     body_channel_capacity: NonZeroUsize,
@@ -46,10 +57,49 @@ impl HyperUpstreamService {
     ) -> Self {
         Self {
             client,
+            partitions: Arc::new(Mutex::new(HashMap::new())),
             max_response_bytes,
             body_channel_capacity,
             body_idle_timeout,
         }
+    }
+
+    fn isolated_client(
+        &self,
+        key: &transmog_core::connection_policy::NetworkIsolationKey,
+    ) -> Result<Arc<HyperOriginClient>, UpstreamError> {
+        if key == &transmog_core::connection_policy::NetworkIsolationKey::shared() {
+            return Ok(Arc::new(self.client.clone()));
+        }
+        let mut clients = self
+            .partitions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((client, used)) = clients.get_mut(key) {
+            *used = Instant::now();
+            return Ok(Arc::clone(client));
+        }
+        // This standalone adapter has no downstream lifecycle owner. Bound its
+        // reusable caller registry, without evicting a client executing a head.
+        if clients.len() >= 1024 {
+            let oldest = clients
+                .iter()
+                .filter(|(_, (client, _))| Arc::strong_count(client) == 1)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                clients.remove(&oldest);
+            } else {
+                return Err(contract_error("outbound caller pool capacity reached"));
+            }
+        }
+        let client = Arc::new(self.client.separate_pool().map_err(|error| {
+            let mut failure = map_hyper_error(&error);
+            failure.request_committed = false;
+            failure
+        })?);
+        clients.insert(key.clone(), (Arc::clone(&client), Instant::now()));
+        Ok(client)
     }
 }
 
@@ -80,7 +130,10 @@ impl UpstreamService for HyperUpstreamService {
             });
         }
 
-        let client = self.client.clone();
+        let client = match self.isolated_client(&plan.pool_key.network_isolation) {
+            Ok(client) => client,
+            Err(error) => return Box::pin(async move { Err(error) }),
+        };
         let max_response_bytes = self.max_response_bytes;
         let body_channel_capacity = self.body_channel_capacity;
         let body_idle_timeout = self.body_idle_timeout;
@@ -182,6 +235,8 @@ mod tests {
                 },
                 UpstreamPlan {
                     pool_key: UpstreamPoolKey {
+                        network_isolation:
+                            transmog_core::connection_policy::NetworkIsolationKey::shared(),
                         destination: UpstreamDestination {
                             scheme: "http".to_owned(),
                             host: "example.test".to_owned(),

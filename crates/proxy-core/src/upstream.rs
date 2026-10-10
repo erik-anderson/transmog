@@ -224,6 +224,7 @@ mod tests {
     fn plan() -> UpstreamPlan {
         UpstreamPlan {
             pool_key: UpstreamPoolKey {
+                network_isolation: crate::connection_policy::NetworkIsolationKey::shared(),
                 destination: UpstreamDestination {
                     scheme: "https".to_owned(),
                     host: "example.test".to_owned(),

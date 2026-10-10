@@ -26,6 +26,10 @@ use tower_service::Service;
 use transmog_core::performance::{
     ConnectionSetupTime, PerformanceRecorder, TransportObservation, TransportOutcome,
 };
+use transmog_core::{
+    HttpLegVersion,
+    connection_policy::{AllowedHttpProtocols, OutboundProtocolPolicy},
+};
 use transmog_network::{
     HappyEyeballsConfig,
     metrics::{ConnectionMetrics, MeteredIo},
@@ -38,6 +42,7 @@ tokio::task_local! {static SETUP: Arc<ConnectionSetup>;}
 
 #[derive(Debug)]
 struct ConnectionSetup {
+    allowed: AllowedHttpProtocols,
     id: u64,
     values: Mutex<SetupValues>,
     bytes: Arc<ConnectionMetrics>,
@@ -55,8 +60,9 @@ struct SetupValues {
     dns_failed: bool,
 }
 impl ConnectionSetup {
-    fn new() -> Arc<Self> {
+    fn new(allowed: AllowedHttpProtocols) -> Arc<Self> {
         Arc::new(Self {
+            allowed,
             id: NEXT_CONNECTION.fetch_add(1, Ordering::Relaxed),
             values: Mutex::new(SetupValues::default()),
             bytes: Arc::new(ConnectionMetrics::default()),
@@ -243,17 +249,46 @@ impl AsyncWrite for MeasuredTcp {
 }
 
 #[derive(Clone)]
-pub(crate) struct MeasuredHttpsConnector(HttpsConnector<MeasuredTcpConnector>);
+pub(crate) struct MeasuredHttpsConnector {
+    inner: HttpsConnector<MeasuredTcpConnector>,
+    mode: HyperEgressMode,
+    protocols: OutboundProtocolPolicy,
+}
 impl Service<Uri> for MeasuredHttpsConnector {
     type Response = MaybeHttpsStream<MeasuredTcp>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
+        self.inner.poll_ready(cx)
     }
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let connection = self.0.call(uri);
-        let setup = ConnectionSetup::new();
+        let allowed = self.protocols.snapshot();
+        let admitted = match self.mode {
+            HyperEgressMode::Http1Only => allowed.http1,
+            HyperEgressMode::Http2Only => allowed.http2,
+            HyperEgressMode::Auto => {
+                if uri.scheme_str() == Some("https") {
+                    allowed.http1 || allowed.http2
+                } else {
+                    allowed.http1
+                }
+            }
+        };
+        let mode = self.mode;
+        let setup = ConnectionSetup::new(allowed);
+        if !admitted {
+            setup.values().facts.outcome = TransportOutcome::PolicyRejected;
+            return Box::pin(async move {
+                Err(Box::new(ConnectionFailure {
+                    source: Box::new(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "outbound HTTP protocol is disabled for new connections",
+                    )),
+                    observation: ConnectionObservation(setup),
+                }) as BoxError)
+            });
+        }
+        let connection = self.inner.call(uri);
         let scope = setup.clone();
         Box::pin(SETUP.scope(scope, async move {
             let stream = match connection.await {
@@ -293,6 +328,27 @@ impl Service<Uri> for MeasuredHttpsConnector {
                     .ssl()
                     .selected_alpn_protocol()
                     .map(|alpn| String::from_utf8_lossy(alpn).into_owned());
+                let negotiated = if tls.ssl().selected_alpn_protocol() == Some(b"h2") {
+                    HttpLegVersion::Http2
+                } else {
+                    HttpLegVersion::Http1
+                };
+                let mode_matches = match mode {
+                    HyperEgressMode::Auto => true,
+                    HyperEgressMode::Http1Only => negotiated == HttpLegVersion::Http1,
+                    HyperEgressMode::Http2Only => negotiated == HttpLegVersion::Http2,
+                };
+                if !allowed.permits(negotiated) || !mode_matches {
+                    values.facts.outcome = TransportOutcome::PolicyRejected;
+                    drop(values);
+                    return Err(Box::new(ConnectionFailure {
+                        source: Box::new(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "origin did not negotiate an allowed HTTP protocol",
+                        )),
+                        observation: ConnectionObservation(setup),
+                    }) as BoxError);
+                }
             }
             Ok(stream)
         }))
@@ -303,15 +359,31 @@ pub(crate) fn connector(
     factory: &UpstreamTlsContextFactory,
     mode: HyperEgressMode,
     happy: HappyEyeballsConfig,
+    protocols: OutboundProtocolPolicy,
 ) -> Result<MeasuredHttpsConnector, TrustError> {
     let mut tcp = HttpConnector::new_with_resolver(HappyEyeballsResolver::new(happy));
     tcp.enforce_http(false);
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.hyper_connector_builder(mode.alpn())?;
     let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;
-    connector.set_ssl_callback(|_, _| {
+    connector.set_ssl_callback(move |ssl, _| {
         let _ = SETUP.try_with(|setup| setup.values().tls_begin = Some(Instant::now()));
+        let allowed = SETUP.try_with(|setup| setup.allowed).unwrap_or_default();
+        let alpn = match mode {
+            HyperEgressMode::Http1Only => HyperEgressMode::Http1Only.alpn(),
+            HyperEgressMode::Http2Only => HyperEgressMode::Http2Only.alpn(),
+            HyperEgressMode::Auto => match (allowed.http1, allowed.http2) {
+                (true, true) => HyperEgressMode::Auto.alpn(),
+                (false, true) => HyperEgressMode::Http2Only.alpn(),
+                _ => HyperEgressMode::Http1Only.alpn(),
+            },
+        };
+        ssl.set_alpn_protos(alpn)?;
         Ok(())
     });
-    Ok(MeasuredHttpsConnector(connector))
+    Ok(MeasuredHttpsConnector {
+        inner: connector,
+        mode,
+        protocols,
+    })
 }

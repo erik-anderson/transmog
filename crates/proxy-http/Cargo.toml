@@ -25,3 +25,6 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio-boring.workspace = true

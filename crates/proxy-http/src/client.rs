@@ -51,6 +51,9 @@ type OriginClient = Client<MeasuredHttpsConnector, CanonicalHttpBody>;
 /// Pooled Hyper origin client with distinct ALPN pools for forced H1 and H2.
 #[derive(Clone)]
 pub struct HyperOriginClient {
+    protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
+    factory: UpstreamTlsContextFactory,
+    happy_eyeballs: HappyEyeballsConfig,
     h1: OriginClient,
     h2: OriginClient,
     auto: OriginClient,
@@ -83,6 +86,13 @@ impl std::fmt::Debug for HyperUpgradeResponse {
 }
 
 impl HyperOriginClient {
+    /// Creates separate physical pools with the same immutable TLS and connector policy.
+    ///
+    /// # Errors
+    /// Returns a connector-construction error without changing the original pools.
+    pub fn separate_pool(&self) -> Result<Self, HyperOriginError> {
+        Self::with_connection_policy(&self.factory, self.happy_eyeballs, self.protocols.clone())
+    }
     /// Shares an exchange-local recorder while keeping the same physical pools.
     #[must_use]
     pub fn with_performance(mut self, performance: Option<PerformanceRecorder>) -> Self {
@@ -193,10 +203,27 @@ impl HyperOriginClient {
         factory: &UpstreamTlsContextFactory,
         happy_eyeballs: HappyEyeballsConfig,
     ) -> Result<Self, HyperOriginError> {
+        Self::with_connection_policy(
+            factory,
+            happy_eyeballs,
+            transmog_core::connection_policy::OutboundProtocolPolicy::default(),
+        )
+    }
+
+    /// Creates pools sharing a live protocol policy checked only for new connections.
+    ///
+    /// # Errors
+    /// Returns a TLS connector construction error.
+    pub fn with_connection_policy(
+        factory: &UpstreamTlsContextFactory,
+        happy_eyeballs: HappyEyeballsConfig,
+        protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
+    ) -> Result<Self, HyperOriginError> {
         let h1 = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
             factory,
             HyperEgressMode::Http1Only,
             happy_eyeballs,
+            protocols.clone(),
         )?);
         let mut h2_builder = Client::builder(TokioExecutor::new());
         h2_builder.http2_only(true);
@@ -204,14 +231,19 @@ impl HyperOriginClient {
             factory,
             HyperEgressMode::Http2Only,
             happy_eyeballs,
+            protocols.clone(),
         )?);
         let auto = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
             factory,
             HyperEgressMode::Auto,
             happy_eyeballs,
+            protocols.clone(),
         )?);
         Ok(Self {
             h1,
+            protocols,
+            factory: factory.clone(),
+            happy_eyeballs,
             h2,
             auto,
             performance: None,
@@ -746,6 +778,182 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use transmog_tls::{SystemTrustSource, TrustSnapshot, UpstreamTlsPolicy};
     #[tokio::test]
+    async fn separate_caller_pools_never_share_a_physical_origin_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = tokio::spawn(async move {
+            let mut number = 0_u32;
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                number += 1;
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |_| async move {
+                        Ok::<_, std::convert::Infallible>(http::Response::new(
+                            http_body_util::Full::new(Bytes::from(number.to_string())),
+                        ))
+                    });
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(socket), service)
+                        .await;
+                });
+            }
+        });
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap());
+        let first = HyperOriginClient::new(&UpstreamTlsContextFactory::new(
+            trust,
+            UpstreamTlsPolicy::default(),
+        ))
+        .unwrap();
+        let second = first.separate_pool().unwrap();
+        let request = || CanonicalRequest {
+            head: RequestHead {
+                method: "GET".into(),
+                target: transmog_core::Target {
+                    scheme: "http".into(),
+                    authority: address.to_string(),
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                    path: "/".into(),
+                    query: None,
+                },
+                headers: HeaderBlock::new(),
+                source_version: HttpLegVersion::Http1,
+            },
+            body: vec![],
+        };
+        let a = first
+            .execute(
+                request(),
+                HyperEgressMode::Http1Only,
+                1024,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        let b = second
+            .execute(
+                request(),
+                HyperEgressMode::Http1Only,
+                1024,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        let reused = first
+            .execute(
+                request(),
+                HyperEgressMode::Http1Only,
+                1024,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_ne!(a.body, b.body);
+        assert_eq!(a.body, reused.body);
+        origin.abort();
+    }
+
+    #[tokio::test]
+    async fn h2_policy_change_preserves_connected_sessions_and_rejects_reconnect() {
+        use transmog_tls::{
+            DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, PemTrustSource,
+            ProxyCa,
+        };
+        let ca = ProxyCa::generate("Transmog H2 policy fixture", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("127.0.0.1").unwrap(), 1)
+            .unwrap();
+        let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default())
+            .acceptor(&leaf)
+            .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let origin = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let tls = tokio_boring::accept(&acceptor, socket).await.unwrap();
+            assert_eq!(tls.ssl().selected_alpn_protocol(), Some(b"h2".as_slice()));
+            let service = hyper::service::service_fn(|_| async {
+                Ok::<_, std::convert::Infallible>(http::Response::new(http_body_util::Full::new(
+                    Bytes::from_static(b"h2"),
+                )))
+            });
+            let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                .serve_connection(hyper_util::rt::TokioIo::new(tls), service)
+                .await;
+        });
+        let roots =
+            PemTrustSource::from_pem(&ca.certificate().to_pem().unwrap(), "H2 policy fixture")
+                .unwrap();
+        let factory = UpstreamTlsContextFactory::new(
+            Arc::new(TrustSnapshot::load(&roots, 2).unwrap()),
+            UpstreamTlsPolicy::default(),
+        );
+        let policy = transmog_core::connection_policy::OutboundProtocolPolicy::default();
+        let client = HyperOriginClient::with_connection_policy(
+            &factory,
+            HappyEyeballsConfig::default(),
+            policy.clone(),
+        )
+        .unwrap();
+        let request = || CanonicalRequest {
+            head: RequestHead {
+                method: "GET".into(),
+                target: transmog_core::Target {
+                    scheme: "https".into(),
+                    authority: address.to_string(),
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                    path: "/".into(),
+                    query: None,
+                },
+                headers: HeaderBlock::new(),
+                source_version: HttpLegVersion::Http1,
+            },
+            body: vec![],
+        };
+        let first = client
+            .execute(
+                request(),
+                HyperEgressMode::Auto,
+                1024,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.head.source_version, HttpLegVersion::Http2);
+        policy.set(transmog_core::connection_policy::AllowedHttpProtocols {
+            http1: true,
+            http2: false,
+            http3: false,
+        });
+        let second = client
+            .execute(
+                request(),
+                HyperEgressMode::Auto,
+                1024,
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.head.source_version, HttpLegVersion::Http2);
+        // A fresh pool cannot bypass the restriction with a new H2 connection.
+        assert!(
+            client
+                .separate_pool()
+                .unwrap()
+                .execute(
+                    request(),
+                    HyperEgressMode::Http2Only,
+                    1024,
+                    Duration::from_secs(1)
+                )
+                .await
+                .is_err()
+        );
+        origin.abort();
+    }
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One physical connection proves reuse, timing and admission changes.
     async fn pooled_requests_share_connection_counters_and_preserve_actual_http_minor_version() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -774,8 +982,17 @@ mod tests {
         ))
         .unwrap();
         let mut samples = Vec::new();
-        for _ in 0..2 {
+        for attempt in 0..2 {
             let performance = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+            if attempt == 1 {
+                client
+                    .protocols
+                    .set(transmog_core::connection_policy::AllowedHttpProtocols {
+                        http1: false,
+                        http2: false,
+                        http3: false,
+                    });
+            }
             let response = client
                 .clone()
                 .with_performance(Some(performance.clone()))
@@ -837,6 +1054,40 @@ mod tests {
                 .all(|timing| timing.ended_offset_micros < 0 && timing.request_wait_micros == 0)
         );
         assert!(samples[1].transports[0].bytes_read > samples[0].transports[0].bytes_read);
+        let rejected_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let rejected_address = rejected_listener.local_addr().unwrap();
+        let denied = CanonicalRequest {
+            head: RequestHead {
+                method: "GET".into(),
+                target: transmog_core::Target {
+                    scheme: "http".into(),
+                    authority: rejected_address.to_string(),
+                    host: "127.0.0.1".into(),
+                    port: rejected_address.port(),
+                    path: "/".into(),
+                    query: None,
+                },
+                headers: HeaderBlock::new(),
+                source_version: HttpLegVersion::Http1,
+            },
+            body: vec![],
+        };
+        assert!(
+            client
+                .execute(
+                    denied,
+                    HyperEgressMode::Http1Only,
+                    1024,
+                    Duration::from_secs(1)
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), rejected_listener.accept())
+                .await
+                .is_err()
+        );
         origin.await.unwrap();
     }
 }

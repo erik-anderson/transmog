@@ -69,6 +69,8 @@ pub struct TimingPoint {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TransportOutcome {
+    /// Local connection-admission policy rejected a new physical connection.
+    PolicyRejected,
     /// The adapter did not expose an outcome.
     #[default]
     Unavailable,
@@ -111,6 +113,9 @@ pub struct ConnectionSetupTime {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransportObservation {
+    /// CONNECT authority for an opaque tunnel whose contents and origin TLS are unobserved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_destination: Option<String>,
     /// Monotonic sampling point, allowing consumers to reject older snapshots.
     #[serde(default)]
     pub sampled_offset_micros: i64,
@@ -346,6 +351,10 @@ impl PerformanceEvidence {
                     ]
                     .into_iter()
                     .all(|field| field.as_ref().is_none_or(|value| value.len() <= 512))
+                    && transport
+                        .tunnel_destination
+                        .as_ref()
+                        .is_none_or(|value| value.len() <= 1024)
             })
             && self.protocols.iter().all(|protocol| {
                 matches!(

@@ -50,8 +50,10 @@ export class SettingsWorkspace extends WorkspaceElement {
   showSettingsSection(section:string):void {this.settingsSection=section;}
   markSettingsDirty():void {this.settingsDirty=true;this.settingsText='Unsaved changes';}
   settingsKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();if(this.settingsDirty)this.settingsForm.requestSubmit();}}
-  private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateRecovery=this.caRecoveryRequired(bootstrap);this.certificateReady=bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted&&!this.certificateRecovery;this.hostRecoveryPending=bootstrap.hostRestorePending;}
+  private certificateBootstrap:DesktopBootstrap|undefined;
+  private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateBootstrap=bootstrap;this.certificateRecovery=this.decryptHttps&&this.caRecoveryRequired(bootstrap);this.certificateReady=!this.decryptHttps||bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted&&!this.certificateRecovery;this.hostRecoveryPending=bootstrap.hostRestorePending;}
   private async runSupport(operation:()=>Promise<void>):Promise<void> {if(this.supportBusy)return;this.supportBusy=true;try {await operation();}finally{this.supportBusy=false;}}
+  @observable decryptHttps = initialState.decryptHttps;
   @observable proxyReady = initialState.proxyReady;
   @observable proxyText = initialState.proxyText;
   @observable proxyKind = initialState.proxyKind;
@@ -107,8 +109,8 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.applyTheme(productState.preferences.theme, productState.workspace);
       this.renderAppStatus(status);
       this.updateCertificateState(bootstrap);
-      const recovery = this.caRecoveryRequired(bootstrap);
-      const certificate = recovery
+      const recovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
+      const certificate = !this.decryptHttps ? 'HTTPS decryption is off. CONNECT tunnels forward bytes without inspecting their contents.' : recovery
         ? 'The saved interception certificate needs to be reset. Reset certificate and set up again to create and trust a new one.'
         : bootstrap.ownedCaSha256 === null
           ? 'No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS.'
@@ -186,7 +188,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         this.setProxyOutput('Start blocked: Windows proxy recovery is pending.', 'error');
         return;
       }
-      if (this.caRecoveryRequired(bootstrap) || !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted) {
+      if (this.decryptHttps && (this.caRecoveryRequired(bootstrap) || !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted)) {
         if (this.caRecoveryRequired(bootstrap)) {
           this.showCaRecovery(bootstrap);
           this.activateView('settings');
@@ -410,7 +412,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async loadSettings():Promise<void> {if(this.settingsBusy)return;this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');this.populateSettings(state);this.applyTheme(state.preferences.theme,state.workspace);this.settingsText='Changes reverted.';}catch(error:unknown){this.settingsError='Settings could not be loaded: '+describeError(error);}finally{this.settingsBusy=false;}}
-  async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.configureSystemProxy=true;state.privacy.bufferLimit=this.bufferMode==='custom'?{mode:'custom',bytes:Math.round(Number(data.get('bufferSize'))*1073741824)}:{mode:this.bufferMode==='unlimited'?'unlimited':'automatic'};const entryLimit=data.get('limitEntries')==='on'?Number(data.get('maxEntries')):null;if(entryLimit!==null&&(!Number.isSafeInteger(entryLimit)||entryLimit<1))throw new Error('Choose a positive whole number of live entries.');state.privacy.maxLiveEntries=entryLimit;state.privacy.retainRequestBodies=data.get('requestBodies')==='on';state.privacy.requestBodyLimit=data.get('requestBodyLimit')==='unlimited'?null:25000000;state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);await this.refreshBufferStatus();this.settingsText='Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
+  async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.decryptHttps=data.get('decryptHttps')==='on';state.preferences.isolateOutboundConnections=data.get('isolateOutbound')==='on';state.preferences.allowedOutboundProtocols={http1:data.get('outboundHttp1')==='on',http2:data.get('outboundHttp2')==='on',http3:data.get('outboundHttp3')==='on'};state.privacy.bufferLimit=this.bufferMode==='custom'?{mode:'custom',bytes:Math.round(Number(data.get('bufferSize'))*1073741824)}:{mode:this.bufferMode==='unlimited'?'unlimited':'automatic'};const entryLimit=data.get('limitEntries')==='on'?Number(data.get('maxEntries')):null;if(entryLimit!==null&&(!Number.isSafeInteger(entryLimit)||entryLimit<1))throw new Error('Choose a positive whole number of live entries.');state.privacy.maxLiveEntries=entryLimit;state.privacy.retainRequestBodies=data.get('requestBodies')==='on';state.privacy.requestBodyLimit=data.get('requestBodyLimit')==='unlimited'?null:25000000;state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);await this.refreshBufferStatus();this.settingsText=this.proxyLifecycle==='running'||this.proxyLifecycle==='draining'?'Settings saved. HTTPS decryption changes apply on the next proxy start.':'Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
 
   async refreshDiagnostics():Promise<void> {await this.runSupport(async()=>{try {const report=await invoke<{applicationVersion:string;runtime:{operatingSystem:string;architecture:string;webviewVersion:string|null};events:Array<{level:string}>;privacyNotice:string}>('diagnostics_report');this.supportFacts=[{label:'Transmog version',value:report.applicationVersion},{label:'Operating system',value:report.runtime.operatingSystem},{label:'Architecture',value:report.runtime.architecture},{label:'WebView2',value:report.runtime.webviewVersion??'Unavailable'},{label:'Recent events',value:String(report.events.length)},{label:'Warnings / errors',value:String(report.events.filter(event=>event.level!=='info').length)},{label:'Privacy',value:report.privacyNotice}];this.supportDetails=JSON.stringify(report,null,2);this.supportText='Diagnostics refreshed.';}catch(error:unknown){this.supportText='Diagnostics unavailable: '+describeError(error);}});}
   async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const destination=await invoke<string|null>('pick_support_path');if(destination===null){this.supportText='Support bundle canceled.';return;}const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination,includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);await this.showError('Support bundle could not be saved',describeError(error));}});}
@@ -432,6 +434,12 @@ export class SettingsWorkspace extends WorkspaceElement {
   private populateSettings(state: ProductState): void {
     this.settingsDirty=false;this.supportPathsAllowed=state.privacy.includePathsInSupportBundles;
     const elements = this.settingsForm.elements;
+    this.decryptHttps = state.preferences.decryptHttps ?? true;
+    if(this.certificateBootstrap)this.updateCertificateState(this.certificateBootstrap);
+    (elements.namedItem('decryptHttps') as HTMLInputElement).checked = this.decryptHttps;
+    (elements.namedItem('isolateOutbound') as HTMLInputElement).checked = state.preferences.isolateOutboundConnections ?? true;
+    const protocols = state.preferences.allowedOutboundProtocols ?? {http1:true,http2:true,http3:true};
+    for (const [name, allowed] of Object.entries(protocols)) (elements.namedItem('outboundHttp' + name.slice(4)) as HTMLInputElement).checked = allowed;
     this.bufferMode=state.privacy.bufferLimit.mode;
     this.entryLimitEnabled=state.privacy.maxLiveEntries!==null;
     (elements.namedItem('limitEntries') as HTMLInputElement).checked=this.entryLimitEnabled;

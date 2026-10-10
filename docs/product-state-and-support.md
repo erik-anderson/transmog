@@ -11,8 +11,21 @@ The desktop start command honors `configureSystemProxy`: false binds the proxy
 for manually configured clients without changing Windows routing. This mode
 does not require installing the managed CA in Windows; clients configure their
 own HTTPS trust when needed. The ordinary Settings flow keeps system routing
-enabled. Both modes still validate and protect CA files and block pending host
-restoration.
+enabled. With HTTPS decryption enabled, both modes validate and protect CA files.
+Both always block pending host restoration.
+
+Advanced network settings contains the enabled-default caller-process isolation
+toggle, allowed outbound protocols and HTTPS decryption choice. Isolation falls
+back to source IP and also separates downstream HTTP/2 sessions. Protocol changes
+apply to new origin connections; established connections continue serving requests
+until they close. Saving preserves explicit manual routing and does not restart
+the proxy. Embedders can supply their own network-isolation key computation.
+
+HTTPS decryption changes apply at the next proxy start. When disabled, CONNECT
+forwards opaque bytes without loading interception CA files or requiring CA trust.
+Traffic and TMCap retain the destination, connection outcome, endpoints and byte
+counts. The HTTP protocol recorded is the outer CONNECT protocol; the tunneled
+protocol and contents remain unknown.
 Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.

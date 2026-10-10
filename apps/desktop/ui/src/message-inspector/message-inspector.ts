@@ -111,6 +111,8 @@ export class MessageInspector extends WebUIElement {
     this.bodyFacts = body ? this.retentionFacts(body) : '';
     this.bodySummary=body?formatBytes(body.retainedBytes)+' · '+body.availability:'';
     this.viewerLabel = this.viewer === 'auto' ? 'Auto' : this.viewer;
+    const tunnel=this.detail.performance?.transports.find(transport=>transport.tunnelDestination);
+    if(tunnel) {this.hexPreview=null;this.bodyText='Opaque CONNECT tunnel to '+tunnel.tunnelDestination+'. HTTPS decryption was disabled. Tunnel contents and the tunneled protocol were not inspected. Open Timings for connection outcomes, endpoints and byte counts.';this.viewerLabel='Opaque tunnel';return;}
     if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : 'No body metadata was captured for this message stage.'; this.viewerLabel = 'Metadata'; return; }
     if (this.side === 'response' && head?.status === 304 && !body?.retainedBytes) {
       this.bodyText = '304 Not Modified — no response body is expected. The client uses its cached representation.';

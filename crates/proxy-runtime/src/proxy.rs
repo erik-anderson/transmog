@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     convert::Infallible,
     future::Future,
     net::SocketAddr,
@@ -7,8 +7,8 @@ use std::{
     pin::Pin,
     str::FromStr,
     sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
+        Arc, Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -38,6 +38,10 @@ use transmog_core::{
     HttpLegVersion, MessageKind, Replayability, RequestHead, ResponseHead, RoutePolicy, SessionId,
     SessionMetadata, StreamId, StreamingRequest, StreamingResponse, Target, TranslationOptions,
     body_semantics,
+    connection_policy::{
+        AllowedHttpProtocols, CallerNetworkIsolation, NetworkIsolationKey, NetworkIsolationPolicy,
+        OutboundProtocolPolicy,
+    },
     intercept::{
         BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, ChainExecutionError,
         ChainInitError, CompletedExchange, ExchangeCancellation, ExchangeChain, ExchangeFailure,
@@ -92,10 +96,17 @@ use crate::{
 };
 
 const FAILED_EXCHANGE_BODY: &[u8] = b"Transmog exchange failed\n";
+mod connect_tunnel;
 
 /// Complete configuration for one explicit proxy instance.
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
+    /// Decrypt CONNECT TLS; false forwards opaque destination tunnels without a CA.
+    pub decrypt_https: bool,
+    /// Protocols admitted for new outbound connections; existing connections are preserved.
+    pub allowed_outbound_protocols: AllowedHttpProtocols,
+    /// Isolate outbound sockets by caller process/source IP and downstream H2 session.
+    pub isolate_outbound_connections: bool,
     /// Listener exposure policy.
     pub listener: crate::ListenerConfig,
     /// Origin protocol selection policy.
@@ -114,6 +125,9 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             listener: crate::ListenerConfig::default(),
+            isolate_outbound_connections: true,
+            decrypt_https: true,
+            allowed_outbound_protocols: AllowedHttpProtocols::default(),
             route_policy: RoutePolicy::Auto,
             limits: RuntimeLimits::default(),
             h3: H3TransportLimits::default(),
@@ -130,6 +144,7 @@ impl Default for ProxyConfig {
 /// value so configuration cannot change after the listener starts.
 #[derive(Clone)]
 pub struct ProxyComponents {
+    network_isolation: Arc<dyn NetworkIsolationPolicy>,
     hooks: InterceptorChainFactory,
     content: ContentPolicy,
     observers: ObserverHub,
@@ -166,6 +181,7 @@ impl ProxyComponents {
     ) -> Self {
         Self {
             hooks,
+            network_isolation: Arc::new(CallerNetworkIsolation),
             content: ContentPolicy::default(),
             observers: ObserverHub::default(),
             route_selector: None,
@@ -203,6 +219,16 @@ impl ProxyComponents {
     #[must_use]
     pub fn with_interceptor(mut self, registration: InterceptorRegistration) -> Self {
         self.hooks = self.hooks.with_registration(registration);
+        self
+    }
+
+    /// Installs an embedding policy for caller/session connection partitioning.
+    #[must_use]
+    pub fn with_network_isolation_policy(
+        mut self,
+        policy: Arc<dyn NetworkIsolationPolicy>,
+    ) -> Self {
+        self.network_isolation = policy;
         self
     }
 
@@ -340,6 +366,21 @@ pub struct ProxyControl {
 }
 
 impl ProxyControl {
+    /// Sets decryption for new CONNECT tunnels; already admitted tunnels continue unchanged.
+    /// Enabling requires a usable certificate resolver supplied when the server was created.
+    pub fn set_https_decryption(&self, enabled: bool) {
+        self.state.decrypt_https.store(enabled, Ordering::Release);
+    }
+    /// Changes protocol admission for new connections, preserving existing sockets and sessions.
+    pub fn set_outbound_protocols(&self, allowed: AllowedHttpProtocols) {
+        self.state.outbound_protocols.set(allowed);
+    }
+    /// Changes caller isolation for subsequent exchanges, without aborting admitted work.
+    pub fn set_outbound_isolation(&self, enabled: bool) {
+        self.state
+            .isolate_outbound
+            .store(enabled, Ordering::Release);
+    }
     /// Current requests, negotiations, relays and connected clients.
     pub fn activity(&self) -> crate::ProxyActivity {
         self.state.activity.snapshot()
@@ -376,6 +417,7 @@ impl ProxyControl {
             trust,
             self.state.config.h3,
             self.state.config.happy_eyeballs,
+            self.state.outbound_protocols.clone(),
         )?);
         let mut active = self.state.upstream.write().await;
         if next.trust_generation <= active.trust_generation {
@@ -479,10 +521,12 @@ impl ProxyServer {
         {
             return Err(ProxyRuntimeError::InvalidConfiguration);
         }
+        let outbound_protocols = OutboundProtocolPolicy::new(config.allowed_outbound_protocols);
         let upstream = Arc::new(UpstreamGeneration::new(
             trust,
             config.h3,
             config.happy_eyeballs,
+            outbound_protocols.clone(),
         )?);
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
@@ -494,6 +538,10 @@ impl ProxyServer {
             hooks: components.hooks,
             content: components.content,
             observers: components.observers,
+            network_isolation: components.network_isolation,
+            isolate_outbound: AtomicBool::new(config.isolate_outbound_connections),
+            decrypt_https: AtomicBool::new(config.decrypt_https),
+            outbound_protocols,
             route_selector: components.route_selector,
             application_upstream: components.application_upstream,
             websocket_hooks: components.websocket_hooks,
@@ -590,6 +638,7 @@ impl ProxyServer {
                             stream,
                             ConnectionContext {
                                 accepted_at,
+                                outbound_pool: Arc::new(std::sync::Mutex::new(None)),
                                 identity_done: Instant::now(),
                                 socket_metrics: metrics,
                                 exchange_count: Arc::new(AtomicU64::new(0)),
@@ -638,6 +687,10 @@ impl ProxyServer {
 }
 
 struct ProxyState {
+    decrypt_https: AtomicBool,
+    outbound_protocols: OutboundProtocolPolicy,
+    network_isolation: Arc<dyn NetworkIsolationPolicy>,
+    isolate_outbound: AtomicBool,
     activity: Arc<ActivityTracker>,
     final_shutdown: ExchangeCancellation,
     tunnels: Mutex<JoinSet<()>>,
@@ -662,11 +715,23 @@ struct ProxyState {
 #[derive(Clone, Debug)]
 struct RuntimeExchangeObserver(Arc<ExchangeObserver>);
 
+#[derive(Clone)]
 struct UpstreamGeneration {
     hyper: HyperOriginClient,
     h3: H3OriginClient,
     trust_generation: u64,
+    partitions: Arc<UpstreamPartitions>,
 }
+
+struct UpstreamPartitions {
+    protocols: OutboundProtocolPolicy,
+    tls: UpstreamTlsContextFactory,
+    happy: HappyEyeballsConfig,
+    clients: std::sync::Mutex<HashMap<NetworkIsolationKey, Weak<UpstreamGeneration>>>,
+}
+
+type ConnectionPoolLease =
+    Arc<std::sync::Mutex<Option<(u64, NetworkIsolationKey, Arc<UpstreamGeneration>)>>>;
 
 impl UpstreamGeneration {
     fn observed(&self, performance: Option<PerformanceRecorder>) -> Self {
@@ -674,27 +739,84 @@ impl UpstreamGeneration {
             hyper: self.hyper.clone().with_performance(performance.clone()),
             h3: self.h3.clone().with_performance(performance),
             trust_generation: self.trust_generation,
+            partitions: Arc::clone(&self.partitions),
         }
     }
     fn new(
         trust: Arc<TrustSnapshot>,
         h3_limits: H3TransportLimits,
         happy_eyeballs: HappyEyeballsConfig,
+        protocols: OutboundProtocolPolicy,
     ) -> Result<Self, ProxyRuntimeError> {
         h3_limits.validate().map_err(H3OriginError::from)?;
         let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
-        let hyper = HyperOriginClient::with_happy_eyeballs(&tls, happy_eyeballs)?;
-        let h3 = H3OriginClient::with_happy_eyeballs(tls.clone(), h3_limits, happy_eyeballs);
+        let hyper =
+            HyperOriginClient::with_connection_policy(&tls, happy_eyeballs, protocols.clone())?;
+        let h3 = H3OriginClient::with_happy_eyeballs(tls.clone(), h3_limits, happy_eyeballs)
+            .with_outbound_protocols(protocols.clone());
         Ok(Self {
             hyper,
             h3,
             trust_generation: tls.snapshot().generation(),
+            partitions: Arc::new(UpstreamPartitions {
+                protocols,
+                tls,
+                happy: happy_eyeballs,
+                clients: std::sync::Mutex::new(HashMap::new()),
+            }),
         })
+    }
+
+    fn isolated(
+        &self,
+        key: &NetworkIsolationKey,
+        lease: &ConnectionPoolLease,
+    ) -> Result<Arc<Self>, ProxyRuntimeError> {
+        let mut held = lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((generation, previous, client)) = held.as_ref()
+            && *generation == self.trust_generation
+            && previous == key
+        {
+            return Ok(Arc::clone(client));
+        }
+        let selected = if key == &NetworkIsolationKey::shared() {
+            Arc::new(self.clone())
+        } else {
+            let mut clients = self
+                .partitions
+                .clients
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Downstream connections hold leases; dead caller/session pools do not
+            // accumulate when browsers repeatedly open and close sessions.
+            clients.retain(|_, client| client.strong_count() > 0);
+            if let Some(client) = clients.get(key).and_then(Weak::upgrade) {
+                client
+            } else {
+                let client = Arc::new(Self {
+                    hyper: HyperOriginClient::with_connection_policy(
+                        &self.partitions.tls,
+                        self.partitions.happy,
+                        self.partitions.protocols.clone(),
+                    )?,
+                    h3: self.h3.clone().with_network_isolation(key.clone()),
+                    trust_generation: self.trust_generation,
+                    partitions: Arc::clone(&self.partitions),
+                });
+                clients.insert(key.clone(), Arc::downgrade(&client));
+                client
+            }
+        };
+        *held = Some((self.trust_generation, key.clone(), Arc::clone(&selected)));
+        Ok(selected)
     }
 }
 
 #[derive(Clone)]
 struct ConnectionContext {
+    outbound_pool: ConnectionPoolLease,
     accepted_at: Instant,
     identity_done: Instant,
     socket_metrics: Arc<ConnectionMetrics>,
@@ -857,6 +979,11 @@ impl ProxyState {
             .authority()
             .map_or_else(|| request.uri().path(), http::uri::Authority::as_str);
         let authority = ConnectAuthority::from_str(authority_text)?;
+        if !self.decrypt_https.load(Ordering::Acquire) {
+            return self
+                .handle_opaque_connect(request, context, authority)
+                .await;
+        }
         let upgraded = hyper::upgrade::on(&mut request);
         let state = Arc::clone(&self);
         let tunnel_client = state.activity.acquire(ActivityKind::Client);
@@ -1224,15 +1351,36 @@ impl ProxyState {
             .await;
         let chain = Arc::new(chain);
 
-        let upstream = Arc::new(
-            self.upstream
-                .read()
-                .await
-                .observed(performance_recorder(&chain)),
-        );
+        let isolation_key = if self.isolate_outbound.load(Ordering::Acquire) {
+            let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.network_isolation.compute(chain.context().metadata())
+            }));
+            let Ok(key) = computed else {
+                let error = ProxyRuntimeError::IsolationPolicyPanicked;
+                self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
+                    .await;
+                return Err(error);
+            };
+            key
+        } else {
+            NetworkIsolationKey::shared()
+        };
+        let selected = self
+            .upstream
+            .read()
+            .await
+            .isolated(&isolation_key, &context.outbound_pool);
+        let upstream = match selected {
+            Ok(selected) => Arc::new(selected.observed(performance_recorder(&chain))),
+            Err(error) => {
+                self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
+                    .await;
+                return Err(error);
+            }
+        };
         let replayability = request_replayability(&request_head);
         publish_performance(&chain, Some(Milestone::RouteBegin)).await;
-        let plan = match self
+        let mut plan = match self
             .select_route(
                 &chain,
                 &request_head,
@@ -1257,6 +1405,7 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        plan.pool_key.network_isolation = isolation_key;
         observer
             .emit(ObserverEventKind::RouteSelected {
                 policy_id: Arc::clone(&plan.route_id),
@@ -4826,6 +4975,12 @@ fn map_from_block(block: &HeaderBlock) -> Result<HeaderMap, ProxyRuntimeError> {
 /// Listener, interception-hook, routing, or origin-adapter failure.
 #[derive(Debug, Error)]
 pub enum ProxyRuntimeError {
+    /// An authority-form CONNECT carried an unsupported HTTP request body.
+    #[error("CONNECT requests must not carry an HTTP message body")]
+    ConnectRequestBodyUnsupported,
+    /// Application connection-isolation computation panicked and was contained.
+    #[error("outbound connection isolation policy panicked")]
+    IsolationPolicyPanicked,
     /// Listener exposure configuration was unsafe.
     #[error(transparent)]
     Listener(#[from] ListenerConfigError),
@@ -5496,6 +5651,7 @@ mod tests {
     ) {
         let plan = UpstreamPlan {
             pool_key: transmog_core::route::UpstreamPoolKey {
+                network_isolation: NetworkIsolationKey::shared(),
                 destination: transmog_core::route::UpstreamDestination {
                     scheme: target.scheme.clone(),
                     host: target.host.clone(),
@@ -6074,6 +6230,229 @@ mod tests {
         assert_eq!(active.trust_generation, 51);
         assert_eq!(retained.trust_generation, 50);
         assert!(!Arc::ptr_eq(&retained, &active));
+    }
+
+    #[tokio::test]
+    async fn network_isolation_shares_within_callers_and_releases_closed_sessions() {
+        let generation = UpstreamGeneration::new(
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 150).unwrap()),
+            H3TransportLimits::default(),
+            HappyEyeballsConfig::default(),
+            OutboundProtocolPolicy::default(),
+        )
+        .unwrap();
+        let first = Arc::new(StdMutex::new(None));
+        let second = Arc::new(StdMutex::new(None));
+        let key = NetworkIsolationKey::new("process:10/h2:1");
+        let a = generation.isolated(&key, &first).unwrap();
+        let b = generation.isolated(&key, &second).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
+        let other = generation
+            .isolated(&NetworkIsolationKey::new("process:10/h2:2"), &second)
+            .unwrap();
+        assert!(!Arc::ptr_eq(&a, &other));
+        let weak = Arc::downgrade(&a);
+        drop(a);
+        drop(b);
+        drop(first);
+        assert!(weak.upgrade().is_none());
+        assert!(Arc::ptr_eq(
+            &other,
+            &generation
+                .isolated(
+                    &NetworkIsolationKey::new("process:10/h2:2"),
+                    &Arc::new(StdMutex::new(None))
+                )
+                .unwrap()
+        ));
+        assert_eq!(generation.partitions.clients.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Verify one raw tunnel's bytes, certificate avoidance and retained context together.
+    async fn opaque_connect_relays_exact_bytes_and_records_destination_without_certificates() {
+        struct NoCertificates;
+        impl DownstreamCertificateResolver for NoCertificates {
+            fn resolve(
+                &self,
+                _identity: &EndpointIdentity,
+                _now: std::time::SystemTime,
+            ) -> Result<transmog_tls::IssuedLeaf, CertificateResolverError> {
+                panic!("opaque CONNECT tried to resolve an interception certificate");
+            }
+        }
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let destination = origin.local_addr().unwrap();
+        let payload = Bytes::from([0x16, 0x03, 0x03, 0, 0xff, 0x00, 0x80].repeat(8192));
+        let expected = payload.clone();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).await.unwrap();
+            assert_eq!(bytes.as_slice(), expected.as_ref());
+            stream.write_all(&bytes).await.unwrap();
+        });
+        let performance = Arc::new(StdMutex::new(
+            transmog_core::performance::PerformanceEvidence::default(),
+        ));
+        let phases = Arc::new(StdMutex::new(Vec::new()));
+        let components = ProxyComponents::new(
+            InterceptorChainFactory::new(
+                Vec::new(),
+                transmog_core::intercept::HookLimits::default(),
+            ),
+            Arc::new(NoCertificates),
+        )
+        .with_observer(
+            Arc::new(LifecycleObserver {
+                performance: performance.clone(),
+                phases: phases.clone(),
+                client_identity: Arc::new(StdMutex::new(None)),
+            }),
+            ObserverConfig::default(),
+        );
+        let proxy = ProxyServer::bind_with_components(
+            ProxyConfig {
+                decrypt_https: false,
+                ..ProxyConfig::default()
+            },
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 151).unwrap()),
+            components,
+        )
+        .await
+        .unwrap();
+        let address = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            headers.push(client.read_u8().await.unwrap());
+        }
+        assert!(headers.starts_with(b"HTTP/1.1 200"));
+        client.write_all(&payload).await.unwrap();
+        client.shutdown().await.unwrap();
+        let mut echoed = Vec::new();
+        timeout(Duration::from_secs(2), client.read_to_end(&mut echoed))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(echoed.as_slice(), payload.as_ref());
+        timeout(Duration::from_secs(1), async {
+            while !phases.lock().unwrap().contains(&"completed") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let evidence = performance.lock().unwrap().clone();
+        let transport = evidence
+            .transports
+            .iter()
+            .find(|transport| transport.tunnel_destination.is_some())
+            .unwrap();
+        assert_eq!(
+            transport.tunnel_destination.as_deref(),
+            Some(destination.to_string().as_str())
+        );
+        assert_eq!(
+            transport.peer.as_deref(),
+            Some(destination.to_string().as_str())
+        );
+        assert_eq!(transport.bytes_written, Some(payload.len() as u64));
+        assert_eq!(transport.bytes_read, Some(payload.len() as u64));
+        assert!(transport.tls_version.is_none());
+        assert!(evidence.valid());
+        assert!(
+            evidence
+                .protocols
+                .iter()
+                .all(|protocol| !protocol.boundary.starts_with("upstream"))
+        );
+        shutdown_tx.send(()).unwrap();
+        task.await.unwrap().unwrap();
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn opaque_connect_failure_retains_destination_and_terminal_context() {
+        let unavailable = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let destination = unavailable.local_addr().unwrap();
+        drop(unavailable);
+        let performance = Arc::new(StdMutex::new(
+            transmog_core::performance::PerformanceEvidence::default(),
+        ));
+        let phases = Arc::new(StdMutex::new(Vec::new()));
+        let proxy = ProxyServer::bind_with_components(
+            ProxyConfig {
+                decrypt_https: false,
+                ..ProxyConfig::default()
+            },
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 152).unwrap()),
+            ProxyComponents::new(
+                InterceptorChainFactory::new(
+                    Vec::new(),
+                    transmog_core::intercept::HookLimits::default(),
+                ),
+                Arc::new(
+                    CachedMitmCertificateResolver::new(
+                        ProxyCa::generate("Unused tunnel CA", 2).unwrap(),
+                        8,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            )
+            .with_observer(
+                Arc::new(LifecycleObserver {
+                    performance: performance.clone(),
+                    phases: phases.clone(),
+                    client_identity: Arc::new(StdMutex::new(None)),
+                }),
+                ObserverConfig::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        let address = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(10), async {
+            while !phases.lock().unwrap().contains(&"failed") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let evidence = performance.lock().unwrap().clone();
+        assert!(evidence.valid());
+        assert_eq!(
+            evidence.transports[0].tunnel_destination.as_deref(),
+            Some(destination.to_string().as_str())
+        );
+        assert_eq!(evidence.transports[0].outcome, TransportOutcome::TcpFailed);
+        assert!(evidence.transports[0].tcp_micros.is_some());
+        assert!(!phases.lock().unwrap().contains(&"completed"));
+        drop(client);
+        shutdown_tx.send(()).unwrap();
+        task.await.unwrap().unwrap();
     }
 
     #[tokio::test]

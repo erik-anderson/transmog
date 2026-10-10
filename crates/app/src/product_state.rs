@@ -61,6 +61,15 @@ pub enum ThemePreference {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductPreferences {
+    /// Decrypt HTTPS traffic; false forwards CONNECT contents without inspection.
+    #[serde(default = "enabled_by_default")]
+    pub decrypt_https: bool,
+    /// Partition origin connections by caller PID/source IP and downstream H2 session.
+    #[serde(default = "enabled_by_default")]
+    pub isolate_outbound_connections: bool,
+    /// Allowed protocols for new origin connections; established connections continue until closed.
+    #[serde(default)]
+    pub allowed_outbound_protocols: transmog_core::connection_policy::AllowedHttpProtocols,
     /// Color preference.
     pub theme: ThemePreference,
     /// Legacy page preference retained for saved-state compatibility; Traffic is virtualized.
@@ -72,11 +81,19 @@ pub struct ProductPreferences {
 impl Default for ProductPreferences {
     fn default() -> Self {
         Self {
+            decrypt_https: true,
+            isolate_outbound_connections: true,
+            allowed_outbound_protocols:
+                transmog_core::connection_policy::AllowedHttpProtocols::default(),
             theme: ThemePreference::System,
             session_page_size: 100,
             configure_system_proxy: true,
         }
     }
+}
+
+const fn enabled_by_default() -> bool {
+    true
 }
 
 /// Explicit persisted privacy choices.
@@ -450,6 +467,24 @@ fn quarantine(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_preferences_gain_safe_network_defaults_without_losing_user_choices() {
+        let mut value = serde_json::to_value(ProductState::default()).unwrap();
+        let preferences = value["preferences"].as_object_mut().unwrap();
+        preferences.remove("isolateOutboundConnections");
+        preferences.remove("decryptHttps");
+        preferences.remove("allowedOutboundProtocols");
+        preferences.insert("configureSystemProxy".into(), serde_json::json!(false));
+        let restored: ProductState = serde_json::from_value(value).unwrap();
+        assert!(restored.preferences.isolate_outbound_connections);
+        assert!(restored.preferences.decrypt_https);
+        assert_eq!(
+            restored.preferences.allowed_outbound_protocols,
+            transmog_core::connection_policy::AllowedHttpProtocols::default()
+        );
+        assert!(!restored.preferences.configure_system_proxy);
+    }
 
     fn prefix(label: &str) -> PathBuf {
         std::env::temp_dir()

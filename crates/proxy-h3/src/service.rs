@@ -82,7 +82,10 @@ impl UpstreamService for H3UpstreamService {
             });
         }
 
-        let client = self.client.clone();
+        let client = self
+            .client
+            .clone()
+            .with_network_isolation(plan.pool_key.network_isolation.clone());
         let peer_port = plan.pool_key.destination.port;
         let max_response_bytes = self.max_response_bytes;
         let body_channel_capacity = self.body_channel_capacity;
@@ -191,6 +194,8 @@ mod tests {
                 },
                 UpstreamPlan {
                     pool_key: UpstreamPoolKey {
+                        network_isolation:
+                            transmog_core::connection_policy::NetworkIsolationKey::shared(),
                         destination: UpstreamDestination {
                             scheme: "http".to_owned(),
                             host: "example.test".to_owned(),

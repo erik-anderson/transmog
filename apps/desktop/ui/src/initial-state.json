@@ -9,6 +9,7 @@
   "errorTitle": "",
   "errorMessage": "",
   "proxyReady": false,
+  "decryptHttps": true,
   "noticeVisible": false,
   "noticeTitleText": "Action required",
   "noticeMessageText": "",

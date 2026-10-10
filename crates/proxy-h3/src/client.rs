@@ -69,6 +69,8 @@ pub struct H3StreamingResponse {
 /// Direct Tokio driver over quiche using the shared `BoringSSL` context.
 #[derive(Clone, Debug)]
 pub struct H3OriginClient {
+    protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
+    network_isolation: transmog_core::connection_policy::NetworkIsolationKey,
     performance: Option<PerformanceRecorder>,
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
@@ -77,6 +79,24 @@ pub struct H3OriginClient {
 }
 
 impl H3OriginClient {
+    /// Shares live admission restrictions while preserving established QUIC sessions.
+    #[must_use]
+    pub fn with_outbound_protocols(
+        mut self,
+        policy: transmog_core::connection_policy::OutboundProtocolPolicy,
+    ) -> Self {
+        self.protocols = policy;
+        self
+    }
+    /// Selects the caller/session partition while retaining the shared bounded registry.
+    #[must_use]
+    pub fn with_network_isolation(
+        mut self,
+        key: transmog_core::connection_policy::NetworkIsolationKey,
+    ) -> Self {
+        self.network_isolation = key;
+        self
+    }
     /// Associates measurements with an exchange while sharing the original QUIC pool.
     #[must_use]
     pub fn with_performance(mut self, performance: Option<PerformanceRecorder>) -> Self {
@@ -97,6 +117,8 @@ impl H3OriginClient {
     ) -> Self {
         Self {
             tls,
+            protocols: transmog_core::connection_policy::OutboundProtocolPolicy::default(),
+            network_isolation: transmog_core::connection_policy::NetworkIsolationKey::shared(),
             limits,
             happy_eyeballs,
             pool: Arc::new(Mutex::new(HashMap::new())),
@@ -218,6 +240,7 @@ impl H3OriginClient {
     fn pool_key(&self, host: String, peer_port: u16) -> PoolKey {
         PoolKey {
             host,
+            network_isolation: self.network_isolation.clone(),
             peer_port,
             trust_generation: self.tls.snapshot().generation(),
         }
@@ -245,6 +268,9 @@ impl H3OriginClient {
         pool.retain(|_, sender| !sender.is_closed());
         if let Some(sender) = pool.get(key) {
             return Ok(sender.clone());
+        }
+        if !self.protocols.snapshot().http3 {
+            return Err(H3OriginError::ProtocolDisabled);
         }
         if pool.len() >= self.limits.max_pool_entries {
             return Err(H3OriginError::PoolCapacityExceeded {
@@ -279,6 +305,7 @@ impl H3OriginClient {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PoolKey {
+    network_isolation: transmog_core::connection_policy::NetworkIsolationKey,
     host: String,
     peer_port: u16,
     trust_generation: u64,
@@ -1331,6 +1358,9 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// Direct quiche origin-adapter failure.
 #[derive(Debug, Error)]
 pub enum H3OriginError {
+    /// HTTP/3 is disabled for new physical connections; existing sessions remain usable.
+    #[error("outbound HTTP/3 is disabled for new connections")]
+    ProtocolDisabled,
     /// Shared TLS or quiche transport configuration failed.
     #[error(transparent)]
     Config(#[from] H3ConfigError),
@@ -1889,6 +1919,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Exercise simultaneous streams and admission changes on the same connection.
     async fn pooled_connection_multiplexes_concurrent_requests() {
         let ca = ProxyCa::generate("Transmog pooled h3 origin", 2).unwrap();
         let leaf = ca
@@ -1921,6 +1952,20 @@ mod tests {
                 .execute(h3_request(origin, "/slow"), origin.port(), 1024)
                 .await
         });
+        timeout(std::time::Duration::from_secs(1), async {
+            while client.pool.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        client
+            .protocols
+            .set(transmog_core::connection_policy::AllowedHttpProtocols {
+                http1: true,
+                http2: true,
+                http3: false,
+            });
         let fast = timeout(
             std::time::Duration::from_secs(1),
             client
@@ -1985,6 +2030,22 @@ mod tests {
             );
         }
 
+        client
+            .protocols
+            .set(transmog_core::connection_policy::AllowedHttpProtocols {
+                http1: true,
+                http2: true,
+                http3: false,
+            });
+        let isolated = client.clone().with_network_isolation(
+            transmog_core::connection_policy::NetworkIsolationKey::new("another caller"),
+        );
+        assert!(matches!(
+            isolated
+                .execute(h3_request(origin, "/fast"), origin.port(), 1024)
+                .await,
+            Err(H3OriginError::ProtocolDisabled)
+        ));
         server.finish().await;
     }
 

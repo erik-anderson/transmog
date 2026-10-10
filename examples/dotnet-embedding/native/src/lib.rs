@@ -681,6 +681,7 @@ fn streaming_get(target: &Target) -> Result<StreamingRequest, String> {
 fn route_plan(target: &Target, route_policy: RoutePolicy, trust_generation: u64) -> UpstreamPlan {
     UpstreamPlan {
         pool_key: UpstreamPoolKey {
+            network_isolation: transmog_core::connection_policy::NetworkIsolationKey::shared(),
             destination: UpstreamDestination::from_target(target),
             version_policy: route_policy,
             trust_generation,

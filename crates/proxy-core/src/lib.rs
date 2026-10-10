@@ -5,6 +5,8 @@
 //! Stable APIs in this crate deliberately do not expose Hyper or quiche types.
 
 mod body;
+/// Outbound connection partition and protocol admission policies.
+pub mod connection_policy;
 mod extensions;
 mod header;
 pub mod intercept;

@@ -7,6 +7,7 @@ use tokio::time::timeout;
 
 use crate::{
     Replayability, RequestHead, RoutePolicy, Target,
+    connection_policy::NetworkIsolationKey,
     intercept::{ExchangeCancellation, ExchangeMetadata, OriginalTarget},
     task::AbortOnDrop,
 };
@@ -86,6 +87,8 @@ fn normalized_authority(scheme: &str, host: &str, port: u16) -> String {
 /// Identities needed to segregate upstream connection pools safely.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct UpstreamPoolKey {
+    /// Caller and browser-session partition independent of the destination.
+    pub network_isolation: NetworkIsolationKey,
     /// Authorized socket destination.
     pub destination: UpstreamDestination,
     /// HTTP version-selection policy.
@@ -244,6 +247,7 @@ impl RouteSelector for PolicyRouteSelector {
             };
             Ok(UpstreamPlan {
                 pool_key: UpstreamPoolKey {
+                    network_isolation: NetworkIsolationKey::for_caller(&input.metadata),
                     destination,
                     version_policy: self.version_policy,
                     trust_generation: self.trust_generation,
@@ -424,6 +428,7 @@ mod tests {
     #[test]
     fn pool_key_segregates_destination_protocol_trust_tls_and_connector() {
         let base = UpstreamPoolKey {
+            network_isolation: NetworkIsolationKey::shared(),
             destination: UpstreamDestination::from_target(&target("example.test", 443)),
             version_policy: RoutePolicy::Auto,
             trust_generation: 1,
@@ -441,10 +446,13 @@ mod tests {
         let mut changed = base.clone();
         changed.tls_policy_id = "tls-b".into();
         keys.insert(changed);
+        let mut changed = base.clone();
+        changed.network_isolation = NetworkIsolationKey::new("different caller");
+        keys.insert(changed);
         let mut changed = base;
         changed.connector_policy_id = "proxy-a".into();
         keys.insert(changed);
-        assert_eq!(keys.len(), 5);
+        assert_eq!(keys.len(), 6);
     }
 
     #[test]

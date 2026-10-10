@@ -538,10 +538,24 @@ fn render_request(
 ) -> Result<Vec<u8>, SazError> {
     validate_line_component(request.method.as_bytes())?;
     validate_line_component(request.target.as_bytes())?;
+    let target = if request.method == "CONNECT" {
+        let uri: http::Uri = request
+            .target
+            .parse()
+            .map_err(|_| SazError::UnsafeWireField)?;
+        let authority = uri.authority().ok_or(SazError::UnsafeWireField)?;
+        format!(
+            "{}:{}",
+            authority.host(),
+            authority.port_u16().unwrap_or(443)
+        )
+    } else {
+        request.target.clone()
+    };
     let mut output = Vec::new();
     output.extend_from_slice(request.method.as_bytes());
     output.push(b' ');
-    output.extend_from_slice(request.target.as_bytes());
+    output.extend_from_slice(target.as_bytes());
     output.extend_from_slice(format!(" {protocol}\r\n").as_bytes());
     render_entity(&mut output, &request.headers, body, trailers)?;
     Ok(output)
@@ -831,6 +845,23 @@ mod tests {
     use transmog_capture::CaptureRecord;
 
     use super::*;
+
+    #[test]
+    fn connect_exports_an_authority_form_destination_instead_of_a_url() {
+        for (target, authority) in [
+            ("https://example.test:8443/", "example.test:8443"),
+            ("https://[::1]:443/", "[::1]:443"),
+            ("https://example.test/", "example.test:443"),
+        ] {
+            let request = CapturedRequest {
+                method: "CONNECT".into(),
+                target: target.into(),
+                headers: Vec::new(),
+            };
+            let bytes = render_request(&request, &[], &[], "HTTP/1.1").unwrap();
+            assert!(bytes.starts_with(format!("CONNECT {authority} HTTP/1.1\r\n").as_bytes()));
+        }
+    }
 
     #[test]
     fn encrypted_saz_round_trips_and_produces_interop_fixtures() {

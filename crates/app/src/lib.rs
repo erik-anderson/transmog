@@ -445,6 +445,10 @@ impl Application {
         if let Ok(state) = &result {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
+            if let Some(control) = self.service.proxy_control() {
+                control.set_outbound_protocols(state.preferences.allowed_outbound_protocols);
+                control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
+            }
         }
         if let Ok(state) = &result
             && self.entry_preferences
@@ -931,11 +935,14 @@ impl Application {
             return Ok(self.status());
         }
         let result = lifecycle::start_proxy(
-            &self.service,
-            Arc::clone(&self.runtime_ids),
-            self.body_store.as_ref(),
-            self.automation.clone(),
-            self.scripts.clone(),
+            lifecycle::ProxyStartResources {
+                service: &self.service,
+                runtime_ids: Arc::clone(&self.runtime_ids),
+                body_store: self.body_store.as_ref(),
+                automation: self.automation.clone(),
+                scripts: self.scripts.clone(),
+                preferences: self.product_state().preferences,
+            },
             request,
             host,
         )

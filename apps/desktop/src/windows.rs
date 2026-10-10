@@ -237,10 +237,11 @@ fn product_state(
 }
 
 #[tauri::command]
-fn save_product_state(
+async fn save_product_state(
     product_state: ProductState,
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
+    let _certificate_operation = state.certificate_operation.lock().await;
     state.application.save_product_state(product_state)
 }
 
@@ -620,11 +621,13 @@ async fn start_proxy_locked(
         .preferences
         .configure_system_proxy;
     validate_proxy_start(state, configure_system_proxy)?;
-    transmog_app::protect_ca_private_key(
-        &request.ca_certificate_path,
-        &request.ca_private_key_path,
-    )
-    .map_err(|error| error.to_string())?;
+    if state.application.product_state().preferences.decrypt_https {
+        transmog_app::protect_ca_private_key(
+            &request.ca_certificate_path,
+            &request.ca_private_key_path,
+        )
+        .map_err(|error| error.to_string())?;
+    }
     state.application.record_diagnostic(
         DiagnosticLevel::Info,
         "desktop",
@@ -653,6 +656,9 @@ fn validate_proxy_start(state: &DesktopState, configure_system_proxy: bool) -> R
             "Restore the journaled Windows proxy settings before starting a new proxy run."
                 .to_owned(),
         );
+    }
+    if !state.application.product_state().preferences.decrypt_https {
+        return Ok(());
     }
     if !state.ca_certificate_path.is_file() || !state.ca_private_key_path.is_file() {
         return Err(

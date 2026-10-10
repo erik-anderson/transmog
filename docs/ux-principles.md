@@ -220,6 +220,17 @@ starting the listener must not change host routing or require host-wide CA trust
 Managed CA validation and private-key protection still apply; HTTPS clients supply
 their own trust. The ordinary desktop connection flow uses Windows routing.
 
+Outbound connections are isolated by caller process, with source IP as fallback,
+and by each HTTP/2 browser session. Keep the desktop control to one enabled-by-default
+checkbox in Advanced network settings. Outbound protocol choices apply when
+creating connections; established connections may continue serving new requests
+until they close. Saving these choices must not restart the proxy or interrupt traffic.
+
+Disabling HTTPS decryption forwards opaque CONNECT bytes and records the destination,
+connection outcome and byte counts without implying knowledge of the tunneled protocol
+or contents. This choice applies on the next proxy start. Starting with decryption off
+does not require interception certificate creation, key protection or host CA trust.
+
 Live entries have no count limit by default. Offer an optional maximum that drops
 older completed live entries, preserves imported entries and lets active requests
 finish before eviction. Changing this limit applies immediately. Body bytes have

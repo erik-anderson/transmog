@@ -24,6 +24,17 @@ use crate::{
 
 const MAX_CA_FILE_BYTES: u64 = 1024 * 1024;
 
+struct DisabledInterceptionCertificates;
+impl transmog_tls::DownstreamCertificateResolver for DisabledInterceptionCertificates {
+    fn resolve(
+        &self,
+        _identity: &transmog_tls::EndpointIdentity,
+        _now: std::time::SystemTime,
+    ) -> Result<transmog_tls::IssuedLeaf, transmog_tls::CertificateResolverError> {
+        Err(transmog_tls::CertificateResolverError::Provider("HTTPS decryption is disabled; restart the proxy after setting up an interception certificate to enable it".into()))
+    }
+}
+
 /// Product-level upstream routing selection.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -97,22 +108,18 @@ pub struct CaIdentity {
     pub certificate_path: PathBuf,
 }
 
-pub(crate) async fn start_proxy(
-    service: &ApplicationSessionService,
-    runtime_ids: Arc<AtomicRuntimeIdGenerator>,
-    body_store: Option<&BodyStore>,
-    automation: AutomationRegistry,
-    scripts: ScriptRegistry,
+pub(crate) struct ProxyStartResources<'a> {
+    pub service: &'a ApplicationSessionService,
+    pub runtime_ids: Arc<AtomicRuntimeIdGenerator>,
+    pub body_store: Option<&'a BodyStore>,
+    pub automation: AutomationRegistry,
+    pub scripts: ScriptRegistry,
+    pub preferences: crate::ProductPreferences,
+}
+
+async fn load_proxy_ca(
     request: ProxyStartRequest,
-    host: Option<Arc<dyn HostIntegration>>,
-) -> Result<(), AppError> {
-    if !request.listen.ip().is_loopback() && !request.allow_remote_clients {
-        return Err(AppError::new(
-            ErrorCategory::InvalidInput,
-            "non-loopback listening requires explicit remote-client acknowledgement",
-            false,
-        ));
-    }
+) -> Result<(ProxyCa, ProxyStartRequest), AppError> {
     let (certificate, key, request) = tokio::task::spawn_blocking(move || {
         Ok::<_, AppError>((
             read_bounded(&request.ca_certificate_path)?,
@@ -130,7 +137,62 @@ pub(crate) async fn start_proxy(
             false,
         )
     })?;
+    Ok((ca, request))
+}
+
+fn interception_certificates(
+    ca: Option<ProxyCa>,
+    limits: &transmog_runtime::RuntimeLimits,
+) -> Result<Arc<dyn transmog_tls::DownstreamCertificateResolver>, AppError> {
+    if let Some(ca) = ca {
+        let resolver = CachedMitmCertificateResolver::new(
+            ca,
+            limits.leaf_cache_capacity,
+            limits.leaf_validity_days,
+        )
+        .map_err(|_| {
+            AppError::new(
+                ErrorCategory::InvalidInput,
+                "CA cannot issue bounded interception certificates",
+                false,
+            )
+        })?;
+        Ok(Arc::new(resolver))
+    } else {
+        Ok(Arc::new(DisabledInterceptionCertificates))
+    }
+}
+
+pub(crate) async fn start_proxy(
+    resources: ProxyStartResources<'_>,
+    request: ProxyStartRequest,
+    host: Option<Arc<dyn HostIntegration>>,
+) -> Result<(), AppError> {
+    let ProxyStartResources {
+        service,
+        runtime_ids,
+        body_store,
+        automation,
+        scripts,
+        preferences,
+    } = resources;
+    if !request.listen.ip().is_loopback() && !request.allow_remote_clients {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "non-loopback listening requires explicit remote-client acknowledgement",
+            false,
+        ));
+    }
+    let (ca, request) = if preferences.decrypt_https {
+        let (ca, request) = load_proxy_ca(request).await?;
+        (Some(ca), request)
+    } else {
+        (None, request)
+    };
     let config = ProxyConfig {
+        decrypt_https: preferences.decrypt_https,
+        isolate_outbound_connections: preferences.isolate_outbound_connections,
+        allowed_outbound_protocols: preferences.allowed_outbound_protocols,
         listener: ListenerConfig {
             listen_addr: request.listen,
             allow_remote_clients: request.allow_remote_clients,
@@ -160,20 +222,7 @@ pub(crate) async fn start_proxy(
             Arc::new(scripts),
             NonZeroUsize::new(64).expect("script provider limit is nonzero"),
         );
-    let certificates = Arc::new(
-        CachedMitmCertificateResolver::new(
-            ca,
-            config.limits.leaf_cache_capacity,
-            config.limits.leaf_validity_days,
-        )
-        .map_err(|_| {
-            AppError::new(
-                ErrorCategory::InvalidInput,
-                "CA cannot issue bounded interception certificates",
-                false,
-            )
-        })?,
-    );
+    let certificates = interception_certificates(ca, &config.limits)?;
     // IDs must outlive a proxy run because retained exchanges and body-cache
     // files remain addressable after stop/start.
     let mut components = ProxyComponents::new(hooks, certificates)
@@ -1062,11 +1111,14 @@ mod tests {
         };
         let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
         let error = start_proxy(
-            &service,
-            Arc::new(AtomicRuntimeIdGenerator::new()),
-            None,
-            AutomationRegistry::load(None, Arc::new(assets.clone())).unwrap(),
-            ScriptRegistry::load(None, None, Arc::new(assets)).unwrap(),
+            ProxyStartResources {
+                service: &service,
+                runtime_ids: Arc::new(AtomicRuntimeIdGenerator::new()),
+                body_store: None,
+                automation: AutomationRegistry::load(None, Arc::new(assets.clone())).unwrap(),
+                scripts: ScriptRegistry::load(None, None, Arc::new(assets)).unwrap(),
+                preferences: crate::ProductPreferences::default(),
+            },
             request,
             None,
         )
@@ -1109,5 +1161,103 @@ mod tests {
         application.shutdown().await.unwrap();
         assert_eq!(application.status().lifecycle, crate::AppLifecycle::Stopped);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn tunnel_only_proxy_starts_without_loading_interception_files() {
+        let root = tempfile::tempdir().unwrap();
+        let application = crate::Application::new(crate::AppConfig {
+            body_store: Some(crate::BodyStoreConfig::product_default(
+                root.path().join("bodies"),
+            )),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        let mut state = application.product_state();
+        state.preferences.decrypt_https = false;
+        application.save_product_state(state).unwrap();
+        let request = ProxyStartRequest {
+            ca_certificate_path: "/missing/certificate.pem".into(),
+            ca_private_key_path: "/missing/private.key".into(),
+            ..ProxyStartRequest::default()
+        };
+        application.start_proxy(request, None).await.unwrap();
+        assert_eq!(application.status().lifecycle, crate::AppLifecycle::Running);
+        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let destination = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            let mut bytes = [0; 3];
+            socket.read_exact(&mut bytes).await.unwrap();
+            socket.write_all(&bytes).await.unwrap();
+            socket.shutdown().await.unwrap();
+        });
+        let mut client = tokio::net::TcpStream::connect(application.status().listener.unwrap())
+            .await
+            .unwrap();
+        client
+            .write_all(
+                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            read_http_head(&mut client)
+                .await
+                .starts_with(b"HTTP/1.1 200")
+        );
+        client.write_all(&[0xff, 0x00, 0x80]).await.unwrap();
+        client.shutdown().await.unwrap();
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, [0xff, 0x00, 0x80]);
+        origin_task.await.unwrap();
+        application.shutdown().await.unwrap();
+        let path = root.path().join("opaque.tmcap");
+        application
+            .save_traffic_trace(path.clone(), crate::TraceSaveOptions::default())
+            .await
+            .unwrap();
+        let reopened = crate::Application::new(crate::AppConfig {
+            body_store: Some(crate::BodyStoreConfig::product_default(
+                root.path().join("reopened-bodies"),
+            )),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        reopened
+            .import_trace(
+                crate::TraceImportRequest {
+                    path,
+                    password: None,
+                    operation_id: "opaque".into(),
+                    max_file_bytes: u64::MAX,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap();
+        assert_eq!(rows.sessions.len(), 1);
+        let detail = reopened.session_detail(&rows.sessions[0].id).unwrap();
+        assert_eq!(detail.requests[0].method.as_deref(), Some("CONNECT"));
+        assert_eq!(detail.terminal_state, "completed");
+        let transport = &detail.performance.transports[0];
+        assert_eq!(
+            transport.tunnel_destination.as_deref(),
+            Some(destination.to_string().as_str())
+        );
+        assert_eq!(transport.bytes_read, Some(3));
+        assert_eq!(transport.bytes_written, Some(3));
+        assert!(
+            detail
+                .performance
+                .protocols
+                .iter()
+                .any(|protocol| protocol.boundary == "client-request"
+                    && protocol.version == "HTTP/1.1")
+        );
     }
 }

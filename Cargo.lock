@@ -7069,6 +7069,7 @@ dependencies = [
  "hyper-util",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-boring",
  "tower-service",
  "tracing",
  "transmog-core",

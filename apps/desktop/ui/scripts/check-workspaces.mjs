@@ -139,7 +139,7 @@ await page.addInitScript((workspace) => {
           state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
         }
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
+        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': if(state.holdProxyStart)await new Promise(resolve=>state.releaseProxyStart=resolve);else await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
@@ -1319,6 +1319,51 @@ try {
   const caIdle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').proxyPending);
   await page.locator('.settings-tabs').getByRole('button',{name:'Preferences',exact:true}).click();
   const preferences=page.locator('settings-workspace');
+  const advancedNetwork=preferences.locator('.preferences-form .connection-advanced');
+  assert.equal(await advancedNetwork.getAttribute('open'),null,'Advanced settings were expanded by default');
+  await advancedNetwork.locator('summary').click();
+  assert.equal(await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).isChecked(),true);
+  assert.equal(await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).isChecked(),true);
+  for(const name of ['HTTP/1.1','HTTP/2','HTTP/3'])assert.equal(await advancedNetwork.getByLabel(name,{exact:true}).isChecked(),true);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.configureSystemProxy=false;});
+  await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).uncheck();
+  await advancedNetwork.getByLabel('HTTP/2',{exact:true}).uncheck();
+  await advancedNetwork.getByLabel('HTTP/3',{exact:true}).uncheck();
+  await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  const networkSaved=await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences);
+  assert.equal(networkSaved.isolateOutboundConnections,false);
+  assert.deepEqual(networkSaved.allowedOutboundProtocols,{http1:true,http2:false,http3:false});
+  assert.equal(networkSaved.configureSystemProxy,false,'Saving preferences enabled host routing');
+  await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).check();
+  await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  assert.equal(await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).isChecked(),false);
+  await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).uncheck();
+  await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.caBootstrap={caFilesPresent:false,caFilesExist:false,ownedCaSha256:null,ownedCaTrusted:false};globalThis.__workspaceFixture.caEvents=[];});
+  await page.locator('.settings-tabs').getByRole('button',{name:'Connection',exact:true}).click();
+  assert.equal(await preferences.getByRole('button',{name:'Set up HTTPS interception',exact:true}).isVisible(),false);
+  await preferences.locator('#settings').getByRole('button',{name:'Start proxy',exact:true}).click();
+  await caIdle();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caEvents),[],'Opaque mode attempted certificate setup');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lifecycle),'running');
+  await preferences.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
+  await page.locator('.settings-tabs').getByRole('button',{name:'Preferences',exact:true}).click();
+  await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).check();
+  await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).check();
+  for(const name of ['HTTP/1.1','HTTP/2','HTTP/3'])await advancedNetwork.getByLabel(name,{exact:true}).check();
+  await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  await advancedNetwork.scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/network-settings-wide.png')});
+  await page.setViewportSize({width:760,height:520});
+  await advancedNetwork.scrollIntoViewIfNeeded();
+  assert.equal(await advancedNetwork.getByLabel('HTTP/3',{exact:true}).isVisible(),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/network-settings-small.png')});
+  await page.setViewportSize({width:1280,height:800});
+  await advancedNetwork.locator('summary').click();
   assert.equal(await preferences.getByLabel('Limit number of live entries',{exact:true}).isChecked(),false);
   await preferences.getByLabel('Limit number of live entries',{exact:true}).check();
   await preferences.getByLabel('Maximum live entries',{exact:true}).fill('25000');
@@ -1380,7 +1425,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/credits-wide.png')});
   await page.keyboard.press('Escape');assert.equal(await credits.count(),0);
   await page.locator('.settings-tabs').getByRole('button',{name:'Connection',exact:true}).click();
-  await preferences.locator('.connection-advanced summary').click();
+  await preferences.locator('.connection-panel .connection-advanced summary').click();
   // Legacy, partial, and missing material all offer recovery without attempting
   // to overwrite files or trust a certificate with an unknown identity.
   for(const bootstrap of [
@@ -1773,6 +1818,14 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-compact.png')});
   await timing.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__opaqueOriginal=structuredClone(workspace.selectedDetail);const detail=structuredClone(workspace.selectedDetail);detail.performance={points:[],protocols:[],transports:[{leg:'upstream',connectionId:'opaque',outcome:'connected',tunnelDestination:'example.test:443',bytesRead:57,bytesWritten:31}]};globalThis.__workspaceFixture.performance=detail.performance;workspace.applyDetail(detail);});
+  await page.locator('message-inspector[side="response"]').getByText(/Opaque CONNECT tunnel to example.test:443/).waitFor({state:'visible'});
+  await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
+  await timing.getByText('Proxy ↔ upstream',{exact:true}).click();
+  await timing.getByText('CONNECT destination',{exact:true}).waitFor();
+  assert.equal(await timing.getByText('TLS version',{exact:true}).count(),0,'Opaque tunnel reported a TLS protocol');
+  await timing.getByRole('button',{name:'Close',exact:true}).click();
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__workspaceFixture.performance=globalThis.__opaqueOriginal.performance;workspace.applyDetail(globalThis.__opaqueOriginal);delete globalThis.__opaqueOriginal;});
   await page.evaluate(()=>{globalThis.__workspaceFixture.performance=undefined;});
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
   await timing.getByText(/no measured proxy timeline/).waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.timing-dialog[open]').count(),0);
