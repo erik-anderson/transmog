@@ -121,17 +121,19 @@ pub struct ComposerSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComposerResult {
+    /// Full response evidence consumed by the shared Traffic message inspector.
+    pub detail: crate::SessionDetail,
     /// History identifier.
     pub id: u64,
     /// Response status.
     pub status: u16,
     /// Ordered response headers rendered safely.
     pub headers: Vec<ComposerHeader>,
-    /// Response body as text or hexadecimal.
+    /// Legacy bounded inline preview as text or hexadecimal; use `detail` for inspection.
     pub body: String,
     /// Whether `body` is hexadecimal.
     pub body_is_hex: bool,
-    /// Whether the body hit the response bound.
+    /// Whether the legacy inline preview was shortened; retained bytes remain complete.
     pub truncated: bool,
     /// Stable replay attribution.
     pub attribution: &'static str,
@@ -148,12 +150,14 @@ struct History {
 pub(crate) struct ComposerManager {
     executor: Option<Arc<dyn ReplayExecutor>>,
     history: Arc<Mutex<History>>,
+    response: Arc<Mutex<Option<Arc<crate::composer_response::ComposerResponse>>>>,
 }
 
 impl ComposerManager {
     pub(crate) fn new(executor: Option<Arc<dyn ReplayExecutor>>) -> Self {
         Self {
             executor,
+            response: Arc::new(Mutex::new(None)),
             history: Arc::new(Mutex::new(History {
                 next_id: 0,
                 items: VecDeque::new(),
@@ -167,6 +171,7 @@ impl ComposerManager {
         input: ComposerRequest,
         file: Option<(std::fs::File, u64)>,
         source: Option<ComposerOrigin>,
+        redact: bool,
     ) -> Result<ComposerResult, AppError> {
         if input.body_source.is_some() != file.is_some() {
             return Err(AppError::new(
@@ -196,43 +201,49 @@ impl ComposerManager {
             executor
         };
         let method = request.method.clone();
+        let prepared = crate::composer_response::ComposerResponse::prepare(service)?;
+        let head = RequestHead {
+            method: request.method.clone(),
+            target: request.target.clone(),
+            headers: request.headers.clone(),
+            source_version: HttpLegVersion::Http1,
+        };
+        let started_at = std::time::SystemTime::now();
         let cancellation = ExchangeCancellation::new();
         let response = service
             .replay(executor, request, ReplayLimits::default(), &cancellation)
             .await
-            .map_err(|error| {
-                let category = match error {
-                    transmog_session::ReplayError::NonIdempotentNotAcknowledged
-                    | transmog_session::ReplayError::CredentialsNotAcknowledged
-                    | transmog_session::ReplayError::InvalidMethod
-                    | transmog_session::ReplayError::InvalidTarget
-                    | transmog_session::ReplayError::InvalidTimeout => ErrorCategory::InvalidInput,
-                    transmog_session::ReplayError::RequestBodyExceeded { .. }
-                    | transmog_session::ReplayError::ResponseBodyExceeded { .. }
-                    | transmog_session::ReplayError::HeaderBytesExceeded { .. }
-                    | transmog_session::ReplayError::HeaderCountExceeded { .. } => {
-                        ErrorCategory::Limit
-                    }
-                    _ => ErrorCategory::Unavailable,
-                };
-                AppError::new(
-                    category,
-                    error.to_string(),
-                    category == ErrorCategory::Unavailable,
-                )
-            })?;
+            .map_err(|error| replay_error(&error))?;
         let id = self.record(method, target, Some(response.status), source.clone());
-        let headers = response
+        let (retained, detail) = crate::composer_response::ComposerResponse::retain(
+            prepared,
+            head,
+            &response,
+            started_at,
+            redact,
+            source.clone(),
+        )?;
+        *self
+            .response
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(retained.clone());
+        let headers = retained.snapshot.response_heads[0]
+            .head
             .headers
             .iter()
             .take(128)
             .map(|field| ComposerHeader {
                 name: safe_bytes(field.name()).0,
-                value: safe_bytes(field.value()).0,
+                value: if field.is_redacted() {
+                    "[redacted]".into()
+                } else {
+                    safe_bytes(field.value()).0
+                },
             })
             .collect();
         let (body, body_is_hex) = safe_bytes(&response.body);
         Ok(ComposerResult {
+            detail,
             id,
             status: response.status,
             headers,
@@ -257,6 +268,19 @@ impl ComposerManager {
             .iter()
             .cloned()
             .collect()
+    }
+    pub(crate) fn response(
+        &self,
+        id: &str,
+    ) -> Option<Arc<crate::composer_response::ComposerResponse>> {
+        self.response
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|response| {
+                id.eq_ignore_ascii_case(&format!("{:032x}", response.snapshot.exchange_id.0))
+            })
+            .cloned()
     }
 
     fn record(
@@ -283,6 +307,27 @@ impl ComposerManager {
         history.items.truncate(MAX_HISTORY);
         id
     }
+}
+
+fn replay_error(error: &transmog_session::ReplayError) -> AppError {
+    use transmog_session::ReplayError;
+    let category = match error {
+        ReplayError::NonIdempotentNotAcknowledged
+        | ReplayError::CredentialsNotAcknowledged
+        | ReplayError::InvalidMethod
+        | ReplayError::InvalidTarget
+        | ReplayError::InvalidTimeout => ErrorCategory::InvalidInput,
+        ReplayError::RequestBodyExceeded { .. }
+        | ReplayError::ResponseBodyExceeded { .. }
+        | ReplayError::HeaderBytesExceeded { .. }
+        | ReplayError::HeaderCountExceeded { .. } => ErrorCategory::Limit,
+        _ => ErrorCategory::Unavailable,
+    };
+    AppError::new(
+        category,
+        error.to_string(),
+        category == ErrorCategory::Unavailable,
+    )
 }
 
 struct ReplayProducer(tokio::task::JoinHandle<()>, ExchangeCancellation);
@@ -451,6 +496,7 @@ impl ReplayExecutor for SystemReplayExecutor {
                 }
             }
             Ok(ReplayResponse {
+                source_version: response.head.source_version,
                 status: response.head.status,
                 headers: response.head.headers,
                 body: Bytes::from(bytes),
@@ -498,6 +544,7 @@ impl ReplayExecutor for SystemReplayExecutor {
                 }
             }
             Ok(ReplayResponse {
+                source_version: response.head.source_version,
                 status: response.head.status,
                 headers: response.head.headers,
                 body: Bytes::from(bytes),
@@ -737,6 +784,7 @@ mod tests {
             let body = request.body().clone();
             Box::pin(async move {
                 Ok(ReplayResponse {
+                    source_version: HttpLegVersion::Http1,
                     status: 201,
                     headers: HeaderBlock::new(),
                     body,
@@ -766,20 +814,20 @@ mod tests {
         };
         assert!(
             manager
-                .execute(&service, request.clone(), None, None)
+                .execute(&service, request.clone(), None, None, true)
                 .await
                 .is_err()
         );
         request.acknowledge_non_idempotent = true;
         assert!(
             manager
-                .execute(&service, request.clone(), None, None)
+                .execute(&service, request.clone(), None, None, true)
                 .await
                 .is_err()
         );
         request.acknowledge_credentials = true;
         let result = manager
-            .execute(&service, request, None, None)
+            .execute(&service, request, None, None, true)
             .await
             .unwrap();
         assert_eq!(result.status, 201);
@@ -878,6 +926,7 @@ mod tests {
                 input,
                 Some((file, u64::try_from(length).unwrap())),
                 Some(origin.clone()),
+                true,
             )
             .await
             .unwrap();
@@ -911,7 +960,7 @@ mod tests {
             acknowledge_credentials: false,
         };
         let error = manager
-            .execute(&service, input, Some((file, 4)), None)
+            .execute(&service, input, Some((file, 4)), None, true)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("does not support file bodies"));

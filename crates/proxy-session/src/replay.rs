@@ -106,6 +106,8 @@ impl ValidatedReplayRequest {
 /// Owned bounded replay response returned by an injected executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplayResponse {
+    /// Protocol actually used by the origin response.
+    pub source_version: transmog_core::HttpLegVersion,
     /// Numeric HTTP status.
     pub status: u16,
     /// Ordered duplicate-preserving fields.
@@ -386,6 +388,7 @@ mod tests {
         ) -> BoxReplayFuture<'_> {
             Box::pin(async move {
                 Ok(ReplayResponse {
+                    source_version: transmog_core::HttpLegVersion::Http1,
                     status: 200,
                     headers: request.headers,
                     body: request.body,

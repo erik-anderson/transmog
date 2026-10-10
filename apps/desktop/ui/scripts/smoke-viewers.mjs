@@ -184,7 +184,11 @@ try{
   // Exercise a real viewer Composer upload. The only contacted endpoint is
   // this owned loopback fixture; no captured URL or outside service is replayed.
   const replayLength=5*1024*1024+7;let replayBytes=0,replayError='';
+  const composerImage=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="green"/></svg>');
+  const composerBinary=Buffer.alloc(1024*1024+17);for(let index=0;index<composerBinary.length;index++)composerBinary[index]=index%256;
   const replayServer=createServer(async(request,response)=>{
+    if(request.url==='/composer-image.svg'){request.resume();response.setHeader('Content-Type','image/svg+xml');response.end(composerImage);return;}
+    if(request.url==='/composer-binary.bin'){request.resume();response.setHeader('Content-Type','application/octet-stream');response.end(composerBinary);return;}
     try {for await(const chunk of request){replayBytes+=chunk.length;if(!chunk.every(byte=>byte===7))throw new Error('Captured replay bytes changed');}if(replayBytes!==replayLength)throw new Error('Captured replay was incomplete');response.end('received '+replayBytes);}
     catch(error){replayError=String(error);response.statusCode=500;response.end('fixture upload failed');}
   });
@@ -206,6 +210,25 @@ try{
     assert.equal(replayBytes,replayLength);assert.equal(replayError,'');
     const replayResult=await viewer.evaluate(`({status:${composer}.composerResult?.status,body:${composer}.composerResult?.body,source:${composer}.composerResult?.source,error:${composer}.composerError})`);
     assert.equal(replayResult.error,'');assert.equal(replayResult.status,200);assert.equal(replayResult.body,'received '+replayLength);assert.equal(replayResult.source.entryId,replayId);assert.ok(replayResult.source.traceId);
+    const composerResponse=composer+'.querySelector("message-inspector")';
+    await waitFor(()=>viewer.evaluate(`${composerResponse}?.bodyText==='received ${replayLength}'`),'Composer text did not use the shared message inspector');
+    const composerFixtureUrl='http://127.0.0.1:'+replayServer.address().port;
+    await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.input('method').value='GET';workspace.input('url').value=${JSON.stringify(composerFixtureUrl+'/composer-image.svg')};workspace.input('headers').value='';workspace.input('bodyHex').checked=false;workspace.useEmptyBody();workspace.updateRisk();await workspace.executeComposer(new Event('submit',{cancelable:true}));})()`);
+    await waitFor(()=>viewer.evaluate(`${composerResponse}.querySelector('img')?.naturalWidth===64`),'Composer safe image preview did not render through the native preview worker');
+    const imageResult=await viewer.evaluate(`({handle:${composerResponse}.imageUrl,facts:${composerResponse}.bodyFacts,status:${composer}.composerResult?.status,error:${composer}.composerError,protocol:${composer}.composerResult?.detail.responses[0].protocol})`);
+    assert.equal(imageResult.error,'');assert.equal(imageResult.status,200);assert.match(imageResult.handle,/transmog-preview/);assert.match(imageResult.facts,/image\/svg\+xml/);assert.equal(imageResult.protocol,'HTTP/1.1');
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer-image.png'),Buffer.from(image.data,'base64'));}
+    await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.input('url').value=${JSON.stringify(composerFixtureUrl+'/composer-binary.bin')};await workspace.executeComposer(new Event('submit',{cancelable:true}));})()`);
+    await waitFor(()=>viewer.evaluate(`${composerResponse}.pagedHex && !${composerResponse}.loading`),'Composer binary response did not use paged Hex');
+    await viewer.evaluate(`${composerResponse}.querySelector('hex-viewer').viewport.focus()`);
+    await viewer.call('Input.dispatchKeyEvent',{type:'keyDown',key:'End',windowsVirtualKeyCode:35,modifiers:2});
+    await viewer.call('Input.dispatchKeyEvent',{type:'keyUp',key:'End',windowsVirtualKeyCode:35,modifiers:2});
+    await waitFor(()=>viewer.evaluate(`${composerResponse}.querySelector('[data-byte="${composerBinary.length-1}"][data-column=hex]')?.textContent==='10'`),'Composer did not expose bytes beyond its legacy text preview');
+    const binaryResult=await viewer.evaluate(`({total:${composerResponse}.hexPreview.source.totalBytes,rows:${composerResponse}.querySelectorAll('.hex-data-row').length,legacyTruncated:${composer}.composerResult.truncated,text:${composer}.composerText,detail:${composer}.composerResult.detail.id})`);
+    assert.equal(binaryResult.total,String(composerBinary.length));assert.ok(binaryResult.rows<100&&binaryResult.legacyTruncated);assert.doesNotMatch(binaryResult.text,/truncated/);
+    const bytePage=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('read_body_range',{request:{sessionId:${JSON.stringify(binaryResult.detail)},boundary:'client-response',offset:'1048576',maxBytes:17}})`);
+    assert.deepEqual(Buffer.from(bytePage.bytesBase64,'base64'),composerBinary.subarray(1048576));
+    process.stdout.write('Native Composer shared text, safe image preview and complete paged binary response verified.\n');
     await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.composerPane='request';const details=workspace.shadowRoot?.querySelector('.composer-history')??workspace.querySelector('.composer-history');details.open=true;await workspace.refreshHistory();})()`);
     await waitFor(()=>viewer.evaluate(`${composer}.composerHistory.length>0 && !${composer}.composerHistoryBusy`),'Latest Composer history refresh did not complete');
     assert.equal(await viewer.evaluate(`${composer}.composerHistory[0].sourceId`),replayId);
@@ -213,8 +236,14 @@ try{
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer.png'),Buffer.from(image.data,'base64'));}
     await viewer.call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
     assert.ok(await viewer.evaluate(`${composer}.composerForm.getBoundingClientRect().width<760`));
+    await viewer.evaluate(`${composer}.composerPane='response'`);
+    await waitFor(()=>viewer.evaluate(`${composerResponse}.querySelector('hex-viewer').viewport.clientHeight>40`),'Compact Composer hid its byte rows');
+    await viewer.evaluate(`${composerResponse}.querySelector('hex-viewer').viewport.focus()`);
+    await viewer.call('Input.dispatchKeyEvent',{type:'keyDown',key:'End',windowsVirtualKeyCode:35,modifiers:2});
+    await viewer.call('Input.dispatchKeyEvent',{type:'keyUp',key:'End',windowsVirtualKeyCode:35,modifiers:2});
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-composer-compact.png'),Buffer.from(image.data,'base64'));}
     await viewer.call('Emulation.clearDeviceMetricsOverride');
+    await viewer.evaluate(`${composer}.composerPane='request'`);
     await viewer.evaluate(`(async()=>{await ${root}.activateView('traffic');const workspace=${traffic};workspace.searchInput.value='Content-Length';workspace.searchMetadata=false;workspace.searchRequestHeaders=true;workspace.searchResponseHeaders=false;workspace.searchBodies=false;workspace.searchRequestBodies=false;workspace.selectSearchMatches=true;await workspace.runContentSearch();})()`);
     assert.ok(await viewer.evaluate(`${traffic}.searchMatchIds.includes(${JSON.stringify(replayId)})`),'Native scoped search did not find the retained request header');
     await viewer.evaluate(`${traffic}.showMatches()`);

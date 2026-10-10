@@ -68,7 +68,7 @@ export class MessageInspector extends WebUIElement {
     else {this.renderHeaders(head?.headers??[],head?.summary,0);if(this.largestFirst && (head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);}
     this.sourceIp=this.side==='request'?this.detail?.sourceIp??'':'';
     this.sortHeaders();
-    this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss},null,2) : 'No exchange selected.';
+    this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss,...(this.detail.composerOrigin?{composerSource:this.detail.composerOrigin}:{})},null,2) : 'No exchange selected.';
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody();
     else { this.generation++; this.hexPreview = null; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
   }

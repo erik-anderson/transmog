@@ -48,6 +48,7 @@ await page.addInitScript((workspace) => {
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
+    if(state.composerResponseDetail?.id===id)return structuredClone(state.composerResponseDetail);
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
@@ -210,7 +211,7 @@ await page.addInitScript((workspace) => {
         case 'inspect_headers': {const head=[...detail(args.id).requests,...detail(args.id).responses].find(head=>head.boundary===args.boundary);let headers=(args.boundary==='client-request'&&state.fullHeaders?state.fullHeaders:head.headers).map((header,index)=>({...header,index}));if(args.largestFirst)headers.sort((a,b)=>(b.fieldBytes??0)-(a.fieldBytes??0));return {summary:head.summary,headers:headers.slice(args.offset,args.offset+512),offset:args.offset,nextOffset:args.offset+512<headers.length?args.offset+512:null};}
         case 'request_command': state.lastRequestCommand=args;return state.directCommand ? {text:'fixture direct '+args.format,notices:[],bodyFileRequired:false,bodyFileAvailable:true} : {text:'fixture generated '+args.format,notices:['The command needs a request body file.'],bodyFileRequired:true,bodyFileAvailable:true};
         case 'save_request_body': state.savedRequestBody=args;return {text:'fixture saved body command',notices:[],bodyFileRequired:true,bodyFileAvailable:true};
-        case 'copy_message_url': state.lastCopiedUrl=structuredClone(args);return state.completeCopiedUrl??state.sessions.find(row=>row.id===args.id)?.url;
+        case 'copy_message_url': state.lastCopiedUrl=structuredClone(args);return state.completeCopiedUrl??detail(args.id).requests[0].target;
         case 'copy_all_headers': return 'GET http://example.test/second HTTP/1.1\r\nAccept: */*\r\n\r\n\r\nHTTP/1.1 200 OK';
         case 'session_detail':
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
@@ -224,28 +225,31 @@ await page.addInitScript((workspace) => {
         }
         case 'read_body_range': {
           const request=args.request;state.lastRangeRequest=structuredClone(request);
+          const composer=state.composerResponseDetail?.id===request.sessionId;
+          const retained=composer?state.composerBytes:state.hexBytes??[0,0x41,0xff,0x20];
           state.rangeRequests??=[];state.rangeRequests.push(structuredClone(request));
-          const total=BigInt(state.hexLargeTotal??(state.hexBytes??[0,0x41,0xff,0x20]).length);
+          const total=BigInt(!composer&&state.hexLargeTotal?state.hexLargeTotal:retained.length);
           const offset=BigInt(request.offset),count=Number((total-offset)<BigInt(request.maxBytes)?total-offset:BigInt(request.maxBytes));
-          const bytes=state.hexLargeTotal?Array.from({length:count},(_,index)=>Number((offset+BigInt(index))%256n)):(state.hexBytes??[0,0x41,0xff,0x20]).slice(Number(offset),Number(offset)+count);
+          const bytes=!composer&&state.hexLargeTotal?Array.from({length:count},(_,index)=>Number((offset+BigInt(index))%256n)):retained.slice(Number(offset),Number(offset)+count);
           if(state.deferRangeOffset===request.offset){state.rangePending=true;await new Promise(resolve=>state.releaseRange=resolve);}
-          const metadata=detail(request.sessionId).storedBodies[0];if(state.bodyOverride)Object.assign(metadata,state.bodyOverride);
+          const metadata=detail(request.sessionId).storedBodies[0];if(state.bodyOverride&&!composer)Object.assign(metadata,state.bodyOverride);
           metadata.retainedBytes=Number(total);
           const chunks=[];for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
           return {metadata,totalBytes:total.toString(),offset:request.offset,bytesBase64:btoa(chunks.join('')),readLimit:16777216};
         }
         case 'inspect_body': {
+          const composer=state.composerResponseDetail?.id===args.request.sessionId;
           if (state.deferBody===args.request.sessionId && args.request.representation==='original-text') { state.bodyPending=true; await new Promise(resolve=>state.releaseBody=resolve); }
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
           const metadata=detail(args.request.sessionId).storedBodies[0];
-          if (state.bodyOverride) Object.assign(metadata,state.bodyOverride);
+          if (state.bodyOverride&&!composer) Object.assign(metadata,state.bodyOverride);
           state.lastBodyRequest=structuredClone(args.request);
           if (metadata.contentCodings.length && metadata.availability!=='complete' && args.request.decodeContent) throw new Error('Content decoding needs a complete body');
-          const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':'original-text'):args.request.representation;
-          const bytes=state.hexBytes??[0,0x41,0xff,0x20];
+          const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':metadata.mediaType==='application/octet-stream'?'bytes':'original-text'):args.request.representation;
+          const bytes=composer?state.composerBytes:state.hexBytes??[0,0x41,0xff,0x20];
           const chunks=[];
           if(representation==='bytes')for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
-          return { metadata, representation, decoded:args.request.decodeContent, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':'body for '+args.request.sessionId, displayBytes:representation==='bytes'?bytes.length:4,bytesBase64:representation==='bytes'?btoa(chunks.join('')):null,byteOffset:0,truncated:state.hexTruncated??false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
+          return { metadata, representation, decoded:args.request.decodeContent&&metadata.contentCodings.length>0, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':composer?new TextDecoder().decode(Uint8Array.from(bytes)):'body for '+args.request.sessionId, displayBytes:representation==='bytes'||composer?bytes.length:4,bytesBase64:representation==='bytes'?btoa(chunks.join('')):null,byteOffset:0,truncated:composer?false:state.hexTruncated??false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
         case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
         case 'set_autoresponses_enabled': {
@@ -344,7 +348,16 @@ await page.addInitScript((workspace) => {
         case 'inspect_trace_metadata': state.lastCaptureImport=structuredClone(args.request);if(state.captureInspectionError)throw new Error('Fixture inspection failed');return {path:/^[A-Za-z]:/.test(args.request.path)?args.request.path:'C:/captures/'+args.request.path,format:args.request.path.endsWith('.saz')?'saz':args.request.path.endsWith('.har')?'har':'native',sessions:3,bytes:4096,context:{networkContext:'Original fixture network context'},sources:[],notes:['Interrupted tail; valid prefix recovered']};
         case 'export_capture': state.lastCaptureExport=structuredClone(args.request);return {destination:args.request.destination,records:12,bytes:4096,sourceSealed:false,sourceTruncatedTail:true,fidelity:'Valid prefix preserved'};
         case 'composer_history': return state.composerHistory??[];
-        case 'execute_composer': state.composerInput=structuredClone(args.request);if(state.deferComposer){state.composerPending=true;await new Promise(resolve=>state.finishComposer=resolve);}else await new Promise(resolve=>setTimeout(resolve,80));if(state.composerError)throw new Error('Fixture send failed');return {id:1,status:201,headers:[{name:'X-Duplicate',value:'first'},{name:'X-Duplicate',value:'second'}],body:'<script>globalThis.unsafeComposer=true</script>',bodyIsHex:false,truncated:false,attribution:'composer',source:state.composerResultSource??null};
+        case 'execute_composer': {
+          state.composerInput=structuredClone(args.request);if(state.deferComposer){state.composerPending=true;await new Promise(resolve=>state.finishComposer=resolve);}else await new Promise(resolve=>setTimeout(resolve,80));if(state.composerError)throw new Error('Fixture send failed');
+          state.composerResponseCount=(state.composerResponseCount??0)+1;
+          const body='<script>globalThis.unsafeComposer=true</script>',id='composer-response-'+state.composerResponseCount;
+          const response=detail(id);response.composerOrigin=state.composerResultSource??null;response.requests[0].target=args.request.url;response.responses[0].status=201;response.responses[0].headers=[{name:'X-Duplicate',value:'first',sensitive:false,binary:false},{name:'X-Duplicate',value:'second',sensitive:false,binary:false}];
+          state.composerBytes=state.nextComposerBytes??Array.from(new TextEncoder().encode(body));
+          Object.assign(response.storedBodies[0],{observedBytes:state.composerBytes.length,retainedBytes:state.composerBytes.length,mediaType:state.nextComposerType??'text/html'});
+          state.composerResponseDetail=response;
+          return {detail:structuredClone(response),id:1,status:201,headers:response.responses[0].headers,body,bodyIsHex:false,truncated:false,attribution:'composer',source:state.composerResultSource??null};
+        }
         case 'script_declarations': return '';
         case 'script_status': return {generation:0,active:state.activeScripts??[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
         case 'save_script': state.savedScript=structuredClone(args.draft);return {generation:1,active:state.activeScripts??[],saved:[state.savedScript],candidateCount:0,historyCount:0};
@@ -616,9 +629,9 @@ try {
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('#inspector-heading').textContent.endsWith('/second'));
   assert.equal(await page.locator('tr[data-session-id="second"]').getAttribute('aria-selected'), 'true');
   assert.match(await page.locator('.list-footer').textContent(),/Inspection pinned · showing captured traffic/);
-  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
-  assert.match(await page.locator('message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
-  const requestHeaders=page.locator('message-inspector[side="request"]');
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  assert.match(await page.locator('traffic-workspace message-inspector[side="response"] .body-preview').textContent(), /"fixture": true/);
+  const requestHeaders=page.locator('traffic-workspace message-inspector[side="request"]');
   assert.equal(await requestHeaders.getByText('AUTH',{exact:true}).isVisible(),true);
   assert.match(await requestHeaders.locator('.field-help').first().textContent(),/2 fields.*HTTP\/1 equivalent/);
   await page.evaluate(()=>globalThis.__workspaceFixture.completeCopiedUrl='https://example.test/complete?query='+('x'.repeat(20000)));
@@ -722,11 +735,12 @@ try {
   await page.evaluate(()=>globalThis.__workspaceFixture.finishComposer());
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('composer-workspace').composerResult?.status===201);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('composer-workspace').composerPane),'request','Late responses interrupted request editing');
-  assert.match(await page.locator('.composer-result-body').first().textContent(),/<script>/);
+  const composerInspector=page.locator('composer-workspace message-inspector');
+  await composerInspector.locator('.body-preview').getByText(/<script>/).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.unsafeComposer),undefined,'Response markup executed');
-  await page.locator('.composer-result-tabs').getByRole('button',{name:'Headers',exact:true}).click();
-  assert.equal(await page.locator('.composer-result-headers tbody tr').count(),2,'Duplicate response headers were combined');
-  await page.locator('.composer-result-tabs button[data-selected]').getByText('Headers',{exact:true}).waitFor({state:'visible'});
+  await composerInspector.getByRole('button',{name:'Headers',exact:true}).click();
+  assert.equal(await composerInspector.locator('.headers-table tbody tr').count(),2,'Duplicate response headers were combined');
+  await composerInspector.locator('.message-tabs button[data-selected]').getByText('Headers',{exact:true}).waitFor({state:'visible'});
   const bodySpacing=await page.locator('.composer-body').evaluate(label=>{const range=document.createRange();range.selectNodeContents(label.firstElementChild);return label.querySelector('textarea').getBoundingClientRect().top-range.getBoundingClientRect().bottom;});
   assert.ok(bodySpacing<24, 'Body label drifted away from its editor');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-wide.png')});
@@ -746,8 +760,8 @@ try {
   await page.getByRole('button',{name:'Send request',exact:true}).click();await page.locator('.composer-feedback').getByText('Response received: HTTP 201',{exact:true}).waitFor();
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.bodySource),{kind:'captured',entryId:'first'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.composerInput.body),'');
-  await page.locator('.composer-result-tabs').getByRole('button',{name:'Details',exact:true}).click();
-  assert.match(await page.locator('.composer-result-body').last().textContent(),/trace-fixture/);
+  await composerInspector.getByRole('button',{name:'Details',exact:true}).click();
+  assert.match(await composerInspector.locator('.exchange-details').textContent(),/trace-fixture/);
   await page.getByText('Replay history',{exact:true}).click();await page.locator('.composer-history').getByText('trace-fixture · 17',{exact:true}).waitFor();
   await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-streamed-small.png')});
   await page.locator('.composer-pane-tabs').getByRole('button',{name:'Request',exact:true}).click();
@@ -773,13 +787,39 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-streamed-wide.png')});
   await page.evaluate(()=>{delete globalThis.__workspaceFixture.composerSourceOverride;globalThis.__workspaceFixture.capturePick=null;});
 
+  await composerInspector.getByRole('button',{name:'Body',exact:true}).click();
+  await page.evaluate(()=>{const f=globalThis.__workspaceFixture;f.nextComposerType='image/png';f.nextComposerBytes=Array.from(Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='),char=>char.charCodeAt(0)));});
+  await page.getByRole('button',{name:'Send request',exact:true}).click();
+  await composerInspector.getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('composer-workspace message-inspector img')?.naturalWidth===1);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-image-wide.png')});
+  await composerInspector.getByRole('button',{name:'Save as…',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.lastSave?.sessionId===globalThis.__workspaceFixture.composerResponseDetail.id);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastSave.boundary),'client-response');
+  await page.evaluate(()=>{const f=globalThis.__workspaceFixture;f.nextComposerType='application/octet-stream';f.nextComposerBytes=Array.from({length:300019},(_,index)=>index%256);});
+  await page.getByRole('button',{name:'Send request',exact:true}).click();
+  await composerInspector.getByText('Auto · Hex',{exact:true}).waitFor({state:'visible'});
+  const composerHex=composerInspector.locator('hex-viewer'),composerGrid=composerHex.getByRole('grid');
+  await composerGrid.press('Control+End');
+  await composerHex.locator('[data-byte="300018"][data-column="hex"]').getByText('F2',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await composerHex.evaluate(element=>element.preview.source.totalBytes),'300019');
+  assert.ok(await composerHex.locator('.hex-data-row').count()<100);
+  assert.doesNotMatch(await composerInspector.locator('.body-facts').textContent(),/preview truncated/);
+  await page.setViewportSize({width:760,height:520});
+  await page.locator('.composer-pane-tabs').getByRole('button',{name:'Response',exact:true}).click();
+  await composerGrid.press('Control+End');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/composer-hex-small.png')});
+  assert.ok(await composerGrid.evaluate(element=>element.clientHeight>40),'Compact Composer left no space for bytes');
+  await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.nextComposerBytes;delete globalThis.__workspaceFixture.nextComposerType;});
+
   await view('traffic');
   await page.locator('tr[data-session-id="cached"]').click();
-  await page.locator('message-inspector[side="response"] .body-preview').getByText('304 Not Modified',{exact:false}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"] .body-preview').getByText('304 Not Modified',{exact:false}).waitFor({state:'visible'});
   await page.locator('tr[data-session-id="image"]').click();
-  await page.locator('message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
-  await page.locator('message-inspector[side="response"] img').waitFor({state:'visible'});
-  const responseInspector=page.locator('message-inspector[side="response"]');
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"] img').waitFor({state:'visible'});
+  const responseInspector=page.locator('traffic-workspace message-inspector[side="response"]');
   assert.equal(await page.getByRole('button',{name:'Copy body',exact:true}).count(),0);
   const saveBody=responseInspector.getByRole('button',{name:'Save as…',exact:true});
   await saveBody.click();
@@ -839,7 +879,7 @@ try {
   assert.equal(await saveBody.isEnabled(),false,'Save as accepts evicted response bytes');
   await page.evaluate(()=>delete globalThis.__workspaceFixture.bodyOverride);
   await page.locator('tr[data-session-id="second"]').click();
-  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   const heldOrder=await page.locator('.traffic-table tbody tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId));
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions.push({...state.sessions[0],id:'new',url:'http://example.test/new',path:'/new',startedAt:9999});await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions();});
   assert.deepEqual(await page.locator('.traffic-table tbody tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId)),heldOrder,'Live arrival moved rows during inspection');
@@ -851,10 +891,10 @@ try {
   await page.locator('tr[data-session-id="first"]').click();
   await page.locator('.selection-bar').getByText('Pending',{exact:true}).waitFor({state:'visible'});
   await page.evaluate(()=>{const state=globalThis.__workspaceFixture;Object.assign(state.sessions[0],{status:200,terminal:'completed',responseBytes:4});state.channel.onmessage({exchangeId:'first',sequence:2,lagged:false});});
-  await page.locator('message-inspector[side="response"] .body-preview').getByText('body for first',{exact:true}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"] .body-preview').getByText('body for first',{exact:true}).waitFor({state:'visible'});
   await checkTrafficFailures(page,resolve(root,'../../../target/ui-check'));
   await page.locator('tr[data-session-id="second"]').click();
-  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button', { name: 'Create auto-response', exact: true }).isEnabled(), true);
   await page.getByRole('button', { name: 'Create auto-response', exact: true }).click();
   await page.locator('#automation').waitFor({ state: 'visible' });
@@ -1321,10 +1361,10 @@ try {
   assert.deepEqual(errors, []);
   await page.setViewportSize({width:760,height:520});
   await page.locator('tr[data-session-id="second"]').click();
-  await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
-  const smallPreview=await page.locator('message-inspector[side="response"] .body-scroll').boundingBox();
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
+  const smallPreview=await page.locator('traffic-workspace message-inspector[side="response"] .body-scroll').boundingBox();
   assert.ok(smallPreview.height>=48,'Small-window response preview has no usable space');
-  await page.locator('message-inspector[side="response"] .body-preview').scrollIntoViewIfNeeded();
+  await page.locator('traffic-workspace message-inspector[side="response"] .body-preview').scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollHeight<=document.documentElement.clientHeight+1),true,'Small-window inspection scroll escaped the pane');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/workspace-small.png')});
   await openColumn('status');
@@ -1840,7 +1880,7 @@ try {
   await timing.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
   await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__opaqueOriginal=structuredClone(workspace.selectedDetail);const detail=structuredClone(workspace.selectedDetail);detail.performance={points:[],protocols:[],transports:[{leg:'upstream',connectionId:'opaque',outcome:'connected',tunnelDestination:'example.test:443',bytesRead:57,bytesWritten:31}]};globalThis.__workspaceFixture.performance=detail.performance;workspace.applyDetail(detail);});
-  await page.locator('message-inspector[side="response"]').getByText(/Opaque CONNECT tunnel to example.test:443/).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"]').getByText(/Opaque CONNECT tunnel to example.test:443/).waitFor({state:'visible'});
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();
   await timing.getByText('Proxy ↔ upstream',{exact:true}).click();
   await timing.getByText('CONNECT destination',{exact:true}).waitFor();

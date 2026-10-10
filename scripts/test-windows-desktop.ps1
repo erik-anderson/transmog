@@ -275,6 +275,7 @@ try {
 } finally {
     if ($process -and -not $process.HasExited) {
         Stop-Process -Id $process.Id -Force
+        if (-not $process.WaitForExit(10000)) { throw 'The owned desktop probe did not finish stopping.' }
     }
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $priorArguments
     $env:LOCALAPPDATA = $priorLocalAppData

@@ -174,6 +174,15 @@ return focus to the options button after closing its metadata dialog.
 Copy URL beside Copy headers uses the complete corresponding request target from
 retained evidence, without display truncation.
 
+Composer keeps its request editor and uses the shared message inspector for live
+responses, including images, raw Hex, decoding, header actions and Save as. Keep
+the latest complete received response separate from Traffic and retain it until
+another response replaces it or the window closes. A pending send must preserve
+later draft edits and avoid switching an edited request to the response pane.
+Save as leases the original received body while the file dialog is open, so a
+later response or window closure cannot change the bytes being saved. Preserve
+the original captured-request association after editing and sending a draft.
+
 Trace drop targets name the accepted formats (TMCap, SAZ, HAR, and NetLog), offer
 a click/keyboard file picker, and highlight the actual accepting region during
 a supported file drag. Unsupported files, inactive workspaces, and busy imports

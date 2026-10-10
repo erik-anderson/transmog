@@ -125,6 +125,15 @@ pub(crate) fn header_page(
                 false,
             )
         })?;
+    header_page_from_snapshot(&snapshot, stage, offset, largest_first)
+}
+
+pub(crate) fn header_page_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+    offset: usize,
+    largest_first: bool,
+) -> Result<HeaderPage, AppError> {
     let block = snapshot
         .request_heads
         .iter()
@@ -177,14 +186,6 @@ pub(crate) fn copy_message_url(
     id: &str,
     stage: &str,
 ) -> Result<String, AppError> {
-    let request_stage = match parse_boundary(stage)? {
-        ExchangeBoundary::ClientRequest | ExchangeBoundary::ClientResponse => {
-            ExchangeBoundary::ClientRequest
-        }
-        ExchangeBoundary::UpstreamRequest | ExchangeBoundary::UpstreamResponse => {
-            ExchangeBoundary::UpstreamRequest
-        }
-    };
     let snapshot = service
         .catalog()
         .get(transmog_core::intercept::ExchangeId(parse_session_id(id)?))
@@ -195,6 +196,21 @@ pub(crate) fn copy_message_url(
                 false,
             )
         })?;
+    copy_message_url_from_snapshot(&snapshot, stage)
+}
+
+pub(crate) fn copy_message_url_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+) -> Result<String, AppError> {
+    let request_stage = match parse_boundary(stage)? {
+        ExchangeBoundary::ClientRequest | ExchangeBoundary::ClientResponse => {
+            ExchangeBoundary::ClientRequest
+        }
+        ExchangeBoundary::UpstreamRequest | ExchangeBoundary::UpstreamResponse => {
+            ExchangeBoundary::UpstreamRequest
+        }
+    };
     let request = snapshot
         .request_heads
         .iter()
@@ -224,6 +240,13 @@ pub(crate) fn copy_message_headers(
                 false,
             )
         })?;
+    copy_message_headers_from_snapshot(&snapshot, stage)
+}
+
+pub(crate) fn copy_message_headers_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+) -> Result<String, AppError> {
     let block = snapshot
         .request_heads
         .iter()
@@ -274,6 +297,9 @@ pub(crate) fn copy_message_headers(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Original captured request that supplied a manually sent Composer draft.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composer_origin: Option<crate::ComposerOrigin>,
     /// Measured local milestones, actual protocols and shared transport facts.
     pub performance: transmog_core::performance::PerformanceEvidence,
     /// Direct association with the saved source's trace metadata.
@@ -431,6 +457,15 @@ pub(crate) fn session_detail(
                 false,
             )
         })?;
+    detail_from_snapshot(&snapshot, body_store)
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn detail_from_snapshot(
+    snapshot: &SessionSnapshot,
+    body_store: Option<&BodyStore>,
+) -> Result<SessionDetail, AppError> {
+    let numeric = snapshot.exchange_id.0;
     if snapshot.terminal.is_some()
         && let Some(store) = body_store
     {
@@ -546,6 +581,7 @@ pub(crate) fn session_detail(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        composer_origin: None,
         performance: snapshot.performance.clone(),
         trace_id: None,
         original_id: None,
@@ -560,7 +596,7 @@ pub(crate) fn session_detail(
             };
             (!ip.is_loopback()).then(|| ip.to_string())
         },
-        id: id.to_ascii_lowercase(),
+        id: format!("{numeric:032x}"),
         started_at: u64::try_from(
             snapshot
                 .metadata
@@ -577,7 +613,7 @@ pub(crate) fn session_detail(
         stored_bodies,
         diagnostics,
         hook_effects,
-        auto_response: auto_response_match(&snapshot),
+        auto_response: auto_response_match(snapshot),
         route_selection,
         route_attempts,
         terminal,

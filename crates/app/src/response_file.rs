@@ -141,6 +141,25 @@ pub(crate) fn prepare(
     session_id: &str,
     boundary: &str,
 ) -> Result<ResponseFile, AppError> {
+    let snapshot = service
+        .catalog()
+        .get(ExchangeId(parse_session_id(session_id)?));
+    prepare_with_path(
+        store,
+        session_id,
+        boundary,
+        snapshot.as_ref().map_or("", |snapshot| {
+            snapshot.metadata.original_target.as_target().path.as_str()
+        }),
+    )
+}
+
+pub(crate) fn prepare_with_path(
+    store: Option<&BodyStore>,
+    session_id: &str,
+    boundary: &str,
+    request_path: &str,
+) -> Result<ResponseFile, AppError> {
     let exchange_id = ExchangeId(parse_session_id(session_id)?);
     let boundary_id = match boundary {
         "client-response" => ExchangeBoundary::ClientResponse,
@@ -187,7 +206,6 @@ pub(crate) fn prepare(
                 .map_err(|_| unavailable("Complete response bytes are unavailable"))?,
         )
     };
-    let snapshot = service.catalog().get(exchange_id);
     let head = store.response_head(exchange_id, boundary_id);
     let dispositions = head
         .as_ref()
@@ -202,13 +220,7 @@ pub(crate) fn prepare(
     } else {
         None
     };
-    let name = suggested_filename(
-        disposition,
-        snapshot.as_ref().map_or("", |snapshot| {
-            snapshot.metadata.original_target.as_target().path.as_str()
-        }),
-        metadata.media_type.as_deref(),
-    );
+    let name = suggested_filename(disposition, request_path, metadata.media_type.as_deref());
     Ok(ResponseFile {
         name,
         metadata,

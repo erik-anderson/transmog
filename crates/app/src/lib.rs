@@ -15,6 +15,7 @@ mod breakpoints;
 mod captured_page;
 mod captured_page_report;
 mod composer;
+mod composer_response;
 mod diagnostics;
 mod export_privacy;
 mod inspector;
@@ -1201,6 +1202,9 @@ impl Application {
     /// Returns an invalid identifier, unavailable/evicted session, or body
     /// metadata synchronization error.
     pub fn session_detail(&self, id: &str) -> Result<SessionDetail, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return response.detail();
+        }
         let mut detail = inspector::session_detail(&self.service, self.body_store.as_ref(), id)?;
         if let Some(entry) = self.traces.entry(id) {
             let native = entry.raw_headers.is_none();
@@ -1263,6 +1267,14 @@ impl Application {
         offset: usize,
         largest_first: bool,
     ) -> Result<inspector::HeaderPage, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::header_page_from_snapshot(
+                &response.snapshot,
+                boundary,
+                offset,
+                largest_first,
+            );
+        }
         inspector::header_page(&self.service, id, boundary, offset, largest_first)
     }
 
@@ -1271,6 +1283,9 @@ impl Application {
     /// # Errors
     /// Returns invalid selection or unavailable original target evidence.
     pub fn copy_message_url(&self, id: &str, boundary: &str) -> Result<String, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::copy_message_url_from_snapshot(&response.snapshot, boundary);
+        }
         if self
             .traces
             .entry(id)
@@ -1290,6 +1305,9 @@ impl Application {
     /// # Errors
     /// Returns unavailable evidence or non-text header values.
     pub fn copy_message_headers(&self, id: &str, boundary: &str) -> Result<String, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::copy_message_headers_from_snapshot(&response.snapshot, boundary);
+        }
         inspector::copy_message_headers(&self.service, id, boundary)
     }
 
@@ -1414,6 +1432,20 @@ impl Application {
         session_id: &str,
         boundary: &str,
     ) -> Result<ResponseFile, AppError> {
+        if let Some(response) = self.composer.response(session_id) {
+            return response_file::prepare_with_path(
+                Some(&response.store),
+                session_id,
+                boundary,
+                response
+                    .snapshot
+                    .metadata
+                    .original_target
+                    .as_target()
+                    .path
+                    .as_str(),
+            );
+        }
         response_file::prepare(
             &self.service,
             self.body_store.as_ref(),
@@ -1430,13 +1462,15 @@ impl Application {
         &self,
         request: BodyRangeRequest,
     ) -> Result<BodyBytePage, AppError> {
-        let store = self.body_store.clone().ok_or_else(|| {
-            AppError::new(
-                ErrorCategory::Unavailable,
-                "Body retention is not configured",
-                false,
-            )
-        })?;
+        let store = self
+            .inspection_body_store(&request.session_id)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Body retention is not configured",
+                    false,
+                )
+            })?;
         tokio::task::spawn_blocking(move || body_ranges::read(&store, &request))
             .await
             .map_err(|_| AppError::new(ErrorCategory::Internal, "Byte range worker failed", true))?
@@ -1451,8 +1485,9 @@ impl Application {
         &self,
         mut request: BodyInspectionRequest,
     ) -> Result<BodyInspection, AppError> {
+        let store = self.inspection_body_store(&request.session_id);
         if request.representation == BodyRepresentation::Auto
-            && let Some(store) = &self.body_store
+            && let Some(store) = &store
             && let Ok(id) = inspector::parse_session_id(&request.session_id)
             && store
                 .metadata(transmog_core::intercept::ExchangeId(id))
@@ -1470,7 +1505,7 @@ impl Application {
         }
         if request.representation == BodyRepresentation::Image {
             let (metadata, source, decoded) =
-                inspector::image_source(self.body_store.as_ref(), &request).await?;
+                inspector::image_source(store.as_ref(), &request).await?;
             let display_bytes = source.len();
             let media_type = metadata.media_type.clone();
             let (preview_handle, preview_mime_type) =
@@ -1491,7 +1526,14 @@ impl Application {
                 preview_mime_type: Some(preview_mime_type),
             });
         }
-        inspector::inspect_body(self.body_store.as_ref(), request).await
+        inspector::inspect_body(store.as_ref(), request).await
+    }
+
+    fn inspection_body_store(&self, id: &str) -> Option<BodyStore> {
+        self.composer
+            .response(id)
+            .map(|response| response.store.clone())
+            .or_else(|| self.body_store.clone())
     }
 
     /// Resolves one opaque, short-lived safe image preview handle.
@@ -1615,7 +1657,13 @@ impl Application {
             None => None,
         };
         self.composer
-            .execute(&self.service, request, file, source)
+            .execute(
+                &self.service,
+                request,
+                file,
+                source,
+                self.product_state().privacy.redact_sensitive_headers,
+            )
             .await
     }
 

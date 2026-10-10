@@ -13,10 +13,7 @@ export class ComposerWorkspace extends WorkspaceElement {
  @observable composerDirty=false;
  @observable composerPane='request';
  @observable composerResult:ComposerResult|null=null;
- @observable resultMode='body';
- @observable resultHeaders:Array<{id:string;name:string;value:string}>=[];
  @observable resultRequestLabel='';
- @observable resultDetails='';
  @observable resultTone='';
  @observable needsNonIdempotent=false;
  @observable needsCredentials=false;
@@ -67,7 +64,6 @@ export class ComposerWorkspace extends WorkspaceElement {
   }catch(error:unknown){if(revision===this.historyRevision)this.composerHistoryError='History could not be loaded: '+describeError(error);}finally{if(revision===this.historyRevision)this.composerHistoryBusy=false;}
  }
  async showHistorySource(id:string):Promise<void> {try{await invoke('session_detail',{id});this.$emit('source-traffic-request',id);}catch{this.composerHistoryError='This source entry is no longer in Traffic. Its trace and original entry association remain in history.';}}
- showResult(mode:string):void {this.resultMode=mode;}
  returnToTraffic():void {this.activateView('traffic');}
  private async checkSource():Promise<void> {const id=this.composerSourceId;try {await invoke('session_detail',{id});if(this.composerSourceId===id)this.composerSourceAvailable=true;}catch {if(this.composerSourceId===id)this.composerSourceAvailable=false;}}
  async showComposerSource():Promise<void> {await this.checkSource();if(this.composerSourceAvailable)this.$emit('source-traffic-request',this.composerSourceId);}
@@ -95,8 +91,9 @@ export class ComposerWorkspace extends WorkspaceElement {
   event.preventDefault();if(this.composerBusy||this.composerBodyMissing)return;this.draftGeneration++;this.composerBusy=true;this.composerError='';this.composerText='Sending request…';const data=new FormData(this.composerForm);
   const version=this.editVersion;const label=String(data.get('method'))+' '+String(data.get('url'));
   try {const result=await invoke<ComposerResult>('execute_composer',{request:{method:String(data.get('method')??''),url:String(data.get('url')??''),headers:parseHeaderLines(String(data.get('headers')??'')),sourceEntryId:this.composerSourceId||null,bodySource:this.composerBodyMode==='captured'?{kind:'captured',entryId:this.capturedBodyId}:this.composerBodyMode==='file'?{kind:'file',path:this.composerBodyFile}:null,body:this.composerBodyMode==='inline'?String(data.get('body')??''):'',bodyIsHex:data.get('bodyHex')==='on',acknowledgeNonIdempotent:data.get('nonIdempotent')==='on',acknowledgeCredentials:data.get('credentials')==='on'}});
-   this.composerResult=result;this.resultHeaders=result.headers.map((header,index)=>({...header,id:String(index)}));this.resultRequestLabel=label;this.resultDetails=JSON.stringify({id:result.id,attribution:result.attribution,bodyIsHex:result.bodyIsHex,truncated:result.truncated,source:result.source??null},null,2);this.resultTone=result.status>=400?'failed':result.status>=300?'redirect':'success';this.composerText='Response received: HTTP '+result.status+(result.truncated?' · preview truncated':'');if(version===this.editVersion)this.composerPane='response';if(this.historyVisible)void this.refreshHistory();
-  }catch(error:unknown){this.composerError='Send failed: '+describeError(error);this.composerText='The request draft is ready to retry.';}finally{this.composerBusy=false;}
+   if(!this.isConnected)return;
+   this.composerResult=result;this.resultRequestLabel=label;this.resultTone=result.status>=400?'failed':result.status>=300?'redirect':'success';this.composerText='Response received: HTTP '+result.status;if(version===this.editVersion)this.composerPane='response';if(this.historyVisible)void this.refreshHistory();
+  }catch(error:unknown){if(this.isConnected){this.composerError='Send failed: '+describeError(error);this.composerText='The request draft is ready to retry.';}}finally{this.composerBusy=false;}
  }
  disconnectedCallback():void {this.historyRevision++;this.draftGeneration++;this.leaveResolve?.(false);this.leaveResolve=null;super.disconnectedCallback();}
 }
