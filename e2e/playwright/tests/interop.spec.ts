@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { startProxy, type Evidence } from '../support/proxy';
 import { startWebSocketOrigin } from '../support/websocket-origin';
+import { proxyCertificateSpki } from '../support/proxy-certificate';
 
 type Origin = {
   name: string;
@@ -147,6 +148,38 @@ for (const protocol of [
     }
   });
 }
+
+test('Chromium consistently negotiates H2 with the intercepting proxy through ALPN', async () => {
+  const proofId = `chromium-alpn-${randomUUID()}`;
+  const proxy = await startProxy({binary, repo, caCertificate, caPrivateKey, upstreamCaCertificate:caCertificate, route:'h1', proofId});
+  let browser: Browser | undefined;
+  try {
+    // Pin the validated proxy leaf without modifying host trust or ignoring arbitrary certificates.
+    const spki = await proxyCertificateSpki(proxy.listenAddress,caddyUrl,caCertificate);
+    browser = await chromium.launch({proxy:{server:`http://${proxy.listenAddress}`}, args:[
+      '--disable-quic', '--proxy-bypass-list=<-loopback>', `--ignore-certificate-errors-spki-list=${spki}`,
+    ]});
+    for (let cycle=0;cycle<5;cycle++) {
+      const context = await browser.newContext({ignoreHTTPSErrors:false, serviceWorkers:'block'});
+      try {
+        const page = await context.newPage();
+        const network = await context.newCDPSession(page);
+        const protocols = new Map<string,string>();
+        network.on('Network.responseReceived', event => protocols.set(event.response.url,event.response.protocol));
+        await network.send('Network.enable');
+        for (let request=0;request<3;request++) {
+          const url = new URL(caddyUrl);url.searchParams.set('alpn-proof',`${cycle}-${request}`);
+          const response = await page.goto(url.href,{waitUntil:'domcontentloaded'});
+          expect(response?.status(),proxy.lines.join('\n')).toBe(200);
+          expect(response?.headers()['x-intercepted-by']).toBe(proofId);
+          await expect.poll(()=>protocols.get(url.href)).toBe('h2');
+        }
+      } finally {await context.close();}
+    }
+    // The forced H1 origin route makes this evidence specific to browser-facing H2.
+    assertEvidence(await proxy.waitForEvidence(matchesOrigin(caddyUrl)),caddyUrl,'Http1','hyper','verified','Http2');
+  } finally {await browser?.close();await proxy.stop();}
+});
 
 test('Chromium traverses every supported content coding through Nginx', async () => {
   const nginx = origins.find(origin => origin.marker === 'nginx')!;
@@ -332,8 +365,9 @@ function assertEvidence(
   egress = 'Http1',
   adapter = 'hyper',
   verification = 'not-applicable',
+  ingress = 'Http1',
 ) {
-  expect(evidence.ingress).toBe('Http1');
+  expect(evidence.ingress).toBe(ingress);
   expect(evidence.egress).toBe(egress);
   expect(evidence.adapter).toBe(adapter);
   expect(evidence.request_breakpoint).toBe('true');
