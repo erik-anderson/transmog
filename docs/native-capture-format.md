@@ -14,6 +14,18 @@ optionally encrypted frame. Incompressible frames are stored raw. All sensitive
 index metadata, including exchange IDs, headers and body digests, stays encrypted
 when a password is used. Public framing exposes lengths and encoding parameters.
 
+Public X.509 certificates use global `public-certificate` definitions keyed by
+SHA-256. TLS connection evidence refers to these definitions rather than repeating
+DER for every request or HTTP/2 stream. Definitions precede their references and
+are retained across circular exchange eviction. Shared definitions stay until
+their last referencing exchange is evicted; unreferenced definitions and their
+disk frames are reclaimed. Readers validate the exact DER and digest and share
+a bounded dictionary. No private key or TLS session secret
+is part of this schema. Connection evidence records the available verification
+path, trust snapshot, offered policy and negotiation errors, including rejected
+handshakes. The available peer path remains labeled when a full trust path could
+not be constructed.
+
 The desktop indexes a native trace by reading and authenticating metadata only,
 then seeking over body payloads without reading, decrypting or decompressing them.
 The index retains

@@ -25,7 +25,7 @@ use transmog_network::{
 };
 use transmog_tls::UpstreamTlsContextFactory;
 
-use crate::{H3ConfigError, H3TransportLimits, build_quiche_config};
+use crate::{H3ConfigError, H3TransportLimits};
 
 use transmog_core::performance::{
     ConnectionSetupTime, Milestone, PerformanceRecorder, ProtocolObservation, QuicObservation,
@@ -284,6 +284,7 @@ impl H3OriginClient {
             self.tls.clone(),
             self.limits,
             self.happy_eyeballs,
+            self.performance.clone(),
         )
         .await?;
         let (sender, receiver) = mpsc::channel(self.limits.pending_requests_per_connection);
@@ -384,6 +385,7 @@ impl ResponseTarget {
 }
 
 struct H3ConnectionDriver {
+    capture: transmog_tls::TlsCapture,
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
     socket: UdpSocket,
@@ -403,6 +405,7 @@ impl H3ConnectionDriver {
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
         happy_eyeballs: HappyEyeballsConfig,
+        performance: Option<PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
         let dns_begin = Instant::now();
         let candidates = resolve_candidates(&host, peer_port, happy_eyeballs).await?;
@@ -413,7 +416,13 @@ impl H3ConnectionDriver {
             return Err(H3OriginError::DnsNoAddresses(host));
         }
         match race_candidates(candidates, happy_eyeballs, |peer_addr| {
-            Self::connect_address(host.clone(), peer_addr, tls.clone(), limits)
+            Self::connect_address(
+                host.clone(),
+                peer_addr,
+                tls.clone(),
+                limits,
+                performance.clone(),
+            )
         })
         .await
         {
@@ -441,6 +450,7 @@ impl H3ConnectionDriver {
         peer_addr: SocketAddr,
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
+        performance: Option<PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
         let setup_begin = Instant::now();
         let bind_addr = if peer_addr.is_ipv4() {
@@ -452,7 +462,12 @@ impl H3ConnectionDriver {
         socket.connect(peer_addr).await?;
         let local_addr = socket.local_addr()?;
 
-        let mut config = build_quiche_config(&tls, limits)?;
+        let mut evidence = tls
+            .capture(Some(host.clone()), vec!["h3".into()])
+            .snapshot();
+        evidence.offered_versions = vec!["TLSv1.3".into()];
+        let capture = transmog_tls::TlsCapture::new(evidence);
+        let mut config = crate::config::build_quiche_config_captured(&tls, limits, Some(&capture))?;
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         let mut source_connection_id = [0_u8; quiche::MAX_CONN_ID_LEN];
@@ -467,6 +482,7 @@ impl H3ConnectionDriver {
         )?;
         Box::pin(
             Self {
+                capture,
                 tls,
                 limits,
                 socket,
@@ -487,12 +503,42 @@ impl H3ConnectionDriver {
                 setup_timings: Vec::new(),
                 uses: 0,
             }
-            .establish(setup_begin),
+            .establish(setup_begin, performance.as_ref()),
         )
         .await
     }
 
-    async fn establish(mut self, setup_begin: Instant) -> Result<Self, H3OriginError> {
+    async fn establish(
+        mut self,
+        setup_begin: Instant,
+        performance: Option<&PerformanceRecorder>,
+    ) -> Result<Self, H3OriginError> {
+        let result = self.establish_inner(setup_begin).await;
+        if let Err(error) = result {
+            self.capture.failure(&error.to_string());
+            if let Some(error) = self.connection.local_error() {
+                self.capture.failure(&format!(
+                    "QUIC error {}: {}",
+                    error.error_code,
+                    String::from_utf8_lossy(&error.reason)
+                ));
+            }
+            self.transport.outcome = TransportOutcome::TlsFailed;
+            // These fields describe negotiation only after establishment.
+            self.transport.alpn = None;
+            self.transport.tls_version = None;
+            self.transport.tls = Some(self.capture.snapshot());
+            if let Some(performance) = performance {
+                performance.transport(quic_observation(&self.connection, &self.transport));
+            }
+            return Err(error);
+        }
+        self.capture.verified();
+        self.transport.tls = Some(self.capture.snapshot());
+        Ok(self)
+    }
+
+    async fn establish_inner(&mut self, setup_begin: Instant) -> Result<(), H3OriginError> {
         let mut recv_buffer = vec![0_u8; MAX_UDP_PACKET_SIZE];
         let mut send_buffer = vec![0_u8; MAX_DATAGRAM_SIZE];
         flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
@@ -505,7 +551,7 @@ impl H3ConnectionDriver {
                 });
                 self.transport.tls_micros =
                     Some(u64::try_from(setup_begin.elapsed().as_micros()).unwrap_or(u64::MAX));
-                return Ok(self);
+                return Ok(());
             }
             if self.connection.is_closed() {
                 return Err(H3OriginError::ClosedBeforeResponse);
@@ -1513,13 +1559,15 @@ mod tests {
             TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 41)
                 .unwrap(),
         );
+        let performance = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
         let client = H3OriginClient::new(
             UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
             H3TransportLimits {
                 idle_timeout: std::time::Duration::from_secs(2),
                 ..H3TransportLimits::default()
             },
-        );
+        )
+        .with_performance(Some(performance.clone()));
         let request = CanonicalRequest {
             head: RequestHead {
                 method: "GET".to_owned(),
@@ -1578,6 +1626,7 @@ mod tests {
                     peer_addr,
                     tls.clone(),
                     limits,
+                    None,
                 )
             }),
         )
@@ -1612,13 +1661,15 @@ mod tests {
             )
             .unwrap(),
         );
+        let performance = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
         let client = H3OriginClient::new(
             UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
             H3TransportLimits {
                 idle_timeout: std::time::Duration::from_secs(1),
                 ..H3TransportLimits::default()
             },
-        );
+        )
+        .with_performance(Some(performance.clone()));
         let request = CanonicalRequest {
             head: RequestHead {
                 method: "GET".to_owned(),
@@ -1636,6 +1687,23 @@ mod tests {
             body: Vec::new(),
         };
         assert!(client.execute(request, origin.port(), 1024).await.is_err());
+        let sample = performance.snapshot();
+        let tls = sample
+            .transports
+            .iter()
+            .find_map(|transport| transport.tls.as_ref())
+            .expect("failed H3 certificate evidence");
+        assert!(!tls.server_chain.is_empty());
+        assert!(!tls.server_chain[0].der.is_empty());
+        assert!(matches!(
+            tls.verification,
+            Some(transmog_core::VerificationResult::Rejected { .. })
+        ));
+        assert!(
+            tls.errors
+                .iter()
+                .any(|error| error.contains("Certificate verification"))
+        );
         server.abort();
     }
 

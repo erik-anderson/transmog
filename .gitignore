@@ -12,6 +12,8 @@
 *.pdb
 *.key
 *.pem
+!crates/app/tests/fixtures/certificates/leaf.pem
+!crates/app/tests/fixtures/certificates/root.pem
 /session.tmcap
 /transmog-support.zip
 e2e/playwright/node_modules/

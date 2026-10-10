@@ -14,6 +14,7 @@ mod body_store;
 mod breakpoints;
 mod captured_page;
 mod captured_page_report;
+mod certificates;
 mod composer;
 mod composer_response;
 mod diagnostics;
@@ -64,6 +65,9 @@ pub use captured_page::{CapturedPage, CapturedResource};
 pub use captured_page_report::{
     CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport, CapturedPageScope,
     CapturedPreviewRequest, CapturedResourceDecision,
+};
+pub use certificates::{
+    CertificateConnection, CertificateField, CertificateInspection, CertificateView,
 };
 pub use composer::{
     ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,

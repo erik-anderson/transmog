@@ -299,6 +299,7 @@ impl ProxyCa {
         Ok(IssuedLeaf {
             identity,
             certificate: builder.build(),
+            issuer_chain: vec![self.certificate.clone()],
             private_key,
             expires_at: SystemTime::now() + Duration::from_secs(u64::from(validity_days) * 86_400),
         })
@@ -312,6 +313,8 @@ pub struct IssuedLeaf {
     pub identity: EndpointIdentity,
     /// Signed certificate.
     pub certificate: X509,
+    /// Public issuer path retained for certificate inspection.
+    pub issuer_chain: Vec<X509>,
     /// Leaf private key.
     pub private_key: PKey<Private>,
     /// Conservative local cache expiry.

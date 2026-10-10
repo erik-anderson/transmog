@@ -6,6 +6,7 @@ import './app-shell/app-shell.js';
 import './traffic-workspace/traffic-workspace.js';
 import './message-inspector/message-inspector.js';
 import './hex-viewer/hex-viewer.js';
+import './certificate-viewer/certificate-viewer.js';
 import './settings-workspace/settings-workspace.js';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from './utilities.js';

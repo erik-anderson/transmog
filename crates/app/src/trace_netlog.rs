@@ -8,7 +8,70 @@ use super::{
 };
 use super::{BodySpool, Engine, STANDARD};
 use crate::traces::import_failure;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::sync::Arc;
+use transmog_core::{PublicCertificate, TlsEvidence, VerificationResult};
+
+// Chromium's public NetLog schema records PEM arrays for received and verified
+// paths: net/log/net_log_event_type_list.h, SSL_CERTIFICATES_RECEIVED and
+// CERT_VERIFY_PROC. Client-certificate events expose a count, not DER.
+fn certificate_chain(
+    value: &Value,
+    cache: &mut HashMap<String, Arc<[u8]>>,
+    result: &mut ImportData,
+) -> Result<Vec<PublicCertificate>, AppError> {
+    let Some(values) = value
+        .as_array()
+        .or_else(|| value["certificates"].as_array())
+    else {
+        return Ok(Vec::new());
+    };
+    if values.len() > 32 {
+        return Err(invalid("NetLog certificate chain exceeds its limit"));
+    }
+    let mut chain = Vec::new();
+    for value in values {
+        let Some(pem) = value.as_str() else {
+            return Err(invalid("Invalid NetLog certificate"));
+        };
+        if pem.len() > 2 * 1024 * 1024 {
+            return Err(invalid("NetLog certificate exceeds its limit"));
+        }
+        let parsed = boring::x509::X509::from_pem(pem.as_bytes())
+            .map_err(|_| invalid("Invalid NetLog public certificate"))?;
+        let der = parsed
+            .to_der()
+            .map_err(|_| invalid("Invalid NetLog public certificate"))?;
+        let digest = Sha256::digest(&der)
+            .iter()
+            .fold(String::new(), |mut output, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(output, "{byte:02x}");
+                output
+            });
+        if !cache.contains_key(&digest) {
+            result.index_bytes = result.index_bytes.saturating_add(der.len());
+            if result.index_bytes > super::MAX_HEAD_BYTES {
+                return Err(invalid("NetLog certificate index exceeds its limit"));
+            }
+        }
+        let der = cache
+            .entry(digest.clone())
+            .or_insert_with(|| der.into())
+            .clone();
+        if !chain
+            .iter()
+            .any(|certificate: &PublicCertificate| certificate.sha256 == digest)
+        {
+            chain.push(PublicCertificate {
+                sha256: digest,
+                der,
+            });
+        }
+    }
+    Ok(chain)
+}
 
 fn number(value: &Value) -> Option<f64> {
     value
@@ -109,6 +172,7 @@ pub(super) fn import(
     let offset = number(&constants["timeTickOffset"]);
     let mut position = 0;
     let mut spool = BodySpool::new()?;
+    let mut certificates = HashMap::new();
     for (source_id, group) in &sources {
         if !group.iter().any(|e| {
             matches!(
@@ -315,6 +379,11 @@ pub(super) fn import(
                 leg: "upstream".into(),
                 ..TransportObservation::default()
             };
+            let mut tls = TlsEvidence {
+                server_name: Some(request.target.host.clone()),
+                trust_source: Some("Chromium NetLog (original browser verification)".into()),
+                ..TlsEvidence::default()
+            };
             while let Some(dependency) = dependencies.pop() {
                 if visited.len() >= 128 || !visited.insert(dependency) {
                     continue;
@@ -346,6 +415,77 @@ pub(super) fn import(
                             transport.connection_id = dependency.to_string();
                         }
                         let event_name = name(constants, "logEventTypes", &event["type"]);
+                        if event_name == "SSL_CERTIFICATES_RECEIVED"
+                            && tls.chain_source.as_deref() != Some("verified-path")
+                        {
+                            tls.server_chain = certificate_chain(
+                                &params["certificates"],
+                                &mut certificates,
+                                &mut result,
+                            )?;
+                            tls.chain_source = Some("peer-presented".into());
+                        }
+                        if matches!(event_name, "CERT_VERIFY_PROC" | "CERT_VERIFIER_JOB") {
+                            let chain = certificate_chain(
+                                &params["verified_cert"],
+                                &mut certificates,
+                                &mut result,
+                            )?;
+                            if !chain.is_empty() {
+                                tls.server_chain = chain;
+                                tls.chain_source = Some("verified-path".into());
+                            }
+                            let phase = name(constants, "logEventPhase", &event["phase"]);
+                            if let Some(error) = params["net_error"].as_i64().or_else(|| {
+                                (phase == "PHASE_END" && params.get("verified_cert").is_some())
+                                    .then_some(0)
+                            }) {
+                                tls.verification = Some(if error == 0 {
+                                    VerificationResult::Verified
+                                } else {
+                                    VerificationResult::Rejected {
+                                        error_code: i32::try_from(error).unwrap_or(i32::MIN),
+                                        depth: None,
+                                    }
+                                });
+                            }
+                        }
+                        if event_name == "SSL_CONNECT" {
+                            if let Some(alpn) = params["next_proto"].as_str() {
+                                transport.alpn = Some(alpn.into());
+                            }
+                            transport.tls_resumed = params["is_resumed"].as_bool();
+                        }
+                        if event_name == "SSL_CLIENT_CERT_PROVIDED"
+                            && let Some(count) = params["cert_count"].as_i64()
+                        {
+                            tls.details.insert(
+                                "Chromium client certificate count".into(),
+                                count.to_string(),
+                            );
+                        }
+                        if event_name.starts_with("SSL_")
+                            || event_name.starts_with("CERT_")
+                            || event_name.starts_with("QUIC_SESSION_CERTIFICATE")
+                        {
+                            for key in ["cert_status", "is_issued_by_known_root", "ssl_lib_error"] {
+                                if let Some(value) = params.get(key) {
+                                    tls.details
+                                        .insert(format!("Chromium {key}"), value.to_string());
+                                }
+                            }
+                            if let Some(error) =
+                                params["net_error"].as_i64().filter(|error| *error != 0)
+                            {
+                                let message =
+                                    format!("Chromium {event_name}: network error {error}");
+                                if tls.errors.len() < 16 && !tls.errors.contains(&message) {
+                                    tls.errors.push(message);
+                                }
+                                transport.outcome =
+                                    transmog_core::performance::TransportOutcome::TlsFailed;
+                            }
+                        }
                         if matches!(
                             event_name,
                             "TCP_CONNECT"
@@ -371,7 +511,18 @@ pub(super) fn import(
                     }
                 }
             }
-            if !transport.connection_id.is_empty() || transport.peer.is_some() {
+            if !transport.connection_id.is_empty()
+                || transport.peer.is_some()
+                || !tls.server_chain.is_empty()
+                || !tls.errors.is_empty()
+            {
+                if !tls.server_chain.is_empty()
+                    || !tls.errors.is_empty()
+                    || transport.tls_version.is_some()
+                    || !tls.details.is_empty()
+                {
+                    transport.tls = Some(tls);
+                }
                 snapshot.performance.transports.push(transport);
             }
             if let Some(error) = failed {

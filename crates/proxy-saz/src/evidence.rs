@@ -69,6 +69,33 @@ pub(crate) fn write_sources<W: std::io::Write + std::io::Seek>(
     options: zip::write::FileOptions<'_, ()>,
     remaining: usize,
 ) -> Result<usize, crate::SazError> {
+    let mut written = 0;
+    let mut certificate_ids = std::collections::BTreeSet::new();
+    for record in &capture.records {
+        if let transmog_capture::CaptureRecordKind::Unknown { kind, payload } = &record.kind
+            && record.exchange_id == 0
+            && kind == "public-certificate"
+        {
+            let definition: transmog_capture::CertificateDefinition =
+                serde_json::from_value(payload.clone())?;
+            definition
+                .validate()
+                .map_err(|_| crate::SazError::InvalidArchive)?;
+            if !certificate_ids.insert(definition.sha256.clone()) {
+                continue;
+            }
+            if written >= remaining {
+                return Err(crate::SazError::EntryLimitExceeded);
+            }
+            crate::write_member(
+                writer,
+                &format!("transmog/certificates/{}.json", definition.sha256),
+                &serde_json::to_vec(&definition)?,
+                options,
+            )?;
+            written += 1;
+        }
+    }
     let sources = capture
         .records
         .iter()
@@ -82,9 +109,9 @@ pub(crate) fn write_sources<W: std::io::Write + std::io::Seek>(
         })
         .collect::<Vec<_>>();
     if sources.is_empty() {
-        return Ok(0);
+        return Ok(written);
     }
-    if remaining == 0 {
+    if remaining <= written {
         return Err(crate::SazError::EntryLimitExceeded);
     }
     let bytes = serde_json::to_vec(&sources)?;
@@ -92,7 +119,7 @@ pub(crate) fn write_sources<W: std::io::Write + std::io::Seek>(
         return Err(crate::SazError::MetadataLimitExceeded);
     }
     crate::write_member(writer, "transmog/trace-sources.json", &bytes, options)?;
-    Ok(1)
+    Ok(written + 1)
 }
 pub(crate) fn write_session<W: std::io::Write + std::io::Seek>(
     writer: &mut zip::ZipWriter<W>,

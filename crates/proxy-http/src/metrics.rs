@@ -34,7 +34,7 @@ use transmog_network::{
     HappyEyeballsConfig,
     metrics::{ConnectionMetrics, MeteredIo},
 };
-use transmog_tls::{TrustError, UpstreamTlsContextFactory};
+use transmog_tls::{TlsCapture, TrustError, UpstreamTlsContextFactory};
 
 type BoxError = Box<dyn Error + Send + Sync>;
 static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
@@ -51,6 +51,7 @@ struct ConnectionSetup {
 #[derive(Debug, Default)]
 struct SetupValues {
     facts: TransportObservation,
+    tls_capture: Option<TlsCapture>,
     tls_begin: Option<Instant>,
     dns_begin: Option<Instant>,
     dns_done: Option<Instant>,
@@ -87,6 +88,7 @@ impl ConnectionObservation {
     ) -> TransportObservation {
         let values = self.0.values();
         let mut facts = values.facts.clone();
+        facts.tls = values.tls_capture.as_ref().map(TlsCapture::snapshot);
         if let Some(performance) = performance {
             let phases = [
                 ("dns", values.dns_begin, values.dns_done),
@@ -296,6 +298,9 @@ impl Service<Uri> for MeasuredHttpsConnector {
                 Err(source) => {
                     {
                         let mut values = setup.values();
+                        if let Some(capture) = &values.tls_capture {
+                            capture.failure_chain(source.as_ref());
+                        }
                         values.tls_done = values.tls_begin.map(|_| Instant::now());
                         values.facts.tls_micros =
                             values.tls_begin.map(|begin| micros(begin.elapsed()));
@@ -316,6 +321,9 @@ impl Service<Uri> for MeasuredHttpsConnector {
             setup.values().facts.outcome = TransportOutcome::Connected;
             if let MaybeHttpsStream::Https(tls) = &stream {
                 let mut values = setup.values();
+                if let Some(capture) = &values.tls_capture {
+                    capture.completed(tls.ssl(), false);
+                }
                 values.tls_done = values.tls_begin.map(|_| Instant::now());
                 values.facts.tls_micros = values.tls_begin.map(|begin| micros(begin.elapsed()));
                 values.facts.tls_version = Some(tls.ssl().version_str().into());
@@ -366,7 +374,8 @@ pub(crate) fn connector(
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.hyper_connector_builder(mode.alpn())?;
     let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;
-    connector.set_ssl_callback(move |ssl, _| {
+    let factory = factory.clone();
+    connector.set_ssl_callback(move |ssl, uri| {
         let _ = SETUP.try_with(|setup| setup.values().tls_begin = Some(Instant::now()));
         let allowed = SETUP.try_with(|setup| setup.allowed).unwrap_or_default();
         let alpn = match mode {
@@ -379,6 +388,14 @@ pub(crate) fn connector(
             },
         };
         ssl.set_alpn_protos(alpn)?;
+        let offered_alpn = match alpn {
+            b"\x02h2\x08http/1.1" => vec!["h2".into(), "http/1.1".into()],
+            b"\x02h2" => vec!["h2".into()],
+            _ => vec!["http/1.1".into()],
+        };
+        let capture = factory.capture(uri.host().map(str::to_owned), offered_alpn);
+        capture.attach_ssl(ssl)?;
+        let _ = SETUP.try_with(|setup| setup.values().tls_capture = Some(capture));
         Ok(())
     });
     Ok(MeasuredHttpsConnector {

@@ -305,6 +305,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         let mut trace_metadata = None;
         let mut trace_sources: Vec<serde_json::Value> = Vec::new();
         let mut metadata_bytes = 0_usize;
+        let mut certificates = std::collections::HashMap::<String, std::sync::Arc<[u8]>>::new();
         let members = self.archive.len();
         for index in 0..members {
             if canceled() {
@@ -326,7 +327,28 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                     return Err(SazError::ImportLimitExceeded);
                 }
             }
-            if name == "transmog/trace-metadata.json" {
+            if let Some(digest) = name
+                .strip_prefix("transmog/certificates/")
+                .and_then(|name| name.strip_suffix(".json"))
+            {
+                let bytes = self.read_metadata(index)?;
+                metadata_bytes = metadata_bytes.saturating_add(bytes.len());
+                if metadata_bytes > self.limits.max_index_bytes {
+                    return Err(SazError::ImportLimitExceeded);
+                }
+                let definition: transmog_capture::CertificateDefinition =
+                    serde_json::from_slice(&bytes)?;
+                definition
+                    .validate()
+                    .map_err(|_| SazError::InvalidArchive)?;
+                if digest != definition.sha256
+                    || certificates
+                        .insert(definition.sha256, definition.der.into())
+                        .is_some()
+                {
+                    return Err(SazError::UnsafeMember);
+                }
+            } else if name == "transmog/trace-metadata.json" {
                 let bytes = self.read_metadata(index)?;
                 metadata_bytes += bytes.len();
                 trace_metadata = Some(serde_json::from_slice(&bytes)?);
@@ -390,9 +412,20 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                 .map(|index| {
                     let bytes = self.read_metadata(index)?;
                     index_bytes = index_bytes.saturating_add(bytes.len());
-                    let evidence: crate::SessionEvidence = serde_json::from_slice(&bytes)?;
+                    let mut evidence: crate::SessionEvidence = serde_json::from_slice(&bytes)?;
                     if !evidence.valid() {
                         return Err(SazError::InvalidArchive);
+                    }
+                    for certificate in evidence
+                        .performance
+                        .transports
+                        .iter_mut()
+                        .filter_map(|transport| transport.tls.as_mut())
+                        .flat_map(|tls| tls.server_chain.iter_mut().chain(&mut tls.client_chain))
+                    {
+                        if let Some(der) = certificates.get(&certificate.sha256) {
+                            certificate.der = der.clone();
+                        }
                     }
                     Ok(evidence)
                 })

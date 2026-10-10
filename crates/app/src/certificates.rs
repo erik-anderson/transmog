@@ -1,0 +1,537 @@
+//! Public certificate inspection shared by live traffic and saved trace windows.
+use crate::{AppError, Application, ErrorCategory};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use boring::x509::{X509, X509NameRef};
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+use transmog_core::{PublicCertificate, VerificationResult};
+
+/// A readable field derived from recorded public certificate bytes.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateField {
+    /// Field label.
+    pub label: String,
+    /// Original value, without display truncation.
+    pub value: String,
+}
+/// One deduplicated public X.509 certificate.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateView {
+    /// SHA-256 identity of the original DER.
+    pub sha256: String,
+    /// Subject or a clear indication that DER was not included.
+    pub subject: String,
+    /// Certificate properties derived from the original bytes.
+    pub fields: Vec<CertificateField>,
+    /// Public PEM, suitable for copying.
+    pub pem: String,
+    /// Original public DER for the shared Hex viewer.
+    pub der_base64: String,
+    /// Explanation when the capture omitted or damaged the public DER.
+    pub unavailable: String,
+}
+/// Certificate paths and diagnostics for one physical connection.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateConnection {
+    /// Stable physical connection identity.
+    pub id: String,
+    /// Identifies the browser-facing or server-facing leg.
+    pub title: String,
+    /// Connection, TLS policy and recorded verification properties.
+    pub fields: Vec<CertificateField>,
+    /// Server path, leaf first, referencing the shared certificate list.
+    pub server_chain: Vec<String>,
+    /// Client authentication path, if recorded.
+    pub client_chain: Vec<String>,
+    /// Recorded negotiation and verification failures.
+    pub errors: Vec<String>,
+}
+/// Public TLS context belonging to the selected request's connections.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateInspection {
+    /// Connections corresponding to the request.
+    pub connections: Vec<CertificateConnection>,
+    /// Each public certificate appears once, including shared roots.
+    pub certificates: Vec<CertificateView>,
+}
+#[allow(clippy::needless_pass_by_value)]
+fn field(label: &str, value: impl ToString) -> CertificateField {
+    CertificateField {
+        label: label.into(),
+        value: value.to_string(),
+    }
+}
+fn distinguished_name(name: &X509NameRef) -> String {
+    name.entries()
+        .map(|entry| {
+            format!(
+                "{}={}",
+                entry.object().nid().short_name().unwrap_or("OID"),
+                String::from_utf8_lossy(entry.data().as_slice())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+fn certificate_view(certificate: &PublicCertificate) -> CertificateView {
+    let mut view = CertificateView {
+        sha256: certificate.sha256.clone(),
+        subject: "Certificate bytes unavailable".into(),
+        fields: vec![field("SHA-256", &certificate.sha256)],
+        pem: String::new(),
+        der_base64: String::new(),
+        unavailable: String::new(),
+    };
+    if certificate.der.is_empty() {
+        view.unavailable =
+            "This capture contains a fingerprint without the public certificate bytes.".into();
+        return view;
+    }
+    let Ok(parsed) = X509::from_der(&certificate.der) else {
+        view.unavailable = "The recorded public certificate could not be parsed.".into();
+        return view;
+    };
+    view.subject = distinguished_name(parsed.subject_name());
+    view.fields.extend([
+        field("Subject", &view.subject),
+        field("Issuer", distinguished_name(parsed.issuer_name())),
+        field("Valid from", parsed.not_before()),
+        field("Valid until", parsed.not_after()),
+    ]);
+    view.fields.push(field(
+        "Signature algorithm",
+        parsed
+            .signature_algorithm()
+            .object()
+            .nid()
+            .long_name()
+            .unwrap_or("Unknown"),
+    ));
+    if let Ok(key) = parsed.public_key() {
+        let algorithm = match key.id() {
+            boring::pkey::Id::RSA => "RSA",
+            boring::pkey::Id::EC => "EC",
+            boring::pkey::Id::ED25519 => "Ed25519",
+            _ => "Other",
+        };
+        view.fields.push(field(
+            "Public key",
+            format!("{algorithm} · {} bits", key.bits()),
+        ));
+    }
+    if let Ok(serial) = parsed
+        .serial_number()
+        .to_bn()
+        .and_then(|number| number.to_hex_str())
+    {
+        view.fields.push(field("Serial number", serial));
+    }
+    if let Some(names) = parsed.subject_alt_names() {
+        let names = names
+            .iter()
+            .filter_map(|name| {
+                name.dnsname().map(str::to_owned).or_else(|| {
+                    name.ipaddress().map(|bytes| match bytes.len() {
+                        4 => {
+                            std::net::IpAddr::from(<[u8; 4]>::try_from(bytes).expect("four bytes"))
+                                .to_string()
+                        }
+                        16 => std::net::IpAddr::from(
+                            <[u8; 16]>::try_from(bytes).expect("sixteen bytes"),
+                        )
+                        .to_string(),
+                        _ => format!("IP: {bytes:?}"),
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        view.fields
+            .push(field("Subject alternative names", names.join("\n")));
+    }
+    view.pem = parsed
+        .to_pem()
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default();
+    view.der_base64 = STANDARD.encode(&certificate.der);
+    view
+}
+impl Application {
+    /// Reads public certificate paths and recorded negotiation diagnostics.
+    /// Does not perform new verification against this computer's current trust.
+    /// # Errors
+    /// Returns a missing/evicted selection or invalid certificate evidence error.
+    #[allow(clippy::too_many_lines)]
+    pub fn inspect_certificates(&self, id: &str) -> Result<CertificateInspection, AppError> {
+        let detail = self.session_detail(id)?;
+        let mut certificates = BTreeMap::new();
+        let mut connections = Vec::new();
+        for transport in &detail.performance.transports {
+            let mut fields = vec![
+                field("Connection", &transport.connection_id),
+                field("Outcome", format!("{:?}", transport.outcome)),
+            ];
+            if detail.terminal_state == "failed" {
+                fields.push(field("Request result", &detail.terminal));
+            }
+            for (label, value) in [
+                ("Peer", &transport.peer),
+                ("TLS version", &transport.tls_version),
+                ("Cipher", &transport.cipher),
+                ("ALPN", &transport.alpn),
+            ] {
+                if let Some(value) = value {
+                    fields.push(field(label, value));
+                }
+            }
+            let mut connection = CertificateConnection {
+                id: format!("{}:{}", transport.leg, transport.connection_id),
+                title: if transport.leg == "client" {
+                    "Client → Transmog"
+                } else {
+                    "Transmog → server"
+                }
+                .into(),
+                fields,
+                server_chain: Vec::new(),
+                client_chain: Vec::new(),
+                errors: Vec::new(),
+            };
+            if let Some(tls) = &transport.tls {
+                if tls.trust_source.as_deref()
+                    == Some("Chromium NetLog (original browser verification)")
+                {
+                    connection.title = "Browser → server".into();
+                } else if tls.details.keys().any(|key| {
+                    key.starts_with("HAR ") || key.to_ascii_lowercase().starts_with("https-")
+                }) {
+                    connection.title = if transport.leg == "client" {
+                        "Recorded client connection"
+                    } else {
+                        "Recorded server connection"
+                    }
+                    .into();
+                }
+                if !tls.valid() {
+                    return Err(AppError::new(
+                        ErrorCategory::InvalidInput,
+                        "The saved TLS evidence exceeds its limits",
+                        false,
+                    ));
+                }
+                for (label, value) in [
+                    ("Server name", &tls.server_name),
+                    ("Chain source", &tls.chain_source),
+                    ("Recorded trust source", &tls.trust_source),
+                ] {
+                    if let Some(value) = value {
+                        connection.fields.push(field(label, value));
+                    }
+                }
+                if let Some(generation) = tls.trust_generation {
+                    connection
+                        .fields
+                        .push(field("Recorded trust generation", generation));
+                }
+                let verification = match &tls.verification {
+                    Some(VerificationResult::Verified) => {
+                        "Verified by the original connection".into()
+                    }
+                    Some(VerificationResult::Rejected { error_code, depth }) => format!(
+                        "Rejected (code {error_code}, depth {})",
+                        depth.map_or_else(|| "unavailable".into(), |depth| depth.to_string())
+                    ),
+                    None => "Not recorded or verification was not reached".into(),
+                };
+                connection
+                    .fields
+                    .push(field("Recorded verification", verification));
+                for (label, values) in [
+                    ("TLS version bounds", &tls.offered_versions),
+                    ("Available cipher suites", &tls.offered_ciphers),
+                    ("Offered ALPN", &tls.offered_alpn),
+                ] {
+                    if !values.is_empty() {
+                        connection.fields.push(field(label, values.join(", ")));
+                    }
+                }
+                connection
+                    .fields
+                    .extend(tls.details.iter().map(|(label, value)| field(label, value)));
+                connection.errors.clone_from(&tls.errors);
+                for (chain, references) in [
+                    (&tls.server_chain, &mut connection.server_chain),
+                    (&tls.client_chain, &mut connection.client_chain),
+                ] {
+                    let mut seen = BTreeSet::new();
+                    for certificate in chain {
+                        if seen.insert(&certificate.sha256) {
+                            references.push(certificate.sha256.clone());
+                        }
+                        certificates
+                            .entry(certificate.sha256.clone())
+                            .or_insert_with(|| certificate_view(certificate));
+                    }
+                }
+            }
+            connections.push(connection);
+        }
+        if connections.is_empty() {
+            connections.push(CertificateConnection {
+                id: "unavailable".into(),
+                title: "TLS context unavailable".into(),
+                fields: vec![field("Request result", detail.terminal)],
+                server_chain: vec![],
+                client_chain: vec![],
+                errors: vec![],
+            });
+        }
+        Ok(CertificateInspection {
+            connections,
+            certificates: certificates.into_values().collect(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        AppConfig, BodyStoreConfig, TraceImportRequest, TraceSaveFormat, TraceSaveOptions,
+    };
+    use std::sync::Arc;
+    use transmog_capture::{CaptureLimits, CaptureRecord, CaptureRecordKind, CaptureWriter};
+    use transmog_core::{
+        TlsEvidence,
+        performance::{PerformanceEvidence, TransportObservation, TransportOutcome},
+    };
+    use transmog_tls::{EndpointIdentity, ProxyCa};
+
+    fn fixture(path: &std::path::Path) -> (Vec<PublicCertificate>, Vec<u8>) {
+        let ca = ProxyCa::generate("Recorded certificate test root", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let chain = [&leaf.certificate, ca.certificate()]
+            .into_iter()
+            .map(|certificate| {
+                let der = certificate.to_der().unwrap();
+                let digest = certificate
+                    .digest(boring::hash::MessageDigest::sha256())
+                    .unwrap();
+                let sha256 = digest.iter().fold(String::new(), |mut output, byte| {
+                    use std::fmt::Write as _;
+                    let _ = write!(output, "{byte:02x}");
+                    output
+                });
+                PublicCertificate {
+                    sha256,
+                    der: der.into(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut writer = CaptureWriter::new(
+            std::fs::File::create(path).unwrap(),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        let evidence = PerformanceEvidence {
+            transports: vec![TransportObservation {
+                leg: "upstream".into(),
+                connection_id: "recorded-h2".into(),
+                outcome: TransportOutcome::TlsFailed,
+                tls: Some(TlsEvidence {
+                    server_name: Some("localhost".into()),
+                    server_chain: chain.clone(),
+                    client_chain: vec![chain[0].clone()],
+                    verification: Some(VerificationResult::Rejected {
+                        error_code: 20,
+                        depth: Some(1),
+                    }),
+                    offered_versions: vec!["TLSv1.3".into()],
+                    offered_ciphers: vec!["TLS_AES_128_GCM_SHA256".into()],
+                    errors: vec![
+                        "Certificate issuer was not trusted by the recorded snapshot".into(),
+                    ],
+                    ..TlsEvidence::default()
+                }),
+                ..TransportObservation::default()
+            }],
+            ..PerformanceEvidence::default()
+        };
+        for id in [1, 2] {
+            let kinds = [
+                CaptureRecordKind::RequestHead {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientRequest,
+                    method: "GET".into(),
+                    target: "https://localhost/certificate".into(),
+                    headers: vec![],
+                },
+                CaptureRecordKind::ResponseHead {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientResponse,
+                    status: 502,
+                    headers: vec![],
+                },
+                CaptureRecordKind::Performance(evidence.clone()),
+                CaptureRecordKind::Failed {
+                    category: "Upstream".into(),
+                    message: "Recorded TLS verification failure".into(),
+                },
+            ];
+            for (sequence, kind) in kinds.into_iter().enumerate() {
+                writer
+                    .append(&CaptureRecord {
+                        sequence: sequence as u64,
+                        exchange_id: id,
+                        kind,
+                    })
+                    .unwrap();
+            }
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        (chain, ca.private_key_pem_pkcs8().unwrap())
+    }
+    async fn open(path: std::path::PathBuf, cache: std::path::PathBuf) -> Application {
+        let app = Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(cache)),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        app.import_trace(
+            TraceImportRequest {
+                password: None,
+                path,
+                operation_id: "certificates".into(),
+                max_file_bytes: u64::MAX,
+            },
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+        app
+    }
+    #[tokio::test]
+    async fn certificate_paths_failures_and_deduplication_survive_native_saz_and_har() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("original.tmcap");
+        let (chain, private_key) = fixture(&path);
+        let recovered = transmog_capture::recover(
+            std::fs::File::open(&path).unwrap(),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(recovered.records.iter().filter(|record| matches!(&record.kind,CaptureRecordKind::Unknown { kind,.. } if kind == "public-certificate")).count(), 2);
+        let paths = recovered
+            .records
+            .iter()
+            .filter_map(|record| match &record.kind {
+                CaptureRecordKind::Performance(performance) => {
+                    Some(&performance.transports[0].tls.as_ref().unwrap().server_chain)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(Arc::ptr_eq(&paths[0][1].der, &paths[1][1].der));
+        let app = open(path, root.path().join("cache-original")).await;
+        for (index, format, extension) in [
+            (0, TraceSaveFormat::Native, "tmcap"),
+            (1, TraceSaveFormat::SazExtended, "saz"),
+            (2, TraceSaveFormat::Har, "har"),
+        ] {
+            let saved = root.path().join(format!("saved-{index}.{extension}"));
+            app.save_traffic_trace(
+                saved.clone(),
+                TraceSaveOptions {
+                    format,
+                    ..TraceSaveOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+            let raw = std::fs::read(&saved).unwrap();
+            assert!(
+                !raw.windows(private_key.len())
+                    .any(|window| window == private_key)
+            );
+            let reopened = open(saved, root.path().join(format!("cache-{index}"))).await;
+            let rows = reopened
+                .query_sessions(crate::SessionQueryInput::default())
+                .unwrap();
+            assert_eq!(rows.sessions.len(), 2);
+            let inspection = reopened.inspect_certificates(&rows.sessions[0].id).unwrap();
+            assert_eq!(inspection.certificates.len(), 2);
+            let connection = inspection
+                .connections
+                .iter()
+                .find(|connection| connection.id.ends_with("recorded-h2"))
+                .unwrap();
+            assert_eq!(
+                connection.server_chain,
+                chain
+                    .iter()
+                    .map(|certificate| certificate.sha256.clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(connection.client_chain.len(), 1);
+            assert!(connection.errors[0].contains("not trusted"));
+            assert!(
+                connection
+                    .fields
+                    .iter()
+                    .any(|field| field.value.contains("Rejected (code 20"))
+            );
+            let leaf = inspection
+                .certificates
+                .iter()
+                .find(|certificate| certificate.sha256 == chain[0].sha256)
+                .unwrap();
+            assert!(leaf.subject.contains("localhost"));
+            assert!(leaf.pem.starts_with("-----BEGIN CERTIFICATE-----"));
+            assert_eq!(
+                STANDARD.decode(&leaf.der_base64).unwrap(),
+                chain[0].der.as_ref()
+            );
+            assert!(
+                leaf.fields
+                    .iter()
+                    .any(|field| field.label == "Subject alternative names"
+                        && field.value == "localhost")
+            );
+        }
+    }
+    #[test]
+    fn public_certificate_definitions_reject_private_keys_trailing_data_and_wrong_digest() {
+        let root = tempfile::tempdir().unwrap();
+        let (chain, key) = fixture(&root.path().join("certificates.tmcap"));
+        for der in [key, {
+            let mut der = chain[0].der.to_vec();
+            der.extend_from_slice(b"trailing secret");
+            der
+        }] {
+            let digest = boring::hash::hash(boring::hash::MessageDigest::sha256(), &der).unwrap();
+            let sha256 = digest.iter().fold(String::new(), |mut output, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(output, "{byte:02x}");
+                output
+            });
+            assert!(
+                transmog_capture::CertificateDefinition { sha256, der }
+                    .validate()
+                    .is_err()
+            );
+        }
+        assert!(
+            transmog_capture::CertificateDefinition {
+                sha256: "0".repeat(64),
+                der: chain[0].der.to_vec()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}

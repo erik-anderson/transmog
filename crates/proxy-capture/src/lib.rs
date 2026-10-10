@@ -478,8 +478,50 @@ struct SealPayload {
     record_count: u64,
 }
 
+/// Public certificate definition shared by native and namespaced trace extensions.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CertificateDefinition {
+    /// SHA-256 of the exact public DER.
+    pub sha256: String,
+    /// Public X.509 DER only.
+    pub der: Vec<u8>,
+}
+impl CertificateDefinition {
+    /// Checks the resource bound and content-addressed identity.
+    /// # Errors
+    /// Returns a malformed-record error for invalid or mismatched bytes.
+    pub fn validate(&self) -> Result<(), CaptureError> {
+        let digest = Sha256::digest(&self.der)
+            .iter()
+            .fold(String::new(), |mut output, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(output, "{byte:02x}");
+                output
+            });
+        if self.der.is_empty() || self.der.len() > 1024 * 1024 || self.sha256 != digest {
+            return Err(CaptureError::MalformedRecord(
+                "invalid public certificate definition",
+            ));
+        }
+        let certificate = boring::x509::X509::from_der(&self.der)
+            .map_err(|_| CaptureError::MalformedRecord("definition is not an X.509 certificate"))?;
+        if certificate
+            .to_der()
+            .map_err(|_| CaptureError::MalformedRecord("invalid X.509 encoding"))?
+            != self.der
+        {
+            return Err(CaptureError::MalformedRecord(
+                "noncanonical or trailing certificate data",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Append-only writer over a file, socket, or other streaming destination.
 pub struct CaptureWriter<W> {
+    certificates: BTreeSet<String>,
     output: W,
     limits: CaptureLimits,
     bytes_written: u64,
@@ -514,6 +556,7 @@ impl<W: Write> CaptureWriter<W> {
         }
         Ok(Self {
             output,
+            certificates: BTreeSet::new(),
             limits,
             bytes_written,
             records_written: 0,
@@ -530,6 +573,48 @@ impl<W: Write> CaptureWriter<W> {
     pub fn append(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
         if self.sealed {
             return Err(CaptureError::AlreadySealed);
+        }
+        if let CaptureRecordKind::Performance(evidence) = &record.kind {
+            for certificate in evidence
+                .transports
+                .iter()
+                .filter_map(|transport| transport.tls.as_ref())
+                .flat_map(|tls| tls.server_chain.iter().chain(&tls.client_chain))
+            {
+                if !certificate.der.is_empty() && !self.certificates.contains(&certificate.sha256) {
+                    let definition = CertificateDefinition {
+                        sha256: certificate.sha256.clone(),
+                        der: certificate.der.to_vec(),
+                    };
+                    definition.validate()?;
+                    self.append_record(&CaptureRecord {
+                        sequence: 0,
+                        exchange_id: 0,
+                        kind: CaptureRecordKind::Unknown {
+                            kind: "public-certificate".into(),
+                            payload: serde_json::to_value(&definition)?,
+                        },
+                    })?;
+                    self.certificates.insert(certificate.sha256.clone());
+                }
+            }
+        }
+        if let CaptureRecordKind::Unknown { kind, payload } = &record.kind
+            && kind == "public-certificate"
+        {
+            if record.exchange_id != 0 {
+                return Err(CaptureError::MalformedRecord(
+                    "certificate definition is not global",
+                ));
+            }
+            let definition: CertificateDefinition = serde_json::from_value(payload.clone())?;
+            definition.validate()?;
+            if self.certificates.contains(&definition.sha256) {
+                return Ok(());
+            }
+            self.append_record(record)?;
+            self.certificates.insert(definition.sha256);
+            return Ok(());
         }
         if let CaptureRecordKind::BodySegment {
             boundary,
@@ -893,6 +978,8 @@ pub struct CaptureFrame {
 
 /// Streaming native reader retaining at most one bounded frame payload.
 pub struct CaptureReader<R> {
+    certificates: HashMap<String, std::sync::Arc<[u8]>>,
+    certificate_bytes: usize,
     input: R,
     limits: CaptureLimits,
     records: usize,
@@ -940,6 +1027,8 @@ impl<R: Read> CaptureReader<R> {
         }
         Ok(Self {
             input,
+            certificates: HashMap::new(),
+            certificate_bytes: 0,
             limits,
             records: 0,
             valid_bytes,
@@ -971,6 +1060,42 @@ impl<R: Read> CaptureReader<R> {
             .is_none_or(|next| next > self.limits.max_file_bytes)
         {
             return Err(CaptureError::QuotaExceeded);
+        }
+        Ok(())
+    }
+
+    fn resolve_certificates(&mut self, record: &mut CaptureRecord) -> Result<(), CaptureError> {
+        if let CaptureRecordKind::Unknown { kind, payload } = &record.kind
+            && kind == "public-certificate"
+        {
+            if record.exchange_id != 0 {
+                return Err(CaptureError::MalformedRecord(
+                    "certificate definition is not global",
+                ));
+            }
+            let definition: CertificateDefinition = serde_json::from_value(payload.clone())?;
+            definition.validate()?;
+            if !self.certificates.contains_key(&definition.sha256) {
+                self.certificate_bytes =
+                    self.certificate_bytes.saturating_add(definition.der.len());
+                if self.certificate_bytes > 256 * 1024 * 1024 {
+                    return Err(CaptureError::QuotaExceeded);
+                }
+                self.certificates
+                    .insert(definition.sha256, definition.der.into());
+            }
+        }
+        if let CaptureRecordKind::Performance(evidence) = &mut record.kind {
+            for certificate in evidence
+                .transports
+                .iter_mut()
+                .filter_map(|transport| transport.tls.as_mut())
+                .flat_map(|tls| tls.server_chain.iter_mut().chain(&mut tls.client_chain))
+            {
+                if let Some(der) = self.certificates.get(&certificate.sha256) {
+                    certificate.der = der.clone();
+                }
+            }
         }
         Ok(())
     }
@@ -1027,6 +1152,7 @@ impl<R: Read> CaptureReader<R> {
             .decode(&payload, index, self.limits.max_record_bytes)?;
         let (mut record, body_index) =
             serde_json::from_slice::<StoredRecord>(&payload)?.load_metadata()?;
+        self.resolve_certificates(&mut record)?;
         if let Some(body) = body_index {
             body.validate(self.limits.max_record_bytes)?;
             frame_bytes = frame_bytes
@@ -1128,6 +1254,8 @@ pub fn read_indexed_frame_with_codec(
     index: u64,
 ) -> Result<CaptureRecord, CaptureError> {
     let mut reader = CaptureReader {
+        certificates: HashMap::new(),
+        certificate_bytes: 0,
         input: input.take(frame_bytes),
         limits: limits.validate()?,
         records: 0,

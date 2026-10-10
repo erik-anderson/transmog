@@ -778,6 +778,106 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use transmog_tls::{SystemTrustSource, TrustSnapshot, UpstreamTlsPolicy};
     #[tokio::test]
+    async fn failed_https_records_verification_path_and_cipher_policy() {
+        use boring::ssl::{SslAcceptor, SslMethod, SslVersion};
+        use transmog_tls::{EndpointIdentity, PemTrustSource, ProxyCa};
+        for cipher_mismatch in [false, true] {
+            let ca = ProxyCa::generate("TLS failure fixture", 2).unwrap();
+            let leaf = ca
+                .issue(EndpointIdentity::parse("127.0.0.1").unwrap(), 1)
+                .unwrap();
+            let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+            acceptor.set_certificate(&leaf.certificate).unwrap();
+            acceptor.set_private_key(&leaf.private_key).unwrap();
+            acceptor
+                .set_max_proto_version(Some(SslVersion::TLS1_2))
+                .unwrap();
+            if cipher_mismatch {
+                acceptor
+                    .set_cipher_list("ECDHE-ECDSA-AES128-GCM-SHA256")
+                    .unwrap();
+            }
+            let acceptor = acceptor.build();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let origin = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                assert!(tokio_boring::accept(&acceptor, socket).await.is_err());
+            });
+            let unrelated = ProxyCa::generate("Unrelated TLS root", 2).unwrap();
+            let root = if cipher_mismatch {
+                ca.certificate()
+            } else {
+                unrelated.certificate()
+            };
+            let roots = PemTrustSource::from_pem(&root.to_pem().unwrap(), "Recorded failure trust")
+                .unwrap();
+            let factory = UpstreamTlsContextFactory::new(
+                Arc::new(TrustSnapshot::load(&roots, 123).unwrap()),
+                UpstreamTlsPolicy {
+                    maximum_version: SslVersion::TLS1_2,
+                    cipher_list: "ECDHE-ECDSA-AES256-GCM-SHA384".into(),
+                    ..UpstreamTlsPolicy::default()
+                },
+            );
+            let performance = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+            let client = HyperOriginClient::new(&factory)
+                .unwrap()
+                .with_performance(Some(performance.clone()));
+            let request = CanonicalRequest {
+                head: RequestHead {
+                    method: "GET".into(),
+                    target: transmog_core::Target {
+                        scheme: "https".into(),
+                        authority: address.to_string(),
+                        host: "127.0.0.1".into(),
+                        port: address.port(),
+                        path: "/failed".into(),
+                        query: None,
+                    },
+                    headers: HeaderBlock::new(),
+                    source_version: HttpLegVersion::Http1,
+                },
+                body: vec![],
+            };
+            assert!(
+                client
+                    .execute(
+                        request,
+                        HyperEgressMode::Http1Only,
+                        1024,
+                        Duration::from_secs(2)
+                    )
+                    .await
+                    .is_err()
+            );
+            let sample = performance.snapshot();
+            let transport = &sample.transports[0];
+            let tls = transport.tls.as_ref().unwrap();
+            assert_eq!(
+                transport.outcome,
+                transmog_core::performance::TransportOutcome::TlsFailed
+            );
+            assert_eq!(tls.trust_generation, Some(123));
+            assert_eq!(tls.server_name.as_deref(), Some("127.0.0.1"));
+            assert!(!tls.errors.is_empty());
+            assert!(
+                tls.offered_ciphers
+                    .iter()
+                    .any(|cipher| cipher == "ECDHE-ECDSA-AES256-GCM-SHA384")
+            );
+            if !cipher_mismatch {
+                assert!(!tls.server_chain.is_empty());
+                assert!(!tls.server_chain[0].der.is_empty());
+                assert!(matches!(
+                    tls.verification,
+                    Some(transmog_core::VerificationResult::Rejected { .. })
+                ));
+            }
+            origin.await.unwrap();
+        }
+    }
+    #[tokio::test]
     async fn separate_caller_pools_never_share_a_physical_origin_connection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -854,6 +954,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn h2_policy_change_preserves_connected_sessions_and_rejects_reconnect() {
         use transmog_tls::{
             DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, PemTrustSource,
@@ -889,12 +990,14 @@ mod tests {
             UpstreamTlsPolicy::default(),
         );
         let policy = transmog_core::connection_policy::OutboundProtocolPolicy::default();
+        let performance = PerformanceRecorder::new(SystemTime::now(), Instant::now());
         let client = HyperOriginClient::with_connection_policy(
             &factory,
             HappyEyeballsConfig::default(),
             policy.clone(),
         )
-        .unwrap();
+        .unwrap()
+        .with_performance(Some(performance.clone()));
         let request = || CanonicalRequest {
             head: RequestHead {
                 method: "GET".into(),
@@ -921,6 +1024,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.head.source_version, HttpLegVersion::Http2);
+        let sample = performance.snapshot();
+        let tls = sample.transports[0].tls.as_ref().unwrap();
+        assert_eq!(tls.server_chain.len(), 2);
+        assert_eq!(
+            tls.verification,
+            Some(transmog_core::VerificationResult::Verified)
+        );
+        assert_eq!(tls.trust_generation, Some(2));
+        assert!(
+            tls.server_chain
+                .iter()
+                .all(|certificate| !certificate.der.is_empty())
+        );
         policy.set(transmog_core::connection_policy::AllowedHttpProtocols {
             http1: true,
             http2: false,

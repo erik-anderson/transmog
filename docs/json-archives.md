@@ -5,6 +5,12 @@ desktop command-line file argument. Imported requests use the ordinary headers,
 body inspector, timings, connection and source-metadata views. NetLog is
 import-only; there is no NetLog exporter.
 
+Certificate context uses the same Certificates viewer as live traffic. Chromium's
+received PEM chain and nested verified path follow its
+[certificate event schema](https://chromium.googlesource.com/chromium/src/+/6eb6e4909a960030aa01b17ab3cca9987b5ceae2/net/log/net_log_event_type_list.h).
+Recorded browser verification, TLS errors and client-certificate counts remain
+original evidence. A count does not supply missing client certificate DER.
+
 HAR 1.x input preserves duplicate headers, HTTP versions, status text, page
 context, original timings and available payloads. HAR response content is decoded
 data, including base64 binary data; its original compression headers are retained

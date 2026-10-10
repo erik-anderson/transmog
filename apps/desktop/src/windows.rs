@@ -1023,6 +1023,15 @@ fn session_detail(
 }
 
 #[tauri::command]
+fn inspect_certificates(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::CertificateInspection, AppError> {
+    state.window_application(&window)?.inspect_certificates(&id)
+}
+
+#[tauri::command]
 async fn request_command(
     id: String,
     format: RequestCommandFormat,
@@ -1725,6 +1734,7 @@ pub fn run() {
                 traffic_view_rows,
                 release_traffic_view,
                 session_detail,
+                inspect_certificates,
                 inspect_headers,
                 copy_message_headers,
                 copy_message_url,

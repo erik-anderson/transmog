@@ -147,6 +147,9 @@ pub struct TransportObservation {
     pub tls_version: Option<String>,
     /// Whether the TLS session was resumed, when exposed by the adapter.
     pub tls_resumed: Option<bool>,
+    /// Public certificate references, verification and TLS negotiation context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<crate::TlsEvidence>,
     /// Negotiated cipher suite.
     pub cipher: Option<String>,
     /// Negotiated application protocol.
@@ -355,6 +358,7 @@ impl PerformanceEvidence {
                         .tunnel_destination
                         .as_ref()
                         .is_none_or(|value| value.len() <= 1024)
+                    && transport.tls.as_ref().is_none_or(crate::TlsEvidence::valid)
             })
             && self.protocols.iter().all(|protocol| {
                 matches!(

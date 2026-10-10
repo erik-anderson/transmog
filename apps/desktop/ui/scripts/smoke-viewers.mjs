@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {zstdCompressSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import {smokeTrafficList} from './smoke-traffic-list.mjs';
+import {smokeCertificates} from './smoke-certificates.mjs';
 
 // Native probes use the current plain indexed container; encrypted I/O is covered
 // by the CLI and Rust tests. Keep fixtures independent of historical layouts.
@@ -140,6 +141,7 @@ try{
 
   await viewer.evaluate(`${traffic}.closeTimings()`);
   // Real IPC and indexed TMCap pages must reach beyond the bounded preview limit.
+  await smokeCertificates(viewer,traffic,source,nativeFixture,screenshot);
   const byteSource=join(dirname(source),'large-byte-fixture.tmcap'),byteLength=32*1024*1024+17;
   const byteChunk=Array.from({length:1024*1024},(_,index)=>index%256);
   const byteRecords=[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/large-byte-body',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[{name:Array.from(Buffer.from('Content-Type')),value:Array.from(Buffer.from('application/octet-stream'))}]}}];

@@ -1,0 +1,19 @@
+<template>
+  <dialog w-ref="{certificateDialog}" class="certificate-dialog" aria-labelledby="certificate-heading" @close="{closed()}">
+    <h2 id="certificate-heading">Certificates and TLS</h2>
+    <label>Connection<select aria-label="Certificate connection" @change="{changeConnection(e)}" ?disabled="{{certificateBusy}}"><for each="connection in certificateConnections"><option key="{{connection.id}}" value="{{connection.id}}" ?selected="{{connection.selected}}">{{connection.title}}</option></for></select></label>
+    <div class="certificate-scroll">
+      <p class="field-help">Verification and trust describe the original connection. Opening this viewer does not verify the chain against this computer’s current trust.</p>
+      <for each="error in certificateErrors"><p key="{{error.id}}" class="certificate-error">{{error.text}}</p></for>
+      <details ?open="{{!certificateServerChain.length}}"><summary>Connection and negotiation</summary><dl class="certificate-facts"><for each="field in certificateConnectionFields"><div key="{{field.label}}"><dt>{{field.label}}</dt><dd>{{field.value}}</dd></div></for></dl></details>
+      <if condition="certificateServerChain.length"><h3>Server certificate chain</h3><div class="certificate-chain"><for each="certificate in certificateServerChain"><button key="{{certificate.id}}" type="button" class="secondary" ?data-selected="{{certificate.selected}}" @click="{selectCertificate(certificate.id)}">{{certificate.label}}</button></for></div></if>
+      <if condition="certificateClientChain.length"><h3>Client authentication certificate chain</h3><div class="certificate-chain"><for each="certificate in certificateClientChain"><button key="{{certificate.id}}" type="button" class="secondary" ?data-selected="{{certificate.selected}}" @click="{selectCertificate(certificate.id)}">{{certificate.label}}</button></for></div></if>
+      <h3 class="certificate-subject">{{certificateSubject}}</h3><if condition="certificateUnavailable"><p>{{certificateUnavailable}}</p></if>
+      <nav class="certificate-tabs" aria-label="Certificate representation"><button type="button" class="secondary" ?data-selected="{{certificateTab == 'details'}}" @click="{showTab('details')}">Details</button><button type="button" class="secondary" ?data-selected="{{certificateTab == 'pem'}}" ?disabled="{{!certificateHasBytes}}" @click="{showTab('pem')}">PEM</button><button type="button" class="secondary" ?data-selected="{{certificateTab == 'hex'}}" ?disabled="{{!certificateHasBytes}}" @click="{showTab('hex')}">Hex</button></nav>
+      <div w-ref="{certificateRepresentation}" class="certificate-representation"><if condition="certificateTab == 'details'"><dl class="certificate-facts"><for each="field in certificateFields"><div key="{{field.label}}"><dt>{{field.label}}</dt><dd>{{field.value}}</dd></div></for></dl></if>
+      <if condition="certificateTab == 'pem'"><pre class="certificate-pem" tabindex="0">{{certificatePem}}</pre></if>
+      <if condition="certificateTab == 'hex'"><div class="certificate-hex"><hex-viewer :preview="{{certificateHex}}"></hex-viewer></div></if></div>
+    </div>
+    <p role="status">{{certificateStatus}}</p><footer class="actions"><button type="button" class="secondary" @click="{copyPem()}" ?disabled="{{!certificateHasBytes || certificateBusy}}">Copy PEM</button><button type="button" class="secondary" @click="{close()}">Close</button></footer>
+  </dialog>
+</template>

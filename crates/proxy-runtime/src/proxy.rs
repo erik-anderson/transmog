@@ -830,6 +830,7 @@ struct ConnectionContext {
 }
 
 struct ClientTlsObservation {
+    evidence: transmog_core::TlsEvidence,
     began: Instant,
     done: Instant,
     certificate_began: Instant,
@@ -1071,7 +1072,14 @@ impl ProxyState {
         .map_err(|error| ProxyRuntimeError::DownstreamTlsHandshake(error.to_string()))?;
         normalize_connect_identity(authority.host(), tls.ssl().servername(NameType::HOST_NAME))?;
         let negotiated_h2 = tls.ssl().selected_alpn_protocol() == Some(b"h2");
+        let public_tls = transmog_tls::TlsCapture::new(transmog_core::TlsEvidence {
+            server_name: Some(authority.host().to_owned()),
+            ..transmog_core::TlsEvidence::default()
+        });
+        public_tls.completed(tls.ssl(), true);
+        public_tls.server_issuers(leaf.issuer_chain.iter().map(std::ops::Deref::deref));
         let tls_observation = Arc::new(ClientTlsObservation {
+            evidence: public_tls.snapshot(),
             began: tls_began,
             done: self.clock.instant(),
             certificate_began,
@@ -3565,6 +3573,7 @@ impl ClientPerformanceSource {
             }),
             tls_version: tls.map(|tls| tls.version.clone()),
             tls_resumed: tls.map(|tls| tls.resumed),
+            tls: tls.map(|tls| tls.evidence.clone()),
             cipher: tls.and_then(|tls| tls.cipher.clone()),
             alpn: tls.and_then(|tls| tls.alpn.clone()),
             bytes_read: Some(read),

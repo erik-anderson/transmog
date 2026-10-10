@@ -278,8 +278,29 @@ fn har(
     if entries.len() > MAX_SESSIONS {
         return Err(invalid("HAR exceeds the viewer session limit"));
     }
-    let capture_context = without_fields(log, &["entries"]);
+    let capture_context = without_fields(log, &["entries", "_transmogCertificates"]);
+    let mut certificates = HashMap::<String, Arc<[u8]>>::new();
+    let mut certificate_bytes = 0_usize;
+    if let Some(definitions) = log.get("_transmogCertificates") {
+        let definitions: Vec<transmog_capture::CertificateDefinition> =
+            serde_json::from_value(definitions.clone())
+                .map_err(|_| invalid("Invalid HAR public certificate dictionary"))?;
+        for definition in definitions {
+            definition
+                .validate()
+                .map_err(|_| invalid("Invalid HAR public certificate"))?;
+            certificate_bytes = certificate_bytes.saturating_add(definition.der.len());
+            if certificate_bytes > super::MAX_HEAD_BYTES
+                || certificates
+                    .insert(definition.sha256, definition.der.into())
+                    .is_some()
+            {
+                return Err(invalid("Excessive or duplicate HAR certificates"));
+            }
+        }
+    }
     let mut result = empty("har", capture_context);
+    result.index_bytes = certificate_bytes;
     let mut spool = BodySpool::new()?;
     for (position, entry) in entries.iter().enumerate() {
         if canceled.load(Ordering::Acquire) {
@@ -346,6 +367,73 @@ fn har(
                 peer: Some(peer.into()),
                 ..TransportObservation::default()
             });
+        }
+        if let Some(saved) = entry.get("_transmogPerformance") {
+            let mut performance: transmog_core::performance::PerformanceEvidence =
+                serde_json::from_value(saved.clone())
+                    .map_err(|_| invalid("Invalid HAR transport evidence"))?;
+            if !performance.valid() {
+                return Err(invalid("HAR transport evidence exceeds its limits"));
+            }
+            for certificate in performance
+                .transports
+                .iter_mut()
+                .filter_map(|transport| transport.tls.as_mut())
+                .flat_map(|tls| tls.server_chain.iter_mut().chain(&mut tls.client_chain))
+            {
+                if let Some(der) = certificates.get(&certificate.sha256) {
+                    certificate.der = der.clone();
+                }
+            }
+            snapshot.performance.merge(&performance);
+        }
+        if entry.get("_transmogPerformance").is_none()
+            && let Some(security) = entry
+                .get("_securityDetails")
+                .or_else(|| resp.get("_securityDetails"))
+        {
+            let mut tls = transmog_core::TlsEvidence {
+                server_name: Some(request.target.host.clone()),
+                ..transmog_core::TlsEvidence::default()
+            };
+            if let Some(fields) = security.as_object() {
+                for (name, value) in fields {
+                    if name.len() <= 252 && tls.details.len() < 64 {
+                        let text = value
+                            .as_str()
+                            .map_or_else(|| value.to_string(), str::to_owned);
+                        if text.len() <= 4096 {
+                            tls.details.insert(format!("HAR {name}"), text);
+                        }
+                    }
+                }
+            }
+            if !tls.details.is_empty() {
+                let transport = if let Some(transport) = snapshot.performance.transports.last_mut()
+                {
+                    transport
+                } else {
+                    snapshot.performance.transports.push(TransportObservation {
+                        leg: "upstream".into(),
+                        connection_id: string(entry, "connection").into(),
+                        ..TransportObservation::default()
+                    });
+                    snapshot
+                        .performance
+                        .transports
+                        .last_mut()
+                        .expect("inserted transport")
+                };
+                transport.tls_version = security["protocol"]
+                    .as_str()
+                    .filter(|value| value.len() <= 512)
+                    .map(str::to_owned);
+                transport.cipher = security["cipher"]
+                    .as_str()
+                    .filter(|value| value.len() <= 512)
+                    .map(str::to_owned);
+                transport.tls = Some(tls);
+            }
         }
         let mut timings = BTreeMap::new();
         for key in [
@@ -788,5 +876,87 @@ mod tests {
         assert!(detail.performance.points.is_empty());
         assert_eq!(detail.saved_evidence["NetLog elapsed (ms)"], "4");
         assert_eq!(detail.bodies[1].observed_bytes, 4);
+    }
+    #[tokio::test]
+    async fn har_security_summaries_are_visible_without_inventing_certificate_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let app = application(root.path());
+        let path = root.path().join("summary.har");
+        let document = json!({"log":{"version":"1.2","entries":[{"startedDateTime":"2026-10-10T12:00:00Z","time":1,"request":{"method":"GET","url":"https://localhost/test","httpVersion":"HTTP/2","headers":[]},"response":{"status":200,"httpVersion":"HTTP/2","headers":[],"content":{"text":""}},"_securityDetails":{"protocol":"TLS 1.3","issuer":"Recorded issuer","subjectName":"localhost"}}]}});
+        std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+        let id = load(&app, path, "har-security").await;
+        let inspection = app.inspect_certificates(&id).unwrap();
+        assert!(inspection.certificates.is_empty());
+        assert!(
+            inspection.connections[0]
+                .fields
+                .iter()
+                .any(|field| field.label == "HAR issuer" && field.value == "Recorded issuer")
+        );
+        assert!(
+            inspection.connections[0]
+                .fields
+                .iter()
+                .any(|field| field.label == "TLS version" && field.value == "TLS 1.3")
+        );
+        assert!(
+            inspection.connections[0]
+                .fields
+                .iter()
+                .any(|field| field.label == "Recorded verification"
+                    && field.value.starts_with("Not recorded"))
+        );
+    }
+
+    #[tokio::test]
+    async fn netlog_maps_nested_certificate_paths_client_counts_and_verification_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let app = application(root.path());
+        let path = root.path().join("tls-netlog.json");
+        let leaf = include_str!("../tests/fixtures/certificates/leaf.pem");
+        let issuer = include_str!("../tests/fixtures/certificates/root.pem");
+        let source = |id, kind| json!({"id":id,"type":kind});
+        let log = json!({"constants":{"logSourceType":{"URL_REQUEST":1,"SOCKET":2,"CERT_VERIFIER_JOB":3},"logEventTypes":{"URL_REQUEST_START_JOB":1,"HTTP_TRANSACTION_SEND_REQUEST_HEADERS":2,"BOUND":3,"SSL_CERTIFICATES_RECEIVED":4,"CERT_VERIFIER_JOB":5,"SSL_CLIENT_CERT_PROVIDED":6,"SSL_HANDSHAKE_ERROR":7},"logEventPhase":{"PHASE_NONE":0,"PHASE_BEGIN":1,"PHASE_END":2}},"events":[
+            {"source":source(1,1),"type":1,"phase":1,"time":"1","params":{"url":"https://localhost/test","method":"GET"}},
+            {"source":source(1,1),"type":2,"phase":0,"time":"2","params":{"line":"GET /test HTTP/2","headers":["Accept: */*"]}},
+            {"source":source(1,1),"type":3,"phase":0,"time":"3","params":{"source_dependency":{"id":2}}},
+            {"source":source(2,2),"type":4,"phase":0,"time":"4","params":{"certificates":[leaf]}},
+            {"source":source(2,2),"type":6,"phase":0,"time":"5","params":{"cert_count":1}},
+            {"source":source(2,2),"type":3,"phase":0,"time":"6","params":{"source_dependency":{"id":3}}},
+            {"source":source(3,3),"type":5,"phase":2,"time":"7","params":{"net_error":-202,"cert_status":4,"verified_cert":{"certificates":[leaf,issuer]}}},
+            {"source":source(2,2),"type":7,"phase":0,"time":"8","params":{"net_error":-202,"ssl_lib_error":123}}
+        ]});
+        std::fs::write(&path, serde_json::to_vec(&log).unwrap()).unwrap();
+        let id = load(&app, path, "netlog-tls").await;
+        let view = app.inspect_certificates(&id).unwrap();
+        assert_eq!(view.certificates.len(), 2);
+        let connection = &view.connections[0];
+        assert_eq!(connection.title, "Browser → server");
+        assert_eq!(connection.server_chain.len(), 2);
+        assert!(connection.client_chain.is_empty());
+        assert!(
+            connection
+                .fields
+                .iter()
+                .any(|field| field.label == "Chromium client certificate count"
+                    && field.value == "1")
+        );
+        assert!(
+            connection
+                .fields
+                .iter()
+                .any(|field| field.value.contains("Rejected (code -202"))
+        );
+        assert!(
+            connection
+                .errors
+                .iter()
+                .any(|error| error.contains("SSL_HANDSHAKE_ERROR"))
+        );
+        assert!(
+            view.certificates
+                .iter()
+                .all(|certificate| !certificate.der_base64.is_empty())
+        );
     }
 }

@@ -9,12 +9,15 @@ import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTe
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
+import type { CertificateViewer } from '../certificate-viewer/certificate-viewer.js';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  certificateViewer!:CertificateViewer;
+  showCertificates(event:Event):void {if(this.selectedSessionId)void this.certificateViewer.show(this.selectedSessionId,event.currentTarget as HTMLElement);}
   @attr({attribute:'viewer-mode',mode:'boolean'}) viewerMode = false;
   @observable timingTitle="Timings and transport";
   @observable timingSummary="";

@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+transmog-core = { version = "=0.1.2", path = "../proxy-core" }
 boring.workspace = true
 rustls-native-certs.workspace = true
 serde.workspace = true

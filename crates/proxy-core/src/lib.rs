@@ -20,6 +20,7 @@ mod protocol;
 pub mod route;
 mod session;
 mod task;
+mod tls_evidence;
 mod translation;
 pub mod upstream;
 
@@ -36,6 +37,7 @@ pub use message::{
 pub use policy::{FallbackDecision, Replayability, RoutePolicy};
 pub use protocol::{HttpLegVersion, TlsSummary, VerificationResult};
 pub use session::{ClientIdentity, ConnectionId, SessionId, SessionMetadata, StreamId};
+pub use tls_evidence::{PublicCertificate, TlsEvidence};
 pub use translation::{
     BodySemantics, MessageKind, TranslationError, TranslationOptions, body_semantics,
     prepare_headers,

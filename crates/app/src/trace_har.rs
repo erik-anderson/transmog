@@ -72,18 +72,47 @@ pub(crate) fn write(
         .catalog()
         .project_retained(Clone::clone);
     sessions.sort_by_key(|session| session.metadata.started_at);
+    let mut certificates = std::collections::BTreeMap::new();
+    for certificate in sessions
+        .iter()
+        .flat_map(|session| &session.performance.transports)
+        .filter_map(|transport| transport.tls.as_ref())
+        .flat_map(|tls| tls.server_chain.iter().chain(&tls.client_chain))
+    {
+        if !certificate.der.is_empty() {
+            certificates
+                .entry(certificate.sha256.clone())
+                .or_insert_with(|| transmog_capture::CertificateDefinition {
+                    sha256: certificate.sha256.clone(),
+                    der: certificate.der.to_vec(),
+                });
+        }
+    }
     let mut temporary = tempfile::NamedTempFile::new_in(
         destination
             .parent()
             .ok_or_else(|| error("Choose a HAR destination"))?,
     )
     .map_err(|_| error("HAR output could not be created"))?;
+    for certificate in certificates.values() {
+        certificate
+            .validate()
+            .map_err(|_| error("Invalid retained public certificate"))?;
+    }
     temporary
         .write_all(b"{\"log\":{\"version\":\"1.2\",\"creator\":")
         .map_err(|_| error("HAR output could not be written"))?;
     serde_json::to_writer(
         &mut temporary,
         &json!({"name":"Transmog","version":env!("CARGO_PKG_VERSION")}),
+    )
+    .map_err(|_| error("HAR output could not be written"))?;
+    temporary
+        .write_all(b",\"_transmogCertificates\":")
+        .map_err(|_| error("HAR output could not be written"))?;
+    serde_json::to_writer(
+        &mut temporary,
+        &certificates.into_values().collect::<Vec<_>>(),
     )
     .map_err(|_| error("HAR output could not be written"))?;
     temporary
@@ -258,6 +287,6 @@ fn entry(
         .filter(|n| *n >= 0.0)
         .sum::<f64>();
     Ok(
-        json!({"startedDateTime":date(snapshot.metadata.started_at),"time":duration,"request":req,"response":{"status":response.map_or(0,|r|r.head.status),"statusText":snapshot.performance.protocols.iter().find(|p|p.boundary=="client-response").and_then(|p|p.reason.as_deref()).unwrap_or(""),"httpVersion":protocol("client-response"),"cookies":[],"headers":headers(resp_headers,redact),"content":content,"redirectURL":header(resp_headers,"location"),"headersSize":-1,"bodySize":size(ExchangeBoundary::ClientResponse).map_or(-1_i128,i128::from)},"cache":{},"timings":timings}),
+        json!({"startedDateTime":date(snapshot.metadata.started_at),"time":duration,"request":req,"response":{"status":response.map_or(0,|r|r.head.status),"statusText":snapshot.performance.protocols.iter().find(|p|p.boundary=="client-response").and_then(|p|p.reason.as_deref()).unwrap_or(""),"httpVersion":protocol("client-response"),"cookies":[],"headers":headers(resp_headers,redact),"content":content,"redirectURL":header(resp_headers,"location"),"headersSize":-1,"bodySize":size(ExchangeBoundary::ClientResponse).map_or(-1_i128,i128::from)},"cache":{},"timings":timings,"_transmogPerformance":snapshot.performance}),
     )
 }

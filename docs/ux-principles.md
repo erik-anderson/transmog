@@ -306,6 +306,14 @@ measured heights with scroll anchoring to preserve the request being read.
 Search match review reveals and marks the current request in Traffic while
 preserving multiselection. Closing review returns focus to that request.
 
+Certificates opens the TLS context of that request's physical connections.
+Separate the client-facing proxy certificate from the origin server path and
+client authentication certificates. Show public certificate bytes, recorded
+verification and negotiation failures together. Label fingerprints or imported
+summaries whose certificate bytes were omitted. Recorded trust belongs to the
+original connection; opening the viewer must not imply verification against the
+current computer's trust or expose private keys or session secrets.
+
 Timings opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish
 zero from unavailable, shared connection setup from per-request work, and bytes

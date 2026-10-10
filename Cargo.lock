@@ -6861,6 +6861,7 @@ name = "transmog-app"
 version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
+ "boring",
  "bytes",
  "getrandom 0.4.3",
  "http",
@@ -6930,6 +6931,7 @@ version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "boring",
  "crc32fast",
  "getrandom 0.4.3",
  "serde",
@@ -7060,6 +7062,7 @@ dependencies = [
 name = "transmog-http"
 version = "0.1.2"
 dependencies = [
+ "boring",
  "bytes",
  "http",
  "http-body",
@@ -7231,6 +7234,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "thiserror 2.0.21",
+ "transmog-core",
 ]
 
 [[package]]

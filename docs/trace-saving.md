@@ -6,6 +6,15 @@ Undo a removal before saving if those entries should be included. The file dialo
 confirms overwriting, and an existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact.
 
+Select a request and choose **Certificates…** to inspect its original TLS
+connections, server and client authentication chains, public PEM/DER and recorded
+verification failures. TMCap shares certificate definitions across requests.
+Extended SAZ stores them under `transmog/certificates/`; HAR uses a
+`_transmogCertificates` dictionary with per-entry `_transmogPerformance`
+references. Ordinary readers can ignore these extensions. Imported Chromium
+NetLog PEM paths use the same viewer, while SAZ HTTPS flags and HAR security
+summaries remain available even when their files omitted certificate bytes.
+
 The Save trace dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
 fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
 extended fidelity** to preserve original source associations and additional

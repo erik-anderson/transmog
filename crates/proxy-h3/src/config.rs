@@ -78,8 +78,19 @@ pub fn build_quiche_config(
     factory: &UpstreamTlsContextFactory,
     limits: H3TransportLimits,
 ) -> Result<quiche::Config, H3ConfigError> {
+    build_quiche_config_captured(factory, limits, None)
+}
+
+pub(crate) fn build_quiche_config_captured(
+    factory: &UpstreamTlsContextFactory,
+    limits: H3TransportLimits,
+    capture: Option<&transmog_tls::TlsCapture>,
+) -> Result<quiche::Config, H3ConfigError> {
     limits.validate()?;
-    let tls = factory.quiche_context_builder()?;
+    let mut tls = factory.quiche_context_builder()?;
+    if let Some(capture) = capture {
+        capture.attach_context(&mut tls).map_err(TrustError::from)?;
+    }
     let mut config = quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, tls)?;
     // The shared factory already enables peer verification and installs the
     // identity callback. Calling `Config::verify_peer` here would replace

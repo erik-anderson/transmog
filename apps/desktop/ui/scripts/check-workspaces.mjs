@@ -9,6 +9,7 @@ import { checkTrafficList } from './check-traffic-list.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
+import { checkCertificates } from './check-certificates.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -213,6 +214,10 @@ await page.addInitScript((workspace) => {
         case 'save_request_body': state.savedRequestBody=args;return {text:'fixture saved body command',notices:[],bodyFileRequired:true,bodyFileAvailable:true};
         case 'copy_message_url': state.lastCopiedUrl=structuredClone(args);return state.completeCopiedUrl??detail(args.id).requests[0].target;
         case 'copy_all_headers': return 'GET http://example.test/second HTTP/1.1\r\nAccept: */*\r\n\r\n\r\nHTTP/1.1 200 OK';
+        case 'inspect_certificates': {
+          if(state.deferCertificates)await new Promise(resolve=>state.releaseCertificates=resolve);
+          return state.certificateInspection??{connections:[],certificates:[]};
+        }
         case 'session_detail':
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
           if (state.evictedIds?.includes(args.id) || state.dismissedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
@@ -1879,6 +1884,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/timings-compact.png')});
   await timing.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
+  await checkCertificates(page,root);
   await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__opaqueOriginal=structuredClone(workspace.selectedDetail);const detail=structuredClone(workspace.selectedDetail);detail.performance={points:[],protocols:[],transports:[{leg:'upstream',connectionId:'opaque',outcome:'connected',tunnelDestination:'example.test:443',bytesRead:57,bytesWritten:31}]};globalThis.__workspaceFixture.performance=detail.performance;workspace.applyDetail(detail);});
   await page.locator('traffic-workspace message-inspector[side="response"]').getByText(/Opaque CONNECT tunnel to example.test:443/).waitFor({state:'visible'});
   await page.locator('.selection-actions').getByRole('button',{name:'Timings',exact:true}).click();

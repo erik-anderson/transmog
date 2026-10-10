@@ -653,6 +653,40 @@ fn import_saz(
             started,
         );
         let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), ended);
+        if evidence.is_none() {
+            for (leg, prefix) in [("client", "https-client-"), ("upstream", "https-server-")] {
+                let details = session
+                    .metadata
+                    .flags
+                    .iter()
+                    .filter(|(key, _)| key.to_ascii_lowercase().starts_with(prefix))
+                    .filter(|(key, value)| key.len() <= 256 && value.len() <= 4096)
+                    .take(64)
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                if !details.is_empty() {
+                    let value = |suffix: &str| {
+                        details
+                            .iter()
+                            .find(|(key, _)| key.eq_ignore_ascii_case(&format!("{prefix}{suffix}")))
+                            .map(|(_, value)| value.clone())
+                    };
+                    snapshot.performance.transports.push(
+                        transmog_core::performance::TransportObservation {
+                            leg: leg.into(),
+                            connection_id: format!("saz-{}-{leg}", session.source_id),
+                            tls_version: value("protocol"),
+                            cipher: value("cipher"),
+                            tls: Some(transmog_core::TlsEvidence {
+                                details,
+                                ..transmog_core::TlsEvidence::default()
+                            }),
+                            ..transmog_core::performance::TransportObservation::default()
+                        },
+                    );
+                }
+            }
+        }
         if matches!(
             session
                 .metadata
@@ -1698,6 +1732,45 @@ mod tests {
             operation_id: operation_id.into(),
             max_file_bytes: 64 * 1024 * 1024,
         }
+    }
+
+    #[tokio::test]
+    async fn conventional_saz_https_flags_are_visible_without_invented_der_or_trust() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("https-flags.saz");
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name,bytes) in [("raw/1_c.txt",b"GET https://localhost/flags HTTP/1.1\r\nHost: localhost\r\n\r\n".as_slice()),("raw/1_s.txt",b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".as_slice()),("raw/1_m.xml",b"<Session SID=\"1\" BitFlags=\"1\"><SessionFlags><SessionFlag N=\"HTTPS-SERVER-CIPHER\" V=\"Aes256 256bits\"/><SessionFlag N=\"HTTPS-CLIENT-CERTIFICATE\" V=\"Original certificate filename\"/></SessionFlags></Session>".as_slice())] {
+            zip.start_file(name,zip::write::SimpleFileOptions::default()).unwrap();zip.write_all(bytes).unwrap();
+        }
+        std::fs::write(&path, zip.finish().unwrap().into_inner()).unwrap();
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(path, "https-flags"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = workspace
+            .query_sessions(SessionQueryInput::default())
+            .unwrap();
+        let inspection = workspace
+            .inspect_certificates(&rows.sessions[0].id)
+            .unwrap();
+        assert!(inspection.certificates.is_empty());
+        assert_eq!(inspection.connections.len(), 2);
+        assert!(
+            inspection
+                .connections
+                .iter()
+                .flat_map(|connection| &connection.fields)
+                .any(|field| field.label == "Cipher" && field.value == "Aes256 256bits")
+        );
+        assert!(
+            inspection
+                .connections
+                .iter()
+                .flat_map(|connection| &connection.fields)
+                .any(|field| field.label == "HTTPS-CLIENT-CERTIFICATE"
+                    && field.value == "Original certificate filename")
+        );
     }
 
     #[tokio::test]

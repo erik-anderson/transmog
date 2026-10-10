@@ -65,6 +65,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "traffic_view_rows"
             | "release_traffic_view"
             | "session_detail"
+            | "inspect_certificates"
             | "inspect_headers"
             | "copy_message_headers"
             | "copy_message_url"
@@ -317,6 +318,7 @@ mod tests {
             "execute_composer",
             "request_command",
             "read_body_range",
+            "inspect_certificates",
             "copy_message_url",
             "open_main_window",
         ] {

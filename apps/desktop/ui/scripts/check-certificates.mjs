@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {resolve} from 'node:path';
+import {X509Certificate,createHash} from 'node:crypto';
+
+export async function checkCertificates(page, root) {
+  const certificates=[];
+  for(const name of ['leaf','root']) {
+    const pem=await readFile(resolve(root,'../../../crates/app/tests/fixtures/certificates/'+name+'.pem'),'utf8'),certificate=new X509Certificate(pem);
+    certificates.push({sha256:createHash('sha256').update(certificate.raw).digest('hex'),subject:certificate.subject,fields:[{label:'Subject',value:certificate.subject},{label:'Issuer',value:certificate.issuer},{label:'SHA-256',value:createHash('sha256').update(certificate.raw).digest('hex')}],pem,derBase64:certificate.raw.toString('base64'),unavailable:''});
+  }
+  const inspection={certificates,connections:[{id:'upstream:failed',title:'Transmog → server',fields:[{label:'Recorded verification',value:'Rejected (code 20, depth 1)'},{label:'Offered cipher suites',value:'ECDHE-ECDSA-AES128-GCM-SHA256'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[certificates[0].sha256],errors:['Certificate issuer was not trusted by the recorded snapshot']},{id:'client:browser',title:'Client → Transmog',fields:[{label:'Recorded verification',value:'Not recorded or verification was not reached'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]}]};
+  await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
+  const trigger=page.locator('.selection-actions').getByRole('button',{name:'Certificates…',exact:true});await trigger.click();
+  const dialog=page.locator('.certificate-dialog[open]');
+  await dialog.getByText(inspection.connections[0].errors[0],{exact:true}).waitFor();
+  await dialog.getByText('Client authentication certificate chain',{exact:true}).waitFor();
+  await dialog.locator('.certificate-chain').first().getByRole('button').nth(1).click();
+  assert.match(await dialog.locator('.certificate-subject').textContent(),/fixture root/);
+  await dialog.getByRole('button',{name:'PEM',exact:true}).click();
+  assert.match(await dialog.locator('.certificate-pem').textContent(),/BEGIN CERTIFICATE/);
+  await dialog.getByRole('button',{name:'Copy PEM',exact:true}).click();
+  await dialog.getByText('Public certificate PEM copied.',{exact:true}).waitFor();
+  assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/BEGIN CERTIFICATE/);
+  await dialog.getByRole('button',{name:'Hex',exact:true}).click();await dialog.locator('.hex-row').first().waitFor();
+  assert.equal(await dialog.locator('.hex-row').first().evaluate(node=>{const rect=node.getBoundingClientRect();return rect.height>0&&rect.y>=0&&rect.bottom<=innerHeight;}),true,'The selected certificate Hex rows were left outside the visible dialog');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/certificates-wide.png')});
+  await page.setViewportSize({width:640,height:520});
+  const bounds=await dialog.boundingBox();assert.ok(bounds.width<=640&&bounds.height<=520);
+  assert.equal(await dialog.getByRole('button',{name:'Close',exact:true}).evaluate(node=>{const rect=node.getBoundingClientRect();return node.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===node;}),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/certificates-compact.png')});
+  await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});
+  assert.equal(await trigger.evaluate(node=>node===node.getRootNode().activeElement),true);
+  await page.setViewportSize({width:1280,height:800});
+  await page.evaluate(()=>globalThis.__workspaceFixture.certificateInspection={certificates:[],connections:[{id:'none',title:'TLS context unavailable',fields:[],serverChain:[],clientChain:[],errors:[]}]});
+  await trigger.click();await page.locator('.certificate-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
+  await page.locator('.certificate-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
+  // Late replies from a closed dialog must not replace the reopened selection.
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCertificates=true;});await trigger.click();await page.keyboard.press('Escape');
+  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.deferCertificates=false;fixture.releaseCertificates();});
+  await trigger.click();await page.locator('.certificate-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
+  await page.locator('.certificate-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.certificateInspection;});
+}

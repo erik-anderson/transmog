@@ -284,6 +284,31 @@ impl UpstreamTlsContextFactory {
         &self.snapshot
     }
 
+    /// Creates connection-specific public evidence before attempting a handshake.
+    pub fn capture(&self, server_name: Option<String>, alpn: Vec<String>) -> crate::TlsCapture {
+        let label = |version| {
+            if version == SslVersion::TLS1_2 {
+                "TLS1.2".into()
+            } else if version == SslVersion::TLS1_3 {
+                "TLS1.3".into()
+            } else {
+                format!("{version:?}")
+            }
+        };
+        let mut versions = vec![label(self.policy.minimum_version)];
+        if self.policy.maximum_version != self.policy.minimum_version {
+            versions.push(label(self.policy.maximum_version));
+        }
+        crate::TlsCapture::new(transmog_core::TlsEvidence {
+            server_name,
+            offered_versions: versions,
+            offered_alpn: alpn,
+            trust_generation: Some(self.snapshot.generation()),
+            trust_source: Some(self.snapshot.source_description().to_owned()),
+            ..transmog_core::TlsEvidence::default()
+        })
+    }
+
     /// Creates the connector used by Hyper's HTTP/1.1 and HTTP/2 adapter.
     ///
     /// # Errors
@@ -326,7 +351,11 @@ impl UpstreamTlsContextFactory {
 
     fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
         builder.set_cert_store((*self.snapshot.store).clone());
-        builder.set_verify_callback(SslVerifyMode::PEER, verify_peer_identity);
+        builder.set_verify_callback(SslVerifyMode::PEER, |accepted, context| {
+            let accepted = verify_peer_identity(accepted, context);
+            crate::evidence::verification(context, accepted);
+            accepted
+        });
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         builder.set_cipher_list(&self.policy.cipher_list)?;
