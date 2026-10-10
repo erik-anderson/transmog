@@ -18,6 +18,10 @@ policy, the single-TLS-family graph and generated supply-chain artifacts. It doe
 not install certificates or modify system proxy settings. Tests define individual
 cases; this guide describes which gates to use instead of copying their inventory.
 
+The Chromium HAR/NetLog import regression uses sanitized, checked-in archives
+and runs in the ordinary Rust suite without a browser or network connection.
+See [browser fixtures](../crates/app/tests/fixtures/browser/README.md) for regeneration.
+
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:
 

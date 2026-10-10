@@ -521,11 +521,9 @@ mod tests {
         bytes
     }
     #[tokio::test]
-    #[ignore = "Generate local placeholder browser archives with scripts/generate-browser-archives.mjs first"]
     async fn browser_produced_archives_preserve_http_heads_and_response_content() {
-        let archives = std::path::PathBuf::from(
-            std::env::var("TRANSMOG_BROWSER_ARCHIVES").expect("browser archive directory"),
-        );
+        let archives =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/browser");
         for format in ["har", "netlog"] {
             let root = tempfile::tempdir().unwrap();
             let app = application(root.path());
@@ -549,12 +547,23 @@ mod tests {
                 .collect::<Vec<_>>();
             assert!(requests.len() >= 2);
             for request in requests {
-                assert_eq!(request.response_heads.last().unwrap().head.status, 200);
-                let id = format!("{:032x}", request.exchange_id.0);
-                assert!(
-                    !read(&app, &id).is_empty(),
-                    "Browser response was unavailable in {format}"
+                let head = &request.response_heads.last().unwrap().head;
+                assert_eq!(head.status, 200);
+                assert_eq!(
+                    head.headers.values("x-placeholder").next(),
+                    Some(b"placeholder".as_slice())
                 );
+                let target = request.metadata.original_target.as_target();
+                assert_eq!(target.port, 8080);
+                let expected = if target.path == "/style.css" {
+                    assert_eq!(target.query.as_deref(), Some("placeholder=value"));
+                    b"body { color: rgb(10, 20, 30); }".as_slice()
+                } else {
+                    assert_eq!(target.path, "/");
+                    b"<!doctype html><link rel=\"stylesheet\" href=\"/style.css?placeholder=value\"><h1>Placeholder</h1>".as_slice()
+                };
+                let id = format!("{:032x}", request.exchange_id.0);
+                assert_eq!(read(&app, &id), expected, "{format}: {}", target.path);
             }
         }
     }
