@@ -448,6 +448,14 @@ impl ScriptRegistry {
         }
     }
 
+    pub(crate) fn activity_hint(&self) -> (u64, usize) {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (active.workspace.generation, active.workspace.active.len())
+    }
+
     fn build_snapshot(
         &self,
         workspace: ScriptWorkspace,

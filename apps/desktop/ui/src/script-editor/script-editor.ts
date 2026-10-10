@@ -301,6 +301,7 @@ export class ScriptEditor extends WorkspaceElement {
   }
 
   private renderScriptStatus(message: string, status: ScriptStatus): void {
+    this.$emit('script-activity-change',{generation:status.generation,activeCount:status.active.length});
     const active=status.active.find(item=>item.manifest.id==='user-script');this.scriptActive=Boolean(active);this.activeScriptText=active?'On · revision '+active.manifest.revision:'Paused';
     this.scriptText = `${message} ${status.active.length} active script${status.active.length === 1 ? '' : 's'}; ${status.saved.length} saved draft${status.saved.length === 1 ? '' : 's'}.`;
   }

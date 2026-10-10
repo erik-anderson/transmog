@@ -21,6 +21,18 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable automationEnabledCount=0;
+  @observable automationEnabledLabel='';
+  private enabledScriptCount=0;
+  private scriptGeneration=0;
+  private updateAutomationBadge():void {
+    const count=(this.autoresponseState?.rules??[]).filter(rule=>rule.enabled!==false&&!rule.request.responseAsset&&(rule.request.userAgent||rule.request.headers.length||rule.request.replaceBody!=null||rule.request.discardBody||rule.request.abortReason||rule.response.headers.length||rule.response.replaceBody!=null||rule.response.discardBody||rule.response.abortReason)).length;
+    this.automationEnabledCount=count+this.enabledScriptCount;
+    this.automationEnabledLabel=`${count} enabled rule${count===1?'':'s'} · ${this.enabledScriptCount} enabled script${this.enabledScriptCount===1?'':'s'}. Auto-responses have their own switch.`;
+  }
+  onScriptActivity(event:CustomEvent<{generation:number;activeCount:number}>):void {
+    if(event.detail.generation<this.scriptGeneration)return;this.scriptGeneration=event.detail.generation;this.enabledScriptCount=event.detail.activeCount;this.updateAutomationBadge();
+  }
   @observable errorTitle=initialState.errorTitle;
   @observable errorMessage=initialState.errorMessage;
   errorDialog!:HTMLDialogElement;
@@ -97,7 +109,7 @@ export class AppShell extends WebUIElement {
     if (this.installPending) return;
     this.installPending = true;
     try {
-      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.automation?.draftDirty ? 'Autoresponses' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
+      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.automation?.draftDirty ? 'Autoresponses' : '', this.automation?.userAgentOverrides?.uaDirty ? 'Header overrides' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
       if (dirty.length) {
         this.updateDraftSummary = `There are unsaved changes in ${dirty.join(', ')}. Installing will close Transmog and discard those drafts. Keep working to save them first.`;
         const proceed = await new Promise<boolean>(resolve => { this.resolveUpdateDrafts = resolve; this.updateDraftDialog.showModal(); });
@@ -125,6 +137,9 @@ export class AppShell extends WebUIElement {
   async openMainWindow():Promise<void> {try{await invoke('open_main_window');}catch(error:unknown){this.diagnosticText='Main window could not be opened: '+describeError(error);}}
   onAutomationState(event:CustomEvent<AutomationStatus>):void {
     if(!this.autoresponseState || event.detail.generation>=this.autoresponseState.generation)this.autoresponseState=event.detail;
+    const status=event.detail;
+    if(status.scriptGeneration!==undefined&&status.activeScripts!==undefined&&status.scriptGeneration>=this.scriptGeneration){this.scriptGeneration=status.scriptGeneration;this.enabledScriptCount=status.activeScripts;}
+    this.updateAutomationBadge();
   }
   private async refreshAutoresponses():Promise<void> {
     try {this.onAutomationState(new CustomEvent('automation-state-change',{detail:await invoke<AutomationStatus>('automation_status')}));}

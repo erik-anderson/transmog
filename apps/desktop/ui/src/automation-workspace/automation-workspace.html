@@ -1,7 +1,7 @@
 <template>
 <section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" ?hidden="{{view != 'automation'}}" ?data-active="{{view == 'automation'}}">
   <div class="automation-page">
-    <header class="workspace-header"><h1 id="automation-heading">Automation</h1><nav class="workspace-tabs" aria-label="Automation tools"><button type="button" ?data-selected="{{automationSection == 'responses'}}" @click="{showAutomationSection('responses')}">Auto-responses</button><button type="button" ?data-selected="{{automationSection == 'headers'}}" @click="{showAutomationSection('headers')}">Header overrides</button><button type="button" ?data-selected="{{automationSection == 'scripts'}}" @click="{showAutomationSection('scripts')}">Scripts</button></nav></header>
+    <header class="workspace-header"><h1 id="automation-heading">Automation</h1><nav class="workspace-tabs" aria-label="Automation tools"><button type="button" ?data-selected="{{automationSection == 'responses'}}" @click="{showAutomationSection('responses')}">Auto-responses</button><button type="button" ?data-selected="{{automationSection == 'headers'}}" @click="{showAutomationSection('headers')}">Header overrides<if condition="headerOverrideCount"><span class="automation-enabled-badge" title="Enabled header override rules" aria-label="{{headerOverrideCount}} enabled header override rules">{{headerOverrideCount}}</span></if></button><button type="button" ?data-selected="{{automationSection == 'scripts'}}" @click="{showAutomationSection('scripts')}">Scripts</button></nav></header>
     <div class="automation-panel" ?hidden="{{automationSection != 'responses'}}">
       <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
         <header class="auto-response-header">
@@ -87,19 +87,7 @@
         <dialog w-ref="{unsavedDialog}" class="unsaved-rule-dialog" @cancel="{unsavedCancelled(e)}"><h3>Save changes to this rule?</h3><p>Your current edits have not been saved.</p><div class="actions"><button type="button" @click="{resolveUnsaved('save')}">Save and continue</button><button type="button" class="secondary" @click="{resolveUnsaved('discard')}">Discard changes</button><button type="button" class="secondary" autofocus @click="{resolveUnsaved('stay')}">Keep editing</button></div></dialog>
       </section>
     </div>
-    <section class="automation-panel override-panel" ?hidden="{{automationSection != 'headers'}}">      <details class="automation-card" open>
-        <summary><span><strong>Override User-Agent</strong><small>Replace the outgoing User-Agent on matching requests.</small></span></summary>
-        <form w-ref="{automationForm}" @submit="{activateUserAgentRule(e)}" class="composer-form">
-          <label>User-Agent value <input name="userAgent" maxlength="4096" value="Transmog/1.0" required></label>
-          <label>Host filter (optional) <input name="host" maxlength="255" placeholder="example.test"></label>
-          <label>Path-prefix filter (optional) <input name="path" maxlength="2048" placeholder="/api"></label>
-          <div class="actions">
-            <button type="submit">Enable override</button>
-            <button type="button" class="secondary" @click="{disableBuiltInAutomation('desktop-user-agent')}">Disable</button>
-          </div>
-        </form>
-      </details>
-<output class="operation-status" data-kind="{{automationKind}}" aria-live="polite">{{automationText}}</output></section>
+    <section class="automation-panel override-panel" ?hidden="{{automationSection != 'headers'}}"><user-agent-overrides w-ref="{userAgentOverrides}" :uaState="{{autoresponseState}}"></user-agent-overrides></section>
     <section class="automation-panel script-panel" ?hidden="{{automationSection != 'scripts'}}"><script-editor w-ref="{scriptEditor}" :selection="{{selection}}" theme="{{theme}}" ?active="{{view == 'automation' && automationSection == 'scripts'}}"></script-editor></section>
   </div>
 </section>

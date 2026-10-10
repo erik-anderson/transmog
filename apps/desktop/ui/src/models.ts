@@ -229,6 +229,7 @@ export interface AutomationRule {
     responseStatusClass: number | null;
   };
   request: {
+    userAgent?:UserAgentOverride|null;
     headers: unknown[];
     replaceBody: number[] | null;
     discardBody: boolean;
@@ -238,7 +239,10 @@ export interface AutomationRule {
   };
   response: {headers: unknown[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
 }
+export interface UserAgentOverride { template:string|null; versionOverride:string|null; clientHints:Record<string,string>; stripClientHints:boolean; }
 export interface AutomationStatus {
+  scriptGeneration?:number;
+  activeScripts?:number;
   generation: number;
   autoresponsesEnabled: boolean;
   diagnostics: Array<{ruleId:string; supersededBy:string; duplicateResponse:boolean}>;

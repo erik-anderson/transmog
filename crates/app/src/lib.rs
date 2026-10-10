@@ -560,6 +560,9 @@ impl Application {
     /// Returns active native automation and candidate/history counts.
     pub fn automation_status(&self) -> AutomationStatus {
         let mut status = self.automation.status();
+        let (generation, count) = self.scripts.activity_hint();
+        status.script_generation = Some(generation);
+        status.active_scripts = Some(count);
         let assets = self
             .response_assets
             .list()

@@ -23,12 +23,14 @@ use transmog_core::{
 };
 
 mod matching;
+mod user_agent;
 use matching::CompiledUrl;
 pub use matching::{
     ExampleHeader, MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition,
     QueryParameter, RegexScope, UrlCondition, UrlPattern, UrlRegex, matcher_key, request_for_test,
     same_matching_behavior, test_matcher,
 };
+pub use user_agent::UserAgentOverride;
 
 /// Finite compile-time automation bounds.
 #[derive(Clone, Copy, Debug)]
@@ -274,6 +276,9 @@ impl HeaderOperation {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestActions {
+    /// First-match User-Agent/client-hint policy; omission keeps ordinary rules unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_agent: Option<UserAgentOverride>,
     /// Ordered header operations.
     pub headers: Vec<HeaderOperation>,
     /// Optional decoded replacement body.
@@ -292,6 +297,7 @@ pub struct RequestActions {
 impl RequestActions {
     fn is_empty(&self) -> bool {
         self.headers.is_empty()
+            && self.user_agent.is_none()
             && self.replace_body.is_none()
             && !self.discard_body
             && self.abort_reason.is_none()
@@ -477,6 +483,24 @@ fn validate_limits(limits: AutomationLimits) -> Result<(), CompileError> {
 
 #[allow(clippy::too_many_lines)]
 fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileError> {
+    if rule
+        .request
+        .user_agent
+        .as_ref()
+        .is_some_and(|policy| !policy.valid())
+    {
+        return Err(CompileError::InvalidHeaderOperation(rule.id.clone()));
+    }
+    if rule.request.user_agent.is_some()
+        && (!rule.request.headers.is_empty()
+            || rule.request.replace_body.is_some()
+            || rule.request.discard_body
+            || rule.request.abort_reason.is_some()
+            || rule.request.response_asset.is_some()
+            || !rule.response.is_empty())
+    {
+        return Err(CompileError::InvalidHeaderOperation(rule.id.clone()));
+    }
     if rule.id.is_empty()
         || rule.id.len() > 128
         || !rule
@@ -832,6 +856,8 @@ struct RuleInterceptor {
     direction: RuleDirection,
 }
 
+struct UserAgentSelected;
+
 impl ExchangeInterceptor for RuleInterceptor {
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         if self.direction != RuleDirection::Request
@@ -870,8 +896,22 @@ impl ExchangeInterceptor for RuleInterceptor {
             });
         }
         let mut head = event.head;
+        let mut user_agent_changed = false;
+        if let Some(policy) = &self.rule.request.user_agent {
+            // Request-head hooks run sequentially. The extension claim is atomic
+            // and belongs to this exchange, so no global session registry is needed.
+            if event
+                .context
+                .extensions()
+                .insert(UserAgentSelected)
+                .is_some()
+            {
+                return Box::pin(async { RequestHeadAction::Continue });
+            }
+            user_agent_changed = policy.apply(&mut head.headers);
+        }
         apply_headers(&mut head.headers, &self.rule.request.headers);
-        if self.rule.request.headers.is_empty() {
+        if self.rule.request.headers.is_empty() && !user_agent_changed {
             Box::pin(async { RequestHeadAction::Continue })
         } else {
             Box::pin(async move { RequestHeadAction::Replace(head) })
@@ -1224,6 +1264,76 @@ mod tests {
             effect.phase,
             HookPhase::RequestHead | HookPhase::ResponseHead
         )));
+    }
+
+    #[tokio::test]
+    async fn user_agent_first_enabled_match_reordering_and_exchange_scope_are_explicit() {
+        let ua = |id: &str, priority: i32, enabled: bool, value: &str| Rule {
+            id: id.into(),
+            display_name: None,
+            enabled,
+            revision: 1,
+            priority,
+            matcher: RuleMatcher {
+                host: Some("example.test".into()),
+                path_prefix: Some("/api".into()),
+                ..RuleMatcher::default()
+            },
+            request: RequestActions {
+                user_agent: Some(UserAgentOverride {
+                    template: Some(value.into()),
+                    ..UserAgentOverride::default()
+                }),
+                ..RequestActions::default()
+            },
+            response: ResponseActions::default(),
+        };
+        for (first, second, winner) in [(1, 2, "first"), (2, 1, "second")] {
+            let compiled = compile(
+                vec![
+                    ua("disabled", 0, false, "disabled"),
+                    ua("first", first, true, "first"),
+                    ua("second", second, true, "second"),
+                ],
+                AutomationLimits::default(),
+            )
+            .unwrap();
+            let factory =
+                InterceptorChainFactory::new(compiled.registrations(), HookLimits::default());
+            for carries_header in [true, false, true] {
+                let mut chain = factory.create_exchange(metadata()).unwrap();
+                let mut original = request("GET");
+                if carries_header {
+                    original
+                        .headers
+                        .push(HeaderField::try_new("User-Agent", "Chrome/154.0.0.0").unwrap());
+                }
+                let RequestHeadOutcome::Continue { head, .. } =
+                    chain.request_head(original).await.unwrap()
+                else {
+                    panic!("unexpected terminal request")
+                };
+                assert_eq!(
+                    head.headers.values("user-agent").next(),
+                    carries_header.then_some(winner.as_bytes())
+                );
+            }
+            let mut original = request("GET");
+            original.target.path = "/other".into();
+            original
+                .headers
+                .push(HeaderField::try_new("User-Agent", "original").unwrap());
+            let mut chain = factory.create_exchange(metadata()).unwrap();
+            let RequestHeadOutcome::Continue { head, .. } =
+                chain.request_head(original).await.unwrap()
+            else {
+                panic!("unexpected terminal request")
+            };
+            assert_eq!(
+                head.headers.values("user-agent").next(),
+                Some(b"original".as_slice())
+            );
+        }
     }
 
     #[tokio::test]

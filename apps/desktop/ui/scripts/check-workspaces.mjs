@@ -10,6 +10,7 @@ import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import { checkCertificates } from './check-certificates.mjs';
+import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -331,7 +332,7 @@ await page.addInitScript((workspace) => {
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
-        case 'validate_automation': state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
+        case 'validate_automation': if(state.uaRejectValidation)throw new Error('Fixture validation failed');state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
         case 'activate_automation':
           state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
           ruleDiagnostics();
@@ -407,6 +408,7 @@ try {
   const startupRequests = requests.length;
   assert.equal(await page.locator('.traffic-table tr[data-session-id][draggable]').count(),0,'Traffic rows still advertise cross-tab dragging');
   await view('automation');
+  await checkUserAgentOverrides(page,root);
   assert.equal(requests.some(path=>path==='/monaco.js'),false,'Response management eagerly loaded the script editor');
   await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false,'Scratch authoring is prominent');

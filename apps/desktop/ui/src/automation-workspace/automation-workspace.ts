@@ -2,6 +2,8 @@ import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
 import '../script-editor/script-editor.js';
 import '../match-editor/match-editor.js';
+import '../user-agent-overrides/user-agent-overrides.js';
+import type {UserAgentOverrides} from '../user-agent-overrides/user-agent-overrides.js';
 import type { MatchEditor } from '../match-editor/match-editor.js';
 import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
@@ -17,6 +19,8 @@ type RuleRow=AutomationRule & {order:number;name:string;criteria:string;state:st
 type BatchRow={included:boolean;order:number;id:string;name:string;method:string;url:string;eligible:boolean;reason:string;duplicate:string;startedAt:number};
 
 export class AutomationWorkspace extends WorkspaceElement {
+  userAgentOverrides!:UserAgentOverrides;
+  @observable headerOverrideCount=0;
   scriptEditor!: ScriptEditor;
   @attr view = 'traffic';
   @attr theme = 'system';
@@ -115,7 +119,6 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable editBodyDisabled = initialState.editBodyDisabled;
   @observable responseFieldsHidden = initialState.responseFieldsHidden;
   @observable highlightedRuleId: string | null = initialState.highlightedRuleId;
-  automationForm!: HTMLFormElement;
   autoResponseForm!: HTMLFormElement;
   autoResponseList!: HTMLDivElement;
   autoResponseMethod!: HTMLSelectElement;
@@ -479,58 +482,6 @@ export class AutomationWorkspace extends WorkspaceElement {
     element.scrollIntoView({block:'center'});
     element.focus({preventScroll:true});
   }
-  async activateUserAgentRule(event: Event): Promise<void> {
-    event.preventDefault();
-    const data = new FormData(this.automationForm);
-    const encode = (value: string): number[] => Array.from(new TextEncoder().encode(value));
-    const host = optionalText(data.get('host'));
-    const path = optionalText(data.get('path'));
-    try {
-      const current = await invoke<AutomationStatus>('automation_status');
-      const previous = current.rules.find((rule) => rule.id === 'desktop-user-agent');
-      const rule = {
-        id: 'desktop-user-agent',
-        displayName: 'User-Agent override',
-        enabled: true,
-        revision: (previous?.revision ?? 0) + 1,
-        priority: 0,
-        matcher: {
-          method: null,
-          url: null,
-          scheme: null,
-          host,
-          port: null,
-          pathPrefix: path,
-          query: null,
-          requestHeaders: [],
-          responseHeaders: [],
-          responseStatus: null,
-          responseStatusClass: null,
-        },
-        request: {
-          headers: [{
-            operation: 'set',
-            field: { name: encode('User-Agent'), value: encode(String(data.get('userAgent') ?? '')) },
-          }],
-          replaceBody: null,
-          discardBody: false,
-          abortReason: null,
-          responseAsset: null,
-          allowNonIdempotentBodyReplacement: false,
-        },
-                response: { headers: [], replaceBody: null, discardBody: false, abortReason: null },
-      };
-      const rules = current.rules.filter((candidate) => candidate.id !== rule.id);
-      rules.push(rule);
-      const status = await this.activateRuleSet(rules, current.generation);
-      this.renderAutomation(status);
-      this.diagnostic = 'User-Agent override enabled for new matching requests.';
-    } catch (error: unknown) {
-      this.automationText = `User-Agent override could not be enabled: ${describeError(error)}`;
-      this.automationKind = 'error';
-    }
-  }
-
   async refreshAutomation(): Promise<void> {
     try {
       const [status,assets]=await Promise.all([invoke<AutomationStatus>('automation_status'),invoke<ResponseAsset[]>('response_assets')]);
@@ -944,14 +895,16 @@ export class AutomationWorkspace extends WorkspaceElement {
   private renderAutomation(status: AutomationStatus): void {
     if(this.automationStatus && status.generation<this.automationStatus.generation)return;
     this.automationStatus = status;
+    this.headerOverrideCount=status.rules.filter(rule=>rule.enabled!==false && !rule.request.responseAsset && (rule.request.userAgent || rule.request.headers.length || rule.response.headers.length)).length;
     this.$emit('automation-state-change',status);
     this.renderAutoResponseRules(status);
     const actions: string[] = [];
-    if (status.rules.some((rule) => rule.id === 'desktop-user-agent' && rule.enabled!==false)) actions.push('User-Agent override active');
+    const uaCount=status.rules.filter(rule=>rule.request.userAgent && rule.enabled!==false).length;
+    if(uaCount)actions.push(`${uaCount} User-Agent / client-hint override${uaCount===1?'':'s'} enabled`);
     const autoResponses = this.autoResponseRules(status);
     const enabled=autoResponses.filter(rule=>rule.enabled!==false).length;
     if (autoResponses.length > 0) actions.push(status.autoresponsesEnabled===false?`Autoresponses paused (${enabled} enabled rules)`:`${enabled} of ${autoResponses.length} autoresponse rules enabled`);
-    const other = status.rules.filter((rule) => rule.enabled!==false && !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
+    const other = status.rules.filter((rule) => rule.enabled!==false && !rule.request.userAgent && !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
     if (other > 0) actions.push(`${other} advanced rule${other === 1 ? '' : 's'}`);
     this.automationText = actions.length === 0
       ? 'No built-in traffic actions are active.'

@@ -30,6 +30,29 @@ changes, as task-specific editors. Internal IDs, revisions, and priorities are
 kept out of ordinary authoring UI while remaining available for persistence,
 stale-update detection, and audit evidence.
 
+## User-Agent and client hints
+
+Header overrides contains an ordered list of User-Agent rules. The first enabled
+matching rule wins, even if the request has no headers to replace. Host filters
+are exact and case-insensitive; path prefixes are case-sensitive. Drag the
+handle or use Move up and Move down to change precedence. Saving filters already
+used by another rule asks whether to replace that rule, retaining its position.
+Deleting a rule offers Undo. List changes affect newly admitted requests.
+
+The editor includes 48 presets in ten groups and accepts custom values. `%s`
+and `%full%` resolve to the source browser's major version followed by `.0.0.0`;
+`%major%` resolves to the major alone. An optional major or dotted version
+overrides this automatic choice. Unknown source versions preserve fields that
+need version substitution. The supplied Googlebook preset's dynamic Android
+platform value is captured as `16.0.0`; all client-hint values remain editable.
+
+Replacements affect existing User-Agent and selected Sec-CH-UA fields only,
+preserving duplicate fields and never adding missing headers. Client hints can
+be preserved, overridden from preset metadata or custom values, or stripped.
+Preserve is the default when no hint overrides are authored. The Automation
+navigation count includes enabled non-auto-response rules and active script
+modules; Header overrides shows its enabled header-rule count.
+
 ## Ordered auto-responses
 
 Auto-response rules form a compact top-to-bottom list beside a resizable

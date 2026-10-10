@@ -306,6 +306,14 @@ measured heights with scroll anchoring to preserve the request being read.
 Search match review reveals and marks the current request in Traffic while
 preserving multiselection. Closing review returns focus to that request.
 
+User-Agent and client-hint overrides use a top-to-bottom list: the first enabled
+match wins, with drag handles and reachable Move up / Move down alternatives.
+Editing a draft does not affect live requests until Save. Identical filters ask
+before replacing the existing rule and retain its position. Deleted rules offer
+Undo. Preserve hints without authored replacements; allow explicit stripping.
+Preset replacements update existing headers only. Show enabled non-auto-response
+automation in navigation and enabled header rules beside Header overrides.
+
 Certificates opens the TLS context of that request's physical connections.
 Separate the client-facing proxy certificate from the origin server path and
 client authentication certificates. Show public certificate bytes, recorded

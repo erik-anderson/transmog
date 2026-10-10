@@ -117,6 +117,12 @@ pub struct AutomationCandidate {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomationStatus {
+    /// Script generation supplied by the application without transferring source text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_generation: Option<u64>,
+    /// Enabled script modules, separate from saved drafts and autoresponse rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_scripts: Option<usize>,
     /// Active activation generation.
     pub generation: u64,
     /// Active rules, including stable IDs and revisions.
@@ -263,10 +269,11 @@ impl AutomationRegistry {
         assets: Arc<dyn ResponseAssetResolver>,
     ) -> Result<Self, AppError> {
         let limits = AutomationLimits::default();
-        let document = path
+        let mut document = path
             .as_deref()
             .and_then(|path| load_latest(path, &assets))
             .unwrap_or_default();
+        migrate_user_agent_override(&mut document);
         validate_document(&document)?;
         let compiled = compile_document(&document, limits, assets.clone())?;
         Ok(Self {
@@ -291,6 +298,7 @@ impl AutomationRegistry {
         &self,
         mut document: AutomationRuleSet,
     ) -> Result<AutomationCandidate, AppError> {
+        migrate_user_agent_override(&mut document);
         validate_document(&document)?;
         let generation = self
             .active
@@ -429,6 +437,8 @@ impl AutomationRegistry {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         AutomationStatus {
+            script_generation: None,
+            active_scripts: None,
             generation: active.document.generation,
             rules: active.document.rules.clone(),
             autoresponses_enabled: active.document.autoresponses_enabled,
@@ -537,6 +547,34 @@ impl InterceptorRegistrationProvider for AutomationRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .compiled
             .registrations())
+    }
+}
+
+fn migrate_user_agent_override(document: &mut AutomationRuleSet) {
+    for rule in &mut document.rules {
+        if rule.id != "desktop-user-agent"
+            || rule.request.user_agent.is_some()
+            || rule.request.replace_body.is_some()
+            || rule.request.discard_body
+            || rule.request.abort_reason.is_some()
+            || rule.request.response_asset.is_some()
+            || !rule.response.headers.is_empty()
+            || rule.response.replace_body.is_some()
+            || rule.response.discard_body
+            || rule.response.abort_reason.is_some()
+        {
+            continue;
+        }
+        if let [transmog_automation::HeaderOperation::Set(field)] = rule.request.headers.as_slice()
+            && field.name_eq("user-agent")
+            && let Ok(value) = std::str::from_utf8(field.value())
+        {
+            rule.request.user_agent = Some(transmog_automation::UserAgentOverride {
+                template: Some(value.into()),
+                ..transmog_automation::UserAgentOverride::default()
+            });
+            rule.request.headers.clear();
+        }
     }
 }
 
@@ -714,6 +752,28 @@ mod tests {
         let recovered = AutomationRegistry::load(Some(path), Arc::new(assets)).unwrap();
         assert_eq!(recovered.status().generation, 1);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_desktop_ua_override_migrates_without_changing_other_header_operations() {
+        let mut legacy = document("Transmog/1.0");
+        legacy.rules[0].id = "desktop-user-agent".into();
+        migrate_user_agent_override(&mut legacy);
+        assert!(legacy.rules[0].request.headers.is_empty());
+        assert_eq!(
+            legacy.rules[0]
+                .request
+                .user_agent
+                .as_ref()
+                .unwrap()
+                .template
+                .as_deref(),
+            Some("Transmog/1.0")
+        );
+        let mut ordinary = document("Custom/1.0");
+        migrate_user_agent_override(&mut ordinary);
+        assert!(ordinary.rules[0].request.user_agent.is_none());
+        assert_eq!(ordinary.rules[0].request.headers.len(), 1);
     }
 
     fn rand_bytes() -> [u8; 16] {

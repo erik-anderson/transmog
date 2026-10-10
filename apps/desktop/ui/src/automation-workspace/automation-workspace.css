@@ -44,7 +44,9 @@ automation-workspace { display:contents; }
 .batch-table tr[data-excluded] { background:var(--panel-subtle); }
 .batch-table input { accent-color:var(--accent-strong); }.batch-table tr:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 .batch-duplicates { grid-row:3; font-size:.8125rem; }.batch-duplicates p { margin:.25rem 0; }.batch-review > .field-error { grid-row:4; margin:0; }.batch-review > .auto-response-editor-actions { grid-row:5; }
-.override-panel, .script-panel { overflow:auto; }
+.override-panel { overflow:hidden; }
+.script-panel { overflow:auto; }
+.automation-enabled-badge {display:inline-block;margin-left:.35rem;padding:.05rem .35rem;border-radius:.8rem;background:var(--accent-soft);color:var(--accent-strong);font-size:.7rem;}
 .script-panel .script-workspace { margin:0; padding:0; border:0; }
 .script-panel .script-workspace h2 { margin:.3rem 0; }
 @container (max-width:52rem) {
