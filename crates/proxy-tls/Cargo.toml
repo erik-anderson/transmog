@@ -19,6 +19,9 @@ tokio.workspace = true
 [lints]
 workspace = true
 
+[target.'cfg(windows)'.dependencies]
+transmog-client-certificates = { version = "=0.1.2", path = "../client-certificates" }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tokio-boring.workspace = true

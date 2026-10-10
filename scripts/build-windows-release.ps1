@@ -24,6 +24,9 @@ try {
         & cargo fmt --all -- --check
         & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         & cargo test --workspace --all-features --locked
+        # Opt in explicitly: owned non-exportable CurrentUser/My fixture keys,
+        # real TLS signatures, public paths, deletion and inventory invalidation.
+        & cargo test --locked -p transmog-tls --test windows_client_certificates -- --ignored
         & (Join-Path $PSScriptRoot 'test-saz-interop.ps1')
         & cargo deny check
         & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check

@@ -74,7 +74,11 @@ impl ClientCredential {
     }
     /// Checks time, EKU, key usage, issuer constraints, and supported signing algorithms.
     /// Repeated just before installation to reject disappeared or expired choices.
+    /// May query a native key provider; call from a blocking worker.
     pub fn compatible(&self, request: &CertificateRequest) -> bool {
+        self.public_compatible(request) && self.key.available()
+    }
+    fn public_compatible(&self, request: &CertificateRequest) -> bool {
         if request.constraints_omitted {
             return false;
         }
@@ -85,7 +89,6 @@ impl ClientCredential {
             return false;
         };
         self.chain.len() <= 32
-            && self.key.available()
             && transmog_tls_native::permits_client_authentication(leaf)
             && leaf
                 .not_before()
@@ -387,8 +390,8 @@ impl ClientAuthenticationResolver for PolicyClientAuthenticationResolver {
         let generation = context.generation;
         reject_stale_authorization(
             generation,
-            changes,
-            resolve_policy_action(mode, source, prompt, context, request),
+            changes.clone(),
+            resolve_policy_action(mode, source, prompt, context, request, changes),
         )
     }
 }
@@ -399,17 +402,32 @@ fn resolve_policy_action(
     prompt: Option<Arc<dyn ClientAuthenticationPrompt>>,
     context: ClientAuthenticationContext,
     request: CertificateRequest,
+    changes: tokio::sync::watch::Receiver<u64>,
 ) -> ClientAuthenticationFuture {
     Box::pin(async move {
         let inventory = tokio::time::timeout(Duration::from_secs(5), source.credentials()).await;
         let (candidates, warning) = match inventory {
-            Ok(Ok(identities)) if identities.len() <= 1024 => (
-                identities
-                    .into_iter()
-                    .filter(|credential| credential.compatible(&request))
-                    .collect::<Vec<_>>(),
-                None,
-            ),
+            Ok(Ok(identities)) if identities.len() <= 1024 => {
+                let constraints = request.clone();
+                let generation = context.generation;
+                match crate::blocking_job::run(move |cancelled| {
+                    identities
+                        .into_iter()
+                        .take_while(|_| {
+                            !cancelled.load(Ordering::Acquire) && *changes.borrow() == generation
+                        })
+                        .filter(|credential| credential.compatible(&constraints))
+                        .collect::<Vec<_>>()
+                })
+                .await
+                {
+                    Ok(candidates) => (candidates, None),
+                    Err(_) => (
+                        Vec::new(),
+                        Some("Certificate inventory is unavailable".into()),
+                    ),
+                }
+            }
             Ok(Ok(_)) => (
                 Vec::new(),
                 Some("Certificate inventory is too large".into()),
@@ -659,8 +677,44 @@ impl ClientAuthenticationAttempt {
             .0
             .resolver
             .resolve(self.0.context.clone(), request.clone());
+        let request = request.clone();
+        // The parked future is owned by AttemptState. A strong reference back
+        // to that state would keep an abandoned pending request alive forever.
+        let attempt = Arc::downgrade(&self.0);
         Box::pin(async move {
-            tokio::time::timeout(CLIENT_CERTIFICATE_DECISION_TIMEOUT, decision)
+            let prepared = async move {
+                match decision.await {
+                    ClientAuthenticationDecision::Certificate(credential) => {
+                        // Windows acquisition and pairing checks belong on a worker,
+                        // like Chromium's platform-key task runner. No native key
+                        // lookup happens in the synchronous SSL selection callback.
+                        match crate::blocking_job::run(move |cancelled| {
+                            let attempt = attempt.upgrade()?;
+                            if cancelled.load(Ordering::Acquire)
+                                || attempt.resolver.generation() != attempt.context.generation
+                                || attempt.cancelled.load(Ordering::Acquire)
+                            {
+                                return None;
+                            }
+                            credential.compatible(&request).then_some(credential)
+                        })
+                        .await
+                        {
+                            Ok(Some(credential)) => {
+                                ClientAuthenticationDecision::Certificate(credential)
+                            }
+                            Ok(None) => ClientAuthenticationDecision::NoCertificate(
+                                "selected identity is unavailable or incompatible".into(),
+                            ),
+                            Err(_) => ClientAuthenticationDecision::Cancelled(
+                                "client certificate provider failed".into(),
+                            ),
+                        }
+                    }
+                    decision => decision,
+                }
+            };
+            tokio::time::timeout(CLIENT_CERTIFICATE_DECISION_TIMEOUT, prepared)
                 .await
                 .unwrap_or_else(|_| {
                     ClientAuthenticationDecision::Cancelled("certificate decision timed out".into())
@@ -770,14 +824,25 @@ impl ClientAuthenticationAttempt {
     ) -> SelectionResult {
         match decision {
             ClientAuthenticationDecision::Certificate(credential)
-                if credential.compatible(request) =>
+                if credential.public_compatible(request) =>
             {
                 let Some(leaf) = credential.chain.first() else {
                     return SelectionResult::Failed;
                 };
+                // Preserve the complete local path for issuer matching and
+                // monitoring. Like Chromium, omit only a verified terminal root
+                // from the wire; self-issued intermediates and the leaf remain.
+                let chain = credential.chain.as_slice();
+                let chain = match chain.split_last() {
+                    Some((root, path))
+                        if !path.is_empty() && transmog_tls_native::is_self_signed_ca(root) =>
+                    {
+                        path
+                    }
+                    _ => chain,
+                };
                 if ssl.set_certificate(leaf).is_err()
-                    || credential
-                        .chain
+                    || chain
                         .iter()
                         .skip(1)
                         .any(|issuer| ssl.add_chain_cert(issuer).is_err())
@@ -963,3 +1028,48 @@ impl PrivateKeyMethod for BackgroundSigner {
 
 /// Maximum time an explicit prompt may retain a physical handshake.
 pub const CLIENT_CERTIFICATE_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PendingResolver;
+    impl ClientAuthenticationResolver for PendingResolver {
+        fn generation(&self) -> u64 {
+            1
+        }
+        fn resolve(
+            &self,
+            _: ClientAuthenticationContext,
+            _: CertificateRequest,
+        ) -> ClientAuthenticationFuture {
+            Box::pin(std::future::pending())
+        }
+    }
+
+    #[tokio::test]
+    async fn waiting_selection_does_not_keep_its_owner_alive() {
+        let attempt = ClientAuthenticationAttempt::new(
+            Arc::new(PendingResolver),
+            ClientAuthenticationContext {
+                host: "localhost".into(),
+                port: 443,
+                caller: "test".into(),
+                generation: 1,
+            },
+            crate::TlsCapture::new(transmog_core::TlsEvidence::default()),
+        );
+        let state = Arc::downgrade(&attempt.0);
+        assert!(
+            attempt
+                .poll_decision(&CertificateRequest::default())
+                .unwrap()
+                .is_none()
+        );
+        drop(attempt);
+        assert!(
+            state.upgrade().is_none(),
+            "pending selection retained its abandoned owner"
+        );
+    }
+}

@@ -191,6 +191,19 @@ pub fn permits_client_authentication(certificate: &X509Ref) -> bool {
     }
 }
 
+/// Identifies a CA signed by its own public key, rather than merely self-issued.
+/// Uses public certificate data only; invalid or unsupported signatures return false.
+pub fn is_self_signed_ca(certificate: &X509Ref) -> bool {
+    // SAFETY: the borrowed certificate stays live. BoringSSL synchronizes its
+    // internal extension cache, and no native pointers escape this call.
+    let is_ca = unsafe { boring_sys::X509_check_ca(certificate.as_ptr()) != 0 };
+    is_ca
+        && certificate.issued(certificate).is_ok()
+        && certificate
+            .public_key()
+            .is_ok_and(|key| certificate.verify(&key).unwrap_or(false))
+}
+
 /// Public TLS events relevant to client authentication; excludes all secrets.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientAuthenticationEvent {

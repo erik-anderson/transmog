@@ -1,5 +1,6 @@
 //! The one BoringSSL-backed trust and certificate implementation used by every protocol.
 
+mod blocking_job;
 mod ca;
 /// Request-driven client identity selection and asynchronous signing.
 pub mod client_authentication;
@@ -7,6 +8,9 @@ mod downstream;
 mod evidence;
 mod resolver;
 mod trust;
+/// Current-user Windows software CNG identity inventory and change monitoring.
+#[cfg(windows)]
+pub mod windows_client_certificates;
 
 pub use ca::{
     EndpointIdentity, IdentityError, IssuedLeaf, LeafCache, LeafCacheError, ProxyCa, ProxyCaError,

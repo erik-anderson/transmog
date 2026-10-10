@@ -6945,6 +6945,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-client-certificates"
+version = "0.1.2"
+dependencies = [
+ "sha2 0.10.9",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "transmog-client-identity"
 version = "0.1.2"
 dependencies = [
@@ -7237,6 +7245,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-boring",
+ "transmog-client-certificates",
  "transmog-core",
  "transmog-tls-native",
 ]

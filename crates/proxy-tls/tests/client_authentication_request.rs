@@ -269,6 +269,14 @@ fn server_with_constraints(
         let Ok(mut stream) = acceptor.accept(tcp) else {
             return None;
         };
+        // On the server this API excludes the leaf. These fixtures are issued
+        // directly by a root, so no root or intermediate should be transmitted.
+        assert!(
+            stream
+                .ssl()
+                .peer_cert_chain()
+                .is_none_or(boring::stack::StackRef::is_empty)
+        );
         let certificate = stream.ssl().peer_certificate();
         let mut byte = [0];
         if stream.read_exact(&mut byte).is_ok() {
@@ -521,7 +529,8 @@ async fn quic_resumes_certificate_lookup_and_server_verifies_client_signature() 
         evidence.details["Client certificate"],
         "Certificate queued to TLS transport"
     );
-    assert_eq!(evidence.client_chain.len(), 2);
+    assert_eq!(server.peer_cert_chain().unwrap().len(), 1);
+    assert_eq!(evidence.client_chain.len(), 1);
     assert_eq!(
         evidence.client_chain[0].der.as_ref(),
         server.peer_cert_chain().unwrap()[0]
@@ -581,7 +590,7 @@ async fn embedding_decision_and_background_signer_are_verified_by_live_server() 
                     evidence.details["Client certificate"],
                     "Certificate queued to TLS transport"
                 );
-                assert_eq!(evidence.client_chain.len(), 2);
+                assert_eq!(evidence.client_chain.len(), 1);
                 assert_eq!(
                     evidence.client_chain[0].der.as_ref(),
                     observed.unwrap().to_der().unwrap()
@@ -2009,4 +2018,194 @@ async fn cancelled_lookup_cannot_start_signing_but_started_signing_can_finish() 
             check_signing_cancellation(version, phase).await;
         }
     }
+}
+
+struct QueuedEligibilityKey {
+    availability: AtomicUsize,
+    signatures: AtomicUsize,
+}
+impl ClientSigningKey for QueuedEligibilityKey {
+    fn algorithms(&self) -> &[u16] {
+        &[0x0403]
+    }
+    fn available(&self) -> bool {
+        self.availability.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+    fn sign(&self, _: u16, _: &[u8]) -> Result<Vec<u8>, String> {
+        self.signatures.fetch_add(1, Ordering::SeqCst);
+        Err("unexpected signature".into())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum QueuedLookupStop {
+    Cancel,
+    Abort,
+    Deadline,
+    Authorization,
+}
+
+#[test]
+fn cancelled_owner_does_not_start_queued_eligibility_lookup() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+            for policy_selection in [false, true] {
+                for stop in [
+                    QueuedLookupStop::Cancel,
+                    QueuedLookupStop::Abort,
+                    QueuedLookupStop::Deadline,
+                    QueuedLookupStop::Authorization,
+                ] {
+                    if matches!(stop, QueuedLookupStop::Authorization) && !policy_selection {
+                        continue;
+                    }
+                    check_queued_eligibility(version, policy_selection, stop).await;
+                }
+            }
+        }
+    });
+}
+
+async fn check_queued_eligibility(
+    version: SslVersion,
+    policy_selection: bool,
+    stop: QueuedLookupStop,
+) {
+    // Hold the sole blocking worker so neither filtering nor final eligibility
+    // can start. Always release it, including when a test assertion fails.
+    let gate = Arc::new(SigningGate::default());
+    let _release = ReleaseSigningGate(gate.clone());
+    let started = Arc::new(Notify::new());
+    let blocker_gate = gate.clone();
+    let blocker_started = started.clone();
+    let blocker = tokio::task::spawn_blocking(move || {
+        blocker_started.notify_one();
+        blocker_gate.wait();
+    });
+    tokio::time::timeout(Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    let ca = ProxyCa::generate("Queued eligibility fixture", 2).unwrap();
+    let (mut identity, _) = credential(&ca);
+    let key = Arc::new(QueuedEligibilityKey {
+        availability: AtomicUsize::new(0),
+        signatures: AtomicUsize::new(0),
+    });
+    Arc::make_mut(&mut identity).key = key.clone();
+    let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+    let policy = policy_selection.then(|| queued_lookup_policy(identity.clone()));
+    let resolver: Arc<dyn ClientAuthenticationResolver> = if let Some(policy) = &policy {
+        drop(identity);
+        policy.clone()
+    } else {
+        resolver(Box::pin(async move {
+            ClientAuthenticationDecision::Certificate(identity)
+        }))
+    };
+    let attempt = ClientAuthenticationAttempt::new(
+        resolver,
+        ClientAuthenticationContext {
+            host: "localhost".into(),
+            port: address.port(),
+            caller: "process:test".into(),
+            generation: 1,
+        },
+        transmog_tls::TlsCapture::new(transmog_core::TlsEvidence::default()),
+    );
+    let connector = factory(&ca).hyper_connector().unwrap();
+    let mut config = connector.configure().unwrap();
+    config.set_min_proto_version(Some(version)).unwrap();
+    config.set_max_proto_version(Some(version)).unwrap();
+    let mut ssl = config.into_ssl("localhost").unwrap();
+    attempt.attach_ssl(&mut ssl).unwrap();
+    let tcp = TcpStream::connect(address).await.unwrap();
+    let driver = attempt.clone();
+    let handshake = tokio::spawn(async move {
+        driver
+            .drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect())
+            .await
+    });
+    // Inventory/embedding futures are immediately ready. Waiting means the
+    // selected blocking stage is enqueued and its JoinHandle is being polled.
+    wait_for_queued_lookup(&attempt).await;
+    assert_eq!(key.availability.load(Ordering::SeqCst), 0);
+    match stop {
+        QueuedLookupStop::Cancel => attempt.cancel("owner stopped"),
+        QueuedLookupStop::Abort => handshake.abort(),
+        QueuedLookupStop::Authorization => {
+            policy.as_ref().unwrap().inventory_changed().unwrap();
+        }
+        QueuedLookupStop::Deadline => {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(61)).await;
+            tokio::time::resume();
+        }
+    }
+    let result = tokio::time::timeout(Duration::from_secs(3), handshake)
+        .await
+        .unwrap();
+    if matches!(stop, QueuedLookupStop::Abort) {
+        assert!(result.unwrap_err().is_cancelled());
+    } else {
+        assert!(result.unwrap().is_err());
+    }
+    assert!(attempt.evidence().valid());
+    drop(attempt);
+    drop(policy);
+    gate.release();
+    blocker.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while Arc::strong_count(&key) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(peer.join().unwrap().is_none());
+    assert_eq!(key.signatures.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        key.availability.load(Ordering::SeqCst),
+        0,
+        "version={version:?}, policy={policy_selection}, stop={stop:?}"
+    );
+}
+
+fn queued_lookup_policy(
+    identity: Arc<ClientCredential>,
+) -> Arc<transmog_tls::client_authentication::PolicyClientAuthenticationResolver> {
+    Arc::new(
+        transmog_tls::client_authentication::PolicyClientAuthenticationResolver::new(
+            transmog_core::client_authentication::ClientCertificatePolicy {
+                default: transmog_core::client_authentication::ClientCertificateDefault::Prompt,
+                ..Default::default()
+            },
+            Arc::new(TestInventory {
+                identities: vec![identity],
+                reads: Arc::new(AtomicUsize::new(0)),
+            }),
+            None,
+        )
+        .unwrap(),
+    )
+}
+async fn wait_for_queued_lookup(attempt: &ClientAuthenticationAttempt) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while attempt
+            .evidence()
+            .details
+            .get("Client certificate")
+            .map(String::as_str)
+            != Some("Waiting for decision")
+        {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
 }

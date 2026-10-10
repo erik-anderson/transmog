@@ -1,0 +1,26 @@
+[package]
+name = "transmog-client-certificates"
+description = "Current-user Windows software CNG client certificate boundary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Security_Cryptography"] }
+
+[lints.rust]
+# Only this crate crosses the Windows certificate/CNG boundary. Handles are local
+# to synchronous calls; all pointer, buffer and ownership invariants are documented.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
