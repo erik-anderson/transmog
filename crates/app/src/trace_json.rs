@@ -604,7 +604,12 @@ mod tests {
                 .iter()
                 .all(|note| !note.contains("no end marker"))
         );
-        let mut interrupted = full[..full.len() - b"{\"type\":\"end\"}\n".len()].to_vec();
+        let end = std::str::from_utf8(source)
+            .unwrap()
+            .rfind("{\"type\":\"end\"}")
+            .unwrap();
+        let mut interrupted = vec![0xef, 0xbb, 0xbf];
+        interrupted.extend_from_slice(&source[..end]);
         interrupted.extend_from_slice(b"{\"type\":\"event\",\"event\":");
         let partial = root.path().join("partial.jsonl");
         std::fs::write(&partial, interrupted).unwrap();
