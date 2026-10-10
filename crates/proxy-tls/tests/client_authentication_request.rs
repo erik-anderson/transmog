@@ -6,7 +6,7 @@ use boring::{
     hash::MessageDigest,
     nid::Nid,
     pkey::{PKey, Private},
-    ssl::{SslAcceptor, SslMethod, SslVerifyMode, SslVersion},
+    ssl::{SslAcceptor, SslMethod, SslSignatureAlgorithm, SslVerifyMode, SslVersion},
     x509::{
         X509, X509NameBuilder,
         extension::{ExtendedKeyUsage, KeyUsage},
@@ -82,6 +82,10 @@ impl ClientAuthenticationResolver for TestResolver {
         assert_eq!(context.host, "localhost");
         assert_eq!(context.caller, "process:test");
         assert_ne!(context.port, 0);
+        assert!(matches!(
+            request.tls_version,
+            Some(SslVersion::TLS1_2 | SslVersion::TLS1_3)
+        ));
         assert!(!request.signature_algorithms.is_empty());
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.notice.notify_one();
@@ -145,10 +149,25 @@ fn client_identity(ca: &ProxyCa) -> (X509, PKey<Private>) {
     client_identity_with_expiry(ca, false)
 }
 fn client_identity_with_expiry(ca: &ProxyCa, expired: bool) -> (X509, PKey<Private>) {
-    let key = PKey::from_ec_key(
-        EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+    client_identity_on_curve(ca, expired, Nid::X9_62_PRIME256V1)
+}
+fn client_identity_on_curve(ca: &ProxyCa, expired: bool, curve: Nid) -> (X509, PKey<Private>) {
+    client_identity_with_usage(
+        ca,
+        expired,
+        curve,
+        Some(KeyUsage::new().digital_signature().build().unwrap()),
     )
-    .unwrap();
+}
+fn client_identity_with_usage(
+    ca: &ProxyCa,
+    expired: bool,
+    curve: Nid,
+    key_usage: Option<boring::x509::X509Extension>,
+) -> (X509, PKey<Private>) {
+    let key =
+        PKey::from_ec_key(EcKey::generate(&EcGroup::from_curve_name(curve).unwrap()).unwrap())
+            .unwrap();
     let ca_key = PKey::private_key_from_pem(&ca.private_key_pem_pkcs8().unwrap()).unwrap();
     let mut name = X509NameBuilder::new().unwrap();
     name.append_entry_by_text("CN", "Test client identity")
@@ -173,8 +192,9 @@ fn client_identity_with_expiry(ca: &ProxyCa, expired: bool) -> (X509, PKey<Priva
     };
     cert.set_not_before(&not_before).unwrap();
     cert.set_not_after(&not_after).unwrap();
-    cert.append_extension(&KeyUsage::new().digital_signature().build().unwrap())
-        .unwrap();
+    if let Some(key_usage) = key_usage {
+        cert.append_extension(&key_usage).unwrap();
+    }
     cert.append_extension(&ExtendedKeyUsage::new().client_auth().build().unwrap())
         .unwrap();
     cert.sign(&ca_key, MessageDigest::sha256()).unwrap();
@@ -203,6 +223,15 @@ fn server_with_issuer_count(
     verify: SslVerifyMode,
     issuer_count: usize,
 ) -> (std::net::SocketAddr, std::thread::JoinHandle<Option<X509>>) {
+    server_with_constraints(ca, version, verify, issuer_count, None)
+}
+fn server_with_constraints(
+    ca: &ProxyCa,
+    version: SslVersion,
+    verify: SslVerifyMode,
+    issuer_count: usize,
+    algorithms: Option<&[SslSignatureAlgorithm]>,
+) -> (std::net::SocketAddr, std::thread::JoinHandle<Option<X509>>) {
     let identity = ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
@@ -215,6 +244,9 @@ fn server_with_issuer_count(
     store.add_cert(ca.certificate().clone()).unwrap();
     builder.set_cert_store(store.build());
     builder.set_verify(verify);
+    if let Some(algorithms) = algorithms {
+        builder.set_verify_algorithm_prefs(algorithms).unwrap();
+    }
     let mut names = boring::stack::Stack::new().unwrap();
     for _ in 0..issuer_count {
         names
@@ -1226,14 +1258,19 @@ async fn required_client_authentication_is_only_confirmed_by_explicit_server_ale
         .await
         .unwrap();
         if let Ok(mut stream) = result {
-            let _ = stream.write_all(&[1]).await;
+            // TLS 1.3's rejection can arrive after connect returns. Read its
+            // alert without adding application bytes that can race peer closure.
             assert!(stream.read_exact(&mut [0]).await.is_err());
         }
         assert!(server.join().unwrap().is_none());
         let evidence = attempt.evidence();
         assert!(evidence.client_chain.is_empty());
         if version == SslVersion::TLS1_3 {
-            assert_eq!(evidence.details["Peer TLS alert"], "116");
+            assert_eq!(
+                evidence.details.get("Peer TLS alert").map(String::as_str),
+                Some("116"),
+                "{evidence:?}"
+            );
             assert_eq!(
                 evidence.details["Client certificate requirement"],
                 "Server requires a client certificate"
@@ -1244,6 +1281,732 @@ async fn required_client_authentication_is_only_confirmed_by_explicit_server_ale
                     .details
                     .contains_key("Client certificate requirement")
             );
+        }
+    }
+}
+
+struct PanicSigningKey {
+    panic_in_availability: bool,
+    available_calls: AtomicUsize,
+    entered: AtomicBool,
+}
+impl ClientSigningKey for PanicSigningKey {
+    fn algorithms(&self) -> &[u16] {
+        &[0x0403]
+    }
+    fn available(&self) -> bool {
+        if self.available_calls.fetch_add(1, Ordering::SeqCst) > 0 && self.panic_in_availability {
+            self.entered.store(true, Ordering::Release);
+            panic!("fixture: signing availability panicked");
+        }
+        true
+    }
+    fn sign(&self, _: u16, _: &[u8]) -> Result<Vec<u8>, String> {
+        self.entered.store(true, Ordering::Release);
+        panic!("fixture: signing provider panicked");
+    }
+}
+
+#[tokio::test]
+async fn provider_panic_ends_handshake_without_external_timeout() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for panic_in_availability in [false, true] {
+            let ca = ProxyCa::generate("Provider panic fixture", 2).unwrap();
+            let (mut identity, _) = credential(&ca);
+            let key = Arc::new(PanicSigningKey {
+                panic_in_availability,
+                available_calls: AtomicUsize::new(0),
+                entered: AtomicBool::new(false),
+            });
+            Arc::make_mut(&mut identity).key = key.clone();
+            let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+            let resolver = resolver(Box::pin(async move {
+                ClientAuthenticationDecision::Certificate(identity)
+            }));
+            let attempt = attempt(resolver, address.port());
+            let connector = factory(&ca).hyper_connector().unwrap();
+            let mut config = connector.configure().unwrap();
+            config.set_min_proto_version(Some(version)).unwrap();
+            config.set_max_proto_version(Some(version)).unwrap();
+            let mut ssl = config.into_ssl("localhost").unwrap();
+            attempt.attach_ssl(&mut ssl).unwrap();
+            let tcp = TcpStream::connect(address).await.unwrap();
+            let result = tokio::time::timeout(
+                Duration::from_secs(3),
+                attempt.drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect()),
+            )
+            .await;
+            assert!(key.entered.load(Ordering::Acquire), "signing worker ran");
+            assert!(peer.join().unwrap().is_none());
+            assert!(result.is_ok(), "provider panic left handshake pending");
+            assert!(result.unwrap().is_err());
+            assert!(attempt.evidence().valid());
+            assert!(!format!("{:?}", attempt.evidence()).contains("fixture:"));
+        }
+    }
+}
+
+struct CurveSigningKey {
+    key: PKey<Private>,
+    algorithms: Vec<u16>,
+    signatures: AtomicUsize,
+}
+impl ClientSigningKey for CurveSigningKey {
+    fn algorithms(&self) -> &[u16] {
+        &self.algorithms
+    }
+    fn available(&self) -> bool {
+        true
+    }
+    fn sign(&self, algorithm: u16, input: &[u8]) -> Result<Vec<u8>, String> {
+        assert!(self.algorithms.contains(&algorithm));
+        self.signatures.fetch_add(1, Ordering::SeqCst);
+        let digest = match algorithm {
+            0x0403 => MessageDigest::sha256(),
+            0x0503 => MessageDigest::sha384(),
+            0x0603 => MessageDigest::sha512(),
+            _ => panic!("incompatible scheme reached signer"),
+        };
+        let mut signer = boring::sign::Signer::new(digest, &self.key).unwrap();
+        signer.update(input).unwrap();
+        Ok(signer.sign_to_vec().unwrap())
+    }
+}
+
+#[tokio::test]
+async fn signature_eligibility_uses_negotiated_version_and_leaf_key() {
+    for (version, curve, algorithms, authenticated) in [
+        (SslVersion::TLS1_2, Nid::SECP384R1, vec![0x0403], true),
+        (SslVersion::TLS1_3, Nid::SECP384R1, vec![0x0403], false),
+        (SslVersion::TLS1_3, Nid::SECP384R1, vec![0x0503], true),
+        (SslVersion::TLS1_3, Nid::SECP521R1, vec![0x0603], true),
+        (
+            SslVersion::TLS1_3,
+            Nid::SECP384R1,
+            vec![0x0403, 0x0503, 0x0503],
+            true,
+        ),
+        (
+            SslVersion::TLS1_3,
+            Nid::X9_62_PRIME256V1,
+            vec![0x0503],
+            false,
+        ),
+        (
+            SslVersion::TLS1_2,
+            Nid::X9_62_PRIME256V1,
+            vec![0x0401],
+            false,
+        ),
+        (
+            SslVersion::TLS1_3,
+            Nid::X9_62_PRIME256V1,
+            vec![0x0401],
+            false,
+        ),
+        (
+            SslVersion::TLS1_3,
+            Nid::X9_62_PRIME256V1,
+            vec![0xfeff],
+            false,
+        ),
+    ] {
+        check_signature_eligibility(version, curve, algorithms, authenticated).await;
+    }
+}
+
+async fn check_signature_eligibility(
+    version: SslVersion,
+    curve: Nid,
+    algorithms: Vec<u16>,
+    authenticated: bool,
+) {
+    let ca = ProxyCa::generate("Signature eligibility fixture", 2).unwrap();
+    let (certificate, private_key) = client_identity_on_curve(&ca, false, curve);
+    let key = Arc::new(CurveSigningKey {
+        key: private_key,
+        algorithms,
+        signatures: AtomicUsize::new(0),
+    });
+    let identity = Arc::new(ClientCredential {
+        id: "curve-fixture".into(),
+        chain: vec![certificate, ca.certificate().clone()],
+        key: key.clone(),
+    });
+    // Incomplete protocol information must never authorize an identity.
+    assert!(!identity.compatible(&CertificateRequest::default()));
+    let (address, peer) = server_with_constraints(
+        &ca,
+        version,
+        SslVerifyMode::PEER,
+        1,
+        Some(&[
+            SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256,
+            SslSignatureAlgorithm::ECDSA_SECP384R1_SHA384,
+            SslSignatureAlgorithm::ECDSA_SECP521R1_SHA512,
+            SslSignatureAlgorithm::RSA_PKCS1_SHA256,
+        ]),
+    );
+    let resolver = resolver(Box::pin(async move {
+        ClientAuthenticationDecision::Certificate(identity)
+    }));
+    let attempt = attempt(resolver, address.port());
+    let connector = factory(&ca).hyper_connector().unwrap();
+    let mut config = connector.configure().unwrap();
+    config.set_min_proto_version(Some(version)).unwrap();
+    config.set_max_proto_version(Some(version)).unwrap();
+    let mut ssl = config.into_ssl("localhost").unwrap();
+    attempt.attach_ssl(&mut ssl).unwrap();
+    let tcp = TcpStream::connect(address).await.unwrap();
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(3),
+        attempt.drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    stream.write_all(&[1]).await.unwrap();
+    let mut response = [0; 7];
+    stream.read_exact(&mut response).await.unwrap();
+    assert_eq!(
+        &response,
+        if authenticated {
+            b"private"
+        } else {
+            b"public!"
+        },
+        "version={version:?}, curve={curve:?}, algorithms={:?}, evidence={:?}",
+        key.algorithms(),
+        attempt.evidence()
+    );
+    let observed = peer.join().unwrap();
+    assert_eq!(observed.is_some(), authenticated);
+    assert_eq!(
+        key.signatures.load(Ordering::SeqCst),
+        usize::from(authenticated)
+    );
+    let evidence = attempt.evidence();
+    assert!(evidence.valid());
+    assert_eq!(!evidence.client_chain.is_empty(), authenticated);
+    if let Some(observed) = observed {
+        assert_eq!(
+            evidence.client_chain[0].der.as_ref(),
+            observed.to_der().unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn unicode_decision_reason_keeps_live_capture_evidence_valid() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        let ca = ProxyCa::generate("Unicode reason fixture", 2).unwrap();
+        let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+        let reason = format!("{}{}", "a".repeat(2047), "🦀".repeat(1400));
+        let resolver = resolver(Box::pin(async move {
+            ClientAuthenticationDecision::NoCertificate(reason)
+        }));
+        let attempt = attempt(resolver, address.port());
+        let connector = factory(&ca).hyper_connector().unwrap();
+        let mut config = connector.configure().unwrap();
+        config.set_min_proto_version(Some(version)).unwrap();
+        config.set_max_proto_version(Some(version)).unwrap();
+        let mut ssl = config.into_ssl("localhost").unwrap();
+        attempt.attach_ssl(&mut ssl).unwrap();
+        let tcp = TcpStream::connect(address).await.unwrap();
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(3),
+            attempt.drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        stream.write_all(&[1]).await.unwrap();
+        let mut response = [0; 7];
+        stream.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"public!");
+        assert!(peer.join().unwrap().is_none());
+        let evidence = attempt.evidence();
+        assert!(evidence.valid());
+        assert_eq!(
+            evidence.details["Client certificate decision"],
+            "a".repeat(2047)
+        );
+        assert!(evidence.client_chain.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn signing_key_usage_controls_optional_authentication() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for (key_usage, authenticated) in [
+            (
+                Some(
+                    KeyUsage::new()
+                        .critical()
+                        .digital_signature()
+                        .build()
+                        .unwrap(),
+                ),
+                true,
+            ),
+            (
+                Some(KeyUsage::new().critical().key_agreement().build().unwrap()),
+                false,
+            ),
+            (
+                Some(
+                    KeyUsage::new()
+                        .digital_signature()
+                        .key_agreement()
+                        .build()
+                        .unwrap(),
+                ),
+                true,
+            ),
+            (None, true),
+        ] {
+            let ca = ProxyCa::generate("Signing usage fixture", 2).unwrap();
+            let (certificate, private_key) =
+                client_identity_with_usage(&ca, false, Nid::X9_62_PRIME256V1, key_usage);
+            let key = Arc::new(TestSigningKey {
+                key: private_key,
+                available: AtomicBool::new(true),
+                signatures: AtomicUsize::new(0),
+            });
+            let identity = Arc::new(ClientCredential {
+                id: "key-usage-fixture".into(),
+                chain: vec![certificate, ca.certificate().clone()],
+                key: key.clone(),
+            });
+            let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+            let resolver = resolver(Box::pin(async move {
+                ClientAuthenticationDecision::Certificate(identity)
+            }));
+            let attempt = attempt(resolver, address.port());
+            let connector = factory(&ca).hyper_connector().unwrap();
+            let mut config = connector.configure().unwrap();
+            config.set_min_proto_version(Some(version)).unwrap();
+            config.set_max_proto_version(Some(version)).unwrap();
+            let mut ssl = config.into_ssl("localhost").unwrap();
+            attempt.attach_ssl(&mut ssl).unwrap();
+            let tcp = TcpStream::connect(address).await.unwrap();
+            let mut stream = tokio::time::timeout(
+                Duration::from_secs(3),
+                attempt.drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            stream.write_all(&[1]).await.unwrap();
+            let mut response = [0; 7];
+            stream.read_exact(&mut response).await.unwrap();
+            assert_eq!(
+                &response,
+                if authenticated {
+                    b"private"
+                } else {
+                    b"public!"
+                }
+            );
+            assert_eq!(peer.join().unwrap().is_some(), authenticated);
+            assert_eq!(
+                key.signatures.load(Ordering::SeqCst),
+                usize::from(authenticated)
+            );
+            let evidence = attempt.evidence();
+            assert!(evidence.valid());
+            assert_eq!(!evidence.client_chain.is_empty(), authenticated);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CancellationPhase {
+    Resolve,
+    Poll,
+    PollPending,
+    CompleteDrop,
+    PendingDrop,
+}
+struct ReentrantResolver {
+    phase: CancellationPhase,
+    target: Mutex<Option<ClientAuthenticationAttempt>>,
+    identity: Arc<ClientCredential>,
+    notice: Arc<Notify>,
+    drops: Arc<AtomicUsize>,
+}
+impl ClientAuthenticationResolver for ReentrantResolver {
+    fn generation(&self) -> u64 {
+        1
+    }
+    fn resolve(
+        &self,
+        _: ClientAuthenticationContext,
+        _: CertificateRequest,
+    ) -> ClientAuthenticationFuture {
+        let attempt = self.target.lock().unwrap().as_ref().unwrap().clone();
+        if self.phase == CancellationPhase::Resolve {
+            attempt.cancel("cancelled while creating decision");
+        }
+        Box::pin(ReentrantDecision {
+            phase: self.phase,
+            attempt,
+            identity: self.identity.clone(),
+            notice: self.notice.clone(),
+            drops: self.drops.clone(),
+        })
+    }
+}
+struct ReentrantDecision {
+    phase: CancellationPhase,
+    attempt: ClientAuthenticationAttempt,
+    identity: Arc<ClientCredential>,
+    notice: Arc<Notify>,
+    drops: Arc<AtomicUsize>,
+}
+impl std::future::Future for ReentrantDecision {
+    type Output = ClientAuthenticationDecision;
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if matches!(
+            self.phase,
+            CancellationPhase::Poll | CancellationPhase::PollPending
+        ) {
+            self.attempt.cancel("cancelled while polling decision");
+        }
+        self.notice.notify_one();
+        if matches!(
+            self.phase,
+            CancellationPhase::PendingDrop | CancellationPhase::PollPending
+        ) {
+            std::task::Poll::Pending
+        } else {
+            // Cancellation must win even over a ready certificate answer.
+            std::task::Poll::Ready(ClientAuthenticationDecision::Certificate(
+                self.identity.clone(),
+            ))
+        }
+    }
+}
+impl Drop for ReentrantDecision {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+        if matches!(
+            self.phase,
+            CancellationPhase::CompleteDrop | CancellationPhase::PendingDrop
+        ) {
+            self.attempt
+                .cancel("cancelled while removing pending decision");
+        }
+    }
+}
+
+async fn check_reentrant_cancellation(version: SslVersion, phase: CancellationPhase) {
+    let ca = ProxyCa::generate("Reentrant cancellation fixture", 2).unwrap();
+    let (identity, key) = credential(&ca);
+    let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+    let drops = Arc::new(AtomicUsize::new(0));
+    let resolver = Arc::new(ReentrantResolver {
+        phase,
+        target: Mutex::new(None),
+        identity,
+        notice: Arc::new(Notify::new()),
+        drops: drops.clone(),
+    });
+    let attempt = ClientAuthenticationAttempt::new(
+        resolver.clone(),
+        ClientAuthenticationContext {
+            host: "localhost".into(),
+            port: address.port(),
+            caller: "process:test".into(),
+            generation: 1,
+        },
+        transmog_tls::TlsCapture::new(transmog_core::TlsEvidence::default()),
+    );
+    *resolver.target.lock().unwrap() = Some(attempt.clone());
+    let connector = factory(&ca).hyper_connector().unwrap();
+    let mut config = connector.configure().unwrap();
+    config.set_min_proto_version(Some(version)).unwrap();
+    config.set_max_proto_version(Some(version)).unwrap();
+    let mut ssl = config.into_ssl("localhost").unwrap();
+    attempt.attach_ssl(&mut ssl).unwrap();
+    let tcp = TcpStream::connect(address).await.unwrap();
+    let driver = attempt.clone();
+    let handshake = tokio::spawn(async move {
+        driver
+            .drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect())
+            .await
+    });
+    if phase == CancellationPhase::PendingDrop {
+        resolver.notice.notified().await;
+        attempt.cancel("pending decision cancelled by owner");
+    }
+    assert!(handshake.await.unwrap().is_err());
+    assert!(peer.join().unwrap().is_none());
+    assert_eq!(key.signatures.load(Ordering::SeqCst), 0);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    let evidence = attempt.evidence();
+    assert!(evidence.valid());
+    assert!(evidence.client_chain.is_empty());
+    assert!(evidence.details["Client certificate"].starts_with("Cancelled:"));
+    let target = resolver.target.lock().unwrap().take();
+    drop(target);
+}
+
+#[test]
+fn embedding_cancellation_reenters_decision_lifecycle_without_deadlock() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for phase in [
+            CancellationPhase::Resolve,
+            CancellationPhase::Poll,
+            CancellationPhase::PollPending,
+            CancellationPhase::CompleteDrop,
+            CancellationPhase::PendingDrop,
+        ] {
+            let (done, finished) = std::sync::mpsc::channel();
+            // A dedicated thread keeps the watchdog runnable if this regresses
+            // into a synchronous mutex deadlock in the handshake reactor.
+            let worker = std::thread::spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(check_reentrant_cancellation(version, phase));
+                done.send(()).unwrap();
+            });
+            assert!(
+                finished.recv_timeout(Duration::from_secs(3)).is_ok(),
+                "{version:?} {phase:?} cancellation deadlocked"
+            );
+            worker.join().unwrap();
+        }
+    }
+}
+
+struct PanickingPendingCleanup {
+    notice: Arc<Notify>,
+    drops: Arc<AtomicUsize>,
+}
+impl std::future::Future for PanickingPendingCleanup {
+    type Output = ClientAuthenticationDecision;
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.notice.notify_one();
+        std::task::Poll::Pending
+    }
+}
+impl Drop for PanickingPendingCleanup {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+        panic!("fixture private cleanup diagnostic");
+    }
+}
+
+#[tokio::test]
+async fn cleanup_panic_cannot_strand_cancellation_or_panic_owner_abort() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for abort_owner in [false, true] {
+            let ca = ProxyCa::generate("Cleanup failure fixture", 2).unwrap();
+            let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+            let notice = Arc::new(Notify::new());
+            let drops = Arc::new(AtomicUsize::new(0));
+            let resolver = resolver(Box::pin(PanickingPendingCleanup {
+                notice: notice.clone(),
+                drops: drops.clone(),
+            }));
+            let attempt = attempt(resolver, address.port());
+            let connector = factory(&ca).hyper_connector().unwrap();
+            let mut config = connector.configure().unwrap();
+            config.set_min_proto_version(Some(version)).unwrap();
+            config.set_max_proto_version(Some(version)).unwrap();
+            let mut ssl = config.into_ssl("localhost").unwrap();
+            attempt.attach_ssl(&mut ssl).unwrap();
+            let tcp = TcpStream::connect(address).await.unwrap();
+            let driver = attempt.clone();
+            let handshake = tokio::spawn(async move {
+                driver
+                    .drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect())
+                    .await
+            });
+            tokio::time::timeout(Duration::from_secs(3), notice.notified())
+                .await
+                .unwrap();
+            if abort_owner {
+                handshake.abort();
+            } else {
+                assert!(
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        attempt.cancel("owner cancelled");
+                    }))
+                    .is_ok(),
+                    "cleanup panic escaped cancellation"
+                );
+                attempt.cancel("repeated cancellation");
+            }
+            let result = tokio::time::timeout(Duration::from_secs(3), handshake)
+                .await
+                .unwrap();
+            if abort_owner {
+                assert!(result.unwrap_err().is_cancelled());
+            } else {
+                assert!(result.unwrap().is_err());
+            }
+            assert!(peer.join().unwrap().is_none());
+            assert_eq!(drops.load(Ordering::SeqCst), 1);
+            let evidence = attempt.evidence();
+            assert!(evidence.valid());
+            assert!(evidence.client_chain.is_empty());
+            assert!(evidence.details["Client certificate"].starts_with("Cancelled:"));
+            assert_eq!(
+                evidence.details["Client certificate cleanup"],
+                "Pending request cleanup failed"
+            );
+            assert!(!format!("{evidence:?}").contains("fixture private cleanup diagnostic"));
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SigningGatePhase {
+    Availability,
+    Signing,
+}
+#[derive(Default)]
+struct SigningGate {
+    released: Mutex<bool>,
+    signal: std::sync::Condvar,
+}
+impl SigningGate {
+    fn wait(&self) {
+        let mut released = self.released.lock().unwrap();
+        while !*released {
+            released = self.signal.wait(released).unwrap();
+        }
+    }
+    fn release(&self) {
+        *self.released.lock().unwrap() = true;
+        self.signal.notify_all();
+    }
+}
+struct ReleaseSigningGate(Arc<SigningGate>);
+impl Drop for ReleaseSigningGate {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+struct GatedSigningKey {
+    key: PKey<Private>,
+    phase: SigningGatePhase,
+    reactor_thread: std::thread::ThreadId,
+    notice: Arc<Notify>,
+    gate: Arc<SigningGate>,
+    signatures: AtomicUsize,
+}
+impl ClientSigningKey for GatedSigningKey {
+    fn algorithms(&self) -> &[u16] {
+        &[0x0403]
+    }
+    fn available(&self) -> bool {
+        if self.phase == SigningGatePhase::Availability
+            && std::thread::current().id() != self.reactor_thread
+        {
+            self.notice.notify_one();
+            self.gate.wait();
+        }
+        true
+    }
+    fn sign(&self, algorithm: u16, input: &[u8]) -> Result<Vec<u8>, String> {
+        assert_ne!(std::thread::current().id(), self.reactor_thread);
+        assert_eq!(algorithm, 0x0403);
+        self.signatures.fetch_add(1, Ordering::SeqCst);
+        if self.phase == SigningGatePhase::Signing {
+            self.notice.notify_one();
+            self.gate.wait();
+        }
+        let mut signer = boring::sign::Signer::new(MessageDigest::sha256(), &self.key).unwrap();
+        signer.update(input).unwrap();
+        Ok(signer.sign_to_vec().unwrap())
+    }
+}
+
+async fn check_signing_cancellation(version: SslVersion, phase: SigningGatePhase) {
+    let ca = ProxyCa::generate("Signing admission fixture", 2).unwrap();
+    let (certificate, private_key) = client_identity(&ca);
+    let notice = Arc::new(Notify::new());
+    let gate = Arc::new(SigningGate::default());
+    // Always release a started blocking worker, even if a test assertion fails.
+    let _release = ReleaseSigningGate(gate.clone());
+    let key = Arc::new(GatedSigningKey {
+        key: private_key,
+        phase,
+        reactor_thread: std::thread::current().id(),
+        notice: notice.clone(),
+        gate: gate.clone(),
+        signatures: AtomicUsize::new(0),
+    });
+    let identity = Arc::new(ClientCredential {
+        id: "signing-admission-fixture".into(),
+        chain: vec![certificate, ca.certificate().clone()],
+        key: key.clone(),
+    });
+    let (address, peer) = server(&ca, version, SslVerifyMode::PEER);
+    let resolver = resolver(Box::pin(async move {
+        ClientAuthenticationDecision::Certificate(identity)
+    }));
+    let attempt = attempt(resolver, address.port());
+    let connector = factory(&ca).hyper_connector().unwrap();
+    let mut config = connector.configure().unwrap();
+    config.set_min_proto_version(Some(version)).unwrap();
+    config.set_max_proto_version(Some(version)).unwrap();
+    let mut ssl = config.into_ssl("localhost").unwrap();
+    attempt.attach_ssl(&mut ssl).unwrap();
+    let tcp = TcpStream::connect(address).await.unwrap();
+    let driver = attempt.clone();
+    let handshake = tokio::spawn(async move {
+        driver
+            .drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect())
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), notice.notified())
+        .await
+        .unwrap();
+    let expected = usize::from(phase == SigningGatePhase::Signing);
+    assert_eq!(key.signatures.load(Ordering::SeqCst), expected);
+    attempt.cancel("caller disconnected");
+    gate.release();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), handshake)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    // The error has released SSL's provider. Once only this test owns the key,
+    // the blocking worker has released it too and cannot start a late signature.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while Arc::strong_count(&key) != 1 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(key.signatures.load(Ordering::SeqCst), expected);
+    assert!(
+        peer.join().unwrap().is_none(),
+        "cancelled signature authenticated the peer"
+    );
+    assert!(attempt.evidence().valid());
+}
+
+#[tokio::test]
+async fn cancelled_lookup_cannot_start_signing_but_started_signing_can_finish() {
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for phase in [SigningGatePhase::Availability, SigningGatePhase::Signing] {
+            check_signing_cancellation(version, phase).await;
         }
     }
 }

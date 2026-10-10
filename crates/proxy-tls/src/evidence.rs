@@ -67,10 +67,7 @@ impl TlsCapture {
     }
     /// Records a bounded public client authentication state or policy explanation.
     pub fn authentication_detail(&self, name: &str, value: &str) {
-        self.data().details.insert(
-            name.chars().take(128).collect(),
-            value.chars().take(2048).collect(),
-        );
+        insert_detail(&mut self.data(), name, value);
     }
     pub(crate) fn client_authentication_event(
         &self,
@@ -91,16 +88,15 @@ impl TlsCapture {
                 } else {
                     "Certificate queued to TLS transport"
                 };
-                data.details
-                    .insert("Client certificate".into(), status.into());
+                insert_detail(&mut data, "Client certificate", status);
             }
             ClientAuthenticationEvent::PeerAlert(description) => {
-                data.details
-                    .insert("Peer TLS alert".into(), description.to_string());
+                insert_detail(&mut data, "Peer TLS alert", &description.to_string());
                 if description == 116 {
-                    data.details.insert(
-                        "Client certificate requirement".into(),
-                        "Server requires a client certificate".into(),
+                    insert_detail(
+                        &mut data,
+                        "Client certificate requirement",
+                        "Server requires a client certificate",
                     );
                 }
             }
@@ -231,10 +227,8 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
         }
     }
     if let Some(cipher) = ssl.current_cipher() {
-        data.details
-            .insert("Negotiated TLS version".into(), ssl.version_str().into());
-        data.details
-            .insert("Negotiated cipher".into(), cipher.name().into());
+        insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
+        insert_detail(&mut data, "Negotiated cipher", cipher.name());
     }
     if !accepted && let Err(error) = context.verify_result() {
         data.verification = Some(VerificationResult::Rejected {
@@ -251,6 +245,22 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
             data.errors.push(message);
         }
     }
+}
+
+fn insert_detail(data: &mut TlsEvidence, name: &str, value: &str) {
+    let name = bounded_text(name, 128);
+    if data.details.len() < 64 || data.details.contains_key(name) {
+        data.details
+            .insert(name.to_owned(), bounded_text(value, 2048).to_owned());
+    }
+}
+
+fn bounded_text(value: &str, limit: usize) -> &str {
+    let mut end = value.len().min(limit);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
 }
 
 fn collect_certificate(chain: &mut Vec<PublicCertificate>, certificate: &X509Ref) {
@@ -270,5 +280,33 @@ fn collect_certificate(chain: &mut Vec<PublicCertificate>, certificate: &X509Ref
             sha256,
             der: Arc::from(der),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authentication_details_bound_utf8_bytes_and_entry_count() {
+        let capture = TlsCapture::new(TlsEvidence::default());
+        let name = format!("{}🦀", "a".repeat(127));
+        let value = format!("{}🦀", "b".repeat(2047));
+        capture.authentication_detail(&name, &value);
+        capture.authentication_detail("🦀", &"🦀".repeat(1400));
+        for index in 0..100 {
+            capture.authentication_detail(&format!("entry {index}"), "value");
+        }
+        // Existing status entries can still update when the map is full.
+        capture.authentication_detail("🦀", "updated");
+        let evidence = capture.snapshot();
+        assert!(evidence.valid());
+        assert_eq!(evidence.details.len(), 64);
+        assert_eq!(evidence.details[&"a".repeat(127)], "b".repeat(2047));
+        assert_eq!(evidence.details["🦀"], "updated");
+        capture.client_authentication_event(
+            transmog_tls_native::ClientAuthenticationEvent::PeerAlert(116),
+        );
+        assert!(capture.snapshot().valid());
     }
 }

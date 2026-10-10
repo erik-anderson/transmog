@@ -21,6 +21,8 @@ use std::{
 /// Owned constraints from the current server's actual certificate request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CertificateRequest {
+    /// Negotiated protocol version. An unknown version cannot authorize an identity.
+    pub tls_version: Option<boring::ssl::SslVersion>,
     /// Constraints could not be represented within supported bounds. Never select
     /// a certificate from incomplete constraints; continuing without one is safe.
     pub constraints_omitted: bool,
@@ -124,6 +126,7 @@ unsafe extern "C" fn trampoline(pointer: *mut boring_sys::SSL, _: *mut c_void) -
             )
         };
         let mut request = CertificateRequest {
+            tls_version: ssl.version2(),
             constraints_omitted: algorithm_count > 256 || type_count > 256,
             ..CertificateRequest::default()
         };
@@ -180,6 +183,11 @@ pub fn permits_client_authentication(certificate: &X509Ref) -> bool {
     unsafe {
         boring_sys::X509_check_purpose(certificate.as_ptr(), boring_sys::X509_PURPOSE_SSL_CLIENT, 0)
             == 1
+            // The generic client-purpose check also permits key agreement,
+            // but this bridge authenticates only with CertificateVerify signing.
+            // The getter returns all bits set when Key Usage is absent.
+            && (boring_sys::X509_get_key_usage(certificate.as_ptr())
+                & boring_sys::X509v3_KU_DIGITAL_SIGNATURE.unsigned_abs()) != 0
     }
 }
 
@@ -406,7 +414,11 @@ unsafe fn key_operation(
         else {
             return FAILURE;
         };
-        // SAFETY: native callback contract guarantees capacity writable bytes.
+        // SAFETY: native callback contract guarantees capacity writable bytes,
+        // but BoringSSL may reserve uninitialized signature storage. Initialize
+        // every byte before exposing it as an initialized Rust slice.
+        unsafe { std::ptr::write_bytes(output, 0, capacity) };
+        // SAFETY: the output now contains capacity initialized, writable bytes.
         let buffer = unsafe { std::slice::from_raw_parts_mut(output, capacity) };
         match operation(method.as_ref(), ssl, buffer) {
             Ok(written) if written <= capacity => {
@@ -472,5 +484,85 @@ unsafe extern "C" fn complete(
         key_operation(ssl, output, length, capacity, |method, ssl, buffer| {
             method.complete(ssl, buffer)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use boring::ssl::{SslMethod, SslSignatureAlgorithm};
+    use foreign_types::ForeignType;
+    use std::mem::MaybeUninit;
+
+    struct InitializedBufferMethod;
+    fn signature(output: &mut [u8]) -> usize {
+        assert!(output.iter().all(|byte| *byte == 0));
+        output[..2].copy_from_slice(&[7, 9]);
+        2
+    }
+    impl PrivateKeyMethod for InitializedBufferMethod {
+        fn sign(
+            &self,
+            _: &mut SslRef,
+            _: &[u8],
+            _: SslSignatureAlgorithm,
+            output: &mut [u8],
+        ) -> Result<usize, PrivateKeyMethodError> {
+            Ok(signature(output))
+        }
+        fn decrypt(
+            &self,
+            _: &mut SslRef,
+            _: &[u8],
+            output: &mut [u8],
+        ) -> Result<usize, PrivateKeyMethodError> {
+            Ok(signature(output))
+        }
+        fn complete(
+            &self,
+            _: &mut SslRef,
+            output: &mut [u8],
+        ) -> Result<usize, PrivateKeyMethodError> {
+            Ok(signature(output))
+        }
+    }
+
+    #[test]
+    fn every_key_callback_initializes_reserved_native_output() {
+        let context = SslContext::builder(SslMethod::tls()).unwrap().build();
+        let mut ssl = Ssl::new(&context).unwrap();
+        set_private_key_method(&mut ssl, Arc::new(InitializedBufferMethod)).unwrap();
+        for operation in 0..3 {
+            let mut output = [MaybeUninit::<u8>::uninit(); 8];
+            let mut length = usize::MAX;
+            let pointer = output.as_mut_ptr().cast::<u8>();
+            // SAFETY: the live SSL and owned output/count buffers remain exclusive
+            // throughout the call. Input is initialized and readable. Output is
+            // deliberately uninitialized, as allowed by the native callback API.
+            let result = unsafe {
+                match operation {
+                    0 => sign(
+                        ssl.as_ptr(),
+                        pointer,
+                        &raw mut length,
+                        8,
+                        0x0403,
+                        b"a".as_ptr(),
+                        1,
+                    ),
+                    1 => decrypt(ssl.as_ptr(), pointer, &raw mut length, 8, b"a".as_ptr(), 1),
+                    _ => complete(ssl.as_ptr(), pointer, &raw mut length, 8),
+                }
+            };
+            assert_eq!(
+                result,
+                boring_sys::ssl_private_key_result_t::ssl_private_key_success
+            );
+            assert_eq!(length, 2);
+            // SAFETY: success plus the provider's assertion proves the adapter
+            // initialized all eight bytes before exposing them to safe Rust.
+            let initialized = output.map(|byte| unsafe { byte.assume_init() });
+            assert_eq!(initialized, [7, 9, 0, 0, 0, 0, 0, 0]);
+        }
     }
 }

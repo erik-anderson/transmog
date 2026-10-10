@@ -4,9 +4,10 @@ use boring::{
     error::ErrorStack,
     hash::MessageDigest,
     nid::Nid,
-    pkey::Id,
+    pkey::{Id, PKeyRef, Public},
     ssl::{
         PrivateKeyMethod, PrivateKeyMethodError, SslContextBuilder, SslRef, SslSignatureAlgorithm,
+        SslVersion,
     },
     x509::{X509, X509NameRef},
 };
@@ -32,7 +33,8 @@ use transmog_tls_native::{SelectionResult, clear_client_credentials};
 /// Safe provider of a certificate's private signing operations.
 /// Implementations may hold an OS key reference or protected local file path.
 pub trait ClientSigningKey: Send + Sync + 'static {
-    /// Supported TLS signature algorithms for this particular key and curve.
+    /// Supported TLS signature algorithms for this key. Eligibility also checks
+    /// the leaf key and negotiated version (TLS 1.2 does not bind ECDSA curves).
     fn algorithms(&self) -> &[u16];
     /// Rechecks whether the exact selected identity still exists.
     fn available(&self) -> bool;
@@ -93,10 +95,7 @@ impl ClientCredential {
                 .not_after()
                 .compare(&now)
                 .is_ok_and(std::cmp::Ordering::is_gt)
-            && self.key.algorithms().iter().any(|algorithm| {
-                request.signature_algorithms.is_empty()
-                    || request.signature_algorithms.contains(algorithm)
-            })
+            && !self.signing_algorithms(request).is_empty()
             && (request.certificate_types.is_empty()
                 || leaf.public_key().is_ok_and(|key| match key.id() {
                     Id::RSA => request.certificate_types.contains(&1),
@@ -115,6 +114,25 @@ impl ClientCredential {
                                 .is_ok_and(|der| request.issuers.contains(&der)))
                 }))
     }
+    fn signing_algorithms(&self, request: &CertificateRequest) -> Vec<u16> {
+        let Some(version) = request.tls_version else {
+            return Vec::new();
+        };
+        let Some(key) = self.chain.first().and_then(|leaf| leaf.public_key().ok()) else {
+            return Vec::new();
+        };
+        let mut algorithms = Vec::new();
+        for &algorithm in self.key.algorithms() {
+            if !algorithms.contains(&algorithm)
+                && (request.signature_algorithms.is_empty()
+                    || request.signature_algorithms.contains(&algorithm))
+                && key_supports_algorithm(&key, version, algorithm)
+            {
+                algorithms.push(algorithm);
+            }
+        }
+        algorithms
+    }
     /// Lowercase SHA-256 public leaf fingerprint.
     pub fn fingerprint(&self) -> Option<String> {
         self.chain
@@ -128,6 +146,40 @@ impl ClientCredential {
                     text
                 })
             })
+    }
+}
+// Keep these eligibility rules aligned with the pinned BoringSSL's
+// ssl_pkey_supports_algorithm. Unsupported schemes and versions fail closed.
+fn key_supports_algorithm(key: &PKeyRef<Public>, version: SslVersion, algorithm: u16) -> bool {
+    if !matches!(version, SslVersion::TLS1_2 | SslVersion::TLS1_3) {
+        return false;
+    }
+    match algorithm {
+        0x0201 | 0x0401 | 0x0501 | 0x0601 => version == SslVersion::TLS1_2 && key.id() == Id::RSA,
+        0x0420 => version == SslVersion::TLS1_3 && key.id() == Id::RSA,
+        0x0804..=0x0806 => {
+            let hash_size = match algorithm {
+                0x0804 => 32,
+                0x0805 => 48,
+                _ => 64,
+            };
+            key.id() == Id::RSA && key.size() >= 2 * hash_size + 2
+        }
+        0x0203 => version == SslVersion::TLS1_2 && key.id() == Id::EC,
+        0x0403 | 0x0503 | 0x0603 => {
+            key.id() == Id::EC
+                && (version == SslVersion::TLS1_2
+                    || key.ec_key().is_ok_and(|ec| {
+                        ec.group().curve_name()
+                            == Some(match algorithm {
+                                0x0403 => Nid::X9_62_PRIME256V1,
+                                0x0503 => Nid::SECP384R1,
+                                _ => Nid::SECP521R1,
+                            })
+                    }))
+        }
+        0x0807 => key.id() == Id::ED25519,
+        _ => false,
     }
 }
 fn attributes_match(name: &X509NameRef, attributes: &BTreeMap<String, String>) -> bool {
@@ -423,9 +475,13 @@ fn reject_stale_authorization(
     })
 }
 
-struct SelectionState {
-    future: Option<ClientAuthenticationFuture>,
-    finished: bool,
+enum SelectionState {
+    NotStarted,
+    // The SSL callback owns the future while invoking or polling embedding code.
+    // Cancellation can mark Finished without touching that in-flight future.
+    Polling,
+    Waiting(ClientAuthenticationFuture),
+    Finished,
 }
 struct AttemptState {
     resolver: Arc<dyn ClientAuthenticationResolver>,
@@ -458,10 +514,7 @@ impl ClientAuthenticationAttempt {
             resolver,
             context,
             capture,
-            selection: Mutex::new(SelectionState {
-                future: None,
-                finished: false,
-            }),
+            selection: Mutex::new(SelectionState::NotStarted),
             waker: Mutex::new(None),
             cancelled: AtomicBool::new(false),
             signing_job: Mutex::new(None),
@@ -469,48 +522,64 @@ impl ClientAuthenticationAttempt {
     }
     /// Registers the reactor's current task before polling the handshake driver.
     pub fn register(&self, waker: &Waker) {
-        *self
+        let waker = waker.clone();
+        let previous = self
             .0
             .waker
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(waker.clone());
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(waker);
+        drop(previous);
     }
     /// Invalidates a paused handshake and drops its owned resolver future.
     /// Call when the driver detects peer closure, caller cancellation or shutdown.
     pub fn cancel(&self, reason: &str) {
-        self.0.cancelled.store(true, Ordering::Release);
-        let mut state = self
-            .0
-            .selection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !state.finished {
-            let waiting = state.future.take().is_some();
-            state.finished = true;
-            if waiting {
+        if self.0.cancelled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let previous = {
+            let mut state = self
+                .0
+                .selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let previous = std::mem::replace(&mut *state, SelectionState::Finished);
+            if matches!(
+                previous,
+                SelectionState::Polling | SelectionState::Waiting(_)
+            ) {
                 self.0
                     .capture
                     .authentication_detail("Client certificate", &format!("Cancelled: {reason}"));
             }
-        }
-        drop(state);
-        if let Some(job) = self
+            previous
+        };
+        let job = self
             .0
             .signing_job
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
+            .take();
+        if let Some(job) = job {
             job.abort();
         }
-        if let Some(waker) = self
+        let waker = self
             .0
             .waker
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-        {
-            waker.wake_by_ref();
+            .clone();
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+        // Finish essential cancellation before invoking embedding cleanup.
+        // It can reenter cancel or panic, including during an owner's unwinding.
+        // No selection/job/waker lock is held while its future is destroyed.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(previous))).is_err() {
+            self.0.capture.authentication_detail(
+                "Client certificate cleanup",
+                "Pending request cleanup failed",
+            );
         }
     }
     /// Returns bounded public evidence for this physical connection.
@@ -569,37 +638,73 @@ impl ClientAuthenticationAttempt {
             self.cancel("authorization changed");
             return SelectionResult::Failed;
         }
-        let mut state = self
-            .0
-            .selection
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.finished {
-            return SelectionResult::Failed;
-        }
-        if state.future.is_none() {
-            if request.constraints_omitted {
-                self.0.capture.authentication_detail(
-                    "Client certificate request",
-                    "Request constraints exceed supported limits; no identity can be selected",
-                );
+        match self.poll_decision(request) {
+            Err(()) => SelectionResult::Failed,
+            Ok(None) => SelectionResult::Pending,
+            Ok(Some(decision)) => {
+                let result = self.finish_selection(ssl, request, decision);
+                if self.0.cancelled.load(Ordering::Acquire)
+                    || self.0.resolver.generation() != self.0.context.generation
+                {
+                    clear_client_credentials(ssl);
+                    SelectionResult::Failed
+                } else {
+                    result
+                }
             }
-            self.0
-                .capture
-                .authentication_detail("Client certificate", "Requested");
-            let decision = self
+        }
+    }
+    fn start_decision(&self, request: &CertificateRequest) -> ClientAuthenticationFuture {
+        let decision = self
+            .0
+            .resolver
+            .resolve(self.0.context.clone(), request.clone());
+        Box::pin(async move {
+            tokio::time::timeout(CLIENT_CERTIFICATE_DECISION_TIMEOUT, decision)
+                .await
+                .unwrap_or_else(|_| {
+                    ClientAuthenticationDecision::Cancelled("certificate decision timed out".into())
+                })
+        })
+    }
+    fn poll_decision(
+        &self,
+        request: &CertificateRequest,
+    ) -> Result<Option<ClientAuthenticationDecision>, ()> {
+        let previous = {
+            let mut state = self
                 .0
-                .resolver
-                .resolve(self.0.context.clone(), request.clone());
-            state.future = Some(Box::pin(async move {
-                tokio::time::timeout(CLIENT_CERTIFICATE_DECISION_TIMEOUT, decision)
-                    .await
-                    .unwrap_or_else(|_| {
-                        ClientAuthenticationDecision::Cancelled(
-                            "certificate decision timed out".into(),
-                        )
-                    })
-            }));
+                .selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match *state {
+                SelectionState::Finished => return Err(()),
+                SelectionState::Polling => return Ok(None),
+                _ => (),
+            }
+            if matches!(*state, SelectionState::NotStarted) {
+                if request.constraints_omitted {
+                    self.0.capture.authentication_detail(
+                        "Client certificate request",
+                        "Request constraints exceed supported limits; no identity can be selected",
+                    );
+                }
+                self.0
+                    .capture
+                    .authentication_detail("Client certificate", "Requested");
+            }
+            std::mem::replace(&mut *state, SelectionState::Polling)
+        };
+        if self.0.cancelled.load(Ordering::Acquire) {
+            return Err(());
+        }
+        let mut future = match previous {
+            SelectionState::NotStarted => self.start_decision(request),
+            SelectionState::Waiting(future) => future,
+            _ => unreachable!("selection claimed only an idle or waiting decision"),
+        };
+        if self.0.cancelled.load(Ordering::Acquire) {
+            return Err(());
         }
         let waker = self
             .0
@@ -608,27 +713,52 @@ impl ClientAuthenticationAttempt {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
             .unwrap_or_else(|| Waker::noop().clone());
-        let decision = state
-            .future
-            .as_mut()
-            .expect("decision initialized")
-            .as_mut()
-            .poll(&mut Context::from_waker(&waker));
+        let decision = future.as_mut().poll(&mut Context::from_waker(&waker));
         match decision {
             Poll::Pending => {
-                self.0
-                    .capture
-                    .authentication_detail("Client certificate", "Waiting for decision");
-                SelectionResult::Pending
+                let mut future = Some(future);
+                let parked = {
+                    let mut state = self
+                        .0
+                        .selection
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if matches!(*state, SelectionState::Polling)
+                        && !self.0.cancelled.load(Ordering::Acquire)
+                    {
+                        *state = SelectionState::Waiting(future.take().expect("polled future"));
+                        self.0
+                            .capture
+                            .authentication_detail("Client certificate", "Waiting for decision");
+                        true
+                    } else {
+                        false
+                    }
+                };
+                // If cancellation won while polling, cleanup still runs unlocked.
+                drop(future);
+                if parked { Ok(None) } else { Err(()) }
             }
             Poll::Ready(decision) => {
-                state.future = None;
-                state.finished = true;
-                drop(state);
+                // Cleanup can cancel a ready certificate decision too. Check the
+                // cancellation flag only after destroying the completed future.
+                drop(future);
                 if self.0.resolver.generation() != self.0.context.generation {
-                    return SelectionResult::Failed;
+                    self.cancel("authorization changed");
+                    return Err(());
                 }
-                self.finish_selection(ssl, request, decision)
+                let mut state = self
+                    .0
+                    .selection
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if self.0.cancelled.load(Ordering::Acquire)
+                    || !matches!(*state, SelectionState::Polling)
+                {
+                    return Err(());
+                }
+                *state = SelectionState::Finished;
+                Ok(Some(decision))
             }
         }
     }
@@ -654,8 +784,11 @@ impl ClientAuthenticationAttempt {
                 {
                     return SelectionResult::Failed;
                 }
-                if transmog_tls_native::set_signing_algorithms(ssl, credential.key.algorithms())
-                    .is_err()
+                if transmog_tls_native::set_signing_algorithms(
+                    ssl,
+                    &credential.signing_algorithms(request),
+                )
+                .is_err()
                 {
                     return SelectionResult::Failed;
                 }
@@ -763,24 +896,32 @@ impl PrivateKeyMethod for BackgroundSigner {
             return Err(PrivateKeyMethodError::FAILURE);
         };
         let job = runtime.spawn_blocking(move || {
-            let signed = if !waker.cancelled.load(Ordering::Acquire)
-                && key.available()
-                && waker.resolver.generation() == waker.context.generation
-            {
-                key.sign(algorithm, &input)
-            } else {
-                Err("selected identity is no longer authorized or available".into())
-            };
+            // A provider panic must publish failure and wake the handshake just
+            // like an ordinary error. Never expose its panic payload as evidence.
+            let signed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if !waker.cancelled.load(Ordering::Acquire)
+                    && key.available()
+                    && waker.resolver.generation() == waker.context.generation
+                    // Provider checks may block or reenter cancellation. Admit
+                    // signing only after those checks have returned.
+                    && !waker.cancelled.load(Ordering::Acquire)
+                {
+                    key.sign(algorithm, &input)
+                } else {
+                    Err("selected identity is no longer authorized or available".into())
+                }
+            }))
+            .unwrap_or_else(|_| Err("client certificate signing provider failed".into()));
             *result
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(signed);
-            if let Some(waker) = waker
+            let waker = waker
                 .waker
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_ref()
-            {
-                waker.wake_by_ref();
+                .clone();
+            if let Some(waker) = waker {
+                waker.wake();
             }
         });
         *self
