@@ -1,0 +1,25 @@
+[package]
+name = "transmog-tls-native"
+description = "Audited BoringSSL client certificate callback boundary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+boring.workspace = true
+boring-sys.workspace = true
+foreign-types.workspace = true
+
+[lints.rust]
+# The safe Boring wrapper omits the client CertificateRequest hook. Native calls
+# below use the same pinned BoringSSL instance and synchronous borrowed pointers.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

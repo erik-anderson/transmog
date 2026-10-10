@@ -65,6 +65,47 @@ impl TlsCapture {
     pub fn snapshot(&self) -> TlsEvidence {
         self.data().clone()
     }
+    /// Records a bounded public client authentication state or policy explanation.
+    pub fn authentication_detail(&self, name: &str, value: &str) {
+        self.data().details.insert(
+            name.chars().take(128).collect(),
+            value.chars().take(2048).collect(),
+        );
+    }
+    pub(crate) fn client_authentication_event(
+        &self,
+        event: transmog_tls_native::ClientAuthenticationEvent,
+    ) {
+        use transmog_tls_native::ClientAuthenticationEvent;
+        let mut data = self.data();
+        match event {
+            ClientAuthenticationEvent::CertificateQueued(chain) => {
+                data.client_chain.clear();
+                for der in chain {
+                    if let Ok(certificate) = boring::x509::X509::from_der(&der) {
+                        collect_certificate(&mut data.client_chain, &certificate);
+                    }
+                }
+                let status = if data.client_chain.is_empty() {
+                    "Empty certificate message queued to TLS transport"
+                } else {
+                    "Certificate queued to TLS transport"
+                };
+                data.details
+                    .insert("Client certificate".into(), status.into());
+            }
+            ClientAuthenticationEvent::PeerAlert(description) => {
+                data.details
+                    .insert("Peer TLS alert".into(), description.to_string());
+                if description == 116 {
+                    data.details.insert(
+                        "Client certificate requirement".into(),
+                        "Server requires a client certificate".into(),
+                    );
+                }
+            }
+        }
+    }
     /// Adds a known public issuer path without changing the handshake's wire chain.
     pub fn server_issuers<'a>(&self, chain: impl IntoIterator<Item = &'a X509Ref>) {
         let mut data = self.data();

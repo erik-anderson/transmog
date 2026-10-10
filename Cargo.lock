@@ -7231,10 +7231,23 @@ name = "transmog-tls"
 version = "0.1.2"
 dependencies = [
  "boring",
+ "quiche",
  "rustls-native-certs",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
+ "tokio-boring",
  "transmog-core",
+ "transmog-tls-native",
+]
+
+[[package]]
+name = "transmog-tls-native"
+version = "0.1.2"
+dependencies = [
+ "boring",
+ "boring-sys",
+ "foreign-types",
 ]
 
 [[package]]

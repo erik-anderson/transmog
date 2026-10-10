@@ -12,6 +12,7 @@ members = [
     "crates/proxy-core",
     "crates/proxy-content",
     "crates/proxy-tls",
+    "crates/tls-native",
     "crates/proxy-http",
     "crates/proxy-h3",
     "crates/proxy-runtime",
@@ -48,6 +49,8 @@ sysinfo = { version = "=0.37.2", default-features = false, features = ["system"]
 async-compression = { version = "=0.4.50", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"
 boring = "=5.2.0"
+boring-sys = "=5.2.0"
+foreign-types = "=0.5.0"
 brotli = "=9.0.0"
 bytes = { version = "1.11.1", features = ["serde"] }
 deno_ast = { version = "=0.53.3", features = ["transpiling"] }

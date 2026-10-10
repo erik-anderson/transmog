@@ -9,10 +9,17 @@ repository.workspace = true
 
 [dependencies]
 transmog-core = { version = "=0.1.2", path = "../proxy-core" }
+transmog-tls-native = { version = "=0.1.2", path = "../tls-native" }
 boring.workspace = true
 rustls-native-certs.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tokio-boring.workspace = true
+quiche.workspace = true
