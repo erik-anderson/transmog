@@ -70,8 +70,7 @@ function Invoke-EnvironmentIsolatedFixture([string]$Script) {
     Write-Host "$Script preserved the caller's environment, including absent variables."
 }
 Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
-Invoke-EnvironmentIsolatedFixture 'test-stable-update-release.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
 & (Join-Path $PSScriptRoot 'test-signing-retry.ps1')
-& (Join-Path $PSScriptRoot 'test-release-version.ps1')
-Invoke-EnvironmentIsolatedFixture 'test-release-lifecycle.ps1'
+& (Get-TransmogPython) -m unittest discover -s (Join-Path $PSScriptRoot 'tests') -v
+if ($LASTEXITCODE) { throw 'Portable tooling and release lifecycle fixtures failed.' }

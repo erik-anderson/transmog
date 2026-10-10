@@ -27,7 +27,7 @@ For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:
 
 ```powershell
-./scripts/test-linux-docker.ps1
+python ./scripts/test-linux-docker.py
 ```
 
 That runner uses a digest-pinned image, mounts the checkout read-only and keeps
@@ -73,7 +73,7 @@ changing the host proxy. User-facing workflows use the standalone binary; see
 independent reader:
 
 ```powershell
-./scripts/test-saz-interop.ps1
+python ./scripts/test-saz-interop.py
 ```
 
 That gate authenticates AES-256 exports with native 7-Zip, compares decrypted

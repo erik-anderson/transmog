@@ -31,7 +31,7 @@ def executable(name: str, environment: dict[str, str] | None = None) -> str:
     raise RuntimeError(f"Required command {name!r} was not found on PATH.")
 
 
-def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True):
+def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True, input=None):
     """Run argv without a shell; propagate failures immediately."""
     argv = [str(value) for value in arguments]
     tool = executable(argv[0], env)
@@ -46,7 +46,7 @@ def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True):
     else:
         argv[0] = tool
     return subprocess.run(argv, cwd=cwd, env=env, check=check, text=True,
-                          encoding="utf-8", errors="replace", capture_output=capture)
+                          encoding="utf-8", errors="replace", capture_output=capture, input=input)
 
 
 def native_name(name: str) -> str:

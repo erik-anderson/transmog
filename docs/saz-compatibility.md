@@ -127,7 +127,7 @@ limits are 1,000,000 exchanges and 256 MiB retained per direction per exchange;
 its source recovery retains decoded records in memory. Native capture remains
 the fidelity and recovery source even after a SAZ is produced.
 
-Run `scripts/test-saz-interop.ps1` to check exports with the independent native
+Run `scripts/test-saz-interop.py` to check exports with the independent native
 7-Zip implementation. It authenticates strict and extended AES-256 archives,
 compares every decrypted file to its unencrypted reference, rejects a wrong
 password, and checks Transmog importing a 7-Zip ZipCrypto binary fixture. Windows

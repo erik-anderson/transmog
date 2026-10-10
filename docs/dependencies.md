@@ -32,7 +32,7 @@ dependency policy bans OpenSSL, native-tls, rustls, and webpki data-plane
 crates, while the crypto-graph check verifies exactly one `boring` and
 `boring-sys` version in the normal dependency graph. See
 [`deny.toml`](../deny.toml) and
-[`check-crypto-graph.ps1`](../scripts/check-crypto-graph.ps1).
+[`check-crypto-graph.py`](../scripts/check-crypto-graph.py).
 
 ## Content, WebSockets, and file formats
 

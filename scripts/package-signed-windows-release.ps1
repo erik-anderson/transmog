@@ -29,7 +29,7 @@ try {
         if (-not ($journal | Where-Object { $_.Name -ceq $name })) { throw "Missing signature evidence for $name" }
     }
     Copy-Item -LiteralPath $package.Installer -Destination (Join-Path $releaseRoot $installerEvidence.Name)
-    & (Join-Path $PSScriptRoot 'create-update-manifest.ps1') -Installer $package.Installer -Version $build.Version -OutputDirectory $releaseRoot
+    Invoke-TransmogPython 'create-update-manifest.py' @('--installer', $package.Installer, '--version', $build.Version, '--output-directory', $releaseRoot)
     Copy-Item -LiteralPath $package.Cli -Destination (Join-Path $releaseRoot $cliEvidence.Name)
     Copy-Item -Path (Join-Path $PayloadRoot 'evidence\*') -Destination $releaseRoot
     [ordered]@{ Publisher = $env:SIGNING_PUBLISHER; Files = $journal; Installer = $installerEvidence } | ConvertTo-Json -Depth 6 |

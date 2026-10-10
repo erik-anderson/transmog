@@ -144,13 +144,13 @@ The desktop dependency toolchain is pinned in both lockfiles:
 - TypeScript 7.0.2 and esbuild 0.28.2.
 
 The reviewed Windows V8 archive is pinned by both URL and SHA-256 in
-`scripts/cache-v8.ps1`. Prime Cargo's documented `.rusty_v8` cache before an
+`scripts/cache-v8.py`. Prime Cargo's documented `.rusty_v8` cache before an
 offline build:
 
 ```powershell
-pwsh ./scripts/cache-v8.ps1
+python ./scripts/cache-v8.py
 # Or verify and cache an internally mirrored/downloaded copy:
-pwsh ./scripts/cache-v8.ps1 -ArchivePath C:\staging\rusty_v8.lib.gz
+python ./scripts/cache-v8.py --archive-path C:\staging\rusty_v8.lib.gz
 ```
 
 The script refuses any archive other than SHA-256
@@ -182,7 +182,7 @@ the UI build directory. The repository build
 task generates the assets before Cargo consumes them:
 
 ```powershell
-pwsh ./scripts/build-desktop.ps1 -Configuration Debug -LockedDependencies
+python ./scripts/build-desktop.py --configuration Debug --locked-dependencies
 ```
 
 Build, test, and run through the repository's LLVM/Ninja environment:
@@ -247,7 +247,7 @@ strict-Clippy, all-target test, and release-build gate is reproducible without
 installing a separate WSL distribution:
 
 ```powershell
-./scripts/test-linux-docker.ps1
+python ./scripts/test-linux-docker.py
 ```
 
 The runner uses the same digest-pinned tool image as content fuzzing, clears
@@ -263,7 +263,7 @@ the same Windows LLVM/Ninja environment and starts digest-pinned Nginx, Apache,
 and Caddy containers on ephemeral loopback ports:
 
 ```powershell
-pwsh ./scripts/test-interop.ps1
+python ./scripts/test-interop.py
 ```
 
 The first run can download the container images, npm packages, and the pinned
@@ -305,7 +305,7 @@ normal-graph TLS check:
 ```powershell
 cargo install cargo-deny --locked
 cargo deny check
-pwsh ./scripts/check-crypto-graph.ps1
+python ./scripts/check-crypto-graph.py
 ```
 
 The normal dependency graph must contain exactly one `boring` and one

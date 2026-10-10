@@ -26,7 +26,7 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./scripts/sync-stable-update-release.ps1
+        run: python ./scripts/sync-stable-update-release.py
   advance:
     if: github.repository == 'erik-anderson/transmog' && github.event.repository.private == false && ((github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/')) || (github.event_name == 'release' && github.event.release.draft == false))
     runs-on: windows-2025
@@ -49,4 +49,4 @@ jobs:
       - name: Reserve release lines at branch creation and advance published patches
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./scripts/advance-release-version.ps1
+        run: python ./scripts/advance-release-version.py

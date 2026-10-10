@@ -14,7 +14,7 @@ host:
 . ./scripts/dev-env.ps1
 cargo run --locked --release -p transmog-core --example hooks_benchmark
 cargo run --locked --release -p transmog-content --example content_benchmark
-./scripts/benchmark-content.ps1
+python ./scripts/benchmark-content.py
 ```
 
 ## Microbenchmarks

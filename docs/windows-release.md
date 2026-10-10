@@ -49,7 +49,7 @@ decisions. No push or tag automatically starts a release build.
    the repository root:
 
    ```powershell
-   pwsh ./scripts/set-release-version.ps1 -Version 0.1.1
+   python ./scripts/set-release-version.py --version 0.1.1
    git diff
    ```
 
@@ -58,7 +58,7 @@ decisions. No push or tag automatically starts a release build.
    source channel and a `Beta` or `Stable` track. The command preserves that track
    unless `-ReleaseType` is supplied. It synchronizes Cargo, both lockfiles,
    Tauri, and the desktop UI package without updating external dependencies.
-   `pwsh ./scripts/set-release-version.ps1 -Check` verifies committed versions.
+   `python ./scripts/set-release-version.py --check` verifies committed versions.
    The normal SemVer `major.minor.patch` is used unchanged in packages, tags,
    installer filenames, product titles, diagnostics, and the SBOM. Components
    must fit `0..65535` for Windows numeric version resources; their final component
@@ -104,7 +104,7 @@ decisions. No push or tag automatically starts a release build.
    if ((git branch --show-current) -cne 'main' -or (git status --porcelain)) {
        throw 'Dispatch a Canary from a clean main checkout.'
    }
-   pwsh ./scripts/set-release-version.ps1 -Check
+   python ./scripts/set-release-version.py --check
    if ($LASTEXITCODE -ne 0) { throw 'Committed release versions differ.' }
    $sourceCommit = git rev-parse HEAD
    $credentialLines = "protocol=https`nhost=github.com`n`n" | git credential fill
@@ -233,7 +233,7 @@ always a human decision.
 | Publish Canary `0.2.1` from main | Unchanged | `0.2.2 Canary` |
 | Create `release/0.2` from `0.2.2` | `0.2.2`, Beta track | `0.3.0 Canary` |
 
-The local fixture in `scripts/test-release-lifecycle.ps1` exercises these events
+The local Git fixture in `scripts/tests/test_release.py` exercises these events
 against a disposable Git remote, including retries, older-line hotfixes, and deleted
 branches. It is part of the release safety gate and does not contact GitHub or Azure.
 
@@ -432,7 +432,7 @@ Also run the complete repository gate and standalone interoperability matrix:
 
 ```powershell
 pwsh ./scripts/test.ps1
-pwsh ./scripts/test-interop.ps1
+python ./scripts/test-interop.py
 ```
 
 The interoperability matrix proves the proxy observed the exchange and covers

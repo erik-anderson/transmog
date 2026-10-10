@@ -1,11 +1,15 @@
 # Third-party notices
 
-Generated from the locked Cargo graph and desktop npm production graph by `scripts/generate-supply-chain-artifacts.ps1`.
+Generated from the locked Cargo graph and desktop npm production graph by `scripts/generate-supply-chain-artifacts.py`.
 Distributions must retain the license texts shipped by their dependencies and bundled native sources.
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | https://github.com/oyvindln/adler2 |
+| aead | 0.5.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
+| aes | 0.8.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
+| aes | 0.9.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-ciphers |
+| aes-gcm | 0.10.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/AEADs |
 | ahash | 0.8.12 | MIT OR Apache-2.0 | https://github.com/tkaitchuck/ahash |
 | aho-corasick | 1.1.5 | Unlicense OR MIT | https://github.com/BurntSushi/aho-corasick |
 | alloc-no-stdlib | 3.0.0 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib |
@@ -15,6 +19,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | antidote | 1.1.0 | MIT/Apache-2.0 | https://github.com/sfackler/rust-antidote |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | https://github.com/dtolnay/anyhow |
 | ar_archive_writer | 0.5.3 | Apache-2.0 WITH LLVM-exception | https://github.com/rust-lang/ar_archive_writer |
+| argon2 | 0.5.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes/tree/master/argon2 |
 | ascii | 1.1.0 | Apache-2.0 OR MIT | https://github.com/tomprogrammer/rust-ascii |
 | ast_node | 5.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 | https://github.com/smol-rs/async-broadcast |
@@ -36,6 +41,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | base64 | 0.22.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
 | base64 | 0.23.1 | MIT OR Apache-2.0 | https://github.com/marshallpierce/rust-base64 |
 | base64-simd | 0.8.0 | MIT | https://github.com/Nugine/simd |
+| base64ct | 1.8.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | better_scoped_tls | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | bindgen | 0.70.1 | BSD-3-Clause | https://github.com/rust-lang/rust-bindgen |
 | bindgen | 0.72.1 | BSD-3-Clause | https://github.com/rust-lang/rust-bindgen |
@@ -44,8 +50,10 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | bitflags | 1.3.2 | MIT/Apache-2.0 | https://github.com/bitflags/bitflags |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | https://github.com/bitflags/bitflags |
 | bitvec | 1.1.1 | MIT | https://github.com/bitvecto-rs/bitvec |
+| blake2 | 0.10.6 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
+| block-padding | 0.3.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block2 | 0.6.2 | MIT | https://github.com/madsmtm/objc2 |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/blocking |
 | boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring |
@@ -70,15 +78,20 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | cargo_toml | 1.0.1 | Apache-2.0 OR MIT | https://gitlab.com/lib.rs/cargo_toml |
 | cargo-platform | 0.1.9 | MIT OR Apache-2.0 | https://github.com/rust-lang/cargo |
 | castaway | 0.2.4 | MIT | https://github.com/sagebind/castaway |
+| cbc | 0.1.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-modes |
 | cc | 1.6.0 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
 | cesu8 | 1.1.0 | Apache-2.0/MIT | https://github.com/emk/cesu8-rs |
 | cexpr | 0.6.0 | Apache-2.0/MIT | https://github.com/jethrogb/rust-cexpr |
 | cfb | 0.14.0 | MIT | https://github.com/mdsteele/rust-cfb |
+| cfg_aliases | 0.2.2 | MIT | https://github.com/katharostech/cfg_aliases |
 | cfg-expr | 0.15.8 | MIT OR Apache-2.0 | https://github.com/EmbarkStudios/cfg-expr |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
+| cipher | 0.4.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
+| cipher | 0.5.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | clang-sys | 1.9.1 | Apache-2.0 | https://github.com/KyleMayes/clang-sys |
 | cmake | 0.1.58 | MIT OR Apache-2.0 | https://github.com/rust-lang/cmake-rs |
+| cmov | 0.5.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | color_quant | 1.1.0 | MIT | https://github.com/image-rs/color_quant.git |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
 | compact_str | 0.7.1 | MIT | https://github.com/ParkMyCar/compact_str |
@@ -86,13 +99,16 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | compression-core | 0.4.33 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/concurrent-queue |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
+| constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://github.com/cesarb/constant_time_eq |
 | cooked-waker | 5.0.0 | MPL-2.0 | https://github.com/Lucretiel/cooked-waker |
 | cookie | 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
 | core_maths | 0.1.1 | MIT | https://github.com/robertbastian/core_maths |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
+| core-foundation | 0.9.4 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-graphics | 0.25.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-graphics-types | 0.2.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
+| cpubits | 0.1.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | crc32fast | 1.5.2 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
@@ -106,11 +122,15 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | cssparser | 0.37.0 | MPL-2.0 | https://github.com/servo/rust-cssparser |
 | cssparser-macros | 0.7.1 | MPL-2.0 | https://github.com/servo/rust-cssparser |
 | ctor | 1.0.13 | Apache-2.0 OR MIT | https://github.com/mmastrac/linktime |
+| ctr | 0.9.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-modes |
+| ctutils | 0.4.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | darling | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | darling_core | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | darling_macro | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | data-encoding | 2.11.1 | MIT | https://github.com/ia0/data-encoding |
 | data-url | 0.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
+| dbus | 0.9.12 | Apache-2.0/MIT | https://github.com/diwic/dbus-rs |
+| dbus-secret-service | 4.1.0 | MIT OR Apache-2.0 | https://github.com/brotskydotcom/dbus-secret-service.git |
 | debug_panic | 0.2.1 | MIT | https://github.com/kellytk/debug_panic |
 | debugid | 0.8.0 | Apache-2.0 | https://github.com/getsentry/rust-debugid |
 | defmt | 1.1.1 | MIT OR Apache-2.0 | https://github.com/knurling-rs/defmt |
@@ -163,6 +183,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/fastrand |
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 | https://github.com/image-rs/fdeflate |
 | field-offset | 0.3.6 | MIT OR Apache-2.0 | https://github.com/Diggsey/rust-field-offset |
+| filetime | 0.2.29 | MIT/Apache-2.0 | https://github.com/alexcrichton/filetime |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 | https://github.com/rust-lang/flate2-rs |
 | fnv | 1.0.7 | Apache-2.0 / MIT | https://github.com/servo/rust-fnv |
@@ -191,8 +212,10 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | gdk-sys | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | gdkwayland-sys | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | generic-array | 0.14.7 | MIT | https://github.com/fizyk20/generic-array.git |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 | https://github.com/rust-random/getrandom |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 | https://github.com/rust-random/getrandom |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | https://github.com/rust-random/getrandom |
+| ghash | 0.5.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/universal-hashes |
 | gif | 0.14.2 | MIT OR Apache-2.0 | https://github.com/image-rs/image-gif |
 | gio | 0.18.4 | MIT | https://github.com/gtk-rs/gtk-rs-core |
 | gio-sys | 0.18.1 | MIT | https://github.com/gtk-rs/gtk-rs-core |
@@ -213,6 +236,9 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | heck | 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 | https://github.com/hermit-os/hermit-rs |
 | hex | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex |
+| hkdf | 0.12.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/KDFs/ |
+| hmac | 0.12.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
+| hmac | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
 | home | 0.5.12 | MIT OR Apache-2.0 | https://github.com/rust-lang/cargo |
 | hstr | 3.0.6 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | html-escape | 0.2.15 | MIT | https://github.com/magiclen/html-escape |
@@ -225,6 +251,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hybrid-array |
 | hyper | 1.11.1 | MIT | https://github.com/hyperium/hyper |
 | hyper-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring |
+| hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/hyper-rustls |
 | hyper-util | 0.1.21 | MIT | https://github.com/hyperium/hyper-util |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
 | iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
@@ -249,6 +276,8 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | indexmap | 1.9.3 | Apache-2.0 OR MIT | https://github.com/bluss/indexmap |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/indexmap |
 | infer | 0.22.0 | MIT | https://github.com/bojand/infer |
+| inout | 0.1.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
+| inout | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | intrusive-collections | 0.10.3 | MIT OR Apache-2.0 | https://github.com/Amanieu/intrusive-rs |
 | inventory | 0.3.24 | MIT OR Apache-2.0 | https://github.com/dtolnay/inventory |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | https://github.com/krisprice/ipnet |
@@ -264,6 +293,8 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | jiff-tzdb | 0.1.8 | Unlicense OR MIT | https://github.com/BurntSushi/jiff |
 | jiff-tzdb-platform | 0.1.3 | Unlicense OR MIT | https://github.com/BurntSushi/jiff |
 | jni | 0.21.1 | MIT/Apache-2.0 | https://github.com/jni-rs/jni-rs |
+| jni | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
+| jni-macros | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
 | jni-sys | 0.3.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
 | jni-sys | 0.4.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
 | jni-sys-macros | 0.4.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
@@ -272,8 +303,10 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | json-patch | 4.2.0 | MIT/Apache-2.0 | https://github.com/idubrov/json-patch |
 | jsonptr | 0.7.1 | MIT OR Apache-2.0 | https://github.com/chanced/jsonptr |
 | keyboard-types | 0.8.3 | MIT OR Apache-2.0 | https://github.com/rust-windowing/keyboard-types |
+| keyring | 3.6.3 | MIT OR Apache-2.0 | https://github.com/hwchen/keyring-rs.git |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 | https://github.com/rust-lang-nursery/lazy-static.rs |
 | libc | 0.2.190 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
+| libdbus-sys | 0.2.7 | Apache-2.0/MIT | https://github.com/diwic/dbus-rs |
 | libloading | 0.8.9 | ISC | https://github.com/nagisa/rust_libloading/ |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
 | libredox | 0.1.25 | MIT | https://gitlab.redox-os.org/redox-os/libredox.git |
@@ -298,6 +331,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | microsoft-webui-tokens | 0.0.30 | MIT | https://github.com/microsoft/webui |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
+| minisign-verify | 0.2.5 | MIT | https://github.com/jedisct1/rust-minisign-verify |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
@@ -307,14 +341,20 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | ndk-context | 0.1.1 | MIT OR Apache-2.0 | https://github.com/rust-windowing/android-ndk-rs |
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 | https://github.com/rust-mobile/ndk |
 | new_debug_unreachable | 1.0.6 | MIT | https://github.com/mbrubeck/rust-debug-unreachable |
+| nix | 0.29.0 | MIT | https://github.com/nix-rust/nix |
 | nom | 7.1.3 | MIT | https://github.com/Geal/nom |
+| ntapi | 0.4.3 | Apache-2.0 OR MIT | https://github.com/MSxDOS/ntapi |
 | nu-ansi-term | 0.50.3 | MIT | https://github.com/nushell/nu-ansi-term |
+| num | 0.4.3 | MIT OR Apache-2.0 | https://github.com/rust-num/num |
 | num_cpus | 1.17.0 | MIT OR Apache-2.0 | https://github.com/seanmonstar/num_cpus |
 | num_enum | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | https://github.com/illicitonion/num_enum |
 | num_enum_derive | 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | https://github.com/illicitonion/num_enum |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | https://github.com/rust-num/num-bigint |
+| num-complex | 0.4.6 | MIT OR Apache-2.0 | https://github.com/rust-num/num-complex |
 | num-conv | 0.2.2 | MIT OR Apache-2.0 | https://github.com/jhpratt/num-conv |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 | https://github.com/rust-num/num-integer |
+| num-iter | 0.1.46 | MIT OR Apache-2.0 | https://github.com/rust-num/num-iter |
+| num-rational | 0.4.2 | MIT OR Apache-2.0 | https://github.com/rust-num/num-rational |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | https://github.com/rust-num/num-traits |
 | objc2 | 0.6.4 | MIT | https://github.com/madsmtm/objc2 |
 | objc2-app-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
@@ -328,7 +368,9 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | objc2-encode | 4.1.0 | MIT | https://github.com/madsmtm/objc2 |
 | objc2-exception-helper | 0.1.1 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-foundation | 0.3.2 | MIT | https://github.com/madsmtm/objc2 |
+| objc2-io-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-io-surface | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
+| objc2-osa-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-ui-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-user-notifications | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
@@ -336,10 +378,12 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | object | 0.39.1 | Apache-2.0 OR MIT | https://github.com/gimli-rs/object |
 | octets | 0.3.7 | BSD-2-Clause | https://github.com/cloudflare/quiche |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | https://github.com/matklad/once_cell |
+| opaque-debug | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | openssl-macros | 0.1.1 | MIT/Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 | https://github.com/rustls/openssl-probe |
 | option-ext | 0.2.0 | MPL-2.0 | https://github.com/soc/option-ext.git |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 | https://github.com/danieldg/ordered-stream |
+| osakit | 0.3.1 | MIT OR Apache-2.0 | https://github.com/mdevils/rust-osakit |
 | outref | 0.5.2 | MIT | https://github.com/Nugine/outref |
 | pango | 0.18.3 | MIT | https://github.com/gtk-rs/gtk-rs-core |
 | pango-sys | 0.18.0 | MIT | https://github.com/gtk-rs/gtk-rs-core |
@@ -347,8 +391,10 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | parking | 2.2.1 | Apache-2.0 OR MIT | https://github.com/smol-rs/parking |
 | parking_lot | 0.12.5 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
+| password-hash | 0.5.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits/tree/master/password-hash |
 | paste | 1.0.15 | MIT OR Apache-2.0 | https://github.com/dtolnay/paste |
 | pathdiff | 0.2.3 | MIT/Apache-2.0 | https://github.com/Manishearth/pathdiff |
+| pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/ |
 | phf | 0.11.3 | MIT | https://github.com/rust-phf/rust-phf |
 | phf | 0.13.1 | MIT | https://github.com/rust-phf/rust-phf |
@@ -368,10 +414,12 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | png | 0.17.16 | MIT OR Apache-2.0 | https://github.com/image-rs/image-png |
 | png | 0.18.1 | MIT OR Apache-2.0 | https://github.com/image-rs/image-png |
 | polling | 3.11.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/polling |
+| polyval | 0.6.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/universal-hashes |
 | portable-atomic | 1.15.0 | Apache-2.0 OR MIT | https://github.com/taiki-e/portable-atomic |
 | portable-atomic-util | 0.2.8 | Apache-2.0 OR MIT | https://github.com/taiki-e/portable-atomic-util |
 | potential_utf | 0.1.6 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | powerfmt | 0.2.0 | MIT OR Apache-2.0 | https://github.com/jhpratt/powerfmt |
+| ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | https://github.com/cryptocorrosion/cryptocorrosion |
 | precomputed-hash | 0.1.1 | MIT | https://github.com/emilio/precomputed-hash |
 | prettyplease | 0.2.37 | MIT OR Apache-2.0 | https://github.com/dtolnay/prettyplease |
 | proc-macro-crate | 1.3.1 | MIT OR Apache-2.0 | https://github.com/bkchr/proc-macro-crate |
@@ -392,6 +440,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | radium | 0.7.0 | MIT | https://github.com/bitvecto-rs/radium |
 | rand | 0.8.8 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
+| rand_chacha | 0.3.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | https://github.com/rust-windowing/raw-window-handle |
 | rayon | 1.12.0 | MIT OR Apache-2.0 | https://github.com/rayon-rs/rayon |
@@ -405,13 +454,21 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | https://github.com/seanmonstar/reqwest |
 | resb | 0.1.2 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| rfd | 0.17.2 | MIT | https://github.com/PolyMeilex/rfd |
+| ring | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
+| rpassword | 7.5.4 | Apache-2.0 | https://github.com/conradkleinespel/rpassword |
+| rtoolbox | 0.0.6 | Apache-2.0 | https://github.com/conradkleinespel/rtoolbox |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
 | rustc-hash | 1.1.0 | Apache-2.0/MIT | https://github.com/rust-lang-nursery/rustc-hash |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
+| rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
+| rustls-platform-verifier-android | 0.2.0 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
+| rustls-webpki | 0.103.15 | ISC | https://github.com/rustls/webpki |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | https://github.com/dtolnay/rustversion |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |
 | ryu-js | 1.0.3 | Apache-2.0 OR BSL-1.0 | https://github.com/boa-dev/ryu-js |
@@ -423,6 +480,8 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | schemars_derive | 0.8.22 | MIT | https://github.com/GREsau/schemars |
 | scoped-tls | 1.0.1 | MIT/Apache-2.0 | https://github.com/alexcrichton/scoped-tls |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | https://github.com/bluss/scopeguard |
+| secret-service | 4.0.0 | MIT OR Apache-2.0 | https://github.com/hwchen/secret-service-rs.git |
+| security-framework | 2.11.1 | MIT OR Apache-2.0 | https://github.com/kornelski/rust-security-framework |
 | security-framework | 3.7.0 | MIT OR Apache-2.0 | https://github.com/kornelski/rust-security-framework |
 | security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | https://github.com/kornelski/rust-security-framework |
 | selectors | 0.38.0 | MPL-2.0 | https://github.com/servo/stylo |
@@ -444,13 +503,16 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | serialize-to-javascript-impl | 0.1.2 | MIT OR Apache-2.0 | https://github.com/chippers/serialize-to-javascript |
 | servo_arc | 0.4.3 | MIT OR Apache-2.0 | https://github.com/servo/stylo |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
+| sha1 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sha2 | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
 | sharded-slab | 0.1.7 | MIT | https://github.com/hawkw/sharded-slab |
 | shlex | 1.3.0 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | https://github.com/vorner/signal-hook |
+| simd_cesu8 | 1.2.0 | Apache-2.0 OR MIT | https://github.com/seancroach/simd_cesu8 |
 | simd-adler32 | 0.3.10 | MIT | https://github.com/mcountryman/simd-adler32 |
+| simdutf8 | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
 | siphasher | 0.3.11 | MIT/Apache-2.0 | https://github.com/jedisct1/rust-siphash |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 | https://github.com/jedisct1/rust-siphash |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
@@ -472,6 +534,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | strsim | 0.11.1 | MIT | https://github.com/rapidfuzz/strsim-rs |
 | strum | 0.27.2 | MIT | https://github.com/Peternator7/strum |
 | strum_macros | 0.27.2 | MIT | https://github.com/Peternator7/strum |
+| subtle | 2.6.1 | BSD-3-Clause | https://github.com/dalek-cryptography/subtle |
 | swc_allocator | 4.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_atoms | 9.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_common | 17.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
@@ -504,16 +567,22 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | synstructure | 0.14.0 | MIT | https://github.com/mystor/synstructure |
 | sys_traits | 0.1.29 | MIT | https://github.com/dsherret/sys_traits |
 | sys_traits_macros | 0.1.0 | MIT | https://github.com/dsherret/sys_traits |
+| sysinfo | 0.37.2 | MIT | https://github.com/GuillaumeGomez/sysinfo |
+| system-configuration | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
+| system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | system-deps | 6.2.2 | MIT OR Apache-2.0 | https://github.com/gdesmott/system-deps |
 | tao | 0.37.1 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | tao-macros | 0.1.4 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tao |
 | tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
+| tar | 0.4.46 | MIT OR Apache-2.0 | https://github.com/composefs/tar-rs |
 | target-lexicon | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://github.com/bytecodealliance/target-lexicon |
 | tauri | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-build | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-codegen | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-macros | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-plugin | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-plugin-single-instance | 2.4.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
+| tauri-plugin-updater | 2.13.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-runtime | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-utils | 2.10.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
@@ -538,6 +607,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | tokio | 1.53.1 | MIT | https://github.com/tokio-rs/tokio |
 | tokio-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring |
 | tokio-macros | 2.7.2 | MIT | https://github.com/tokio-rs/tokio |
+| tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | https://github.com/rustls/tokio-rustls |
 | tokio-util | 0.7.19 | MIT | https://github.com/tokio-rs/tokio |
 | toml | 0.8.2 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | toml | 1.1.6+spec-1.1.0 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
@@ -566,8 +636,11 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | uds_windows | 1.2.1 | MIT | https://github.com/haraldh/rust_uds_windows |
 | unicode-id-start | 1.5.0 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/Boshen/unicode-id-start |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident |
+| unicode-normalization | 0.1.25 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-normalization |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-segmentation |
 | unicode-width | 0.2.2 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-width |
+| universal-hash | 0.5.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
+| untrusted | 0.9.0 | ISC | https://github.com/briansmith/untrusted |
 | url | 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | urlpattern | 0.6.0 | MIT | https://github.com/denoland/rust-urlpattern |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
@@ -596,6 +669,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | web-time | 1.1.0 | MIT OR Apache-2.0 | https://github.com/daxpedda/web-time |
 | webkit2gtk | 2.0.2 | MIT | https://github.com/tauri-apps/webkit2gtk-rs |
 | webkit2gtk-sys | 2.0.2 | MIT | https://github.com/tauri-apps/webkit2gtk-rs |
+| webpki-root-certs | 1.0.9 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | webview2-com | 0.39.1 | MIT | https://github.com/wravery/webview2-rs |
 | webview2-com-macros | 0.8.1 | MIT | https://github.com/wravery/webview2-rs |
 | webview2-com-sys | 0.39.1 | MIT | https://github.com/wravery/webview2-rs |
@@ -606,6 +680,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
 | winapi-x86_64-pc-windows-gnu | 0.4.0 | MIT/Apache-2.0 | https://github.com/retep998/winapi-rs |
 | window-vibrancy | 0.8.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri-plugin-vibrancy |
+| windows | 0.61.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_gnullvm | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -630,22 +705,32 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | windows_x86_64_msvc | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-collections | 0.2.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-core | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-core | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-future | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-future | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-implement | 0.60.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-interface | 0.59.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-link | 0.1.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-numerics | 0.2.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-numerics | 0.3.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-registry | 0.6.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-result | 0.3.4 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-strings | 0.4.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.45.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-sys | 0.52.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.60.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.53.5 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-threading | 0.1.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-version | 0.1.7 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | winnow | 0.5.40 | MIT | https://github.com/winnow-rs/winnow |
@@ -656,10 +741,15 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | writeable | 0.6.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | wry | 0.57.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/wry |
 | wyz | 0.5.1 | MIT | https://github.com/myrrlyn/wyz |
+| xattr | 1.6.1 | MIT OR Apache-2.0 | https://github.com/Stebalien/xattr |
+| xdg-home | 1.3.0 | MIT | https://github.com/zeenix/xdg-home |
 | yoke | 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | yoke-derive | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| zbus | 4.4.0 | MIT | https://github.com/dbus2/zbus/ |
 | zbus | 5.19.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zbus_macros | 4.4.0 | MIT | https://github.com/dbus2/zbus/ |
 | zbus_macros | 5.19.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zbus_names | 3.0.0 | MIT | https://github.com/dbus2/zbus/ |
 | zbus_names | 4.3.4 | MIT | https://github.com/z-galaxy/zbus/ |
 | zcheapstr | 1.1.0 | MIT | https://github.com/z-galaxy/zcheapstr/ |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy |
@@ -667,6 +757,7 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | zerofrom | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zeroize | 1.9.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| zeroize_derive | 1.5.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | zerotrie | 0.2.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec | 0.11.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec-derive | 0.11.6 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
@@ -679,8 +770,11 @@ Distributions must retain the license texts shipped by their dependencies and bu
 | zstd-sys | 2.1.0+zstd.1.5.7 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg |
+| zvariant | 4.2.0 | MIT | https://github.com/dbus2/zbus/ |
 | zvariant | 5.15.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zvariant_derive | 4.2.0 | MIT | https://github.com/dbus2/zbus/ |
 | zvariant_derive | 5.15.0 | MIT | https://github.com/z-galaxy/zbus/ |
+| zvariant_utils | 2.1.0 | MIT | https://github.com/dbus2/zbus/ |
 | zvariant_utils | 4.2.0 | MIT | https://github.com/z-galaxy/zbus/ |
 
 ## Desktop npm production packages
