@@ -127,30 +127,38 @@ impl CircularObserver {
             .as_ref()
             .map_or(Ok(()), |message| Err(io::Error::other(message.clone())))
     }
-    pub(crate) fn save(&self, path: &std::path::Path) -> io::Result<()> {
-        self.check()?;
-        let file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)?;
+    pub(crate) fn save(&self, mut output: crate::output::PendingOutput) -> io::Result<()> {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let result = state
-            .ring
-            .write(&file)
-            .map_err(io::Error::other)
-            .and_then(|bytes| {
-                file.sync_all()?;
-                println!(
-                    "Circular trace saved: {bytes} bytes; {} older exchanges evicted.",
-                    state.ring.evicted_exchanges()
-                );
-                Ok(())
-            });
-        // A partial encrypted native file remains recoverable if the final write failed.
-        result
+        let result = state.ring.write(output.file()).map_err(io::Error::other);
+        match result {
+            Ok(bytes) => match output.publish() {
+                Ok(()) => {
+                    println!(
+                        "Circular trace saved: {bytes} bytes; {} older exchanges evicted.",
+                        state.ring.evicted_exchanges()
+                    );
+                    Ok(())
+                }
+                Err(error) => {
+                    let path = crate::output::preserve(error.file);
+                    Err(io::Error::other(format!(
+                        "Cannot save to the requested destination: {}. The complete circular trace is preserved at {}. Use capture inspect --input FILE to review it",
+                        error.error,
+                        path.display()
+                    )))
+                }
+            },
+            Err(error) => {
+                let path = output.preserve();
+                Err(io::Error::other(format!(
+                    "Circular trace write failed: {error}. Available native evidence is preserved at {}. Use capture inspect --input FILE to check its recoverable prefix",
+                    path.display()
+                )))
+            }
+        }
     }
 }
 impl Observer for CircularObserver {
@@ -245,4 +253,82 @@ pub(crate) fn parse_size(value: &str) -> io::Result<u64> {
                 "Circular buffer must be at least 1 MiB and fit a 64-bit byte count",
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_circular_publish_keeps_encrypted_evidence_and_existing_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trace.tmcap");
+        let output = crate::output::PendingOutput::new(&path).unwrap();
+        let password = transmog_capture::CapturePassword::new("fixture-password".into());
+        let observer = CircularObserver::new(
+            "auto",
+            directory.path().join("cache"),
+            CaptureEncoding {
+                password: Some(password.clone()),
+            },
+            CapturePolicy::default(),
+            true,
+        )
+        .unwrap();
+        observer
+            .metadata(serde_json::json!({"fixture": "saved evidence"}))
+            .unwrap();
+        std::fs::write(&path, b"existing destination").unwrap();
+        let error = observer.save(output).unwrap_err().to_string();
+        assert!(error.contains("preserved at"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing destination");
+        let recovery = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".transmog-")
+            })
+            .unwrap();
+        let bytes = std::fs::read(recovery).unwrap();
+        assert!(transmog_capture::recover(bytes.as_slice(), CaptureLimits::default()).is_err());
+        let capture = transmog_capture::recover_with_password(
+            bytes.as_slice(),
+            CaptureLimits::default(),
+            Some(&password),
+        )
+        .unwrap();
+        assert!(capture.sealed);
+        assert!(capture.records.iter().any(|record| matches!(&record.kind,
+            CaptureRecordKind::Unknown { payload, .. } if payload["fixture"] == "saved evidence")));
+    }
+
+    #[test]
+    fn observer_failure_still_allows_saving_the_available_prefix() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefix.tmcap");
+        let output = crate::output::PendingOutput::new(&path).unwrap();
+        let observer = CircularObserver::new(
+            "auto",
+            directory.path().join("cache"),
+            CaptureEncoding::default(),
+            CapturePolicy::default(),
+            true,
+        )
+        .unwrap();
+        observer
+            .metadata(serde_json::json!({"fixture": true}))
+            .unwrap();
+        observer.state.lock().unwrap().failure = Some("fixture worker failure".into());
+        assert!(observer.check().is_err());
+        observer.save(output).unwrap();
+        assert!(
+            transmog_capture::recover(std::fs::File::open(path).unwrap(), CaptureLimits::default())
+                .unwrap()
+                .sealed
+        );
+    }
 }

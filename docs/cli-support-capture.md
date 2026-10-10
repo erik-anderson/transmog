@@ -1,8 +1,9 @@
 # Record a trace for support
 
-Download the separate signed `transmog-cli.exe` from the release assets. It is
-not installed with the desktop app. Download it from the project's official
-release page. Right-click **transmog-cli.exe → Properties → Digital Signatures**,
+Download the separate signed `transmog-cli.exe` from the project's official
+[release assets](https://github.com/erik-anderson/transmog/releases). It is
+not installed with the desktop app and requires no Rust or Cargo installation.
+Right-click **transmog-cli.exe → Properties → Digital Signatures**,
 open the signature's details and confirm Windows says it is valid. Compare the
 signer with the publisher named in that release's notes. Resolve a missing or
 invalid signature, or a different publisher, with your support contact first.
@@ -21,7 +22,14 @@ also downloaded the release checksums, compare SHA-256 using
 `Get-FileHash -Algorithm SHA256 .\transmog-cli.exe`. A matching checksum checks
 the downloaded bytes; the trusted signature identifies the publisher.
 
-Save it in a folder you can write to, open PowerShell in that folder, and run:
+Save it in a folder you can write to and open PowerShell in that folder.
+`record --help` explains the available options without starting setup:
+
+```powershell
+.\transmog-cli.exe record --help
+```
+
+To begin recording, choose a new `.tmcap` destination:
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap
@@ -43,13 +51,14 @@ Save it in a folder you can write to, open PowerShell in that folder, and run:
    **Files → Open in a separate viewer…**. Review the capture and share that one
    chunk-compressed file with your support contact.
 
-The default captures complete headers, including cookies and credentials, and
+On first use, the CLI captures complete headers, including cookies and credentials, and
 retains up to 25 MB (25,000,000 bytes) per request body. Response bodies and
 observed byte counts are also recorded; trace files have no fixed size ceiling.
 Large requests continue forwarding when their capture prefix reaches the cap. To redact `Authorization`, `Proxy-Authorization`, `Cookie` and
 `Set-Cookie` values, add `--redact`. This choice persists for subsequent CLI
-captures. Use `--retain-sensitive` to change it back. Bodies can still contain
-private information, so review the trace before sharing.
+captures. Use `--retain-sensitive` to change it back. The console prints the
+active privacy settings before recording. URLs, bodies, and metadata can still
+contain private information, so review the trace before sharing.
 
 To remove the per-request capture cap (trace output has no file-size ceiling):
 
@@ -59,8 +68,7 @@ To remove the per-request capture cap (trace output has no file-size ceiling):
 
 This preference persists for subsequent CLI runs. Use
 `--request-body-limit 25000000` to restore the default, or supply another positive
-byte count. The
-console prints the active limit before recording. Separate bounded
+byte count. The console prints the active limit before recording. Separate bounded
 body-processing limits still apply to tasks such as decoding and searching;
 they do not impose a trace-file size ceiling.
 
@@ -73,8 +81,9 @@ arrives and lets the desktop read body payloads on demand.
 The default root is ephemeral: its private key stays in memory and is never
 written to disk. Public recovery records include run identity, certificate validity,
 trust-store scope, lifecycle state, key-storage mode and cleanup attempts/outcome.
-They contain no private-key bytes. The CLI removes its trusted public certificate after the
-capture, including after setup or recording failures. Public certificate and
+They contain no private-key bytes. The CLI attempts to remove its trusted public
+certificate after the capture, including after setup or recording failures.
+Failed removal retains recovery records for retry. Public certificate and
 ownership records live separately from the desktop in
 `%LOCALAPPDATA%\Transmog-cli`. Windows proxy recovery also has its own CLI journal.
 
@@ -144,7 +153,8 @@ files can be imported directly and saved as a compressed copy in the desktop.
 
 ## Other platforms and manual setup
 
-Run `transmog-cli record --output support-trace.tmcap` in a terminal. Configure
+Run `./transmog-cli record --output support-trace.tmcap` in a terminal with a
+Linux or macOS binary in the current directory. Configure
 the affected application's HTTP and HTTPS proxy with the printed address, then
 remove that configuration after stopping. Automatic host proxy configuration
 currently applies to Windows; `--no-system-proxy` keeps Windows setup manual too.
@@ -163,8 +173,20 @@ authorize the OS workflow or `--no-install-root`. OS consent is still required
 where applicable. A remote listener requires `--allow-remote`; on Windows also
 use `--no-system-proxy` and configure that device with the listener address.
 
-The lower-level `serve`, `ca` and `capture` commands remain available for existing
-operator workflows. `transmog-cli help` lists their options.
+On Linux systems without a supported system trust store, a run with
+`--no-install-root` can clean up its CLI-owned public files without invoking
+system trust tools. Remove certificates installed manually in an application's
+own trust store from that application yourself. Interrupted or older records
+with possible system installation still retain their recovery identity when
+system cleanup cannot be verified.
+
+For manual proxy setup, CA tools, diagnostic proof IDs, and offline capture
+commands, see [the CLI guide](cli.md). Use command help for the current options:
+
+```powershell
+.\transmog-cli.exe help
+.\transmog-cli.exe help capture export
+```
 
 To include network configuration for a support investigation, add
 `--include-network-context`. The trace records `ipconfig /all` on Windows,
@@ -173,9 +195,14 @@ This is optional because adapter addresses, DNS configuration and computer names
 may be private. Collection is bounded and failures remain in Trace metadata.
 Open the saved trace and use **Trace metadata** before sharing.
 
-## Password protection and circular recording
+## Password protection
 
-Use `record --encrypt --output support-trace.tmcap` to enable AES-256 encryption.
+Enable AES-256 encryption for the recording:
+
+```powershell
+.\transmog-cli.exe record --encrypt --output .\support-trace.tmcap
+```
+
 The console masks the password and asks you to confirm it before certificate
 setup. Keep the password to reopen the file; Transmog cannot recover it. Share
 the password separately from the trace. Passwords are never saved in CLI
@@ -186,20 +213,40 @@ UTF-8 file is read into memory (up to 4096 bytes; a final newline is ignored).
 Protect that file yourself; Transmog does not delete or remember it. Actual
 password strings are never accepted as command-line options.
 
+`capture inspect` and `capture validate` ask for a password when needed, or
+accept `--password-file` in an unattended run. `capture seal` preserves the
+input's encryption and password. See
+[input and output passwords](cli.md#input-and-output-passwords) before exporting
+an encrypted capture: export without `--encrypt` writes unencrypted output,
+and JSONL has no encryption option.
+
+## Circular recording
+
+```powershell
+.\transmog-cli.exe record --circular-buffer auto --output .\recent-trace.tmcap
+```
+
 Ordinary recording streams every exchange to the trace. For just the latest
 retained traffic, use `--circular-buffer auto`: the limit is half installed RAM
 and retained encoded frames stay in memory until Ctrl+C saves them. An abrupt
 process termination loses an unsaved memory buffer. Specify a custom limit such
 as `--circular-buffer 512MiB`, `2GB`, or a positive byte count (at least 1 MiB).
 Limits above half installed RAM use disk. `--circular-buffer unlimited` has no
-buffer maximum and uses disk. Saved traces have no fixed file-size ceiling. Disk circular caches hold compressed frames and, for encrypted runs,
-ciphertext. Completed older exchanges are evicted first; if active traffic alone
+buffer maximum and uses disk. Saved traces have no fixed file-size ceiling.
+Disk circular caches hold compressed frames and, for encrypted runs, ciphertext.
+Completed older exchanges are evicted first; if active traffic alone
 exceeds the quota, older active evidence can be dropped without interrupting
 forwarding. The saved trace’s metadata records eviction counts.
 
-`capture inspect` and `capture validate` ask for a password when needed, or
-accept `--password-file <protected-file>` in an unattended run. `capture seal`
-preserves the input’s encryption in the recovered copy.
-`capture export --format saz --encrypt` writes AES-256 encrypted SAZ; use
-`--source-password-file` for encrypted native input and `--password-file` for
-the encrypted output. JSONL intentionally has no encryption option.
+Circular recording checks that the destination directory exists and can accept
+a temporary file before certificate or proxy setup. The final destination
+appears only after a successful save. If it becomes unavailable while recording,
+or another file takes that name, the CLI preserves the available native evidence
+at a recovery path printed in the error. Inspect that file with `capture inspect`
+and keep the password for an encrypted recording. Do not delete the recovery file
+until you have reviewed or recovered it.
+
+For [inspection and validation](cli.md#inspect-validate-and-recover-a-native-capture)
+or [SAZ and JSONL export](cli.md#export-records-or-a-saz-archive), follow the CLI
+guide. A sealed capture can still contain evictions or incomplete bodies;
+validation checks file integrity rather than completeness of captured traffic.

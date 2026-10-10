@@ -36,6 +36,9 @@ pub(crate) struct Lifecycle {
     pub(crate) created_at: Option<u64>,
     pub(crate) expires_at: Option<u64>,
     pub(crate) installed_at: Option<u64>,
+    /// None denotes an older record whose installation intent is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) installation_requested: Option<bool>,
     pub(crate) last_used_at: Option<u64>,
     pub(crate) run_id: Option<String>,
     pub(crate) finished_at: Option<u64>,

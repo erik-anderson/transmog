@@ -37,7 +37,12 @@ const fn default_request_body_limit() -> Option<u64> {
 pub(crate) trait RootTrust {
     fn install(&self, certificate: &Path, sha256: &str) -> io::Result<()>;
     /// Success means the exact owned root is absent, including after an earlier removal.
-    fn remove(&self, certificate: &Path, sha256: &str) -> io::Result<()>;
+    fn remove(
+        &self,
+        certificate: &Path,
+        sha256: &str,
+        installation_requested: bool,
+    ) -> io::Result<()>;
 }
 
 pub(crate) struct RootLedger {
@@ -296,7 +301,10 @@ impl RootLedger {
         self.save_new_ca(ca, persistent)
     }
     fn save_new_ca(&self, ca: ProxyCa, persistent: bool) -> io::Result<(ProxyCa, RootRecord)> {
-        let mut lifecycle = Lifecycle::default();
+        let mut lifecycle = Lifecycle {
+            installation_requested: Some(false),
+            ..Lifecycle::default()
+        };
         lifecycle.begin(&ca, persistent)?;
         let record = RootRecord {
             schema: 2,
@@ -356,6 +364,12 @@ impl RootLedger {
             if state == RootLifecycle::Installed {
                 updated.lifecycle.installed_at = Some(millis());
             }
+            if matches!(
+                state,
+                RootLifecycle::InstallationRequested | RootLifecycle::Installed
+            ) {
+                updated.lifecycle.installation_requested = Some(true);
+            }
             Ok(())
         })
         .map(|_| ())
@@ -383,7 +397,7 @@ impl RootLedger {
     pub(crate) fn cleanup(&self, record: &RootRecord, trust: &dyn RootTrust) -> io::Result<()> {
         // Persist intent before either OS consent or key deletion. A failed/canceled
         // prompt preserves the public identity; the next run does not reuse this key.
-        self.update(record, |updated| {
+        let pending = self.update(record, |updated| {
             updated.lifecycle.retired = true;
             updated.lifecycle.state = RootLifecycle::CleanupPending;
             updated.lifecycle.cleanup_attempts =
@@ -400,7 +414,13 @@ impl RootLedger {
                 updated.lifecycle.key_storage = KeyStorage::Removed;
                 Ok(())
             })?;
-            trust.remove(&self.certificate(record), &record.sha256)?;
+            // Older records remain conservative, including an installation that
+            // failed after changing OS trust but before publishing Installed.
+            trust.remove(
+                &self.certificate(record),
+                &record.sha256,
+                pending.lifecycle.installation_requested.unwrap_or(true),
+            )?;
             remove_if_present(&self.certificate(record))?;
             remove_if_present(&self.path(&record.sha256, "json"))
         })();
@@ -555,7 +575,14 @@ impl RootTrust for SystemRootTrust {
         }
         Ok(())
     }
-    fn remove(&self, certificate: &Path, sha256: &str) -> io::Result<()> {
+    fn remove(
+        &self,
+        certificate: &Path,
+        sha256: &str,
+        installation_requested: bool,
+    ) -> io::Result<()> {
+        #[cfg(any(windows, target_os = "macos"))]
+        let _ = installation_requested;
         #[cfg(windows)]
         {
             let _ = certificate;
@@ -592,8 +619,14 @@ impl RootTrust for SystemRootTrust {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            let (target, update) = linux_root(sha256)?;
             let pending = certificate.with_extension("refresh");
+            let Some((target, update)) =
+                linux_cleanup_store(linux_root(sha256), installation_requested, pending.exists())?
+            else {
+                // No supported system store was used. Application-specific manual
+                // trust is the user's responsibility; still remove our own files.
+                return Ok(());
+            };
             if target.exists() {
                 verify_public(&target, sha256)?;
                 if !pending.exists() {
@@ -613,6 +646,19 @@ impl RootTrust for SystemRootTrust {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
+fn linux_cleanup_store(
+    store: io::Result<(PathBuf, Vec<&'static str>)>,
+    installation_requested: bool,
+    refresh_pending: bool,
+) -> io::Result<Option<(PathBuf, Vec<&'static str>)>> {
+    match store {
+        Ok(store) => Ok(Some(store)),
+        Err(_) if !installation_requested && !refresh_pending => Ok(None),
+        Err(error) => Err(error),
     }
 }
 #[cfg(unix)]
@@ -736,13 +782,82 @@ mod tests {
         fn install(&self, _: &Path, _: &str) -> io::Result<()> {
             Ok(())
         }
-        fn remove(&self, _: &Path, _: &str) -> io::Result<()> {
+        fn remove(&self, _: &Path, _: &str, _: bool) -> io::Result<()> {
             if self.fail {
                 Err(io::Error::other("User canceled"))
             } else {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn unsupported_manual_linux_cleanup_is_allowed_but_pending_trust_is_preserved() {
+        let unsupported = || Err(io::Error::other("Unsupported trust store"));
+        assert!(
+            linux_cleanup_store(unsupported(), false, false)
+                .unwrap()
+                .is_none()
+        );
+        assert!(linux_cleanup_store(unsupported(), true, false).is_err());
+        assert!(linux_cleanup_store(unsupported(), false, true).is_err());
+    }
+
+    #[test]
+    fn manual_and_requested_installation_intent_survive_finish_and_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
+        let (_, root) = ledger.prepare(false).unwrap();
+        assert_eq!(root.lifecycle.installation_requested, Some(false));
+        ledger
+            .mark(&root, RootLifecycle::InstallationRequested)
+            .unwrap();
+        ledger.finish_run(&root, false).unwrap();
+        ledger
+            .cleanup(&root, &FakeTrust { fail: true })
+            .unwrap_err();
+        assert_eq!(
+            ledger.records().unwrap()[0]
+                .lifecycle
+                .installation_requested,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn legacy_installation_intent_remains_unknown_and_requires_cleanup() {
+        struct ExpectedTrust;
+        impl RootTrust for ExpectedTrust {
+            fn install(&self, _: &Path, _: &str) -> io::Result<()> {
+                unreachable!()
+            }
+            fn remove(&self, _: &Path, _: &str, requested: bool) -> io::Result<()> {
+                assert!(requested, "Legacy records must retain possible OS trust");
+                Err(io::Error::other("Unsupported trust store"))
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let ledger = open_fixture(directory.path().into()).unwrap();
+        let (_, root) = ledger.prepare(true).unwrap();
+        let path = ledger.path(&root.sha256, "json");
+        let mut record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["lifecycle"]
+            .as_object_mut()
+            .unwrap()
+            .remove("installationRequested");
+        record["lifecycle"]["createdAt"] = serde_json::Value::Null;
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        assert_eq!(
+            ledger.records().unwrap()[0]
+                .lifecycle
+                .installation_requested,
+            None
+        );
+        let (_, reused) = ledger.prepare(true).unwrap();
+        assert_eq!(reused.lifecycle.installation_requested, None);
+        ledger.cleanup(&root, &ExpectedTrust).unwrap_err();
+        assert_eq!(ledger.records().unwrap().len(), 1);
     }
     #[test]
     fn ephemeral_keys_never_reach_disk_and_canceled_cleanup_keeps_multiple_identities() {

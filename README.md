@@ -124,8 +124,11 @@ engine from a C# command-line application.
 
 ## Headless proxy and capture tools
 
-For a guided support capture, run the separate signed CLI, reproduce the issue,
-then press Ctrl+C to stop and save a compressed trace:
+Download the separate signed `transmog-cli.exe` from the
+[release assets](https://github.com/erik-anderson/transmog/releases). It runs
+without the desktop app or a Rust toolchain. Open PowerShell in its folder. For
+a guided support capture, run the CLI, reproduce the issue, then press Ctrl+C
+to stop and save a compressed trace:
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap
@@ -137,33 +140,45 @@ and lets the desktop open body payloads on demand.
 The CLI asks to install its public root without relaunching, configures the
 Windows proxy, and removes the root afterward. Its default ephemeral private
 key stays in memory. See [the support capture guide](docs/cli-support-capture.md)
-for review and sharing, persistent roots, redaction, and interrupted-run recovery.
+for signature verification, review and sharing, persistent roots, redaction,
+encryption, circular recording, and interrupted-run recovery.
 
-The lower-level CLI can run the proxy without the desktop shell. Create and
-trust an operator-controlled CA, then start a loopback listener:
+For manual proxy setup, create an operator-controlled CA:
 
 ```powershell
-pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./transmog-ca.pem -PrivateKeyPath ./transmog-ca.key
-pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./transmog-ca.pem
-cargo run --locked -p transmog -- serve --ca-cert ./transmog-ca.pem --ca-key ./transmog-ca.key --listen 127.0.0.1:8080 --route auto
+.\transmog-cli.exe ca generate --cert .\transmog-ca.pem --key .\transmog-ca.key
 ```
 
-Add `--capture ./session.tmcap` to stream redacted metadata, and opt into body
-capture with `--capture-bodies`. Existing output files are never overwritten.
-Captured sessions can be inspected, validated, or converted without the UI:
+Install only the public certificate in the client's trust store, then start the
+listener and configure the client to use `127.0.0.1:8080` as its HTTP/HTTPS proxy:
 
 ```powershell
-cargo run --locked -p transmog -- capture inspect --input ./session.tmcap
-cargo run --locked -p transmog -- capture validate --input ./session.tmcap
-cargo run --locked -p transmog -- capture export --input ./session.tmcap --format jsonl --output ./session.jsonl
-cargo run --locked -p transmog -- capture export --input ./session.tmcap --format saz --output ./session.saz
+.\transmog-cli.exe serve --ca-cert .\transmog-ca.pem --ca-key .\transmog-ca.key --listen 127.0.0.1:8080 --capture .\session.tmcap --capture-bodies
 ```
 
-When finished, remove the exact installed current-user root using the SHA-256
-identity printed by the install command:
+`serve` leaves host proxy settings and certificate trust for you to manage. Its
+capture redacts sensitive headers; `--capture-bodies` retains body bytes.
+Stop with Ctrl+C, then inspect, validate, or convert the file:
 
 ```powershell
-pwsh ./scripts/uninstall-ca-user.ps1 -Sha256 <64-hex-digit-value>
+.\transmog-cli.exe capture inspect --input .\session.tmcap
+.\transmog-cli.exe capture validate --input .\session.tmcap
+.\transmog-cli.exe capture export --input .\session.tmcap --format jsonl --output .\session.jsonl
+.\transmog-cli.exe capture export --input .\session.tmcap --format saz --output .\session.saz
+```
+
+Existing capture destinations are never overwritten. SAZ export requires both
+request and response headers for every exchange; keep the TMCap source for full
+evidence. When finished with manual setup, restore the client's proxy settings
+and remove the exact public certificate you installed.
+
+See [the CLI guide](docs/cli.md) for command workflows, proof IDs, password
+options, export limits, and recovery. Help is available without starting a proxy:
+
+```powershell
+.\transmog-cli.exe help
+.\transmog-cli.exe record --help
+.\transmog-cli.exe help capture export
 ```
 
 ## Technology

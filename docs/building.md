@@ -76,6 +76,23 @@ If CMake selects a Visual Studio generator, ensure `CMAKE_GENERATOR=Ninja` is se
 If BoringSSL cannot assemble x86-64 files, ensure `nasm -v` succeeds in the same
 shell.
 
+### Build the standalone CLI
+
+Release users can download the signed Windows binary and follow
+[the CLI guide](cli.md); the compiler toolchain is only needed for development.
+After installing the prerequisites above, build the CLI in the checkout:
+
+```powershell
+. ./scripts/dev-env.ps1
+cargo build --locked --release -p transmog --bin transmog-cli
+.\target\release\transmog-cli.exe --help
+```
+
+The executable is `target/release/transmog-cli.exe`; the desktop and its WebView
+toolchain are not required. On Linux or macOS, after configuring the platform
+build environment below, use the same Cargo build command and run
+`./target/release/transmog-cli --help`.
+
 ### Windows desktop shell
 
 The product shell additionally requires the Microsoft Edge WebView2 Evergreen
@@ -85,18 +102,23 @@ rather than a bundled browser. A clean-machine release gate must verify the
 Evergreen runtime is present and current before starting the app; Transmog does
 not include a fixed runtime, bootstrapper, or offline WebView installer.
 
-The reusable proxy libraries and CLI can run without changing Windows. The
+The reusable proxy libraries and the CLI's manual `serve` workflow can run
+without changing Windows host settings. Guided CLI `record` configures and
+restores the current-user proxy unless `--no-system-proxy` is specified, and
+asks for root installation unless manual setup is selected. See the
+[CLI guide](cli.md) for release-binary usage. The
 desktop Start action always uses the current-user system-proxy adapter, which
 requires Windows PowerShell 5.1 or newer and access to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`. Explicit
 CA installation/removal uses the current-user Root certificate store and can
 display an operating-system consent dialog; it is never part of an unattended
-build or test. Automated tests use an in-memory host backend. A development or
-production CA must be created separately, and its private key must be protected
-by a user-only ACL before use. The Windows desktop's **Set up HTTPS
-interception** action applies that ACL automatically and then asks the user to
-approve the public certificate trust dialog; embedders and the headless CLI
-remain responsible for applying equivalent platform policy.
+build or test. Automated tests use an in-memory host backend. Desktop HTTPS
+setup and guided CLI recording create their own interception roots. Durable
+private keys use OS-user protection and restricted state directories; the CLI's
+default ephemeral key stays in memory. The Windows desktop's **Set up HTTPS
+interception** action asks the user to approve the public certificate trust
+dialog. Manual `serve` users and embedders manage their clients' certificate
+trust and routing themselves.
 
 The desktop dependency toolchain is pinned in both lockfiles:
 

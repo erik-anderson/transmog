@@ -11,10 +11,12 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import threading
 import time
 import uuid
+import zlib
 
 
 def main():
@@ -54,6 +56,12 @@ def main():
         return subprocess.run([str(executable), *options], env=environment,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True).stdout
 
+    def rejected(*options):
+        result = subprocess.run([str(executable), *options], env=environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        assert result.returncode != 0, result.stdout
+        return result.stderr
+
     def ctrl_c(process):
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.FreeConsole()
@@ -71,7 +79,7 @@ def main():
             kernel.SetConsoleCtrlHandler(None, False)
             kernel.FreeConsole()
 
-    def capture(name, persistent=False, crash=False, circular=None, encrypted=False):
+    def capture(name, persistent=False, crash=False, circular=None, encrypted=False, conflict=False):
         output = fixture / (name + '.tmcap')
         log_path = fixture / (name + '.log')
         startup = subprocess.STARTUPINFO()
@@ -103,7 +111,7 @@ def main():
             if circular:
                 assert not output.exists()
                 if circular != 'unlimited':
-                    assert not (ledger / 'circular').exists()
+                    assert not list((ledger / 'circular').glob('*'))
             assert 'press Ctrl+C once' in text
             assert '25000000 bytes per request' in text
             records = [json.loads(path.read_text()) for path in ledger.glob('root-*.json')]
@@ -128,12 +136,21 @@ def main():
                 process.wait(timeout=10)
                 assert list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
             else:
+                if conflict:
+                    output.write_bytes(b'existing user file')
                 ctrl_c(process)
-                assert process.returncode == 0, log_path.read_text(encoding='utf-8')
                 text = log_path.read_text(encoding='utf-8')
                 assert 'Stopping capture: restoring proxy settings' in text
-                assert 'Trace saved:' in text
-                native = output
+                if conflict:
+                    assert process.returncode != 0, text
+                    assert output.read_bytes() == b'existing user file'
+                    native = Path(re.search(r'preserved at (.+?)\. Use capture inspect', text).group(1))
+                    assert native.is_file(), text
+                    assert f'The native evidence remains at {output}' not in text
+                else:
+                    assert process.returncode == 0, text
+                    assert 'Trace saved:' in text
+                    native = output
                 evidence = fixture / (name + '.jsonl')
                 password_args = ['--password-file', str(password_file)] if encrypted else []
                 command('capture', 'export', '--input', str(native), '--format', 'jsonl', '--output', str(evidence), *password_args)
@@ -154,11 +171,63 @@ def main():
                            for line in evidence.read_text().splitlines())
         return record, output
 
+    def export_rejections(source):
+        # Valid checksummed native fixtures can have incomplete or unsafe heads.
+        data = source.read_bytes()
+        header = data[:13 + struct.unpack('<I', data[9:13])[0]]
+
+        def write_native(path, records):
+            records = [*records, {'revision': 3, 'sequence': 0, 'exchange_id': 0,
+                                  'kind': 'seal', 'payload': {'record_count': len(records)}}]
+            encoded = bytearray(header)
+            for index, record in enumerate(records):
+                payload = json.dumps(record, separators=(',', ':')).encode()
+                frame = struct.pack('<QIB', index * 2 + 1, len(payload), 0) + payload
+                encoded += struct.pack('<II', len(frame), zlib.crc32(frame)) + frame
+            path.write_bytes(encoded)
+
+        request = {'revision': 3, 'sequence': 1, 'exchange_id': 1, 'kind': 'request-head',
+                   'payload': {'boundary': 'client-request', 'method': 'GET',
+                               'target': 'http://example.invalid/', 'headers': []}}
+        source = fixture / 'missing-response.tmcap'
+        write_native(source, [request])
+        for mode in ('saz', 'saz-extended'):
+            output = fixture / (mode + '-rejected.saz')
+            error = rejected('capture', 'export', '--input', str(source), '--format', mode,
+                             '--output', str(output))
+            assert '1 exchange(s)' in error and 'TMCap' in error, error
+            assert not output.exists()
+
+        request['payload']['headers'] = [{'name': list(b'x-fixture'), 'value': list(b'bad\r\nvalue')}]
+        response = {'revision': 3, 'sequence': 2, 'exchange_id': 1, 'kind': 'response-head',
+                    'payload': {'boundary': 'client-response', 'status': 200, 'headers': []}}
+        write_native(source, [request, response])
+        output = fixture / 'failed-export.saz'
+        for _ in range(2):
+            error = rejected('capture', 'export', '--input', str(source), '--format', 'saz',
+                             '--output', str(output))
+            assert 'unsafe HTTP wire field' in error, error
+            assert not output.exists()
+
     try:
-        capture('ephemeral')
+        for topic in ('record', 'serve', 'ca generate', 'ca protect', 'ca issue', 'roots cleanup',
+                      'capture inspect', 'capture validate', 'capture seal', 'capture export'):
+            assert 'Usage:' in command(*topic.split(), '--help')
+        assert 'persist' in command('help', 'record')
+        assert '--source-password-file' in command('help', 'capture', 'export')
+        bad_output = fixture / 'missing-directory' / 'trace.tmcap'
+        error = rejected('record', '--output', str(bad_output), '--circular-buffer', 'auto',
+                         '--no-install-root', '--no-system-proxy')
+        assert 'Cannot prepare destination' in error and not ledger.exists(), error
+        error = rejected('serve', '--ca-cert', 'missing.pem', '--ca-key', 'missing.key',
+                         '--proof-id', 'invalid\r\nvalue')
+        assert '--proof-id' in error and 'panicked' not in error, error
+        _, ordinary = capture('ephemeral')
+        export_rejections(ordinary)
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         capture('circular-memory', circular='auto', encrypted=True)
         capture('circular-disk', circular='unlimited', encrypted=True)
+        capture('circular-conflict', circular='auto', encrypted=True, conflict=True)
         capture('encrypted-stream', encrypted=True)
         first, _ = capture('persistent-1', persistent=True)
         state = json.loads(next(ledger.glob('root-*.json')).read_text())
@@ -175,7 +244,10 @@ def main():
         assert 'SEALED=true' in command('capture', 'inspect', '--input', str(recovered))
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         print(json.dumps({'ephemeralMemoryOnly': True, 'persistentReuse': True,
-                          'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True, 'circularMemory': True, 'circularDisk': True, 'artifacts': str(fixture)}))
+                          'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True,
+                          'circularMemory': True, 'circularDisk': True, 'circularSaveRecovery': True,
+                          'commandHelp': True, 'lossySazRejected': True,
+                          'atomicExports': True, 'proofValidation': True, 'artifacts': str(fixture)}))
     finally:
         for process in processes:
             if process.poll() is None:

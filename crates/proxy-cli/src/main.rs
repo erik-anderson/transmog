@@ -2,17 +2,19 @@
 
 mod arguments;
 mod circular;
+mod help;
+mod output;
 mod passwords;
 mod root_lifecycle;
 mod roots;
 mod support;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     error::Error,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     net::SocketAddr,
     num::NonZeroUsize,
     path::{Path, PathBuf},
@@ -24,8 +26,9 @@ use std::{
 
 use bytes::Bytes;
 use transmog_capture::{
-    CaptureBodyRetention, CaptureExporter, CaptureLimits, CapturePolicy, CaptureWriter,
-    JsonLinesExporter, RecoveredCapture, loss_record, record_from_observer,
+    CaptureBodyRetention, CaptureExporter, CaptureLimits, CapturePolicy, CaptureReader,
+    CaptureSummary, CaptureWriter, JsonLinesExporter, RecoveredCapture, loss_record,
+    record_from_observer,
 };
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{
@@ -71,6 +74,10 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<String> = env::args().skip(1).collect();
+    if let Some(help) = help::requested(&arguments)? {
+        println!("{help}");
+        return Ok(());
+    }
     match arguments.first().map(String::as_str) {
         Some("record") => support::record(&arguments[1..]).await,
         Some("roots") => support::cleanup_roots(&arguments[1..]),
@@ -89,10 +96,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
             protect_ca(&arguments[2..])
         }
         Some("capture") => capture_command(&arguments[1..]),
-        Some("help" | "--help" | "-h") | None => {
-            print_usage();
-            Ok(())
-        }
         _ => Err(invalid_input("unknown command; run `transmog-cli help`").into()),
     }
 }
@@ -118,6 +121,9 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         .parse::<SocketAddr>()?;
     let route_policy = parse_route(option(arguments, "--route").unwrap_or("auto"))?;
     let proof_id = option(arguments, "--proof-id");
+    let proof = proof_id
+        .map(|id| ProofFactory::new(id.to_owned(), 16 * 1024 * 1024))
+        .transpose()?;
     let capture_path = option(arguments, "--capture").map(PathBuf::from);
     let capture_bodies = arguments.iter().any(|value| value == "--capture-bodies");
     if capture_bodies && capture_path.is_none() {
@@ -129,9 +135,9 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let ca = load_ca(&certificate_pem, Path::new(key_path))?;
     let thumbprint = ca.sha256_thumbprint()?;
     let trust = load_upstream_trust(arguments)?;
-    let interceptor: Arc<dyn InterceptorFactory> = proof_id.map_or_else(
+    let interceptor: Arc<dyn InterceptorFactory> = proof.map_or_else(
         || Arc::new(NoopInterceptorFactory) as Arc<dyn InterceptorFactory>,
-        |id| Arc::new(ProofFactory::new(id.to_owned(), 16 * 1024 * 1024)),
+        |proof| Arc::new(proof),
     );
     let config = ProxyConfig {
         listener: ListenerConfig {
@@ -388,6 +394,18 @@ fn recover_file(arguments: &[String]) -> Result<RecoveredCapture, Box<dyn Error>
 fn recover_file_with_password(
     arguments: &[String],
 ) -> Result<(RecoveredCapture, Option<transmog_capture::CapturePassword>), Box<dyn Error>> {
+    with_capture_password(arguments, |file, password| {
+        transmog_capture::recover_with_password(file, CaptureLimits::default(), password)
+    })
+}
+
+fn with_capture_password<T>(
+    arguments: &[String],
+    mut read: impl FnMut(
+        File,
+        Option<&transmog_capture::CapturePassword>,
+    ) -> Result<T, transmog_capture::CaptureError>,
+) -> Result<(T, Option<transmog_capture::CapturePassword>), Box<dyn Error>> {
     let path = required_option(arguments, "--input")?;
     let password_path = if option(arguments, "--source-password-file").is_some() {
         option(arguments, "--source-password-file")
@@ -399,11 +417,7 @@ fn recover_file_with_password(
     let mut password = password_path.map(passwords::read_file).transpose()?;
     loop {
         let file = File::open(path)?;
-        match transmog_capture::recover_with_password(
-            file,
-            CaptureLimits::default(),
-            password.as_ref(),
-        ) {
+        match read(file, password.as_ref()) {
             Ok(capture) => return Ok((capture, password)),
             Err(transmog_capture::CaptureError::PasswordRequired) => {
                 password = Some(passwords::prompt(false)?);
@@ -417,14 +431,54 @@ fn recover_file_with_password(
     }
 }
 
+fn scan_capture(
+    input: impl Read,
+    password: Option<&transmog_capture::CapturePassword>,
+    count_exchanges: bool,
+) -> Result<(CaptureSummary, u64), transmog_capture::CaptureError> {
+    let mut reader = CaptureReader::with_password(input, CaptureLimits::default(), password)?;
+    let mut exchanges = HashSet::new();
+    let mut summary = CaptureSummary {
+        records: 0,
+        exchanges: 0,
+        loss_markers: 0,
+        retained_body_bytes: 0,
+        sealed: false,
+        truncated_tail: false,
+    };
+    // Fully verify each payload, then release it before reading the next frame.
+    while let Some(frame) = reader.read_next()? {
+        summary.records += 1;
+        if count_exchanges && frame.record.exchange_id != 0 {
+            exchanges.insert(frame.record.exchange_id);
+        }
+        match frame.record.kind {
+            transmog_capture::CaptureRecordKind::Loss { .. } => summary.loss_markers += 1,
+            transmog_capture::CaptureRecordKind::BodySegment {
+                bytes: Some(bytes), ..
+            } => {
+                summary.retained_body_bytes = summary
+                    .retained_body_bytes
+                    .saturating_add(bytes.len() as u64);
+            }
+            _ => {}
+        }
+    }
+    summary.exchanges = exchanges.len();
+    summary.sealed = reader.sealed();
+    summary.truncated_tail = reader.truncated_tail();
+    Ok((summary, reader.valid_bytes()))
+}
+
 fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     arguments::validate(
         arguments,
         &["--input", "--password-file", "--source-password-file"],
         &[],
     )?;
-    let capture = recover_file(arguments)?;
-    let summary = capture.summary();
+    let ((summary, valid_bytes), _) = with_capture_password(arguments, |file, password| {
+        scan_capture(file, password, true)
+    })?;
     println!(
         "FORMAT_REVISION={}",
         transmog_capture::CAPTURE_FORMAT_REVISION
@@ -435,7 +489,7 @@ fn capture_inspect(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("RETAINED_BODY_BYTES={}", summary.retained_body_bytes);
     println!("SEALED={}", summary.sealed);
     println!("TRUNCATED_TAIL={}", summary.truncated_tail);
-    println!("VALID_BYTES={}", capture.valid_bytes);
+    println!("VALID_BYTES={valid_bytes}");
     Ok(())
 }
 
@@ -445,17 +499,19 @@ fn capture_validate(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         &["--input", "--password-file", "--source-password-file"],
         &[],
     )?;
-    let capture = recover_file(arguments)?;
-    if capture.truncated_tail {
+    let ((summary, _), _) = with_capture_password(arguments, |file, password| {
+        scan_capture(file, password, false)
+    })?;
+    if summary.truncated_tail {
         return Err(
             invalid_input("capture has a truncated tail; seal a recovered copy first").into(),
         );
     }
-    if !capture.sealed {
+    if !summary.sealed {
         return Err(invalid_input("capture is not sealed").into());
     }
     println!("VALID=true");
-    println!("RECORDS={}", capture.records.len());
+    println!("RECORDS={}", summary.records);
     Ok(())
 }
 
@@ -475,15 +531,13 @@ fn capture_seal(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         return Err(invalid_input("capture is already sealed").into());
     }
     let output = PathBuf::from(required_option(arguments, "--output")?);
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&output)?;
-    write_sealed_capture_encoded(
-        file,
-        &capture,
-        &transmog_capture::CaptureEncoding { password },
-    )?;
+    output::write_new(&output, |file| {
+        Ok(write_sealed_capture_encoded(
+            file,
+            &capture,
+            &transmog_capture::CaptureEncoding { password },
+        )?)
+    })?;
     println!("CAPTURE={}", output.display());
     println!("RECOVERED_TAIL={}", capture.truncated_tail);
     Ok(())
@@ -529,45 +583,56 @@ fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         ],
         &["--encrypt"],
     )?;
-    let password = passwords::output(arguments)?;
-    let capture = recover_file(arguments)?;
     let format = option(arguments, "--format").unwrap_or("jsonl");
-    if password.is_some() && format == "jsonl" {
+    if !["jsonl", "saz", "saz-extended"].contains(&format) {
+        return Err(invalid_input("--format must be jsonl, saz, or saz-extended").into());
+    }
+    if arguments.iter().any(|argument| argument == "--encrypt") && format == "jsonl" {
         return Err(invalid_input("JSONL does not support password encryption; choose SAZ").into());
     }
     let output = option(arguments, "--output").unwrap_or("-");
+    if format != "jsonl" && output == "-" {
+        return Err(invalid_input("SAZ output must be a seekable file, not stdout").into());
+    }
+    let password = passwords::output(arguments)?;
+    let capture = recover_file(arguments)?;
     let report = match format {
         "jsonl" if output == "-" => {
             let stdout = io::stdout();
             let mut lock = stdout.lock();
             JsonLinesExporter::new(&mut lock).export(&capture)?
         }
-        "jsonl" => {
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(output)?;
-            JsonLinesExporter::new(file).export(&capture)?
-        }
-        "saz" | "saz-extended" if output == "-" => {
-            return Err(invalid_input("SAZ output must be a seekable file, not stdout").into());
-        }
+        "jsonl" => output::write_new(Path::new(output), |file| {
+            Ok(JsonLinesExporter::new(file).export(&capture)?)
+        })?,
         "saz" | "saz-extended" => {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(output)?;
             let mode = if format == "saz" {
                 SazMode::Strict
             } else {
                 SazMode::Extended
             };
-            let mut exporter = SazExporter::new(file, mode, SazLimits::default())?;
-            if let Some(password) = password {
-                exporter = exporter.encrypted(password)?;
-            }
-            exporter.export(&capture)?
+            output::write_new(Path::new(output), |file| {
+                let mut exporter = SazExporter::new(file, mode, SazLimits::default())?;
+                if let Some(password) = password {
+                    exporter = exporter.encrypted(password)?;
+                }
+                let report = exporter.export(&capture)?;
+                let detail = exporter
+                    .report()
+                    .ok_or_else(|| io::Error::other("SAZ export report is unavailable"))?;
+                if detail.skipped_incomplete > 0 {
+                    return Err(invalid_input(format!(
+                        "SAZ cannot represent {} exchange(s) missing request or response headers. Keep the TMCap input to preserve those entries; no SAZ file was saved",
+                        detail.skipped_incomplete)).into());
+                }
+                if detail.incomplete_bodies > 0 {
+                    eprintln!(
+                        "INCOMPLETE_BODIES={}. The SAZ contains retained body prefixes; missing bytes cannot be recovered",
+                        detail.incomplete_bodies
+                    );
+                }
+                Ok(report)
+            })?
         }
         _ => return Err(invalid_input("--format must be jsonl, saz, or saz-extended").into()),
     };
@@ -773,41 +838,28 @@ fn invalid_input(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
 }
 
-fn print_usage() {
-    println!(
-        "transmog-cli\n\n\
-         Guided support capture (press Ctrl+C to stop and save):\n  \
-         transmog-cli record [--output trace.tmcap] [--persistent-root] [--redact|--retain-sensitive] [--include-network-context] [--request-body-limit bytes|--unlimited-request-bodies] [--circular-buffer auto|bytes|unlimited] [--encrypt [--password-file FILE]]\n  \
-         [--install-root|--no-install-root] [--no-system-proxy] [--listen 127.0.0.1:0] [--allow-remote] [--route auto|h1|h2|h3]\n\n\
-         Remove CLI-owned roots, including retrying canceled OS prompts:\n  \
-         transmog-cli roots cleanup [--include-persistent]\n\n\
-         Generate a CA (files must not already exist):\n  \
-         transmog-cli ca generate --cert ca.pem --key ca.key [--name NAME]\n\n\
-         transmog-cli ca protect --ca-cert ca.pem --ca-key ca.key\n\n\
-         Issue a short-lived server leaf from an existing CA:\n  \
-         transmog-cli ca issue --ca-cert ca.pem --ca-key ca.key --identity HOST_OR_IP --cert leaf.pem --key leaf.key [--days 1..30]\n\n\
-         Run the explicit proxy:\n  \
-         transmog-cli serve --ca-cert ca.pem --ca-key ca.key [--upstream-ca-cert roots.pem] [--listen 127.0.0.1:0] [--route auto|h1|h2|h3] [--proof-id ID] [--capture FILE [--capture-bodies]]\n\n\
-         Inspect, validate, recover/seal, or export a native capture:\n  \
-         transmog-cli capture inspect --input FILE\n  \
-         transmog-cli capture validate --input FILE\n  \
-         transmog-cli capture seal --input FILE --output RECOVERED_FILE\n  \
-         transmog-cli capture export --input FILE [--format jsonl|saz|saz-extended] [--output FILE|-]\n\n\
-         Non-loopback listening additionally requires --allow-remote."
-    );
-}
-
 struct ProofFactory {
     id: Arc<str>,
+    request_marker: HeaderField,
+    response_marker: HeaderField,
     max_body_bytes: usize,
 }
 
 impl ProofFactory {
-    fn new(id: String, max_body_bytes: usize) -> Self {
-        Self {
+    fn new(id: String, max_body_bytes: usize) -> io::Result<Self> {
+        let invalid = |_| {
+            invalid_input("--proof-id must be a valid HTTP header value without control characters")
+        };
+        let request_marker =
+            HeaderField::try_new("x-intercept-test", id.as_bytes()).map_err(invalid)?;
+        let response_marker =
+            HeaderField::try_new("x-intercepted-by", id.as_bytes()).map_err(invalid)?;
+        Ok(Self {
             id: id.into(),
+            request_marker,
+            response_marker,
             max_body_bytes,
-        }
+        })
     }
 }
 
@@ -818,6 +870,8 @@ impl InterceptorFactory for ProofFactory {
     ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
         Ok(Arc::new(ProofInterceptor {
             id: Arc::clone(&self.id),
+            request_marker: self.request_marker.clone(),
+            response_marker: self.response_marker.clone(),
             max_body_bytes: self.max_body_bytes,
             html: AtomicBool::new(false),
         }))
@@ -826,6 +880,8 @@ impl InterceptorFactory for ProofFactory {
 
 struct ProofInterceptor {
     id: Arc<str>,
+    request_marker: HeaderField,
+    response_marker: HeaderField,
     max_body_bytes: usize,
     html: AtomicBool,
 }
@@ -834,9 +890,7 @@ impl ExchangeInterceptor for ProofInterceptor {
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         Box::pin(async move {
             let mut head = event.head;
-            let proof = HeaderField::try_new("x-intercept-test", self.id.as_bytes())
-                .expect("proof identifiers are valid header values");
-            head.headers.replace_all(proof);
+            head.headers.replace_all(self.request_marker.clone());
             head.headers.replace_all(
                 HeaderField::try_new("accept-encoding", "identity")
                     .expect("static identity header is valid"),
@@ -856,10 +910,7 @@ impl ExchangeInterceptor for ProofInterceptor {
             if !is_html {
                 return ResponseHeadAction::Continue;
             }
-            head.headers.replace_all(
-                HeaderField::try_new("x-intercepted-by", self.id.as_bytes())
-                    .expect("proof identifiers are valid header values"),
-            );
+            head.headers.replace_all(self.response_marker.clone());
             ResponseHeadAction::Replace(head)
         })
     }
@@ -868,7 +919,7 @@ impl ExchangeInterceptor for ProofInterceptor {
         let action = if self.html.load(Ordering::Acquire) {
             let marker = format!(
                 "<meta name=\"intercept-proxy-proof\" content=\"{}\">",
-                self.id
+                escape_html_attribute(&self.id)
             )
             .into_bytes();
             ResponseBodyAction::decoded(BodyPlan::Buffer {
@@ -883,6 +934,15 @@ impl ExchangeInterceptor for ProofInterceptor {
         };
         Box::pin(async move { action })
     }
+}
+
+fn escape_html_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&#39;")
 }
 
 struct HtmlProofEditor {
@@ -917,6 +977,108 @@ fn find_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proof_values_are_validated_before_files_or_traffic_and_html_is_escaped() {
+        for value in ["bad\r\nvalue", "bad\0value"] {
+            assert!(ProofFactory::new(value.into(), 1024).is_err());
+        }
+        assert!(ProofFactory::new("test-id".into(), 1024).is_ok());
+        assert_eq!(escape_html_attribute("\"<&>'"), "&quot;&lt;&amp;&gt;&#39;");
+    }
+
+    #[test]
+    fn streamed_summary_matches_recovery_and_checks_body_corruption() {
+        use transmog_capture::{CaptureRecord, CaptureRecordKind};
+        use transmog_core::observe::ExchangeBoundary;
+        let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+        for index in 0..16 {
+            writer
+                .append(&CaptureRecord {
+                    exchange_id: 7,
+                    sequence: index + 1,
+                    kind: CaptureRecordKind::BodySegment {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        byte_count: 256 * 1024,
+                        bytes: Some(vec![123; 256 * 1024]),
+                        truncated: false,
+                    },
+                })
+                .unwrap();
+        }
+        writer.append(&loss_record(8, 1, 1, "fixture")).unwrap();
+        writer.seal().unwrap();
+        let bytes = writer.into_inner();
+        let recovered =
+            transmog_capture::recover(bytes.as_slice(), CaptureLimits::default()).unwrap();
+        let (summary, valid_bytes) = scan_capture(bytes.as_slice(), None, true).unwrap();
+        assert_eq!(summary, recovered.summary());
+        assert_eq!(valid_bytes, bytes.len() as u64);
+
+        let mut reader = CaptureReader::new(bytes.as_slice(), CaptureLimits::default()).unwrap();
+        let frame = reader.read_next().unwrap().unwrap();
+        let mut damaged = bytes;
+        damaged[usize::try_from(frame.offset + frame.frame_bytes - 1).unwrap()] ^= 1;
+        assert!(scan_capture(damaged.as_slice(), None, false).is_err());
+    }
+
+    #[test]
+    fn saz_missing_heads_is_rejected_without_publishing_either_mode() {
+        use transmog_capture::{CaptureRecord, CaptureRecordKind};
+        use transmog_core::observe::ExchangeBoundary;
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.tmcap");
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        writer
+            .append(&CaptureRecord {
+                exchange_id: 1,
+                sequence: 1,
+                kind: CaptureRecordKind::RequestHead {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    method: "GET".into(),
+                    target: "http://example.test/".into(),
+                    headers: vec![],
+                },
+            })
+            .unwrap();
+        writer.seal().unwrap();
+        drop(writer);
+        for format in ["saz", "saz-extended"] {
+            let output = directory.path().join(format!("{format}.saz"));
+            let arguments = vec![
+                "--input".into(),
+                source.to_string_lossy().into_owned(),
+                "--format".into(),
+                format.into(),
+                "--output".into(),
+                output.to_string_lossy().into_owned(),
+            ];
+            let error = capture_export(&arguments).unwrap_err().to_string();
+            assert!(error.contains("1 exchange(s)"), "{error}");
+            assert!(error.contains("TMCap"));
+            assert!(!output.exists());
+        }
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn export_rejects_invalid_formats_and_encryption_before_prompting_or_reading() {
+        let arguments = ["--input", "missing.tmcap", "--encrypt"].map(str::to_owned);
+        assert!(
+            capture_export(&arguments)
+                .unwrap_err()
+                .to_string()
+                .contains("JSONL")
+        );
+        let arguments = ["--input", "missing.tmcap", "--format", "unknown"].map(str::to_owned);
+        assert!(
+            capture_export(&arguments)
+                .unwrap_err()
+                .to_string()
+                .contains("--format")
+        );
+    }
 
     #[test]
     fn required_values_cannot_consume_another_option() {

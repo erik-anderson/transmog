@@ -27,6 +27,10 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         )
         .into());
     }
+    let circular_output = crate::option(arguments, "--circular-buffer")
+        .map(|_| crate::output::PendingOutput::new(&output))
+        .transpose()?;
+    let circular_recording = circular_output.is_some();
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
     let (redact, request_body_limit) = recording_preferences(arguments, &ledger)?;
@@ -57,6 +61,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             redact,
             request_body_limit,
             encoding,
+            circular_output,
         },
     )
     .await;
@@ -87,7 +92,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             "Previous or rotated roots still need cleanup. Run transmog-cli roots cleanup; public recovery records are retained."
         );
     }
-    if result.is_err() && output.is_file() {
+    if result.is_err() && !circular_recording && output.is_file() {
         eprintln!(
             "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
             output.display()
@@ -197,6 +202,7 @@ struct RecordingOptions {
     redact: bool,
     request_body_limit: Option<u64>,
     encoding: transmog_capture::CaptureEncoding,
+    circular_output: Option<crate::output::PendingOutput>,
 }
 
 async fn run_capture(
@@ -211,6 +217,7 @@ async fn run_capture(
         redact,
         request_body_limit,
         encoding,
+        circular_output,
     } = options;
     setup_root(arguments, ledger, root)?;
     println!(
@@ -297,16 +304,40 @@ async fn run_capture(
         "Set your application's HTTP and HTTPS proxy to this address. Remove that setting after recording."
     );
     println!("Recording. Reproduce the issue, then press Ctrl+C once to stop and save the trace.");
-    let running = wait_for_stop(&service, circular.as_deref()).await;
+    finish_capture(&service, circular.as_deref(), circular_output, native).await
+}
+
+async fn finish_capture(
+    service: &ApplicationSessionService,
+    circular: Option<&crate::circular::CircularObserver>,
+    circular_output: Option<crate::output::PendingOutput>,
+    native: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let running = wait_for_stop(service, circular).await;
     // Ensure failures still flush the recoverable prefix and restore owned host state.
     let stopped = service.stop().await;
-    running?;
-    stopped?;
     if let Some(circular) = circular {
-        circular.save(native)?;
+        // Flush the available prefix even after a runtime/observer failure.
+        let saved = circular.save(
+            circular_output
+                .ok_or_else(|| io::Error::other("Circular destination was not prepared"))?,
+        );
+        if (running.is_err() || stopped.is_err()) && saved.is_ok() {
+            eprintln!(
+                "Recording did not finish cleanly. Retained circular evidence was saved at {}",
+                native.display()
+            );
+        }
+        // A save error includes the recovery path and must not be obscured by
+        // an earlier observer/runtime error.
+        saved?;
+        running?;
+        stopped?;
         return Ok(());
     }
-    verify_sealed(&service, native)
+    running?;
+    stopped?;
+    verify_sealed(service, native)
 }
 
 fn verify_sealed(service: &ApplicationSessionService, native: &Path) -> Result<(), Box<dyn Error>> {

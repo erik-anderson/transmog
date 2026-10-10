@@ -94,23 +94,37 @@ exchange failure. Saved representations require matching retained-byte counts;
 recordings retain ordered body-completion markers. The independent
 `x-transmog-terminal` session flag preserves the exchange outcome in both SAZ
 profiles without marking a fully retained body as dropped.
-Exchanges without both request and response heads are
-skipped and counted in the conversion report. Unsafe line breaks, invalid
-statuses, body-limit overflow, entry-limit overflow, and ZIP failures stop the
+The library exporter counts exchanges without both request and response heads
+as skipped in its conversion report. CLI export and desktop **Save trace**
+reject that result instead of publishing an archive that omits those exchanges;
+use native TMCap to preserve them. Unsafe line breaks, invalid statuses,
+body-limit overflow, entry-limit overflow, and ZIP failures stop the
 conversion rather than producing ambiguous wire text.
 
 Metadata members are bounded to 4 MiB, with the existing aggregate index and ZIP
 budgets enforced before publication. Native TMCap remains the complete persistence
 choice for very large captures or all four HTTP boundaries.
 
-Use the headless converter with a new destination path:
+Use the standalone release CLI with a new destination path (no Cargo or
+repository checkout is required):
 
 ```powershell
-cargo run --locked -p transmog -- capture export `
-  --input ./session.tmcap --format saz --output ./session.saz
+.\transmog-cli.exe capture export `
+  --input .\session.tmcap --format saz --output .\session.saz
 ```
 
-The converter never overwrites an existing destination. Native capture remains
+Choose `--format saz-extended` for extra Transmog evidence. Add `--encrypt` for
+AES-256 output and an interactive password/confirmation. For unattended
+conversion from encrypted native input to encrypted SAZ, supply the input
+password through `--source-password-file` and the output password through
+`--password-file`. ZIP member names remain visible. See the
+[CLI guide](cli.md#input-and-output-passwords) for all password roles.
+
+The CLI converter never overwrites an existing destination and publishes a
+file only after successful conversion. Failures leave no partial destination.
+Incomplete retained bodies are reported and marked in SAZ. The CLI conversion
+limits are 1,000,000 exchanges and 256 MiB retained per direction per exchange;
+its source recovery retains decoded records in memory. Native capture remains
 the fidelity and recovery source even after a SAZ is produced.
 
 Run `scripts/test-saz-interop.ps1` to check exports with the independent native

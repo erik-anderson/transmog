@@ -58,14 +58,18 @@ For CLI changes, build the CLI and run its Windows console lifecycle probe:
 
 ```powershell
 . ./scripts/dev-env.ps1
-cargo build --locked -p transmog
+cargo build --locked -p transmog --bin transmog-cli
 python ./scripts/test-cli-support.py --executable ./target/debug/transmog-cli.exe --artifacts ./artifacts/cli-lifecycle
 ```
 
 It uses controlled loopback traffic, isolated profiles and owned hidden consoles.
 It checks Ctrl+C, ephemeral/persistent roots, encrypted streaming, memory/disk
-circular capture and crash recovery without installing roots or changing the
-host proxy. For SAZ encryption/import/export changes, run the independent reader:
+circular capture, crash recovery, command help, proof-ID validation, and
+destination safety. It exercises circular save recovery and rejects lossy or
+failed SAZ exports without leaving partial output, without installing roots or
+changing the host proxy. User-facing workflows use the standalone binary; see
+[the CLI guide](cli.md). For SAZ encryption/import/export changes, run the
+independent reader:
 
 ```powershell
 ./scripts/test-saz-interop.ps1

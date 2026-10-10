@@ -77,18 +77,38 @@ with the requested DNS or IP identity for controlled origins. The resulting
 private key has the same handling requirements as any server key and should not
 be checked in.
 
-The CLI does not modify an operating-system trust store. On Windows, the
-checked-in scripts provide the explicit, reversible test workflow:
+The guided CLI `record` command installs its public interception root with
+explicit consent and removes it after an ephemeral run. Its fresh private key
+stays in memory; `--persistent-root` opts into a protected key and reused root.
+Windows installation targets current-user trust, macOS uses the login keychain,
+and supported Linux trust stores use their normal update tools through `sudo`.
+`--no-install-root` leaves trust setup manual. Cleanup retains exact public
+identities when removal cannot be completed. See the
+[support capture guide](cli-support-capture.md#certificates-and-interrupted-runs).
+
+The lower-level `serve` and `ca` commands leave trust installation and removal
+to the operator. With the release binary, generate a CA without repository
+scripts:
 
 ```powershell
-pwsh ./scripts/new-proxy-ca.ps1 -CertificatePath ./transmog-ca.pem -PrivateKeyPath ./transmog-ca.key
+.\transmog-cli.exe ca generate --cert .\transmog-ca.pem --key .\transmog-ca.key
+```
+
+Install only the public certificate in the client's trust store, retaining the
+printed `CA_SHA256` to identify it for removal. These operator-created CAs are
+not owned by `roots cleanup`. See [manual proxy setup](cli.md#run-a-manually-configured-proxy).
+
+For developers working in this checkout, the Windows scripts provide an
+explicit, reversible test workflow with that generated public certificate:
+
+```powershell
 $install = pwsh ./scripts/install-ca-user.ps1 -CertificatePath ./transmog-ca.pem
 # Save the CA_SHA256 value emitted above.
 pwsh ./scripts/uninstall-ca-user.ps1 -Sha256 <saved-sha256>
 ```
 
-Installation targets only `Cert:\CurrentUser\Root`. The installer requires a
-CA Basic Constraints extension and verifies exactly one SHA-256 match after
+The test installation script targets only `Cert:\CurrentUser\Root`. It requires
+a CA Basic Constraints extension and verifies exactly one SHA-256 match after
 installation. Uninstallation enumerates by that SHA-256 digest, refuses an
 ambiguous match, removes only that certificate, and verifies that no match
 remains. It never uses a subject-name wildcard and never opens the machine
@@ -96,7 +116,7 @@ store.
 
 Installing an interception CA gives this process the ability to read and
 modify TLS traffic for clients that trust it. Keep the OS-protected private key
-under the user-only ACL applied by `new-proxy-ca.ps1`, do not log or transmit it, and
+accessible only to the owning user, do not log or transmit it, and
 remove ordinary one-off roots immediately after use. For the durable
 live-browser root, run `scripts/remove-live-test-ca.ps1` as soon as repeated
 live testing is complete. Certificate-pinned applications are unsupported;

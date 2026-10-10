@@ -49,8 +49,10 @@ sources of truth.
 - [Native capture encoding](native-capture-format.md): chunk compression,
   authenticated frames, lazy body reads and recovery.
 - [SAZ compatibility](saz-compatibility.md): archive interoperability and fidelity.
-- [CLI support capture](cli-support-capture.md): start, reproduce, stop, review
-  and share a trace; certificate ownership and cleanup.
+- [CLI guide](cli.md): release-binary commands, manual proxy setup, proof IDs,
+  capture inspection, recovery, exports, and input/output passwords.
+- [CLI support capture](cli-support-capture.md): guided recording, reproduce,
+  stop, review and share a trace; certificate ownership and cleanup.
 - [Product state and support](product-state-and-support.md): persistent
   preferences, memory/disk circular retention, diagnostics and support bundles.
 - [Safe response previews](safe-previews.md): inert workbench content and

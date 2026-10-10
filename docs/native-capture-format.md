@@ -23,6 +23,13 @@ body bytes are reported when accessed, rather than blocking metadata-only openin
 An incomplete final metadata/body pair is recovered as a truncated tail. Explicit
 full validation still reads and authenticates every payload.
 
+CLI `capture inspect` and `capture validate` read and verify body payloads one
+frame at a time, releasing each payload before the next frame. Inspection keeps
+exchange IDs for its unique-exchange count; validation does not. These commands
+therefore check body integrity as well as metadata, unlike metadata-only desktop
+opening. A valid final seal does not imply that all traffic or body bytes were
+retained. See [CLI inspection and recovery](cli.md#inspect-validate-and-recover-a-native-capture).
+
 The bounded JSON file header names the container version, compression, cipher,
 KDF and KDF parameters, permitting explicit algorithm changes. Encrypted files
 use Argon2id-derived keys, fresh salt, a random nonce prefix and separate checked
