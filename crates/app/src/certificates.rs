@@ -311,6 +311,29 @@ mod tests {
     };
     use transmog_tls::{EndpointIdentity, ProxyCa};
 
+    fn configured_client_chain(
+        ca: &ProxyCa,
+        leaf: &transmog_tls::IssuedLeaf,
+    ) -> Vec<PublicCertificate> {
+        let trust = transmog_tls::PemTrustSource::from_pem(
+            &ca.certificate_pem().unwrap(),
+            "recorded client chain",
+        )
+        .unwrap();
+        let tls = transmog_tls::UpstreamTlsContextFactory::new(
+            Arc::new(transmog_tls::TrustSnapshot::load(&trust, 1).unwrap()),
+            transmog_tls::UpstreamTlsPolicy::default(),
+        )
+        .with_client_authentication(
+            leaf.certificate.clone(),
+            leaf.private_key.clone(),
+            vec![ca.certificate().clone()],
+        );
+        let context = tls.hyper_connector().unwrap();
+        let capture = tls.capture(None, vec![]);
+        capture.completed(&boring::ssl::Ssl::new(context.context()).unwrap(), false);
+        capture.snapshot().client_chain
+    }
     fn fixture(path: &std::path::Path) -> (Vec<PublicCertificate>, Vec<u8>) {
         let ca = ProxyCa::generate("Recorded certificate test root", 2).unwrap();
         let leaf = ca
@@ -334,6 +357,8 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
+        let client_chain = configured_client_chain(&ca, &leaf);
+        assert_eq!(client_chain, chain);
         let mut writer = CaptureWriter::new(
             std::fs::File::create(path).unwrap(),
             CaptureLimits::default(),
@@ -347,7 +372,7 @@ mod tests {
                 tls: Some(TlsEvidence {
                     server_name: Some("localhost".into()),
                     server_chain: chain.clone(),
-                    client_chain: vec![chain[0].clone()],
+                    client_chain,
                     verification: Some(VerificationResult::Rejected {
                         error_code: 20,
                         depth: Some(1),
@@ -477,7 +502,7 @@ mod tests {
                     .map(|certificate| certificate.sha256.clone())
                     .collect::<Vec<_>>()
             );
-            assert_eq!(connection.client_chain.len(), 1);
+            assert_eq!(connection.client_chain, connection.server_chain);
             assert!(connection.errors[0].contains("not trusted"));
             assert!(
                 connection

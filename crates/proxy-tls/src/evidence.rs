@@ -72,6 +72,15 @@ impl TlsCapture {
             collect_certificate(&mut data.server_chain, certificate);
         }
     }
+    /// Adds a known public client authentication path, without reading its key.
+    /// Context owners supply issuer certificates because Boring's chain getter
+    /// panics for an empty chain. Completion keeps the local leaf first.
+    pub fn client_issuers<'a>(&self, chain: impl IntoIterator<Item = &'a X509Ref>) {
+        let mut data = self.data();
+        for certificate in chain {
+            collect_certificate(&mut data.client_chain, certificate);
+        }
+    }
     /// Marks a completed QUIC verification; the callback retains its full path.
     pub fn verified(&self) {
         self.data().verification = Some(VerificationResult::Verified);
@@ -133,6 +142,16 @@ impl TlsCapture {
             if data.server_chain.is_empty() {
                 data.server_chain = peer;
                 data.chain_source = Some("peer-presented".into());
+            }
+            if !local.is_empty() {
+                for certificate in &data.client_chain {
+                    if !local
+                        .iter()
+                        .any(|existing| existing.sha256 == certificate.sha256)
+                    {
+                        local.push(certificate.clone());
+                    }
+                }
             }
             data.client_chain = local;
             data.verification = Some(VerificationResult::Verified);

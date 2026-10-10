@@ -1,6 +1,7 @@
 use std::{fmt, net::IpAddr, sync::Arc, time::SystemTime};
 
 use boring::{
+    pkey::{PKey, Private},
     ssl::{
         NameType, SslConnector, SslConnectorBuilder, SslContext, SslContextBuilder, SslMethod,
         SslVerifyMode, SslVersion,
@@ -271,12 +272,50 @@ impl Default for UpstreamTlsPolicy {
 pub struct UpstreamTlsContextFactory {
     snapshot: Arc<TrustSnapshot>,
     policy: UpstreamTlsPolicy,
+    client_authentication: Option<Arc<ClientAuthentication>>,
+}
+
+struct ClientAuthentication {
+    certificate: X509,
+    private_key: PKey<Private>,
+    issuers: Vec<X509>,
+}
+impl fmt::Debug for ClientAuthentication {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ClientAuthentication")
+            .field("certificate", &self.certificate)
+            .field("issuer_count", &self.issuers.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl UpstreamTlsContextFactory {
     /// Creates a factory. Replacing trust requires constructing a new factory and pools.
     pub fn new(snapshot: Arc<TrustSnapshot>, policy: UpstreamTlsPolicy) -> Self {
-        Self { snapshot, policy }
+        Self {
+            snapshot,
+            policy,
+            client_authentication: None,
+        }
+    }
+
+    /// Configures a client certificate and its ordered public issuer path for
+    /// both Hyper and QUIC. Context construction validates the certificate/key
+    /// pair; capture retains public certificates only.
+    #[must_use]
+    pub fn with_client_authentication(
+        mut self,
+        certificate: X509,
+        private_key: PKey<Private>,
+        issuers: Vec<X509>,
+    ) -> Self {
+        self.client_authentication = Some(Arc::new(ClientAuthentication {
+            certificate,
+            private_key,
+            issuers,
+        }));
+        self
     }
 
     /// Snapshot used by contexts from this factory.
@@ -299,14 +338,21 @@ impl UpstreamTlsContextFactory {
         if self.policy.maximum_version != self.policy.minimum_version {
             versions.push(label(self.policy.maximum_version));
         }
-        crate::TlsCapture::new(transmog_core::TlsEvidence {
+        let capture = crate::TlsCapture::new(transmog_core::TlsEvidence {
             server_name,
             offered_versions: versions,
             offered_alpn: alpn,
             trust_generation: Some(self.snapshot.generation()),
             trust_source: Some(self.snapshot.source_description().to_owned()),
             ..transmog_core::TlsEvidence::default()
-        })
+        });
+        if let Some(authentication) = &self.client_authentication {
+            capture.client_issuers(
+                std::iter::once(authentication.certificate.as_ref())
+                    .chain(authentication.issuers.iter().map(std::ops::Deref::deref)),
+            );
+        }
+        capture
     }
 
     /// Creates the connector used by Hyper's HTTP/1.1 and HTTP/2 adapter.
@@ -359,6 +405,14 @@ impl UpstreamTlsContextFactory {
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         builder.set_cipher_list(&self.policy.cipher_list)?;
+        if let Some(authentication) = &self.client_authentication {
+            builder.set_certificate(&authentication.certificate)?;
+            builder.set_private_key(&authentication.private_key)?;
+            builder.check_private_key()?;
+            for issuer in &authentication.issuers {
+                builder.add_extra_chain_cert(issuer.clone())?;
+            }
+        }
         Ok(())
     }
 }

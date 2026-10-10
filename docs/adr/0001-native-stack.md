@@ -18,6 +18,14 @@ Build quiche with only `boringssl-boring-crate`; the
 contexts derive from one `UpstreamTlsContextFactory` and immutable trust snapshot. A CI graph check fails
 on duplicate Boring families or a second proxy/replay TLS stack.
 
+Embedders configure client authentication through the shared factory's
+`with_client_authentication`, supplying the leaf, key and ordered public issuers.
+The same identity configures Hyper and QUIC and supplies the public capture path.
+Low-level SSL owners register known public issuers through `TlsCapture::client_issuers`;
+completion retains the leaf first and deduplicates repeated issuers. This avoids
+Boring's non-nullable extra-chain getter, which panics for an empty chain.
+Certificate evidence never reads or serializes private keys.
+
 The Windows desktop updater uses the supported Tauri updater SDK's HTTPS client
 and platform trust to retrieve signed GitHub release assets. Its Rustls dependency
 chain is confined to the desktop-owned updater edge. It never supplies a TLS
