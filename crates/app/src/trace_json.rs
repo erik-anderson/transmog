@@ -12,6 +12,8 @@ use transmog_core::performance::{ProtocolObservation, TransportObservation};
 
 #[path = "trace_netlog.rs"]
 mod netlog;
+#[path = "trace_netlog_lines.rs"]
+mod netlog_lines;
 
 struct CancelReader<'a> {
     reader: SourceReader,
@@ -56,22 +58,30 @@ pub(super) fn import(
             .seek(SeekFrom::Start(0))
             .map_err(|_| invalid("JSON trace is unreadable"))?;
     }
-    let document: Value =
-        serde_json::from_reader(std::io::BufReader::new(CancelReader { reader, canceled }))
-            .map_err(|_| {
+    let reader = std::io::BufReader::new(CancelReader { reader, canceled });
+    let (document, notes) = if format == crate::TraceFormat::Netlog {
+        netlog_lines::read(reader, canceled)?
+    } else {
+        (
+            serde_json::from_reader(reader).map_err(|_| {
                 if canceled.load(Ordering::Acquire) {
                     unavailable("Trace import canceled")
                 } else {
                     invalid("The trace is not valid JSON")
                 }
-            })?;
+            })?,
+            Vec::new(),
+        )
+    };
     if canceled.load(Ordering::Acquire) {
         return Err(unavailable("Trace import canceled"));
     }
     match format {
         crate::TraceFormat::Har => har(&document, prefix, trace_id, canceled, progress),
         crate::TraceFormat::Netlog => {
-            netlog::import(&document, prefix, trace_id, canceled, progress)
+            let mut imported = netlog::import(&document, prefix, trace_id, canceled, progress)?;
+            imported.notes.extend(notes);
+            Ok(imported)
         }
         _ => Err(invalid("Unsupported JSON trace")),
     }
@@ -524,7 +534,7 @@ mod tests {
     async fn browser_produced_archives_preserve_http_heads_and_response_content() {
         let archives =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/browser");
-        for format in ["har", "netlog"] {
+        for format in ["har", "netlog", "jsonl"] {
             let root = tempfile::tempdir().unwrap();
             let app = application(root.path());
             app.import_trace(
@@ -567,6 +577,83 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn chromium_jsonl_bom_interruption_and_invalid_tail_preserve_atomic_imports() {
+        let root = tempfile::tempdir().unwrap();
+        let app = application(root.path());
+        let source = include_bytes!("../tests/fixtures/browser/placeholder.jsonl");
+        let path = root.path().join("browser.data");
+        let mut full = vec![0xef, 0xbb, 0xbf];
+        full.extend_from_slice(source);
+        std::fs::write(&path, &full).unwrap();
+        let request = |path: std::path::PathBuf, operation: &str| TraceImportRequest {
+            path,
+            password: None,
+            operation_id: operation.into(),
+            max_file_bytes: u64::MAX,
+        };
+        let complete = app
+            .import_trace(request(path, "complete"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(complete.trace.sessions, 2);
+        assert!(
+            complete
+                .trace
+                .notes
+                .iter()
+                .all(|note| !note.contains("no end marker"))
+        );
+        let mut interrupted = full[..full.len() - b"{\"type\":\"end\"}\n".len()].to_vec();
+        interrupted.extend_from_slice(b"{\"type\":\"event\",\"event\":");
+        let partial = root.path().join("partial.jsonl");
+        std::fs::write(&partial, interrupted).unwrap();
+        let recovered = app
+            .import_trace(request(partial, "interrupted"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(recovered.trace.sessions, 2);
+        assert!(
+            recovered
+                .trace
+                .notes
+                .iter()
+                .any(|note| note.contains("incomplete tail"))
+        );
+        let retained = app
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .retained_count;
+        let bad = root.path().join("invalid.jsonl");
+        full.extend_from_slice(b"{\"type\":\"event\",\"event\":{}}\n");
+        std::fs::write(&bad, full).unwrap();
+        assert!(
+            app.import_trace(request(bad, "invalid"), Arc::new(|_| {}))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            app.query_sessions(crate::SessionQueryInput::default())
+                .unwrap()
+                .retained_count,
+            retained
+        );
+        let saved = root.path().join("jsonl.tmcap");
+        app.save_traffic_trace(saved.clone(), TraceSaveOptions::default())
+            .await
+            .unwrap();
+        let reopened = application(&root.path().join("reopened"));
+        assert_eq!(
+            reopened
+                .import_trace(request(saved, "native"), Arc::new(|_| {}))
+                .await
+                .unwrap()
+                .trace
+                .sessions,
+            4
+        );
+    }
+
     #[tokio::test]
     async fn clear_and_close_release_imported_sources_and_metadata() {
         let root = tempfile::tempdir().unwrap();

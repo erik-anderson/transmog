@@ -641,7 +641,7 @@ fn protocol(version: HttpLegVersion) -> &'static str {
         HttpLegVersion::Http3 => "HTTP/3",
     }
 }
-fn url(head: &RequestHead) -> String {
+pub(crate) fn url(head: &RequestHead) -> String {
     format!(
         "{}://{}{}{}",
         head.target.scheme,

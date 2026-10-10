@@ -4,13 +4,14 @@ import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview';
 import type { TraceImportIntent } from '../models.js';
 import { describeError } from '../utilities.js';
 
-const acceptsTrace = (path:string):boolean => /\.(tmcap|saz|har|netlog|json)$/i.test(path);
+const acceptsTrace = (path:string):boolean => /\.(tmcap|saz|har|netlog|json|jsonl)$/i.test(path);
 
 /** Shared trace picker and native drop surface. Imports are owned by Traffic. */
 export class TraceDropTarget extends WebUIElement {
   @attr variant='box';
   @attr({mode:'boolean'}) active=false;
   @attr({mode:'boolean'}) busy=false;
+  @attr({attribute:'show-help',mode:'boolean'}) showHelp=true;
   @observable traceDragActive=false;
   @observable pickingTrace=false;
   dropRegion!:HTMLElement;

@@ -54,6 +54,7 @@ await page.addInitScript((workspace) => {
     return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
+  if(new URL(location.href).searchParams.has('empty')){state.emptyExample=state.sessions[0];state.sessions=[];}
   const ruleDiagnostics=()=>{
     const rules=state.automation?.rules??[];const earlier=new Map();const diagnostics=[];
     for(const rule of [...rules].filter(rule=>rule.request.responseAsset).sort((a,b)=>a.priority-b.priority)) {
@@ -209,6 +210,7 @@ await page.addInitScript((workspace) => {
         case 'inspect_headers': {const head=[...detail(args.id).requests,...detail(args.id).responses].find(head=>head.boundary===args.boundary);let headers=(args.boundary==='client-request'&&state.fullHeaders?state.fullHeaders:head.headers).map((header,index)=>({...header,index}));if(args.largestFirst)headers.sort((a,b)=>(b.fieldBytes??0)-(a.fieldBytes??0));return {summary:head.summary,headers:headers.slice(args.offset,args.offset+512),offset:args.offset,nextOffset:args.offset+512<headers.length?args.offset+512:null};}
         case 'request_command': state.lastRequestCommand=args;return state.directCommand ? {text:'fixture direct '+args.format,notices:[],bodyFileRequired:false,bodyFileAvailable:true} : {text:'fixture generated '+args.format,notices:['The command needs a request body file.'],bodyFileRequired:true,bodyFileAvailable:true};
         case 'save_request_body': state.savedRequestBody=args;return {text:'fixture saved body command',notices:[],bodyFileRequired:true,bodyFileAvailable:true};
+        case 'copy_message_url': state.lastCopiedUrl=structuredClone(args);return state.completeCopiedUrl??state.sessions.find(row=>row.id===args.id)?.url;
         case 'copy_all_headers': return 'GET http://example.test/second HTTP/1.1\r\nAccept: */*\r\n\r\n\r\nHTTP/1.1 200 OK';
         case 'session_detail':
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
@@ -607,6 +609,12 @@ try {
   const requestHeaders=page.locator('message-inspector[side="request"]');
   assert.equal(await requestHeaders.getByText('AUTH',{exact:true}).isVisible(),true);
   assert.match(await requestHeaders.locator('.field-help').first().textContent(),/2 fields.*HTTP\/1 equivalent/);
+  await page.evaluate(()=>globalThis.__workspaceFixture.completeCopiedUrl='https://example.test/complete?query='+('x'.repeat(20000)));
+  await requestHeaders.getByRole('button',{name:'Copy URL',exact:true}).click();
+  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'https://example.test/complete?query='+('x'.repeat(20000)));
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastCopiedUrl.boundary),'client-request');
+  assert.equal(await requestHeaders.locator('.inspector-actions > button').first().textContent(),'Copy URL');
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.completeCopiedUrl;});
   await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).click();
   assert.match(await requestHeaders.locator('.headers-table tbody tr').first().textContent(),/Authorization.*5.0 KB/);
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).getAttribute('aria-pressed'),'true');
@@ -1631,11 +1639,11 @@ try {
   await searchOptions.getByLabel('Select all matches after searching',{exact:true}).uncheck();
   await page.getByRole('button',{name:'Search options',exact:true}).click();
   await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/support.saz');
-  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
+  await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).click();
   await page.locator('.trace-import-status').getByText(/Imported 1 entry from support.saz/).waitFor();
   const trafficBeforeFailure=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.sessions));
   await page.evaluate(()=>{globalThis.__workspaceFixture.importError='Capture format is invalid. '+('Long capture details '.repeat(30));});
-  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
+  await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).click();
   const operationError=page.getByRole('alertdialog',{name:'Import failed',exact:true});
   await operationError.waitFor();
   assert.match(await operationError.textContent(),/support.saz.*Capture format is invalid/s);
@@ -1646,7 +1654,7 @@ try {
   await page.setViewportSize({width:760,height:520});
   const errorBounds=await operationError.boundingBox();assert.ok(errorBounds.width<=760&&errorBounds.height<=520);
   assert.equal(await operationError.getByRole('button',{name:'Close',exact:true}).evaluate(node=>{const rect=node.getBoundingClientRect();return node.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===node;}),true);
-  await page.keyboard.press('Tab');assert.equal(await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),false);
+  await page.keyboard.press('Tab');assert.equal(await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),false);
   await page.keyboard.press('Shift+Tab');assert.equal(await operationError.getByRole('button',{name:'Close',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/import-error-compact.png')});
   await page.keyboard.press('Escape');await operationError.waitFor({state:'hidden'});
@@ -1654,7 +1662,7 @@ try {
   await page.getByRole('button',{name:'Dismiss import message',exact:true}).click();
   assert.equal(await page.locator('.trace-import-status').count(),0);
   await page.evaluate(()=>globalThis.__workspaceFixture.importError='Capture format is invalid.');
-  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();await operationError.waitFor();
+  await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).click();await operationError.waitFor();
   await operationError.getByRole('button',{name:'Close',exact:true}).click();await operationError.waitFor({state:'hidden'});
   await page.evaluate(()=>{delete globalThis.__workspaceFixture.importError;document.querySelector('app-shell').diagnosticText='Fixture status message';});
   await page.getByRole('button',{name:'Dismiss status message',exact:true}).click();
@@ -1664,18 +1672,19 @@ try {
   await page.getByRole('alertdialog',{name:'Second failure',exact:true}).getByRole('button',{name:'Close',exact:true}).click();
   await page.evaluate(async()=>{await globalThis.__errorQueue;delete globalThis.__errorQueue;});
   await page.setViewportSize({width:1280,height:800});
-  await page.getByRole('button',{name:'Files',exact:true}).click();
-  await page.locator('#trace-files-menu').getByRole('button',{name:'Trace metadata…',exact:true}).click();
+  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  await page.locator('#trace-files-menu').getByRole('button',{name:'View current imports…',exact:true}).click();
   await page.locator('.trace-metadata-dialog[open] h3').getByText('support.saz',{exact:true}).waitFor();
   assert.match(await page.locator('.trace-context').textContent(),/Captured machine IP configuration/);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/trace-metadata-wide.png')});
   await page.locator('.trace-metadata-dialog').getByRole('button',{name:'Close',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'Files options',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true,'Metadata close did not restore Files options focus');
   await page.evaluate(async()=>{globalThis.__workspaceFixture.openedTraces=['C:/captures/second.saz'];await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').takeOpenedTraces();});
   await page.locator('.trace-open-dialog[open]').waitFor();
   await page.locator('.trace-open-dialog').getByRole('button',{name:'Open separate viewer',exact:true}).click();
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.openedViewer),['C:/captures/second.saz']);
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferImport=true;});
-  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).click();
+  await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).click();
   await page.getByRole('button',{name:'Cancel import',exact:true}).click();
   await page.evaluate(()=>{globalThis.__workspaceFixture.releaseImport();globalThis.__workspaceFixture.deferImport=false;});
   await page.locator('.trace-import-status').getByText('Import canceled. Traffic is unchanged.',{exact:true}).waitFor();
@@ -1685,7 +1694,7 @@ try {
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);
   assert.equal(await page.locator('settings-workspace').count(),0);
   assert.equal(await page.getByRole('button',{name:'Save trace…',exact:true}).count(),1);
-  await page.locator('#traffic').getByRole('button',{name:'Import…',exact:true}).waitFor();
+  await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).waitFor();
   await page.evaluate(async()=>{globalThis.__workspaceFixture.openedTraces=['C:/captures/viewer.saz'];await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').takeOpenedTraces();});
   await page.locator('.trace-import-status').getByText(/Imported 1 entry from viewer.saz/).waitFor();
   assert.equal(await page.locator('.trace-open-dialog[open]').count(),0);
@@ -1867,6 +1876,18 @@ try {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   await checkTrafficNavigation(page);
+  await page.goto('https://workspace.test/?empty');
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
+  const emptyDrop=page.locator('traffic-workspace trace-drop-target');
+  await emptyDrop.getByRole('button',{name:/Drop traces here/}).waitFor({state:'visible'});
+  assert.match(await emptyDrop.locator('.trace-drop-formats').textContent(),/NetLog \(\.netlog\/\.json\/\.jsonl\)/);
+  await page.setViewportSize({width:760,height:520});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-first-empty.png')});
+  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=[state.emptyExample];await document.querySelector('app-shell').traffic.refreshSessions(undefined,true);});
+  assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0);
+  await page.evaluate(async()=>{await document.querySelector('app-shell').traffic.clearTraffic();});
+  assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Clear all restored the initial import helper');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

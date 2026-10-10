@@ -1,6 +1,8 @@
 {
   "theme": "system",
   "view": "traffic",
+  "showHelp": true,
+  "showTraceImportHelp": true,
   "activeView": "traffic",
   "lifecycleLabel": "Stopped",
   "lifecycleKind": "stopped",

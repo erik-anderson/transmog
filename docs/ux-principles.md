@@ -165,6 +165,15 @@ to merge it into that session or open a separate viewer. Dropping a capture on
 the traffic list always imports it there. Imported entries retain their source
 trace association, with a direct action to view that trace's original metadata.
 
+Traffic's drop helper appears only before any entries have been loaded in that
+window. Clearing entries or filtering them out must not bring the helper back;
+the list remains a drop target. Files imports into the current window, with an
+attached options button for importing into a separate viewer and viewing current
+imports. Disable current-import metadata when this window has no imports, and
+return focus to the options button after closing its metadata dialog.
+Copy URL beside Copy headers uses the complete corresponding request target from
+retained evidence, without display truncation.
+
 Trace drop targets name the accepted formats (TMCap, SAZ, HAR, and NetLog), offer
 a click/keyboard file picker, and highlight the actual accepting region during
 a supported file drag. Unsupported files, inactive workspaces, and busy imports

@@ -1264,6 +1264,25 @@ impl Application {
         inspector::header_page(&self.service, id, boundary, offset, largest_first)
     }
 
+    /// Copies the complete corresponding request URL without display truncation.
+    ///
+    /// # Errors
+    /// Returns invalid selection or unavailable original target evidence.
+    pub fn copy_message_url(&self, id: &str, boundary: &str) -> Result<String, AppError> {
+        if self
+            .traces
+            .entry(id)
+            .is_some_and(|entry| !entry.target_known)
+        {
+            return Err(AppError::new(
+                ErrorCategory::Unavailable,
+                "The original URL was not captured",
+                false,
+            ));
+        }
+        inspector::copy_message_url(&self.service, id, boundary)
+    }
+
     /// Copies complete original headers for the selected message stage.
     ///
     /// # Errors

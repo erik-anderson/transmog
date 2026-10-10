@@ -172,6 +172,43 @@ pub(crate) fn header_page(
     })
 }
 
+pub(crate) fn copy_message_url(
+    service: &ApplicationSessionService,
+    id: &str,
+    stage: &str,
+) -> Result<String, AppError> {
+    let request_stage = match parse_boundary(stage)? {
+        ExchangeBoundary::ClientRequest | ExchangeBoundary::ClientResponse => {
+            ExchangeBoundary::ClientRequest
+        }
+        ExchangeBoundary::UpstreamRequest | ExchangeBoundary::UpstreamResponse => {
+            ExchangeBoundary::UpstreamRequest
+        }
+    };
+    let snapshot = service
+        .catalog()
+        .get(transmog_core::intercept::ExchangeId(parse_session_id(id)?))
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Request is no longer retained",
+                false,
+            )
+        })?;
+    let request = snapshot
+        .request_heads
+        .iter()
+        .find(|head| head.boundary == request_stage)
+        .ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "The corresponding request URL was not captured",
+                false,
+            )
+        })?;
+    Ok(crate::request_actions::url(&request.head))
+}
+
 pub(crate) fn copy_message_headers(
     service: &ApplicationSessionService,
     id: &str,
@@ -1388,7 +1425,7 @@ mod tests {
             host: "example.invalid".into(),
             port: 80,
             path: "/".into(),
-            query: None,
+            query: Some(format!("value={}", "x".repeat(20_000))),
         };
         let metadata = Arc::new(ExchangeMetadata::from_session(
             &SessionMetadata {
@@ -1422,6 +1459,16 @@ mod tests {
             },
         });
         let id = "00000000000000000000000000000001";
+        let full_url = copy_message_url(&service, id, "client-request").unwrap();
+        assert_eq!(
+            full_url,
+            format!("http://example.invalid/?value={}", "x".repeat(20_000))
+        );
+        assert_eq!(
+            copy_message_url(&service, id, "client-response").unwrap(),
+            full_url
+        );
+        assert!(copy_message_url(&service, id, "upstream-response").is_err());
         let page = header_page(&service, id, "client-request", 0, false).unwrap();
         assert_eq!(page.headers.len(), 512);
         assert_eq!(page.summary.total_fields, 703);

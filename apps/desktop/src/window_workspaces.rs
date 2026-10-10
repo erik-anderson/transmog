@@ -274,7 +274,7 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
         .set_title("Open saved traffic")
         .add_filter(
             "Traffic captures",
-            &["saz", "tmcap", "har", "netlog", "json"],
+            &["saz", "tmcap", "har", "netlog", "json", "jsonl"],
         )
         .pick_file()
         .await

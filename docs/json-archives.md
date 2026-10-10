@@ -15,6 +15,13 @@ HAR timings remain nonnegative and sum to the elapsed total; unavailable optiona
 timings use -1. Binary request bytes use `_transmogBodyBase64` because HAR has no
 standard binary request-body encoding.
 
+NetLog accepts both the JSON document and Chromium's typed JSONL records
+(`constants`, `event`, optional `polledData`, and `end`). The parser follows
+[Chromium's writer](https://chromium.googlesource.com/chromium/src/+/1793f994a9d0e0d2597375b6db8c8e9b0b7d190b/net/log/file_net_log_observer.cc).
+An interrupted JSONL file retains complete preceding records and reports its
+missing end marker or incomplete tail in metadata. Invalid records elsewhere
+fail before adding any Traffic entries. UTF-8 BOMs, CRLF and blank lines are accepted.
+
 NetLog event/source IDs are resolved through the file's constants. Request heads,
 response heads, redirect hops, errors and linked connection context are mapped
 to existing Traffic views. Its source clock and phase durations remain labeled
@@ -24,19 +31,23 @@ Encrypted socket bytes are never reconstructed as HTTP payloads. Other bodies
 and unrecorded measurements remain unavailable.
 
 Detection reads at most the first 4 KiB: native magic, or a first JSON key of
-`log` for HAR or `constants` for NetLog. Whitespace and a UTF-8 BOM are allowed.
+`log` for HAR, `constants` for NetLog JSON, or a typed `constants` record for
+NetLog JSONL. Whitespace and a UTF-8 BOM are allowed. `.jsonl` is supported by
+desktop opening, file selection and drop targets.
 Otherwise the extension selects the importer. ZIP alone does not identify SAZ,
 so SAZ uses its extension. Reordered JSON uses its recognized extension.
 
-`node scripts/generate-browser-archives.mjs` produces browser-generated HAR and
-NetLog files in `target/browser-archives`. It serves a local placeholder site and
+`node scripts/generate-browser-archives.mjs` produces sanitized browser-generated
+HAR and NetLog fixtures in `crates/app/tests/fixtures/browser`. It serves a local placeholder site and
 uses the locked Playwright Chromium installation. The NetLog switches follow
 [Chromium's capture instructions](https://www.chromium.org/for-testers/providing-network-details/).
 The mapping follows the [official NetLog viewer](https://chromium.googlesource.com/catapult/+/master/netlog_viewer/).
 HAR semantics follow the [HAR 1.2 specification](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
 Regression tests use placeholder hosts and values.
 
-After generating the samples, set `TRANSMOG_BROWSER_ARCHIVES` to the absolute
-`target/browser-archives` directory and run
-`cargo test -p transmog-app browser_produced_archives -- --ignored` to verify
-real browser heads and response payloads with both importers.
+Run `cargo test --locked -p transmog-app browser_produced_archives` to verify
+real browser heads and response payloads with the tracked fixtures.
+
+`node scripts/generate-browser-archives.mjs --jsonl` generates only the sanitized
+Chromium JSONL fixture using `--net-log-file-format=ndjson`. The ordinary browser
+archive regression checks all three formats.

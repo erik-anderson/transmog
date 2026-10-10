@@ -26,6 +26,12 @@ traffic-workspace { display:contents; }
 .search-actions { display:inline-flex; gap:0; white-space:nowrap; }
 .search-actions > button:first-child { border-start-end-radius:0; border-end-end-radius:0; }
 .search-options-trigger { border-start-start-radius:0; border-end-start-radius:0; margin-left:-1px; anchor-name:--search-options; }
+.files-actions { display:inline-flex; gap:0; white-space:nowrap; }
+.files-actions > button:first-child { border-start-end-radius:0; border-end-end-radius:0; }
+.files-menu-trigger { border-start-start-radius:0; border-end-start-radius:0; margin-left:-1px; anchor-name:--trace-files; }
+@supports (anchor-name:--trace-files) {
+  .trace-files-menu { position-anchor:--trace-files; inset:auto; position-area:block-end span-inline-start; margin:.25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
+}
 @supports (anchor-name:--search-options) {
   .search-options { position-anchor:--search-options; inset:auto; position-area:block-end span-inline-start; margin:.25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
 }
@@ -92,10 +98,9 @@ traffic-workspace { display:contents; }
 .cell-value[data-tone="not-modified"], .status-badge[data-tone="not-modified"], .cell-value[data-tone="pending"] { color:var(--muted); background:var(--panel-raised); }
 .auto-badge { display:inline-block; margin-left:.2rem; color:var(--accent-strong); font-size:.55rem; font-weight:750; }
 .navigation-badge { display:inline-block; margin-inline-end:.4rem; padding:.08rem .3rem; border:1px solid var(--line); border-radius:.25rem; color:var(--muted); font-size:.62rem; font-weight:600; vertical-align:baseline; }
-.details-pane { container-type:inline-size; grid-template-rows:auto auto minmax(0,1fr); }
-.details-pane > .selection-bar { grid-row:1; }
-.details-pane > .inspector-side-tabs { grid-row:2; }
-.details-pane > .exchange-inspector { grid-row:3; }
+.details-pane { container-type:inline-size; display:flex; flex-direction:column; }
+.details-pane > .selection-bar, .details-pane > .inspector-side-tabs { flex:0 0 auto; }
+.details-pane > .exchange-inspector { flex:1; min-height:0; }
 .selection-bar { grid-template-columns:auto minmax(0,1fr) auto auto; align-items:baseline; gap:.4rem; }
 .selection-actions { display:flex; align-items:baseline; gap:.35rem; justify-content:flex-end; }
 .selected-url { min-width:0; min-height:0; overflow:hidden; border:0; padding:0; color:var(--text); background:transparent; font:.75rem/1.4 "Cascadia Mono",Consolas,monospace; text-overflow:ellipsis; white-space:nowrap; text-align:left; }

@@ -5,6 +5,18 @@ export async function checkTraceImport(page, root, view) {
   await view('traffic');
   await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.beforeDrop={sessions:structuredClone(state.sessions),traces:structuredClone(state.traces??[])};});
   const trafficDrop=page.locator('traffic-workspace trace-drop-target');
+  assert.equal(await trafficDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Populated Traffic still shows the empty import helper');
+  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  const filesMenu=page.locator('#trace-files-menu');
+  assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isDisabled(),true);
+  const menu=await filesMenu.boundingBox(),trigger=await page.getByRole('button',{name:'Files options',exact:true}).boundingBox();
+  assert.ok(menu.y>=trigger.y+trigger.height-1&&menu.x+menu.width>=trigger.x,'Files menu was not anchored to its trigger');
+  await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/separate.jsonl');
+  await filesMenu.getByRole('button',{name:'Import into separate viewer…',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.openedViewer),['C:/captures/separate.jsonl']);
+  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isDisabled(),true,'A separate viewer enabled current-window imports');
+  await page.keyboard.press('Escape');
   const drag=async(target,type,paths=[],inside=true)=>target.evaluate((element,{type,paths,inside})=>{
     const bounds=element.dropRegion.getBoundingClientRect();
     const position={x:(inside?bounds.left+bounds.width/2:bounds.left-20)*devicePixelRatio,y:(bounds.top+bounds.height/2)*devicePixelRatio};
@@ -24,9 +36,12 @@ export async function checkTraceImport(page, root, view) {
   const importsBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0);
   await drag(trafficDrop,'drop',['C:/captures/not-a-trace.txt']);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
-  await drag(trafficDrop,'drop',['C:/captures/drop.saz']);
+  await drag(trafficDrop,'drop',['C:/captures/drop.jsonl']);
   await page.waitForFunction(count=>globalThis.__workspaceFixture.calls.import_trace>count,importsBefore);
   await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isEnabled(),true);
+  await page.keyboard.press('Escape');
 
   await view('captures');
   const captures=page.locator('capture-workspace');

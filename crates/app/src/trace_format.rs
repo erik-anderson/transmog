@@ -10,7 +10,7 @@ pub enum TraceFormat {
     Saz,
     /// HTTP Archive JSON.
     Har,
-    /// Chromium `NetLog` JSON.
+    /// Chromium `NetLog` JSON or typed JSONL.
     Netlog,
 }
 
@@ -24,7 +24,7 @@ pub fn detect_trace_format(path: &Path) -> Option<TraceFormat> {
             "tmcap" => Some(TraceFormat::Native),
             "saz" => Some(TraceFormat::Saz),
             "har" => Some(TraceFormat::Har),
-            "netlog" | "json" => Some(TraceFormat::Netlog),
+            "netlog" | "json" | "jsonl" => Some(TraceFormat::Netlog),
             _ => None,
         }
     })
@@ -41,6 +41,15 @@ fn sniff(start: &[u8]) -> Option<TraceFormat> {
     };
     let mut text = text.trim_start();
     text = text.strip_prefix('{')?.trim_start();
+    if let Some(rest) = text.strip_prefix("\"type\"") {
+        let rest = rest.trim_start().strip_prefix(':')?.trim_start();
+        if rest
+            .strip_prefix("\"constants\"")
+            .is_some_and(|rest| rest.trim_start().starts_with(','))
+        {
+            return Some(TraceFormat::Netlog);
+        }
+    }
     for (key, format) in [
         ("\"log\"", TraceFormat::Har),
         ("\"constants\"", TraceFormat::Netlog),
@@ -67,6 +76,11 @@ mod tests {
             Some(TraceFormat::Har)
         );
         assert_eq!(sniff(b"{\"constants\": {"), Some(TraceFormat::Netlog));
+        assert_eq!(
+            sniff(b"{\"type\":\"constants\",\"constants\": {"),
+            Some(TraceFormat::Netlog)
+        );
+        assert_eq!(sniff(b"{\"type\":\"event\",\"event\": {"), None);
         assert_eq!(sniff(b"PK\x03\x04"), None);
         assert_eq!(sniff(b"{\"payload\":\"log\"}"), None);
     }

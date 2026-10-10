@@ -104,7 +104,7 @@ pub(super) fn import(
     }
     let mut result = empty(
         "netlog",
-        serde_json::json!({"constants":constants,"polledData":document["polledData"],"userComments":document["userComments"]}),
+        serde_json::json!({"constants":constants,"polledData":document["polledData"],"userComments":document["userComments"],"fileFormat":document["fileFormat"]}),
     );
     let offset = number(&constants["timeTickOffset"]);
     let mut position = 0;

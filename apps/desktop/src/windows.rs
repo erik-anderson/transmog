@@ -1054,6 +1054,18 @@ async fn inspect_headers(
 }
 
 #[tauri::command]
+fn copy_message_url(
+    id: String,
+    boundary: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    state
+        .window_application(&window)?
+        .copy_message_url(&id, &boundary)
+}
+
+#[tauri::command]
 async fn copy_message_headers(
     id: String,
     boundary: String,
@@ -1703,6 +1715,7 @@ pub fn run() {
                 session_detail,
                 inspect_headers,
                 copy_message_headers,
+                copy_message_url,
                 request_command,
                 copy_all_headers,
                 composer_source,

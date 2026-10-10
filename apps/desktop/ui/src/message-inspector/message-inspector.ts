@@ -158,6 +158,7 @@ export class MessageInspector extends WebUIElement {
     return (reasons[body.availability] ?? 'Body capture status: '+body.availability+'.')+(body.reason ? ' Reason: '+body.reason+'.' : '');
   }
   async copyHeaders():Promise<void> {if(!this.detail)return;try {const text=await invoke<string>('copy_message_headers',{id:this.detail.id,boundary:this.boundary});await this.copy(text,'Complete message headers copied.');}catch(error:unknown){this.$emit('diagnostic','Headers could not be copied: '+describeError(error));}}
+  async copyUrl():Promise<void> {if(!this.detail)return;try {const text=await invoke<string>('copy_message_url',{id:this.detail.id,boundary:this.boundary});await this.copy(text,'Complete request URL copied.');}catch(error:unknown){this.$emit('diagnostic','URL could not be copied: '+describeError(error));}}
   async saveBody():Promise<void> {
     if (this.saving || !this.detail || this.bodyMetadata?.availability !== 'complete' || !this.bodyMetadata.retainedBytes) return;
     this.saving = true;
