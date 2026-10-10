@@ -98,6 +98,12 @@ the production AppContainer/Job Object boundary. Containers use ephemeral
 loopback ports; temporary certificates and fixtures are removed in cleanup.
 It does not mutate OS trust, system proxy or durable user state.
 
+## Local Chromium load gate
+
+For repeatable browser scale qualification without public sites, run
+`./scripts/test-load.ps1`. The [load-testing guide](load-testing.md) documents
+CLI/desktop modes, the smoke profile, per-browser routing and generated evidence.
+
 ## Live Chromium gate
 
 This optional network-enabled gate uses a fresh browser profile, QUIC disabled,

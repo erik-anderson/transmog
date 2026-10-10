@@ -614,7 +614,12 @@ async fn start_proxy_locked(
     request: ProxyStartRequest,
     state: &DesktopState,
 ) -> Result<AppStatus, String> {
-    validate_proxy_start(state)?;
+    let configure_system_proxy = state
+        .application
+        .product_state()
+        .preferences
+        .configure_system_proxy;
+    validate_proxy_start(state, configure_system_proxy)?;
     transmog_app::protect_ca_private_key(
         &request.ca_certificate_path,
         &request.ca_private_key_path,
@@ -624,9 +629,14 @@ async fn start_proxy_locked(
         DiagnosticLevel::Info,
         "desktop",
         "proxy-start-requested",
-        "proxy start requested with current-user Windows proxy integration",
+        if configure_system_proxy {
+            "proxy start requested with current-user Windows proxy integration"
+        } else {
+            "proxy start requested with manual client routing"
+        },
     );
-    let host = Some(Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
+    let host = configure_system_proxy
+        .then(|| Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
     state
         .application
         .start_proxy(request, host)
@@ -634,7 +644,7 @@ async fn start_proxy_locked(
         .map_err(|error| error.to_string())
 }
 
-fn validate_proxy_start(state: &DesktopState) -> Result<(), String> {
+fn validate_proxy_start(state: &DesktopState, configure_system_proxy: bool) -> Result<(), String> {
     if state.closing.load(Ordering::Acquire) {
         return Err("Transmog is closing for an update.".to_owned());
     }
@@ -658,9 +668,14 @@ fn validate_proxy_start(state: &DesktopState) -> Result<(), String> {
         .ok_or_else(|| {
             "Set up the Transmog interception certificate before starting the proxy.".to_owned()
         })?;
-    if !CurrentUserCertificateStore
-        .contains(&sha256)
-        .map_err(|error| error.to_string())?
+    validate_proxy_trust(&sha256, configure_system_proxy)
+}
+
+fn validate_proxy_trust(sha256: &str, configure_system_proxy: bool) -> Result<(), String> {
+    if configure_system_proxy
+        && !CurrentUserCertificateStore
+            .contains(sha256)
+            .map_err(|error| error.to_string())?
     {
         return Err(
             "Trust the Transmog interception certificate before starting the proxy.".to_owned(),
@@ -1345,7 +1360,15 @@ async fn start_capture(
             retryable: false,
         });
     }
-    validate_proxy_start(&state).map_err(|message| AppError {
+    validate_proxy_start(
+        &state,
+        state
+            .application
+            .product_state()
+            .preferences
+            .configure_system_proxy,
+    )
+    .map_err(|message| AppError {
         category: transmog_app::ErrorCategory::InvalidInput,
         message,
         retryable: false,
@@ -2047,8 +2070,27 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 mod tests {
     use super::{
         OwnedCertificateRegistry, is_allowed_navigation, preview_handle, remove_owned_app_data,
-        reset_managed_ca,
+        reset_managed_ca, validate_proxy_trust,
     };
+
+    #[tokio::test]
+    async fn manual_client_routing_does_not_require_installing_a_test_root() {
+        // A fresh fixture identity is never installed by this test.
+        let root = tempfile::tempdir().unwrap();
+        let application =
+            transmog_app::Application::new(transmog_app::AppConfig::default()).unwrap();
+        let identity = application
+            .create_ca(transmog_app::CaCreateRequest {
+                certificate_path: root.path().join("ca.pem"),
+                private_key_path: root.path().join("ca.key"),
+                common_name: "Manual routing fixture".to_owned(),
+                validity_days: 1,
+            })
+            .await
+            .unwrap();
+        assert!(validate_proxy_trust(&identity.sha256, false).is_ok());
+        assert!(validate_proxy_trust(&identity.sha256, true).is_err());
+    }
 
     #[test]
     fn certificate_reset_removes_the_exact_recorded_root_and_material() {

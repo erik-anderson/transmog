@@ -66,6 +66,7 @@ sources of truth.
 - [Build prerequisites](building.md)
 - [Testing](testing.md)
 - [Performance harness](performance.md)
+- [Local Chromium load testing](load-testing.md)
 - [Windows release and qualification](windows-release.md)
 - [Desktop-specific development](../apps/desktop/README.md)
 - [Content fuzzing](../fuzz/README.md)

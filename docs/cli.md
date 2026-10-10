@@ -105,6 +105,9 @@ are redacted, and request retention is capped at 25,000,000 bytes per request.
 `--capture-bodies` requires `--capture`. Use `record` when you need encryption,
 circular retention, or configurable recording privacy. Ctrl+C stops `serve`
 and seals a successful capture.
+The file observer applies bounded backpressure during short writer bursts;
+storage pressure beyond the deadline remains visible as capture loss markers.
+Use `capture inspect` to check them, including after a load test.
 
 Afterward, restore manual client proxy settings and remove the public CA from
 each store where you installed it, checking the certificate's exact identity.

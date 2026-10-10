@@ -7,6 +7,12 @@ layers. Desktop and headless callers share those failure and privacy semantics.
 
 Preferences contain theme, table/pane layout, window geometry, connection
 configuration, live-entry/body-retention policy and explicit recent-path choices.
+The desktop start command honors `configureSystemProxy`: false binds the proxy
+for manually configured clients without changing Windows routing. This mode
+does not require installing the managed CA in Windows; clients configure their
+own HTTPS trust when needed. The ordinary Settings flow keeps system routing
+enabled. Both modes still validate and protect CA files and block pending host
+restoration.
 Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.

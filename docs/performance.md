@@ -57,6 +57,13 @@ implemented by the Windows runner. A hosted performance workflow is parked
 under `ci/github-actions/` and remains inactive until hosted automation is
 explicitly enabled.
 
+## Browser capture scale
+
+The [local Chromium load harness](load-testing.md) qualifies CLI and real desktop
+capture with more than 2 GiB of payloads and 10,000 exchanges per target. It
+includes retained traffic, native trace integrity, memory sampling and desktop
+virtualization/save/clear checks using a synthetic loopback website.
+
 ## Remaining coverage
 
 A future transport benchmark should compare H1, H2, and H3 throughput,

@@ -215,6 +215,11 @@ finish; idle clients do not delay shutdown. Keep **Start proxy** available durin
 this state so turning it back on resumes the same run without disrupting work.
 Reject stale shutdown and status results after a new state transition.
 
+Honor explicit manual client routing: when system proxy configuration is disabled,
+starting the listener must not change host routing or require host-wide CA trust.
+Managed CA validation and private-key protection still apply; HTTPS clients supply
+their own trust. The ordinary desktop connection flow uses Windows routing.
+
 Live entries have no count limit by default. Offer an optional maximum that drops
 older completed live entries, preserves imported entries and lets active requests
 finish before eviction. Changing this limit applies immediately. Body bytes have

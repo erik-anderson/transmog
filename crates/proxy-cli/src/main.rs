@@ -22,6 +22,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use bytes::Bytes;
@@ -42,7 +43,7 @@ use transmog_core::{
     },
     observe::{
         BodyObservation, BoxObserverFuture, ObservationInterest, Observer, ObserverConfig,
-        ObserverError, ObserverEvent, ObserverHub,
+        ObserverDeliveryPolicy, ObserverError, ObserverEvent, ObserverHub,
     },
 };
 use transmog_key_protection::SystemKeyProtection;
@@ -255,6 +256,12 @@ fn build_components(
         components = components.with_observers(ObserverHub::new(vec![(
             observer,
             ObserverConfig {
+                // A requested recording should absorb short writer bursts rather
+                // than immediately discard evidence when its bounded queue fills.
+                // Keep the same finite deadline as product body retention.
+                delivery: ObserverDeliveryPolicy::Backpressure {
+                    timeout: Duration::from_millis(25),
+                },
                 interest: ObservationInterest {
                     lifecycle: true,
                     sensitive_headers: false,

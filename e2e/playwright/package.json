@@ -5,7 +5,9 @@
   "license": "MIT",
   "scripts": {
     "test": "playwright test",
-    "test:interop": "playwright test tests/interop.spec.ts"
+    "test:interop": "playwright test tests/interop.spec.ts",
+    "test:load": "node ../load/run.mjs",
+    "test:load:harness": "node --test ../load/harness.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
