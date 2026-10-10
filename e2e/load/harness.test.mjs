@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createServer, request } from 'node:http';
 import { createConnection } from 'node:net';
 import { closeServer, listen, startSite } from './site.mjs';
-import { options, workloadSize, percentile } from './run.mjs';
+import { options, workloadSize, percentile, latencyStatistics, isDesktopHydrated } from './run.mjs';
 
 test('scale qualification cannot silently become a smoke test', () => {
   const config = options([]);
@@ -17,6 +17,28 @@ test('scale qualification cannot silently become a smoke test', () => {
   assert.equal(options(['--smoke']).navigations, 3);
   assert.equal(options(['--smoke', '--navigations', '4']).navigations, 4);
   assert.equal(percentile([4, 1, 2, 3], .95), 4);
+});
+
+test('latency reporting supports large qualified workloads without argument spreading', () => {
+  const count = workloadSize(options(['--navigations', '2000'])).exchanges;
+  const durations = Array.from({ length: count }, (_, index) => count - index);
+  assert.deepEqual(latencyStatistics(durations), { p50: 100000, p95: 190000, p99: 198000, max: 200000 });
+  assert.equal(durations[0], count, 'Reporting reordered the original samples');
+  assert.deepEqual(latencyStatistics([]), { p50: 0, p95: 0, p99: 0, max: 0 });
+});
+
+test('desktop hydration waits for its execution context without hiding UI failures', async () => {
+  let attempts = 0;
+  const evaluate = async () => {
+    if (attempts++ === 0) throw new Error('Cannot find default execution context');
+    return attempts > 2;
+  };
+  assert.equal(await isDesktopHydrated(evaluate), false);
+  assert.equal(await isDesktopHydrated(evaluate), false);
+  assert.equal(await isDesktopHydrated(evaluate), true);
+  assert.equal(await isDesktopHydrated(async () => { throw new Error('Execution context was destroyed.'); }), false);
+  await assert.rejects(isDesktopHydrated(async () => { throw new Error('Runtime.evaluate timed out'); }), /timed out/);
+  await assert.rejects(isDesktopHydrated(async () => { throw new Error('Uncaught TypeError: hydration failed'); }), /hydration failed/);
 });
 
 function getThrough(proxy, url) {

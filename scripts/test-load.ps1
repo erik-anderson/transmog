@@ -31,6 +31,7 @@ try {
         & node e2e/playwright/node_modules/playwright/cli.js install chromium
     }
     & node --test e2e/load/harness.test.mjs
+    & $Python -m unittest discover -s e2e/load -p 'test_*.py'
     $cargoRoot = if ($env:CARGO_TARGET_DIR) { [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR, $repositoryRoot) } else { Join-Path $repositoryRoot 'target' }
     $cliName = if ($IsWindows) { 'transmog-cli.exe' } else { 'transmog-cli' }
     $arguments = @('e2e/load/run.mjs', '--target', $Target, '--storage', $Storage,

@@ -92,6 +92,12 @@ storage; panic and cancellation containment remain active. Whole-catalog
 presentation queries select admission order first, then snapshot entries one at
 a time and format them outside the writer lock, allowing ingestion to continue.
 
+An event reserves queue capacity across its observer registrations before
+publishing or advancing exchange state. Cancelling a capacity wait releases
+the reservations and leaves sequence and terminal state unchanged, so a retry
+or failure cleanup can still deliver evidence. A cancelled batch preserves its
+already committed prefix without leaving a sequence gap for its pending event.
+
 ## Dynamic capture
 
 `CaptureManager` owns one dedicated bounded writer queue. Starting capture uses

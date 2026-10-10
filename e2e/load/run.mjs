@@ -68,9 +68,30 @@ export function workloadSize(config) {
     requestBytes: requestBytes * config.navigations, responseBytes: responseBytes * config.navigations };
 }
 
-export function percentile(values, fraction) {
-  const sorted = [...values].sort((a, b) => a - b);
+function sortedPercentile(sorted, fraction) {
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? 0;
+}
+
+export function percentile(values, fraction) {
+  return sortedPercentile([...values].sort((a, b) => a - b), fraction);
+}
+
+export function latencyStatistics(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return { p50: sortedPercentile(sorted, .50), p95: sortedPercentile(sorted, .95),
+    p99: sortedPercentile(sorted, .99), max: sorted.at(-1) ?? 0 };
+}
+
+export async function isDesktopHydrated(evaluate) {
+  try {
+    return await evaluate('Boolean(document.querySelector("app-shell")?.traffic && window.__TAURI_INTERNALS__)');
+  } catch (error) {
+    // DevTools discovery can precede the initial document's execution context.
+    // Retry only context creation/navigation races, preserving real UI errors.
+    if (error.message === 'Cannot find default execution context' ||
+        error.message.startsWith('Execution context was destroyed')) return false;
+    throw error;
+  }
 }
 
 async function bounded(promise, ms, label) {
@@ -199,7 +220,7 @@ async function connectDesktop(target) {
     return result.result?.value;
   };
   await call('Runtime.enable');
-  await waitFor(() => evaluate('Boolean(document.querySelector("app-shell")?.traffic && window.__TAURI_INTERNALS__)'), 'Desktop hydration');
+  await waitFor(() => isDesktopHydrated(evaluate), 'Desktop hydration');
   return { call, evaluate, errors, close: () => socket.close(),
     invoke: (name, args = {}, timeout) => evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`, timeout) };
 }
@@ -258,7 +279,7 @@ async function workload(page, site, config, target, progress) {
   assert.deepEqual({ exchanges: completed, requestBytes, responseBytes }, workloadSize(config));
   assert.deepEqual(site.stats.errors, []);
   return { completed, requestBytes, responseBytes, navigations,
-    latencyMs: { p50: percentile(durations, .50), p95: percentile(durations, .95), p99: percentile(durations, .99), max: Math.max(...durations) } };
+    latencyMs: latencyStatistics(durations) };
 }
 
 async function verifyDesktop(client, site, root) {

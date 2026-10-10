@@ -336,6 +336,14 @@ struct ObserverDispatcher {
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
+// Keep events inline rather than allocating a box for every queue admission.
+#[allow(clippy::large_enum_variant)]
+enum ObserverAdmission<'a> {
+    Reserved(mpsc::Permit<'a, ObserverEvent>, ObserverEvent),
+    Skipped,
+    Unavailable(ObserverDelivery),
+}
+
 impl std::fmt::Debug for ObserverDispatcher {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -405,42 +413,69 @@ impl ObserverDispatcher {
         })
     }
 
-    async fn emit(&self, event: ObserverEvent) -> ObserverDelivery {
+    // Reserve without publishing events or updating statistics. Dropping a
+    // pending exchange emission releases every acquired permit, so admission
+    // is atomic across registrations even when a later queue applies pressure.
+    async fn reserve(&self, event: ObserverEvent) -> ObserverAdmission<'_> {
         if self.disconnected.load(Ordering::Acquire) {
-            return ObserverDelivery::AlreadyDisconnected;
+            return ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected);
         }
         let Some(event) = self.prepare(event) else {
-            return ObserverDelivery::Delivered;
+            return ObserverAdmission::Skipped;
         };
-        let delivery = match self.delivery {
-            ObserverDeliveryPolicy::WaitForCapacity => match self.sender.send(event).await {
-                Ok(()) => ObserverDelivery::Delivered,
-                Err(_) => ObserverDelivery::AlreadyDisconnected,
+        match self.delivery {
+            ObserverDeliveryPolicy::WaitForCapacity => match self.sender.reserve().await {
+                Ok(permit) => ObserverAdmission::Reserved(permit, event),
+                Err(_) => ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected),
             },
             ObserverDeliveryPolicy::Backpressure { timeout: deadline } => {
-                match timeout(deadline, self.sender.send(event)).await {
-                    Ok(Ok(())) => ObserverDelivery::Delivered,
-                    Ok(Err(_)) => ObserverDelivery::AlreadyDisconnected,
-                    Err(_) => ObserverDelivery::BackpressureTimedOut,
-                }
-            }
-            ObserverDeliveryPolicy::DropNewest => match self.sender.try_send(event) {
-                Ok(()) => ObserverDelivery::Delivered,
-                Err(mpsc::error::TrySendError::Full(_)) => ObserverDelivery::Dropped,
-                Err(mpsc::error::TrySendError::Closed(_)) => ObserverDelivery::AlreadyDisconnected,
-            },
-            ObserverDeliveryPolicy::Disconnect => match self.sender.try_send(event) {
-                Ok(()) => ObserverDelivery::Delivered,
-                Err(mpsc::error::TrySendError::Full(_) | mpsc::error::TrySendError::Closed(_)) => {
-                    let first = !self.disconnected.swap(true, Ordering::AcqRel);
-                    self.force_stop.cancel();
-                    if first {
-                        ObserverDelivery::Disconnected
-                    } else {
-                        ObserverDelivery::AlreadyDisconnected
+                match timeout(deadline, self.sender.reserve()).await {
+                    Ok(Ok(permit)) => ObserverAdmission::Reserved(permit, event),
+                    Ok(Err(_)) => {
+                        ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
+                    }
+                    Err(_) => {
+                        ObserverAdmission::Unavailable(ObserverDelivery::BackpressureTimedOut)
                     }
                 }
+            }
+            ObserverDeliveryPolicy::DropNewest => match self.sender.try_reserve() {
+                Ok(permit) => ObserverAdmission::Reserved(permit, event),
+                Err(mpsc::error::TrySendError::Full(())) => {
+                    ObserverAdmission::Unavailable(ObserverDelivery::Dropped)
+                }
+                Err(mpsc::error::TrySendError::Closed(())) => {
+                    ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
+                }
             },
+            ObserverDeliveryPolicy::Disconnect => match self.sender.try_reserve() {
+                Ok(permit) => ObserverAdmission::Reserved(permit, event),
+                Err(_) => ObserverAdmission::Unavailable(ObserverDelivery::Disconnected),
+            },
+        }
+    }
+
+    fn commit(&self, admission: ObserverAdmission<'_>) -> ObserverDelivery {
+        let delivery = match admission {
+            ObserverAdmission::Reserved(permit, event) => {
+                if self.disconnected.load(Ordering::Acquire) {
+                    ObserverDelivery::AlreadyDisconnected
+                } else {
+                    permit.send(event);
+                    ObserverDelivery::Delivered
+                }
+            }
+            ObserverAdmission::Skipped => return ObserverDelivery::Delivered,
+            ObserverAdmission::Unavailable(ObserverDelivery::Disconnected) => {
+                let first = !self.disconnected.swap(true, Ordering::AcqRel);
+                self.force_stop.cancel();
+                if first {
+                    ObserverDelivery::Disconnected
+                } else {
+                    ObserverDelivery::AlreadyDisconnected
+                }
+            }
+            ObserverAdmission::Unavailable(delivery) => delivery,
         };
         match delivery {
             ObserverDelivery::Delivered => {
@@ -630,6 +665,7 @@ impl ExchangeObserver {
     }
 
     /// Emits one non-terminal event in serialized sequence order.
+    /// Cancelling a capacity wait does not publish the event or advance sequence.
     pub async fn emit(&self, kind: ObserverEventKind) -> ObserverDeliveryReport {
         let mut state = self.state.lock().await;
         if state.terminal {
@@ -653,9 +689,10 @@ impl ExchangeObserver {
     }
 
     /// Emits successful terminal evidence exactly once.
+    /// A cancelled admission leaves failure cleanup or a retry available.
     pub async fn completed(&self, outcome: CompletedExchange) -> ObserverDeliveryReport {
         let mut state = self.state.lock().await;
-        if std::mem::replace(&mut state.terminal, true) {
+        if state.terminal {
             return ObserverDeliveryReport::default();
         }
         self.emit_locked(&mut state, ObserverEventKind::Completed(outcome))
@@ -663,9 +700,10 @@ impl ExchangeObserver {
     }
 
     /// Emits failed terminal evidence exactly once.
+    /// A cancelled admission leaves failure cleanup or a retry available.
     pub async fn failed(&self, failure: ExchangeFailure) -> ObserverDeliveryReport {
         let mut state = self.state.lock().await;
-        if std::mem::replace(&mut state.terminal, true) {
+        if state.terminal {
             return ObserverDeliveryReport::default();
         }
         self.emit_locked(&mut state, ObserverEventKind::Failed(failure))
@@ -677,17 +715,30 @@ impl ExchangeObserver {
         state: &mut ExchangeObserverState,
         kind: ObserverEventKind,
     ) -> ObserverDeliveryReport {
-        state.sequence = state.sequence.saturating_add(1);
+        let sequence = state.sequence.saturating_add(1);
+        let terminal = matches!(
+            kind,
+            ObserverEventKind::Completed(_) | ObserverEventKind::Failed(_)
+        );
         let event = ObserverEvent {
             exchange_id: self.metadata.exchange_id,
-            sequence: state.sequence,
+            sequence,
             kind,
         };
-        let mut report = ObserverDeliveryReport::default();
+        let mut admissions = Vec::with_capacity(self.dispatchers.len());
         for dispatcher in self.dispatchers.iter() {
-            report.deliveries.push(dispatcher.emit(event.clone()).await);
+            admissions.push((dispatcher, dispatcher.reserve(event.clone()).await));
         }
-        report
+        // No await follows this point: state and all queue deliveries commit
+        // together. A cancelled wait above leaves state and observers untouched.
+        state.sequence = sequence;
+        state.terminal |= terminal;
+        ObserverDeliveryReport {
+            deliveries: admissions
+                .into_iter()
+                .map(|(dispatcher, admission)| dispatcher.commit(admission))
+                .collect(),
+        }
     }
 }
 
@@ -758,6 +809,25 @@ mod tests {
     impl Observer for WaitingObserver {
         fn on_event(&self, _event: ObserverEvent) -> BoxObserverFuture<'_> {
             Box::pin(pending())
+        }
+    }
+
+    struct GatedObserver {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        events: Arc<StdMutex<Vec<ObserverEvent>>>,
+    }
+
+    impl Observer for GatedObserver {
+        fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+            Box::pin(async move {
+                if event.sequence == 1 {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.events.lock().unwrap().push(event);
+                Ok(())
+            })
         }
     }
 
@@ -1121,6 +1191,131 @@ mod tests {
             }
             hub.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_completion_leaves_failure_cleanup_available() {
+        check_cancelled_admission(CancelledEmission::Completed).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_failure_can_be_retried_without_missing_evidence() {
+        check_cancelled_admission(CancelledEmission::Failed).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_body_admission_does_not_create_a_sequence_gap() {
+        check_cancelled_admission(CancelledEmission::Body).await;
+    }
+
+    enum CancelledEmission {
+        Completed,
+        Failed,
+        Body,
+    }
+
+    async fn check_cancelled_admission(cancelled: CancelledEmission) {
+        use std::{future::poll_fn, task::Poll};
+
+        let first = Arc::new(StdMutex::new(Vec::new()));
+        let second = Arc::new(StdMutex::new(Vec::new()));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let config = ObserverConfig {
+            queue_capacity: NonZeroUsize::new(1).unwrap(),
+            delivery: ObserverDeliveryPolicy::WaitForCapacity,
+            callback_timeout: None,
+            ..ObserverConfig::default()
+        };
+        let hub = ObserverHub::new(vec![
+            (
+                Arc::new(RecordingObserver {
+                    events: first.clone(),
+                }),
+                config,
+            ),
+            (
+                Arc::new(GatedObserver {
+                    entered: entered.clone(),
+                    release: release.clone(),
+                    events: second.clone(),
+                }),
+                config,
+            ),
+        ]);
+        let metadata = metadata();
+        let exchange = hub.start_exchange(metadata.clone());
+        exchange.emit(started(&metadata)).await;
+        entered.notified().await;
+        let head = RequestHead {
+            method: "GET".into(),
+            target: metadata.original_target.as_target().clone(),
+            headers: HeaderBlock::new(),
+            source_version: HttpLegVersion::Http1,
+        };
+        exchange
+            .emit(ObserverEventKind::RequestHeadFinalized(head.clone()))
+            .await;
+        timeout(Duration::from_secs(1), async {
+            while first.lock().unwrap().len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let failure = ExchangeFailure {
+            metadata: metadata.clone(),
+            stage: crate::intercept::ExchangeStage::Terminal,
+            kind: crate::intercept::ExchangeFailureKind::Cancelled,
+            request_committed: true,
+            response_committed: true,
+            message: "caller cancelled".into(),
+        };
+        let mut pending: Pin<Box<dyn Future<Output = ObserverDeliveryReport>>> = match cancelled {
+            CancelledEmission::Completed => Box::pin(exchange.completed(CompletedExchange {
+                metadata,
+                request_head: head,
+                response_head: ResponseHead {
+                    status: 200,
+                    headers: HeaderBlock::new(),
+                    source_version: HttpLegVersion::Http1,
+                },
+            })),
+            CancelledEmission::Failed => Box::pin(exchange.failed(failure.clone())),
+            CancelledEmission::Body => Box::pin(exchange.emit(ObserverEventKind::BodyChunk(
+                ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 4,
+                    sample: Some(Bytes::from_static(b"data")),
+                    truncated: false,
+                },
+            ))),
+        };
+        assert!(poll_fn(|cx| Poll::Ready(pending.as_mut().poll(cx).is_pending())).await);
+        // The first observer has room, but the second is saturated. Cancelling
+        // must neither publish only to the first nor consume a sequence number.
+        drop(pending);
+        tokio::task::yield_now().await;
+        assert_eq!(first.lock().unwrap().len(), 2);
+        assert_eq!(hub.dispatchers[0].sender.capacity(), 1);
+        release.notify_one();
+        assert_eq!(
+            exchange.failed(failure).await.deliveries(),
+            [ObserverDelivery::Delivered; 2]
+        );
+        hub.shutdown().await;
+        for events in [&first, &second] {
+            let events = events.lock().unwrap();
+            assert_eq!(
+                events
+                    .iter()
+                    .map(|event| event.sequence)
+                    .collect::<Vec<_>>(),
+                [1, 2, 3]
+            );
+            assert!(matches!(events[2].kind, ObserverEventKind::Failed(_)));
+        }
+        assert!(hub.stats().iter().all(|stats| stats.dropped == 0));
     }
 
     #[tokio::test]

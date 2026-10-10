@@ -17,6 +17,7 @@
 e2e/playwright/node_modules/
 e2e/playwright/test-results/
 e2e/playwright/playwright-report/
+e2e/load/__pycache__/
 apps/desktop/ui/node_modules/
 apps/desktop/ui/dist/
 apps/desktop/gen/schemas/

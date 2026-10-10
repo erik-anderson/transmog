@@ -139,28 +139,33 @@ def main():
         startup.wShowWindow = subprocess.SW_HIDE
         if args.kind == 'cli':
             flags = subprocess.CREATE_NEW_CONSOLE
+    done = None
+    sampler = None
     with open(config['log'], 'xb') as log:
         child = subprocess.Popen([config['binary'], *config['arguments']],
                                  env=environment, stdin=subprocess.DEVNULL,
                                  stdout=log, stderr=subprocess.STDOUT,
                                  startupinfo=startup, creationflags=flags)
-        done = threading.Event()
-
-        def sample():
-            while not done.is_set() and child.poll() is None:
-                try:
-                    values = windows_memory(child.pid) if os.name == 'nt' else linux_memory(child.pid)
-                    emit(type='sample', timestamp=time.time(), processes=values)
-                except Exception as error:
-                    emit(type='sample-error', message=str(error))
-                done.wait(1)
-            if not done.is_set():
-                emit(type='target-exited', code=child.returncode)
-
-        emit(type='started', pid=child.pid)
-        sampler = threading.Thread(target=sample, daemon=True)
-        sampler.start()
         try:
+            # Ownership begins at Popen, before reporting startup or creating
+            # the sampler. A closed runner pipe or thread startup failure must
+            # still terminate and reap the target.
+            done = threading.Event()
+
+            def sample():
+                while not done.is_set() and child.poll() is None:
+                    try:
+                        values = windows_memory(child.pid) if os.name == 'nt' else linux_memory(child.pid)
+                        emit(type='sample', timestamp=time.time(), processes=values)
+                    except Exception as error:
+                        emit(type='sample-error', message=str(error))
+                    done.wait(1)
+                if not done.is_set():
+                    emit(type='target-exited', code=child.returncode)
+
+            emit(type='started', pid=child.pid)
+            sampler = threading.Thread(target=sample, daemon=True)
+            sampler.start()
             # EOF also cleans up if the runner fails or is interrupted.
             sys.stdin.readline()
             if child.poll() is None:
@@ -176,8 +181,10 @@ def main():
             if child.returncode:
                 raise RuntimeError(f'Target exited with code {child.returncode}')
         finally:
-            done.set()
-            sampler.join(timeout=2)
+            if done is not None:
+                done.set()
+            if sampler is not None and sampler.ident is not None:
+                sampler.join(timeout=2)
             if child.poll() is None:
                 if os.name == 'nt':
                     subprocess.run(['taskkill', '/PID', str(child.pid), '/T', '/F'],

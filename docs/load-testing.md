@@ -35,6 +35,7 @@ regression tests are:
 
 ```text
 node --test e2e/load/harness.test.mjs
+python -m unittest discover -s e2e/load -p "test_*.py"
 node e2e/load/run.mjs --target cli
 node e2e/load/run.mjs --target both --smoke
 node e2e/load/run.mjs --help
@@ -112,6 +113,13 @@ between snapshots and formats rows outside that lock. The same zero-loss gates
 apply to both storage modes; reducing concurrency or increasing queue capacity
 is not a fix for lost evidence. Small regression tests cover saturated event,
 body and recording queues, slow list projection, and cancellation/panic handling.
+Queue admission reserves capacity across all observers before publishing an
+event or changing sequence/terminal state. Cancelling a wait releases those
+reservations, allowing failure cleanup or a retry without a partial delivery.
+The harness regressions also cover a closed startup pipe, sampler startup
+failure, and latency reporting for a 200,000-exchange configuration.
+Desktop startup waits through initial WebView2 execution-context creation while
+still failing on application exceptions or command timeouts.
 Exercise both desktop storage modes when changing this pipeline. The memory
 path can produce events faster than the disk path, exposing pressure that a
 passing disk run does not rule out.
