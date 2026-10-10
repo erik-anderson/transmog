@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddr,
     num::NonZeroUsize,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -12,7 +15,7 @@ use quiche::h3::NameValue;
 use thiserror::Error;
 use tokio::{
     net::UdpSocket,
-    sync::{Mutex, mpsc, oneshot},
+    sync::{Mutex, mpsc, oneshot, watch},
     time::sleep,
 };
 use transmog_core::{
@@ -21,7 +24,7 @@ use transmog_core::{
     StreamingResponse, TranslationOptions, prepare_headers,
 };
 use transmog_network::{
-    HappyEyeballsConfig, HappyEyeballsError, race_candidates, resolve_candidates,
+    HappyEyeballsConfig, HappyEyeballsError, race_candidates_with_retry, resolve_candidates,
 };
 use transmog_tls::UpstreamTlsContextFactory;
 
@@ -75,7 +78,8 @@ pub struct H3OriginClient {
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
     happy_eyeballs: HappyEyeballsConfig,
-    pool: Arc<Mutex<HashMap<PoolKey, mpsc::Sender<DriverCommand>>>>,
+    pool: Arc<Mutex<HashMap<PoolKey, PoolEntry>>>,
+    connections: Arc<tokio::sync::Semaphore>,
 }
 
 impl H3OriginClient {
@@ -94,6 +98,10 @@ impl H3OriginClient {
         mut self,
         key: transmog_core::connection_policy::NetworkIsolationKey,
     ) -> Self {
+        self.tls = self
+            .tls
+            .clone()
+            .for_client_certificate_caller(format!("{key:?}"));
         self.network_isolation = key;
         self
     }
@@ -101,6 +109,19 @@ impl H3OriginClient {
     #[must_use]
     pub fn with_performance(mut self, performance: Option<PerformanceRecorder>) -> Self {
         self.performance = performance;
+        self
+    }
+
+    /// Installs a controller in a fresh caller/run pool.
+    #[must_use]
+    pub fn with_client_certificate_resolver(
+        mut self,
+        resolver: Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>,
+        caller: impl Into<String>,
+    ) -> Self {
+        self.tls = self.tls.with_client_certificate_resolver(resolver, caller);
+        self.pool = Arc::new(Mutex::new(HashMap::new()));
+        self.connections = connection_slots(self.limits);
         self
     }
 
@@ -122,6 +143,7 @@ impl H3OriginClient {
             limits,
             happy_eyeballs,
             pool: Arc::new(Mutex::new(HashMap::new())),
+            connections: connection_slots(limits),
             performance: None,
         }
     }
@@ -143,8 +165,9 @@ impl H3OriginClient {
         max_response_bytes: usize,
     ) -> Result<H3OriginResponse, H3OriginError> {
         let host = request.head.target.host.clone();
+        let origin_port = request.head.target.port;
         let prepared = PreparedRequest::new(request)?;
-        self.execute_prepared_buffered(host, prepared, peer_port, max_response_bytes)
+        self.execute_prepared_buffered(host, origin_port, prepared, peer_port, max_response_bytes)
             .await
     }
 
@@ -164,8 +187,9 @@ impl H3OriginClient {
         max_response_bytes: usize,
     ) -> Result<H3OriginResponse, H3OriginError> {
         let host = request.head.target.host.clone();
+        let origin_port = request.head.target.port;
         let prepared = PreparedRequest::streaming(request)?;
-        self.execute_prepared_buffered(host, prepared, peer_port, max_response_bytes)
+        self.execute_prepared_buffered(host, origin_port, prepared, peer_port, max_response_bytes)
             .await
     }
 
@@ -184,13 +208,15 @@ impl H3OriginClient {
         body_channel_capacity: NonZeroUsize,
     ) -> Result<H3StreamingResponse, H3OriginError> {
         let host = request.head.target.host.clone();
+        let origin_port = request.head.target.port;
         let prepared = PreparedRequest::streaming(request)?;
-        let key = self.pool_key(host, peer_port);
+        let key = self.pool_key(host, origin_port, peer_port);
         let (body_sender, body) = BodyStream::channel(body_channel_capacity);
         let (head_completion, head_result) = oneshot::channel();
         self.submit(
             &key,
             DriverCommand {
+                lease: None,
                 performance: self.performance.clone(),
                 request: prepared,
                 response: ResponseTarget::Streaming {
@@ -216,15 +242,17 @@ impl H3OriginClient {
     async fn execute_prepared_buffered(
         &self,
         host: String,
+        origin_port: u16,
         prepared: PreparedRequest,
         peer_port: u16,
         max_response_bytes: usize,
     ) -> Result<H3OriginResponse, H3OriginError> {
-        let key = self.pool_key(host, peer_port);
+        let key = self.pool_key(host, origin_port, peer_port);
         let (completion, result) = oneshot::channel();
         self.submit(
             &key,
             DriverCommand {
+                lease: None,
                 performance: self.performance.clone(),
                 request: prepared,
                 response: ResponseTarget::Buffered {
@@ -237,9 +265,21 @@ impl H3OriginClient {
         result.await.map_err(|_| H3OriginError::PoolDriverStopped)?
     }
 
-    fn pool_key(&self, host: String, peer_port: u16) -> PoolKey {
+    fn pool_key(&self, host: String, origin_port: u16, peer_port: u16) -> PoolKey {
+        static NEXT_SCOPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let scope = if self
+            .tls
+            .permits_client_certificate_reuse(&host, origin_port)
+        {
+            0
+        } else {
+            NEXT_SCOPE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        };
         PoolKey {
             host,
+            origin_port,
+            scope,
+            authentication_generation: self.tls.client_certificate_generation(),
             network_isolation: self.network_isolation.clone(),
             peer_port,
             trust_generation: self.tls.snapshot().generation(),
@@ -248,7 +288,8 @@ impl H3OriginClient {
 
     async fn submit(&self, key: &PoolKey, mut command: DriverCommand) -> Result<(), H3OriginError> {
         for _ in 0..2 {
-            let sender = self.sender_for(key).await?;
+            let (sender, lease) = self.sender_for(key).await?;
+            command.lease = Some(lease);
             match sender.send(command).await {
                 Ok(()) => return Ok(()),
                 Err(error) => {
@@ -263,49 +304,239 @@ impl H3OriginClient {
     async fn sender_for(
         &self,
         key: &PoolKey,
-    ) -> Result<mpsc::Sender<DriverCommand>, H3OriginError> {
-        let mut pool = self.pool.lock().await;
-        pool.retain(|_, sender| !sender.is_closed());
-        if let Some(sender) = pool.get(key) {
-            return Ok(sender.clone());
-        }
-        if !self.protocols.snapshot().http3 {
-            return Err(H3OriginError::ProtocolDisabled);
-        }
-        if pool.len() >= self.limits.max_pool_entries {
-            return Err(H3OriginError::PoolCapacityExceeded {
-                limit: self.limits.max_pool_entries,
+    ) -> Result<(mpsc::Sender<DriverCommand>, RequestLease), H3OriginError> {
+        self.limits.validate()?;
+        loop {
+            let generation = self.tls.client_certificate_generation();
+            let mut pool = self.pool.lock().await;
+            let mut retired = Vec::new();
+            pool.retain(|key, entry| {
+                if entry.sender.is_closed() || key.authentication_generation != generation {
+                    retired.push(entry.clone());
+                    false
+                } else {
+                    true
+                }
             });
-        }
+            if !retired.is_empty() {
+                drop(pool);
+                retire_entries(retired).await;
+                continue;
+            }
+            if let Some(entry) = pool.get(key) {
+                return Ok(entry.borrow_request());
+            }
+            if !self.protocols.snapshot().http3 {
+                return Err(H3OriginError::ProtocolDisabled);
+            }
+            if pool.len() >= self.limits.max_pool_entries {
+                return Err(H3OriginError::PoolCapacityExceeded {
+                    limit: self.limits.max_pool_entries,
+                });
+            }
 
-        let driver = H3ConnectionDriver::connect(
-            key.host.clone(),
-            key.peer_port,
-            self.tls.clone(),
-            self.limits,
-            self.happy_eyeballs,
-            self.performance.clone(),
-        )
-        .await?;
-        let (sender, receiver) = mpsc::channel(self.limits.pending_requests_per_connection);
-        tokio::spawn(driver.run(receiver));
-        pool.insert(key.clone(), sender.clone());
-        Ok(sender)
+            let reservation = self.connections.clone().try_acquire_owned().map_err(|_| {
+                H3OriginError::PoolCapacityExceeded {
+                    limit: self.limits.max_pool_entries,
+                }
+            })?;
+
+            let (sender, receiver) = mpsc::channel(self.limits.pending_requests_per_connection);
+            let (stopped, stopping) = watch::channel(false);
+            let abort = self.start_connection(key, &sender, receiver, reservation, stopped);
+            let entry = PoolEntry {
+                sender,
+                requests: Arc::new(AtomicUsize::new(0)),
+                abort,
+                stopped: stopping,
+            };
+            let borrowed = entry.borrow_request();
+            if key.scope == 0 {
+                pool.insert(key.clone(), entry);
+            }
+            drop(pool);
+            return Ok(borrowed);
+        }
+    }
+
+    fn start_connection(
+        &self,
+        key: &PoolKey,
+        sender: &mpsc::Sender<DriverCommand>,
+        receiver: mpsc::Receiver<DriverCommand>,
+        reservation: tokio::sync::OwnedSemaphorePermit,
+        stopped: watch::Sender<bool>,
+    ) -> tokio::task::AbortHandle {
+        let registry = Arc::downgrade(&self.pool);
+        // The driver must not keep its own input channel alive when every
+        // admitted producer and the pool entry have been dropped.
+        let cached_sender = (key.scope == 0).then(|| sender.downgrade());
+        // Reserve this key under the registry lock, then establish independently.
+        // Other origins and callers continue while this peer awaits a certificate.
+        let tls = self
+            .tls
+            .clone()
+            .for_client_certificate_epoch(key.authentication_generation);
+        let key = key.clone();
+        let limits = self.limits;
+        let happy = self.happy_eyeballs;
+        let performance = self.performance.clone();
+        // Field drop order guarantees release before notification even if the
+        // spawned future is aborted before its first poll.
+        let reservation = DriverReservation {
+            _permit: reservation,
+            _stopped: DriverStopped(stopped),
+        };
+        let task = tokio::spawn(async move {
+            let _reservation = reservation;
+            let mut receiver = receiver;
+            let Some(mut first) = receiver.recv().await else {
+                return;
+            };
+            let result = {
+                let connect = H3ConnectionDriver::connect(
+                    key.host.clone(),
+                    key.origin_port,
+                    key.peer_port,
+                    tls.clone(),
+                    limits,
+                    happy,
+                    performance,
+                );
+                tokio::pin!(connect);
+                loop {
+                    tokio::select! {
+                        result = &mut connect => break result,
+                        () = sleep(std::time::Duration::from_millis(5)) => {
+                            if first.response.is_cancelled() {
+                                let mut replacement = None;
+                                while let Ok(command) = receiver.try_recv() { if !command.response.is_cancelled() { replacement = Some(command); break; } }
+                                let Some(command) = replacement else { return; };
+                                first = command;
+                            }
+                        }
+                    }
+                }
+            };
+            match result {
+                Ok(driver) => {
+                    let identity = driver.authentication.as_ref().and_then(transmog_tls::client_authentication::ClientAuthenticationAttempt::selected_identity);
+                    if !tls.permits_selected_client_certificate_reuse(
+                        &key.host,
+                        key.origin_port,
+                        identity.as_deref(),
+                    ) && let (Some(registry), Some(sender)) = (
+                        registry.upgrade(),
+                        cached_sender.as_ref().and_then(mpsc::WeakSender::upgrade),
+                    ) {
+                        let mut pool = registry.lock().await;
+                        if pool
+                            .get(&key)
+                            .is_some_and(|current| current.sender.same_channel(&sender))
+                        {
+                            pool.remove(&key);
+                        }
+                    }
+                    drop(cached_sender);
+                    Box::pin(driver.run(receiver, Some(first))).await;
+                }
+                Err(error) => {
+                    let authentication = matches!(error, H3OriginError::ClientAuthenticationFailed);
+                    let message = error.to_string();
+                    first.response.fail(error);
+                    receiver.close();
+                    while let Some(command) = receiver.recv().await {
+                        command.response.fail(if authentication {
+                            H3OriginError::ClientAuthenticationFailed
+                        } else {
+                            H3OriginError::ConnectionFailed(message.clone())
+                        });
+                    }
+                }
+            }
+        });
+        task.abort_handle()
     }
 
     async fn remove_sender(&self, key: &PoolKey, sender: &mpsc::Sender<DriverCommand>) {
         let mut pool = self.pool.lock().await;
         if pool
             .get(key)
-            .is_some_and(|current| current.same_channel(sender))
+            .is_some_and(|current| current.sender.same_channel(sender))
         {
             pool.remove(key);
         }
     }
 }
 
+fn connection_slots(limits: H3TransportLimits) -> Arc<tokio::sync::Semaphore> {
+    // Keep the infallible client constructors compatible. Admission reports the
+    // validated configuration error before creating any channel or connection.
+    Arc::new(tokio::sync::Semaphore::new(if limits.validate().is_ok() {
+        limits.max_pool_entries
+    } else {
+        0
+    }))
+}
+
+#[derive(Clone, Debug)]
+struct PoolEntry {
+    sender: mpsc::Sender<DriverCommand>,
+    requests: Arc<AtomicUsize>,
+    abort: tokio::task::AbortHandle,
+    stopped: watch::Receiver<bool>,
+}
+impl PoolEntry {
+    fn borrow_request(&self) -> (mpsc::Sender<DriverCommand>, RequestLease) {
+        self.requests.fetch_add(1, Ordering::AcqRel);
+        (self.sender.clone(), RequestLease(self.requests.clone()))
+    }
+}
+struct RequestLease(Arc<AtomicUsize>);
+impl Drop for RequestLease {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+struct DriverStopped(watch::Sender<bool>);
+impl Drop for DriverStopped {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
+}
+struct DriverReservation {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    _stopped: DriverStopped,
+}
+async fn retire_entries(entries: Vec<PoolEntry>) {
+    let mut stopping = Vec::new();
+    for entry in entries {
+        // Leases are acquired under the registry lock and survive queued sends,
+        // connection establishment and active response streaming. A zero count
+        // proves there is no admitted exchange to interrupt or future sender.
+        if entry.requests.load(Ordering::Acquire) != 0 {
+            continue;
+        }
+        entry.abort.abort();
+        stopping.push(entry.stopped);
+        drop(entry.sender);
+    }
+    // Abort every idle owner before awaiting cleanup so cancellation of this
+    // admission cannot strand later entries with their physical permits.
+    for mut stopped in stopping {
+        while !*stopped.borrow_and_update() {
+            if stopped.changed().await.is_err() {
+                break;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PoolKey {
+    origin_port: u16,
+    authentication_generation: u64,
+    scope: u64,
     network_isolation: transmog_core::connection_policy::NetworkIsolationKey,
     host: String,
     peer_port: u16,
@@ -316,6 +547,7 @@ struct DriverCommand {
     performance: Option<PerformanceRecorder>,
     request: PreparedRequest,
     response: ResponseTarget,
+    lease: Option<RequestLease>,
 }
 
 struct ActiveRequest {
@@ -323,6 +555,7 @@ struct ActiveRequest {
     transport: TransportObservation,
     body: ActiveRequestBody,
     response: ResponseTarget,
+    lease: Option<RequestLease>,
 }
 
 enum ResponseTarget {
@@ -385,6 +618,7 @@ impl ResponseTarget {
 }
 
 struct H3ConnectionDriver {
+    authentication: Option<transmog_tls::client_authentication::ClientAuthenticationAttempt>,
     capture: transmog_tls::TlsCapture,
     tls: UpstreamTlsContextFactory,
     limits: H3TransportLimits,
@@ -401,6 +635,7 @@ struct H3ConnectionDriver {
 impl H3ConnectionDriver {
     async fn connect(
         host: String,
+        origin_port: u16,
         peer_port: u16,
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
@@ -415,15 +650,21 @@ impl H3ConnectionDriver {
         if candidates.is_empty() {
             return Err(H3OriginError::DnsNoAddresses(host));
         }
-        match race_candidates(candidates, happy_eyeballs, |peer_addr| {
-            Self::connect_address(
-                host.clone(),
-                peer_addr,
-                tls.clone(),
-                limits,
-                performance.clone(),
-            )
-        })
+        match race_candidates_with_retry(
+            candidates,
+            happy_eyeballs,
+            |peer_addr| {
+                Self::connect_address(
+                    host.clone(),
+                    origin_port,
+                    peer_addr,
+                    tls.clone(),
+                    limits,
+                    performance.clone(),
+                )
+            },
+            |error| !matches!(error, H3OriginError::ClientAuthenticationFailed),
+        )
         .await
         {
             Ok((mut driver, _)) => {
@@ -447,6 +688,7 @@ impl H3ConnectionDriver {
 
     async fn connect_address(
         host: String,
+        origin_port: u16,
         peer_addr: SocketAddr,
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
@@ -467,7 +709,18 @@ impl H3ConnectionDriver {
             .snapshot();
         evidence.offered_versions = vec!["TLSv1.3".into()];
         let capture = transmog_tls::TlsCapture::new(evidence);
-        let mut config = crate::config::build_quiche_config_captured(&tls, limits, Some(&capture))?;
+        let authentication = tls.client_certificate_attempt(
+            &host,
+            origin_port,
+            tls.client_certificate_admission_generation(),
+            capture.clone(),
+        );
+        let mut config = crate::config::build_quiche_config_authenticated(
+            &tls,
+            limits,
+            Some(&capture),
+            authentication.as_ref(),
+        )?;
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         let mut source_connection_id = [0_u8; quiche::MAX_CONN_ID_LEN];
@@ -482,6 +735,7 @@ impl H3ConnectionDriver {
         )?;
         Box::pin(
             Self {
+                authentication,
                 capture,
                 tls,
                 limits,
@@ -513,7 +767,12 @@ impl H3ConnectionDriver {
         setup_begin: Instant,
         performance: Option<&PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
-        let result = self.establish_inner(setup_begin).await;
+        let authentication = self.authentication.clone();
+        let result = if let Some(attempt) = authentication.as_ref() {
+            attempt.drive(self.establish_inner(setup_begin)).await
+        } else {
+            self.establish_inner(setup_begin).await
+        };
         if let Err(error) = result {
             self.capture.failure(&error.to_string());
             if let Some(error) = self.connection.local_error() {
@@ -531,7 +790,16 @@ impl H3ConnectionDriver {
             if let Some(performance) = performance {
                 performance.transport(quic_observation(&self.connection, &self.transport));
             }
-            return Err(error);
+            return Err(
+                if authentication
+                    .as_ref()
+                    .is_some_and(|a| a.evidence().details.contains_key("Client certificate"))
+                {
+                    H3OriginError::ClientAuthenticationFailed
+                } else {
+                    error
+                },
+            );
         }
         self.capture.verified();
         self.transport.tls = Some(self.capture.snapshot());
@@ -573,13 +841,14 @@ impl H3ConnectionDriver {
                     }
                 }
                 () = sleep(wait) => self.connection.on_timeout(),
+                () = sleep(std::time::Duration::from_millis(5)), if self.authentication.as_ref().is_some_and(transmog_tls::client_authentication::ClientAuthenticationAttempt::is_waiting) => {},
             }
             flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         }
     }
 
-    async fn run(mut self, receiver: mpsc::Receiver<DriverCommand>) {
-        let mut pending = VecDeque::new();
+    async fn run(mut self, receiver: mpsc::Receiver<DriverCommand>, first: Option<DriverCommand>) {
+        let mut pending = first.into_iter().collect();
         let mut active = HashMap::new();
         if let Err(error) = self.drive(receiver, &mut pending, &mut active).await {
             let message = error.to_string();
@@ -661,6 +930,10 @@ impl H3ConnectionDriver {
             }
             flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
 
+            if receiver.is_closed() && pending.is_empty() && active.is_empty() {
+                return Ok(());
+            }
+
             let wait = self
                 .connection
                 .timeout()
@@ -674,7 +947,7 @@ impl H3ConnectionDriver {
                 wait
             };
             tokio::select! {
-                command = receiver.recv() => {
+                command = receiver.recv(), if !receiver.is_closed() => {
                     match command {
                         Some(command) if !command.response.is_cancelled() => {
                             pending.push_back(command);
@@ -695,6 +968,9 @@ impl H3ConnectionDriver {
                     }
                 }
                 () = sleep(wait) => self.connection.on_timeout(),
+            }
+            if receiver.is_closed() && pending.is_empty() && active.is_empty() {
+                return Ok(());
             }
         }
     }
@@ -741,6 +1017,7 @@ fn dispatch_pending(
         active.insert(
             stream_id,
             ActiveRequest {
+                lease: command.lease,
                 performance: command.performance,
                 transport,
                 body: command.request.body.into_active(finished),
@@ -854,6 +1131,9 @@ fn poll_responses(
                 });
                 if is_buffered {
                     if let Some(request) = active.remove(&stream_id) {
+                        // Release admission before waking the caller with its
+                        // completed exchange, including on multithreaded runtimes.
+                        drop(request.lease);
                         request.response.finish_buffered(connection, peer_addr, tls);
                     }
                 } else if let Some(request) = active.get_mut(&stream_id) {
@@ -1404,6 +1684,9 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// Direct quiche origin-adapter failure.
 #[derive(Debug, Error)]
 pub enum H3OriginError {
+    /// Authentication failed or was cancelled; never automatically replay via another protocol.
+    #[error("HTTP/3 client authentication failed or was cancelled")]
+    ClientAuthenticationFailed,
     /// HTTP/3 is disabled for new physical connections; existing sessions remain usable.
     #[error("outbound HTTP/3 is disabled for new connections")]
     ProtocolDisabled,
@@ -1543,6 +1826,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn abandoned_producer_releases_an_unstarted_driver_after_pool_drop() {
+        let ca = ProxyCa::generate("Unstarted h3 owner", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 1).unwrap(),
+        );
+        let client = H3OriginClient::new(
+            UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
+            H3TransportLimits {
+                max_pool_entries: 1,
+                ..Default::default()
+            },
+        );
+        let slots = client.connections.clone();
+        let key = client.pool_key("localhost".into(), 443, 443);
+        let (sender, lease) = client.sender_for(&key).await.unwrap();
+        drop(client);
+        assert_eq!(slots.available_permits(), 0);
+        // No command was enqueued; the driver is still awaiting its first
+        // producer. It must release ownership when that producer is abandoned.
+        drop(sender);
+        drop(lease);
+        timeout(std::time::Duration::from_secs(1), async {
+            while slots.available_permits() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelled_retirement_waiter_does_not_strand_other_idle_owners() {
+        let slots = Arc::new(tokio::sync::Semaphore::new(2));
+        let mut entries = Vec::new();
+        let mut owners = Vec::new();
+        let mut notifications = Vec::new();
+        for _ in 0..2 {
+            let permit = slots.clone().acquire_owned().await.unwrap();
+            let (sender, receiver) = mpsc::channel(1);
+            let (notification, stopped) = watch::channel(false);
+            let owner = tokio::spawn(async move {
+                let _permit = permit;
+                let _receiver = receiver;
+                std::future::pending::<()>().await;
+            });
+            entries.push(PoolEntry {
+                sender,
+                requests: Arc::new(AtomicUsize::new(0)),
+                abort: owner.abort_handle(),
+                stopped,
+            });
+            owners.push(owner);
+            // Hold cleanup notification so the admitting caller can be
+            // cancelled while it waits for the first retired owner.
+            notifications.push(notification);
+        }
+        let retirement = tokio::spawn(retire_entries(entries));
+        timeout(std::time::Duration::from_secs(1), async {
+            while !owners[0].is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        retirement.abort();
+        let _ = retirement.await;
+        for owner in owners {
+            assert!(
+                timeout(std::time::Duration::from_secs(1), owner)
+                    .await
+                    .unwrap()
+                    .unwrap_err()
+                    .is_cancelled()
+            );
+        }
+        assert_eq!(slots.available_permits(), 2);
+        drop(notifications);
+    }
+
+    #[tokio::test]
     async fn local_h3_origin_uses_shared_verified_context() {
         let ca = ProxyCa::generate("Transmog h3 origin", 2).unwrap();
         let leaf = ca
@@ -1620,9 +1983,10 @@ mod tests {
         let config = HappyEyeballsConfig::new(std::time::Duration::from_millis(10), 4).unwrap();
         let (driver, selected) = timeout(
             std::time::Duration::from_secs(1),
-            race_candidates(vec![unreachable_v6, origin], config, |peer_addr| {
+            transmog_network::race_candidates(vec![unreachable_v6, origin], config, |peer_addr| {
                 H3ConnectionDriver::connect_address(
                     "localhost".to_owned(),
+                    origin.port(),
                     peer_addr,
                     tls.clone(),
                     limits,

@@ -23,6 +23,53 @@ use transmog_client_certificates::{
 /// excluded before key acquisition; this provider never invokes native UI.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WindowsCurrentUserCertificateSource;
+
+/// Application-owned Windows certificate controller for one proxy/Composer run.
+pub struct WindowsClientCertificateController {
+    resolver: Arc<PolicyClientAuthenticationResolver>,
+    broker: crate::client_prompts::ClientCertificateBroker,
+    _monitor: WindowsCertificateInventoryMonitor,
+}
+impl WindowsClientCertificateController {
+    /// Starts silent software-key monitoring with a bounded nonmodal decision broker.
+    /// # Errors
+    /// Returns a generic configuration or inventory failure.
+    pub async fn new(
+        policy: transmog_core::client_authentication::ClientCertificatePolicy,
+    ) -> Result<Self, String> {
+        let broker = crate::client_prompts::ClientCertificateBroker::default();
+        let resolver = Arc::new(PolicyClientAuthenticationResolver::new(
+            policy,
+            Arc::new(WindowsCurrentUserCertificateSource),
+            Some(Arc::new(broker.clone())),
+        )?);
+        let monitor = WindowsCurrentUserCertificateSource
+            .monitor(Arc::downgrade(&resolver))
+            .await?;
+        Ok(Self {
+            resolver,
+            broker,
+            _monitor: monitor,
+        })
+    }
+    /// Shares origin policy and invalidation across separately scoped callers.
+    pub fn resolver(&self) -> Arc<PolicyClientAuthenticationResolver> {
+        self.resolver.clone()
+    }
+    /// Public pending requests and explicit connection-scoped answers.
+    pub fn broker(&self) -> crate::client_prompts::ClientCertificateBroker {
+        self.broker.clone()
+    }
+}
+impl Drop for WindowsClientCertificateController {
+    fn drop(&mut self) {
+        self.broker.shutdown();
+        let _ = self.resolver.replace_policy(
+            transmog_core::client_authentication::ClientCertificatePolicy::default(),
+        );
+        let _ = self.resolver.inventory_changed();
+    }
+}
 impl ClientCredentialSource for WindowsCurrentUserCertificateSource {
     fn credentials(&self) -> ClientCredentialInventoryFuture {
         Box::pin(async {
@@ -136,7 +183,11 @@ impl WindowsCurrentUserCertificateSource {
         &self,
         resolver: Weak<PolicyClientAuthenticationResolver>,
     ) -> Result<WindowsCertificateInventoryMonitor, String> {
-        let mut previous = snapshot(self.credentials().await?);
+        let mut previous = snapshot(
+            tokio::time::timeout(Duration::from_secs(5), self.credentials())
+                .await
+                .map_err(|_| "Windows client certificate inventory is unavailable".to_owned())??,
+        );
         let source = *self;
         Ok(WindowsCertificateInventoryMonitor(tokio::spawn(
             async move {
@@ -145,7 +196,12 @@ impl WindowsCurrentUserCertificateSource {
                     if resolver.strong_count() == 0 {
                         break;
                     }
-                    let current = source.credentials().await.ok().and_then(snapshot);
+                    let current =
+                        tokio::time::timeout(Duration::from_secs(5), source.credentials())
+                            .await
+                            .ok()
+                            .and_then(Result::ok)
+                            .and_then(snapshot);
                     if current != previous {
                         let Some(resolver) = resolver.upgrade() else {
                             break;

@@ -273,6 +273,7 @@ pub struct UpstreamTlsContextFactory {
     snapshot: Arc<TrustSnapshot>,
     policy: UpstreamTlsPolicy,
     client_authentication: Option<Arc<ClientAuthentication>>,
+    pub(crate) authentication: Option<Arc<crate::client_connections::AuthenticationScope>>,
 }
 
 struct ClientAuthentication {
@@ -297,6 +298,7 @@ impl UpstreamTlsContextFactory {
             snapshot,
             policy,
             client_authentication: None,
+            authentication: None,
         }
     }
 

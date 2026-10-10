@@ -61,6 +61,13 @@ impl H3TransportLimits {
                 "pool and per-connection queue limits must be nonzero",
             ));
         }
+        if self.pending_requests_per_connection > tokio::sync::Semaphore::MAX_PERMITS
+            || self.max_pool_entries > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            return Err(H3ConfigError::InvalidLimits(
+                "pool and request queue limits exceed supported capacity",
+            ));
+        }
         Ok(())
     }
 }
@@ -86,10 +93,21 @@ pub(crate) fn build_quiche_config_captured(
     limits: H3TransportLimits,
     capture: Option<&transmog_tls::TlsCapture>,
 ) -> Result<quiche::Config, H3ConfigError> {
+    build_quiche_config_authenticated(factory, limits, capture, None)
+}
+pub(crate) fn build_quiche_config_authenticated(
+    factory: &UpstreamTlsContextFactory,
+    limits: H3TransportLimits,
+    capture: Option<&transmog_tls::TlsCapture>,
+    attempt: Option<&transmog_tls::client_authentication::ClientAuthenticationAttempt>,
+) -> Result<quiche::Config, H3ConfigError> {
     limits.validate()?;
     let mut tls = factory.quiche_context_builder()?;
     if let Some(capture) = capture {
         capture.attach_context(&mut tls).map_err(TrustError::from)?;
+    }
+    if let Some(attempt) = attempt {
+        attempt.attach_context(&mut tls).map_err(TrustError::from)?;
     }
     let mut config = quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, tls)?;
     // The shared factory already enables peer verification and installs the
@@ -139,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_queue_and_pool_limits_are_rejected_before_driver_start() {
+    fn invalid_queue_and_pool_limits_are_rejected_before_driver_start() {
         let snapshot = Arc::new(TrustSnapshot::load(&SystemTrustSource, 8).unwrap());
         let factory = UpstreamTlsContextFactory::new(snapshot, UpstreamTlsPolicy::default());
         for limits in [
@@ -149,6 +167,14 @@ mod tests {
             },
             H3TransportLimits {
                 max_pool_entries: 0,
+                ..H3TransportLimits::default()
+            },
+            H3TransportLimits {
+                pending_requests_per_connection: usize::MAX,
+                ..H3TransportLimits::default()
+            },
+            H3TransportLimits {
+                max_pool_entries: usize::MAX,
                 ..H3TransportLimits::default()
             },
         ] {

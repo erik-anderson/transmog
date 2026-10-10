@@ -169,7 +169,7 @@ pub fn interleave_candidates(
 /// Returns [`HappyEyeballsError::NoCandidates`] for an empty list, or the last
 /// connector failure after every candidate fails.
 pub async fn race_candidates<T, E, Connector, Attempt>(
-    mut candidates: Vec<SocketAddr>,
+    candidates: Vec<SocketAddr>,
     config: HappyEyeballsConfig,
     connector: Connector,
 ) -> Result<(T, SocketAddr), HappyEyeballsError<E>>
@@ -178,6 +178,32 @@ where
     E: Send,
     Connector: Fn(SocketAddr) -> Attempt + Sync,
     Attempt: Future<Output = Result<T, E>> + Send,
+{
+    race_candidates_with_retry(candidates, config, connector, |_| true).await
+}
+
+/// Races candidates while stopping on failures which cannot authorize a retry.
+///
+/// Returning false from `retry` preserves that error and drops all remaining
+/// attempt futures. Authentication rejection and explicit consent cancellation
+/// must not be replaced by another address's transport failure or success.
+///
+/// # Errors
+/// Returns [`HappyEyeballsError::NoCandidates`] for an empty list, or
+/// [`HappyEyeballsError::AttemptsFailed`] with the terminal failure or the last
+/// retryable error when every candidate fails.
+pub async fn race_candidates_with_retry<T, E, Connector, Attempt, Retry>(
+    mut candidates: Vec<SocketAddr>,
+    config: HappyEyeballsConfig,
+    connector: Connector,
+    retry: Retry,
+) -> Result<(T, SocketAddr), HappyEyeballsError<E>>
+where
+    T: Send,
+    E: Send,
+    Connector: Fn(SocketAddr) -> Attempt + Sync,
+    Attempt: Future<Output = Result<T, E>> + Send,
+    Retry: Fn(&E) -> bool + Sync,
 {
     candidates.truncate(config.max_candidates().get());
     if candidates.is_empty() {
@@ -202,6 +228,9 @@ where
             };
             match result {
                 Ok(value) => return Ok((value, address)),
+                Err(error) if !retry(&error) => {
+                    return Err(HappyEyeballsError::AttemptsFailed(error));
+                }
                 Err(error) => last_error = Some(error),
             }
             continue;
@@ -219,6 +248,7 @@ where
                 if let Some((address, result)) = completed {
                     match result {
                         Ok(value) => return Ok((value, address)),
+                        Err(error) if !retry(&error) => return Err(HappyEyeballsError::AttemptsFailed(error)),
                         Err(error) => last_error = Some(error),
                     }
                 }
@@ -250,7 +280,7 @@ fn push_attempt<'a, T, E, Connector, Attempt>(
 pub enum HappyEyeballsError<E> {
     /// DNS resolution supplied no usable candidate.
     NoCandidates,
-    /// Every candidate failed; the final attempt error is retained.
+    /// The race failed; the terminal error or final retryable failure is retained.
     AttemptsFailed(E),
 }
 
@@ -259,7 +289,7 @@ impl<E: Display> Display for HappyEyeballsError<E> {
         match self {
             Self::NoCandidates => formatter.write_str("no connection candidates were available"),
             Self::AttemptsFailed(error) => {
-                write!(formatter, "every connection candidate failed: {error}")
+                write!(formatter, "connection candidate race failed: {error}")
             }
         }
     }
@@ -351,6 +381,72 @@ mod tests {
         .unwrap();
         assert_eq!(result, (second, second));
         assert_eq!(Instant::now(), started);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn terminal_failure_stops_before_launching_another_candidate() {
+        let first = address("2001:db8::1", 443);
+        let second = address("192.0.2.1", 443);
+        let started = Arc::new(Mutex::new(Vec::new()));
+        let result = race_candidates_with_retry(
+            vec![first, second],
+            HappyEyeballsConfig::default(),
+            |candidate| {
+                let started = started.clone();
+                async move {
+                    started.lock().await.push(candidate);
+                    Err::<(), _>("cancelled")
+                }
+            },
+            |error| *error != "cancelled",
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(HappyEyeballsError::AttemptsFailed("cancelled"))
+        ));
+        assert_eq!(*started.lock().await, vec![first]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn terminal_failure_drops_an_already_running_alternative() {
+        struct AttemptGuard(Arc<std::sync::atomic::AtomicUsize>);
+        impl Drop for AttemptGuard {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let first = address("2001:db8::1", 443);
+        let second = address("192.0.2.1", 443);
+        let started = Arc::new(Mutex::new(Vec::new()));
+        let dropped = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let result = race_candidates_with_retry(
+            vec![first, second],
+            HappyEyeballsConfig::new(Duration::from_millis(1), 2).unwrap(),
+            |candidate| {
+                let dropped = dropped.clone();
+                let started = started.clone();
+                async move {
+                    let _guard = AttemptGuard(dropped);
+                    started.lock().await.push(candidate);
+                    if candidate == first {
+                        sleep(Duration::from_millis(10)).await;
+                        Err("cancelled")
+                    } else {
+                        sleep(Duration::from_secs(30)).await;
+                        Ok(())
+                    }
+                }
+            },
+            |error| *error != "cancelled",
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(HappyEyeballsError::AttemptsFailed("cancelled"))
+        ));
+        assert_eq!(*started.lock().await, vec![first, second]);
+        assert_eq!(dropped.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[tokio::test(start_paused = true)]

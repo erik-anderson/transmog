@@ -50,6 +50,7 @@ struct ConnectionSetup {
 }
 #[derive(Debug, Default)]
 struct SetupValues {
+    no_reuse: bool,
     facts: TransportObservation,
     tls_capture: Option<TlsCapture>,
     tls_begin: Option<Instant>,
@@ -59,6 +60,9 @@ struct SetupValues {
     tcp_done: Option<Instant>,
     tls_done: Option<Instant>,
     dns_failed: bool,
+    attempt: Option<transmog_tls::client_authentication::ClientAuthenticationAttempt>,
+    waker: Option<std::task::Waker>,
+    tcp: Option<std::sync::Weak<Mutex<TcpState>>>,
 }
 impl ConnectionSetup {
     fn new(allowed: AllowedHttpProtocols) -> Arc<Self> {
@@ -194,8 +198,14 @@ impl Service<Uri> for MeasuredTcpConnector {
                 values.facts.peer = socket.peer_addr().ok().map(|address| address.to_string());
                 values.facts.local = socket.local_addr().ok().map(|address| address.to_string());
             }
-            Ok(TokioIo::new(MeasuredTcp {
+            let io = Arc::new(Mutex::new(TcpState {
                 io: MeteredIo::new_tcp(socket, setup.bytes.clone()),
+                buffered: std::collections::VecDeque::new(),
+                eof: false,
+            }));
+            setup.values().tcp = Some(Arc::downgrade(&io));
+            Ok(TokioIo::new(MeasuredTcp {
+                io,
                 observation: ConnectionObservation(setup),
             }))
         })
@@ -204,54 +214,115 @@ impl Service<Uri> for MeasuredTcpConnector {
 
 #[derive(Debug)]
 pub(crate) struct MeasuredTcp {
-    io: MeteredIo<TcpStream>,
+    io: Arc<Mutex<TcpState>>,
     observation: ConnectionObservation,
+}
+#[derive(Debug)]
+struct TcpState {
+    io: MeteredIo<TcpStream>,
+    buffered: std::collections::VecDeque<u8>,
+    eof: bool,
 }
 impl Connection for MeasuredTcp {
     fn connected(&self) -> Connected {
-        self.io
+        let connected = self
+            .io
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .io
             .get_ref()
             .connected()
-            .extra(self.observation.clone())
+            .extra(self.observation.clone());
+        if self.observation.0.values().no_reuse {
+            connected.poison();
+        }
+        connected
     }
 }
 impl AsyncRead for MeasuredTcp {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buffer: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.io).poll_read(cx, buffer)
+        let mut state = self
+            .io
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.buffered.is_empty() {
+            let length = state.buffered.len().min(buffer.remaining());
+            for _ in 0..length {
+                buffer.put_slice(&[state.buffered.pop_front().expect("buffered ciphertext")]);
+            }
+            return Poll::Ready(Ok(()));
+        }
+        if state.eof {
+            return Poll::Ready(Ok(()));
+        }
+        Pin::new(&mut state.io).poll_read(cx, buffer)
     }
 }
 impl AsyncWrite for MeasuredTcp {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bytes: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.io).poll_write(cx, bytes)
+        Pin::new(
+            &mut self
+                .io
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .io,
+        )
+        .poll_write(cx, bytes)
     }
     fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         bytes: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.io).poll_write_vectored(cx, bytes)
+        Pin::new(
+            &mut self
+                .io
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .io,
+        )
+        .poll_write_vectored(cx, bytes)
     }
     fn is_write_vectored(&self) -> bool {
-        self.io.is_write_vectored()
+        self.io
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .io
+            .is_write_vectored()
     }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.io).poll_flush(cx)
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(
+            &mut self
+                .io
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .io,
+        )
+        .poll_flush(cx)
     }
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.io).poll_shutdown(cx)
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(
+            &mut self
+                .io
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .io,
+        )
+        .poll_shutdown(cx)
     }
 }
 
 #[derive(Clone)]
 pub(crate) struct MeasuredHttpsConnector {
+    authorization: UpstreamTlsContextFactory,
     inner: HttpsConnector<MeasuredTcpConnector>,
     mode: HyperEgressMode,
     protocols: OutboundProtocolPolicy,
@@ -277,6 +348,9 @@ impl Service<Uri> for MeasuredHttpsConnector {
             }
         };
         let mode = self.mode;
+        let authorization = self.authorization.clone();
+        let host = uri.host().unwrap_or("").trim_matches(['[', ']']).to_owned();
+        let port = uri.port_u16().unwrap_or(443);
         let setup = ConnectionSetup::new(allowed);
         if !admitted {
             setup.values().facts.outcome = TransportOutcome::PolicyRejected;
@@ -293,34 +367,20 @@ impl Service<Uri> for MeasuredHttpsConnector {
         let connection = self.inner.call(uri);
         let scope = setup.clone();
         Box::pin(SETUP.scope(scope, async move {
-            let stream = match connection.await {
+            let _owner = HandshakeOwner(setup.clone());
+            let mut connection = connection;
+            let result = std::future::poll_fn(|cx| poll_handshake(connection.as_mut(), &setup, cx))
+            .await;
+            let stream = match result {
                 Ok(stream) => stream,
-                Err(source) => {
-                    {
-                        let mut values = setup.values();
-                        if let Some(capture) = &values.tls_capture {
-                            capture.failure_chain(source.as_ref());
-                        }
-                        values.tls_done = values.tls_begin.map(|_| Instant::now());
-                        values.facts.tls_micros =
-                            values.tls_begin.map(|begin| micros(begin.elapsed()));
-                        values.facts.outcome = if values.tls_begin.is_some() {
-                            TransportOutcome::TlsFailed
-                        } else if values.dns_failed {
-                            TransportOutcome::DnsFailed
-                        } else {
-                            TransportOutcome::TcpFailed
-                        };
-                    }
-                    return Err(Box::new(ConnectionFailure {
-                        source,
-                        observation: ConnectionObservation(setup),
-                    }) as BoxError);
-                }
+                Err(source) => return Err(connection_failed(setup, source)),
             };
             setup.values().facts.outcome = TransportOutcome::Connected;
             if let MaybeHttpsStream::Https(tls) = &stream {
+                let identity = setup.values().attempt.as_ref().and_then(transmog_tls::client_authentication::ClientAuthenticationAttempt::selected_identity);
+                let reuse = authorization.permits_selected_client_certificate_reuse(&host, port, identity.as_deref());
                 let mut values = setup.values();
+                values.no_reuse = !reuse;
                 if let Some(capture) = &values.tls_capture {
                     capture.completed(tls.ssl(), false);
                 }
@@ -363,6 +423,53 @@ impl Service<Uri> for MeasuredHttpsConnector {
     }
 }
 
+fn connection_failed(setup: Arc<ConnectionSetup>, source: BoxError) -> BoxError {
+    {
+        let mut values = setup.values();
+        if let Some(capture) = &values.tls_capture {
+            capture.failure_chain(source.as_ref());
+        }
+        values.tls_done = values.tls_begin.map(|_| Instant::now());
+        values.facts.tls_micros = values.tls_begin.map(|begin| micros(begin.elapsed()));
+        values.facts.outcome = if values.tls_begin.is_some() {
+            TransportOutcome::TlsFailed
+        } else if values.dns_failed {
+            TransportOutcome::DnsFailed
+        } else {
+            TransportOutcome::TcpFailed
+        };
+    }
+    Box::new(ConnectionFailure {
+        source,
+        observation: ConnectionObservation(setup),
+    })
+}
+
+fn poll_handshake(
+    connection: Pin<
+        &mut (dyn Future<Output = Result<MaybeHttpsStream<MeasuredTcp>, BoxError>> + Send),
+    >,
+    setup: &ConnectionSetup,
+    cx: &mut Context<'_>,
+) -> Poll<Result<MaybeHttpsStream<MeasuredTcp>, BoxError>> {
+    let (previous, attempt) = {
+        let mut values = setup.values();
+        (
+            values.waker.replace(cx.waker().clone()),
+            values.attempt.clone(),
+        )
+    };
+    drop(previous);
+    if let Some(attempt) = attempt {
+        attempt.register(cx.waker());
+    }
+    let result = connection.poll(cx);
+    if result.is_pending() {
+        observe_paused_peer(setup, cx);
+    }
+    result
+}
+
 pub(crate) fn connector(
     factory: &UpstreamTlsContextFactory,
     mode: HyperEgressMode,
@@ -374,7 +481,9 @@ pub(crate) fn connector(
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.hyper_connector_builder(mode.alpn())?;
     let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;
+    let authorization = factory.clone();
     let factory = factory.clone();
+    let generation = factory.client_certificate_admission_generation();
     connector.set_ssl_callback(move |ssl, uri| {
         let _ = SETUP.try_with(|setup| setup.values().tls_begin = Some(Instant::now()));
         let allowed = SETUP.try_with(|setup| setup.allowed).unwrap_or_default();
@@ -395,12 +504,85 @@ pub(crate) fn connector(
         };
         let capture = factory.capture(uri.host().map(str::to_owned), offered_alpn);
         capture.attach_ssl(ssl)?;
+        if let Some(attempt) = factory.client_certificate_attempt(
+            uri.host().unwrap_or("").trim_matches(['[', ']']),
+            uri.port_u16().unwrap_or(443),
+            generation,
+            capture.clone(),
+        ) {
+            // Hyper's own cache overwrites context cache settings. Clear any
+            // cached session after it has been applied, before sending ClientHello.
+            transmog_tls::client_connections::clear_cached_session(ssl)?;
+            attempt.attach_ssl(ssl)?;
+            let _ = SETUP.try_with(|setup| {
+                let waker = setup.values().waker.clone();
+                if let Some(waker) = waker {
+                    attempt.register(&waker);
+                }
+                setup.values().attempt = Some(attempt);
+            });
+        }
         let _ = SETUP.try_with(|setup| setup.values().tls_capture = Some(capture));
         Ok(())
     });
     Ok(MeasuredHttpsConnector {
+        authorization,
         inner: connector,
         mode,
         protocols,
     })
+}
+
+struct HandshakeOwner(Arc<ConnectionSetup>);
+impl Drop for HandshakeOwner {
+    fn drop(&mut self) {
+        let (attempt, waker) = {
+            let mut values = self.0.values();
+            (values.attempt.take(), values.waker.take())
+        };
+        if let Some(attempt) = attempt {
+            attempt.cancel("physical connection handshake ended");
+        }
+        drop(waker);
+    }
+}
+fn observe_paused_peer(setup: &ConnectionSetup, cx: &mut Context<'_>) {
+    let (attempt, tcp) = {
+        let values = setup.values();
+        (values.attempt.clone(), values.tcp.clone())
+    };
+    let (Some(attempt), Some(tcp)) = (attempt, tcp.and_then(|tcp| tcp.upgrade())) else {
+        return;
+    };
+    if !attempt.is_waiting() {
+        return;
+    }
+    let mut state = tcp
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut bytes = [0; 16_384];
+    let remaining = (1024 * 1024usize).saturating_sub(state.buffered.len());
+    let capacity = remaining.min(bytes.len());
+    let mut buffer = ReadBuf::new(&mut bytes[..capacity]);
+    let reason = if state.buffered.len() >= 1024 * 1024 {
+        Some("peer exceeded paused handshake buffer")
+    } else {
+        match Pin::new(&mut state.io).poll_read(cx, &mut buffer) {
+            Poll::Ready(Ok(())) if buffer.filled().is_empty() => {
+                state.eof = true;
+                Some("peer closed while authentication was pending")
+            }
+            Poll::Ready(Ok(())) => {
+                state.buffered.extend(buffer.filled());
+                cx.waker().wake_by_ref();
+                None
+            }
+            Poll::Ready(Err(_)) => Some("peer failed while authentication was pending"),
+            Poll::Pending => None,
+        }
+    };
+    drop(state);
+    if let Some(reason) = reason {
+        attempt.cancel(reason);
+    }
 }

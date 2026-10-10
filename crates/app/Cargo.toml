@@ -36,6 +36,7 @@ transmog-control-transport = { version = "=0.1.2", path = "../proxy-control-tran
 transmog-capture = { version = "=0.1.2", path = "../proxy-capture" }
 transmog-core = { version = "=0.1.2", path = "../proxy-core" }
 transmog-http = { version = "=0.1.2", path = "../proxy-http" }
+transmog-h3 = { version = "=0.1.2", path = "../proxy-h3" }
 transmog-preview-worker = { version = "=0.1.2", path = "../preview-worker" }
 transmog-runtime = { version = "=0.1.2", path = "../proxy-runtime" }
 transmog-saz = { version = "=0.1.2", path = "../proxy-saz" }
@@ -46,3 +47,10 @@ transmog-tls = { version = "=0.1.2", path = "../proxy-tls" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+quiche.workspace = true
+tokio-boring.workspace = true

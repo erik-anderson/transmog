@@ -20,3 +20,11 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+transmog-http = { version = "=0.1.2", path = "../proxy-http" }
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio-boring.workspace = true

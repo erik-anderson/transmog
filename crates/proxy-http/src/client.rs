@@ -51,13 +51,27 @@ type OriginClient = Client<MeasuredHttpsConnector, CanonicalHttpBody>;
 /// Pooled Hyper origin client with distinct ALPN pools for forced H1 and H2.
 #[derive(Clone)]
 pub struct HyperOriginClient {
+    pools: std::sync::Arc<std::sync::Mutex<GenerationPools>>,
     protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
     factory: UpstreamTlsContextFactory,
     happy_eyeballs: HappyEyeballsConfig,
+    performance: Option<PerformanceRecorder>,
+}
+#[derive(Clone)]
+struct GenerationPools {
+    epoch: u64,
     h1: OriginClient,
     h2: OriginClient,
     auto: OriginClient,
-    performance: Option<PerformanceRecorder>,
+}
+impl GenerationPools {
+    fn client(&self, mode: HyperEgressMode) -> OriginClient {
+        match mode {
+            HyperEgressMode::Http1Only => self.h1.clone(),
+            HyperEgressMode::Http2Only => self.h2.clone(),
+            HyperEgressMode::Auto => self.auto.clone(),
+        }
+    }
 }
 
 /// Result of an HTTP/1.1 upgrade attempt.
@@ -86,6 +100,98 @@ impl std::fmt::Debug for HyperUpgradeResponse {
 }
 
 impl HyperOriginClient {
+    /// Installs authentication in new pools for an immutable application caller.
+    /// # Errors
+    /// Returns a TLS connector construction failure.
+    pub fn with_client_certificate_resolver(
+        &self,
+        resolver: std::sync::Arc<
+            dyn transmog_tls::client_authentication::ClientAuthenticationResolver,
+        >,
+        caller: impl Into<String>,
+    ) -> Result<Self, HyperOriginError> {
+        Self::with_connection_policy(
+            &self
+                .factory
+                .clone()
+                .with_client_certificate_resolver(resolver, caller),
+            self.happy_eyeballs,
+            self.protocols.clone(),
+        )
+    }
+    /// Creates a new pool for an immutable certificate caller partition.
+    /// # Errors
+    /// Returns a TLS connector construction failure.
+    pub fn for_client_certificate_caller(
+        &self,
+        caller: impl Into<String>,
+    ) -> Result<Self, HyperOriginError> {
+        Self::with_connection_policy(
+            &self.factory.clone().for_client_certificate_caller(caller),
+            self.happy_eyeballs,
+            self.protocols.clone(),
+        )
+    }
+    fn authorized_client(
+        &self,
+        uri: &http::Uri,
+        mode: HyperEgressMode,
+    ) -> Result<OriginClient, HyperOriginError> {
+        let reuse = !matches!(uri.scheme_str(), Some("https" | "wss"))
+            || self.factory.permits_client_certificate_reuse(
+                uri.host().unwrap_or("").trim_matches(['[', ']']),
+                uri.port_u16().unwrap_or(443),
+            );
+        if !reuse {
+            let fresh = Self::build_pools(
+                &self.factory,
+                self.happy_eyeballs,
+                self.protocols.clone(),
+                false,
+            )?;
+            let client = fresh
+                .pools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .client(mode);
+            return Ok(client);
+        }
+        let epoch = self.factory.client_certificate_generation();
+        {
+            let pools = self
+                .pools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if epoch == pools.epoch {
+                return Ok(pools.client(mode));
+            }
+        }
+        let next = Self::build_pools(
+            &self.factory,
+            self.happy_eyeballs,
+            self.protocols.clone(),
+            true,
+        )?;
+        let next = next
+            .pools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut pools = self
+            .pools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Construction and resolver callbacks happen outside the pool lock. A
+        // concurrent newer replacement must never be rolled back by this builder.
+        if next.epoch <= pools.epoch {
+            return Ok(pools.client(mode));
+        }
+        let old = std::mem::replace(&mut *pools, next);
+        let client = pools.client(mode);
+        drop(pools);
+        drop(old);
+        Ok(client)
+    }
     /// Creates separate physical pools with the same immutable TLS and connector policy.
     ///
     /// # Errors
@@ -105,11 +211,7 @@ impl HyperOriginClient {
         mut outgoing: Request<CanonicalHttpBody>,
         mode: HyperEgressMode,
     ) -> Result<http::Response<Incoming>, HyperOriginError> {
-        let client = match mode {
-            HyperEgressMode::Http1Only => &self.h1,
-            HyperEgressMode::Http2Only => &self.h2,
-            HyperEgressMode::Auto => &self.auto,
-        };
+        let client = self.authorized_client(outgoing.uri(), mode)?;
         let mut captured = hyper_util::client::legacy::connect::capture_connection(&mut outgoing);
         let response = client.request(outgoing);
         tokio::pin!(response);
@@ -219,33 +321,53 @@ impl HyperOriginClient {
         happy_eyeballs: HappyEyeballsConfig,
         protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
     ) -> Result<Self, HyperOriginError> {
-        let h1 = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
-            factory,
+        Self::build_pools(factory, happy_eyeballs, protocols, true)
+    }
+    fn build_pools(
+        factory: &UpstreamTlsContextFactory,
+        happy_eyeballs: HappyEyeballsConfig,
+        protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
+        reusable: bool,
+    ) -> Result<Self, HyperOriginError> {
+        let epoch = factory.client_certificate_generation();
+        let admitted = factory.clone().for_client_certificate_epoch(epoch);
+        let mut builder = Client::builder(TokioExecutor::new());
+        if !reusable {
+            builder.pool_max_idle_per_host(0);
+        }
+        if factory.has_client_certificate_resolver() {
+            builder.retry_canceled_requests(false);
+        }
+        let h1 = builder.build(crate::metrics::connector(
+            &admitted,
             HyperEgressMode::Http1Only,
             happy_eyeballs,
             protocols.clone(),
         )?);
-        let mut h2_builder = Client::builder(TokioExecutor::new());
+        let mut h2_builder = builder.clone();
         h2_builder.http2_only(true);
         let h2 = h2_builder.build(crate::metrics::connector(
-            factory,
+            &admitted,
             HyperEgressMode::Http2Only,
             happy_eyeballs,
             protocols.clone(),
         )?);
-        let auto = Client::builder(TokioExecutor::new()).build(crate::metrics::connector(
-            factory,
+        let auto = builder.build(crate::metrics::connector(
+            &admitted,
             HyperEgressMode::Auto,
             happy_eyeballs,
             protocols.clone(),
         )?);
         Ok(Self {
-            h1,
+            pools: std::sync::Arc::new(std::sync::Mutex::new(GenerationPools {
+                epoch,
+                h1,
+                h2,
+                auto,
+            })),
             protocols,
             factory: factory.clone(),
             happy_eyeballs,
-            h2,
-            auto,
             performance: None,
         })
     }

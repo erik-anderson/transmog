@@ -390,32 +390,47 @@ impl ReplayExecutor for FileReplayExecutor {
     }
 }
 
-/// Canonical TLS-verifying HTTP/1.1 and HTTP/2 replay executor.
+/// Canonical TLS-verifying HTTP replay executor.
 #[derive(Clone)]
 pub struct SystemReplayExecutor {
     client: HyperOriginClient,
+    h3: Option<transmog_h3::H3OriginClient>,
     mode: HyperEgressMode,
     protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
 }
 
 impl SystemReplayExecutor {
+    /// Shares a certificate controller while keeping Composer's caller/run pool separate.
+    /// # Errors
+    /// Returns a bounded TLS client construction failure.
+    pub fn with_client_certificate_resolver(
+        mut self,
+        resolver: Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>,
+        caller: impl Into<String>,
+    ) -> Result<Self, AppError> {
+        let caller = caller.into();
+        if let Some(h3) = &mut self.h3 {
+            *h3 = h3
+                .clone()
+                .with_client_certificate_resolver(resolver.clone(), caller.clone());
+        }
+        self.client = self
+            .client
+            .with_client_certificate_resolver(resolver, caller)
+            .map_err(|_| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Composer client certificate transport could not be created",
+                    true,
+                )
+            })?;
+        Ok(self)
+    }
     /// Builds a replay executor from a snapshot of operating-system trust.
     ///
     /// # Errors
     /// Returns a bounded trust or TLS client construction failure.
     pub fn new(route: ProxyRoute) -> Result<Self, AppError> {
-        let mode = match route {
-            ProxyRoute::Auto => HyperEgressMode::Auto,
-            ProxyRoute::Http1 => HyperEgressMode::Http1Only,
-            ProxyRoute::Http2 => HyperEgressMode::Http2Only,
-            ProxyRoute::Http3 => {
-                return Err(AppError::new(
-                    ErrorCategory::InvalidInput,
-                    "the canonical Hyper replay executor does not support HTTP/3-only routing",
-                    false,
-                ));
-            }
-        };
         let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).map_err(|_| {
             AppError::new(
                 ErrorCategory::Unavailable,
@@ -423,7 +438,23 @@ impl SystemReplayExecutor {
                 true,
             )
         })?);
-        let factory = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        Self::with_tls_factory(
+            route,
+            UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
+        )
+    }
+    /// Builds a Composer executor with an explicit embedding trust and certificate scope.
+    /// # Errors
+    /// Returns a bounded route or TLS client construction failure.
+    pub fn with_tls_factory(
+        route: ProxyRoute,
+        factory: UpstreamTlsContextFactory,
+    ) -> Result<Self, AppError> {
+        let mode = match route {
+            ProxyRoute::Auto | ProxyRoute::Http3 => HyperEgressMode::Auto,
+            ProxyRoute::Http1 => HyperEgressMode::Http1Only,
+            ProxyRoute::Http2 => HyperEgressMode::Http2Only,
+        };
         let protocols = transmog_core::connection_policy::OutboundProtocolPolicy::default();
         let client = HyperOriginClient::with_connection_policy(
             &factory,
@@ -438,6 +469,10 @@ impl SystemReplayExecutor {
             )
         })?;
         Ok(Self {
+            h3: matches!(route, ProxyRoute::Http3).then(|| {
+                transmog_h3::H3OriginClient::new(factory, transmog_h3::H3TransportLimits::default())
+                    .with_outbound_protocols(protocols.clone())
+            }),
             client,
             mode,
             protocols,
@@ -460,8 +495,9 @@ impl ReplayExecutor for SystemReplayExecutor {
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
         let client = self.client.clone();
+        let h3 = self.h3.clone();
         let mode = self.mode;
-        Box::pin(async move {
+        bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
                 return Err(ReplayExecutionError::new("replay cancelled"));
             }
@@ -511,16 +547,32 @@ impl ReplayExecutor for SystemReplayExecutor {
                 }
             });
             let _producer = ReplayProducer(producer, cancellation);
-            let mut response = client
-                .execute_streaming(
-                    StreamingRequest { head, body },
-                    mode,
+            let peer_port = head.target.port;
+            let request = StreamingRequest { head, body };
+            let mut response = if let Some(h3) = h3 {
+                h3.execute_duplex_streaming(
+                    request,
+                    peer_port,
                     ReplayLimits::default().max_response_body_bytes,
                     NonZeroUsize::new(2).expect("nonzero"),
-                    Duration::from_secs(10),
                 )
                 .await
-                .map_err(|_| ReplayExecutionError::new("canonical upstream file replay failed"))?;
+                .map_err(|_| ReplayExecutionError::new("canonical upstream file replay failed"))?
+                .response
+            } else {
+                client
+                    .execute_streaming(
+                        request,
+                        mode,
+                        ReplayLimits::default().max_response_body_bytes,
+                        NonZeroUsize::new(2).expect("nonzero"),
+                        Duration::from_secs(10),
+                    )
+                    .await
+                    .map_err(|_| {
+                        ReplayExecutionError::new("canonical upstream file replay failed")
+                    })?
+            };
             let mut bytes = Vec::new();
             while let Some(frame) = response.body.recv().await {
                 if let BodyFrame::Data(data) =
@@ -544,8 +596,9 @@ impl ReplayExecutor for SystemReplayExecutor {
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
         let client = self.client.clone();
+        let h3 = self.h3.clone();
         let mode = self.mode;
-        Box::pin(async move {
+        bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
                 return Err(ReplayExecutionError::new("replay cancelled"));
             }
@@ -554,23 +607,36 @@ impl ReplayExecutor for SystemReplayExecutor {
             } else {
                 vec![BodyFrame::Data(request.body().clone())]
             };
-            let response = client
-                .execute(
-                    CanonicalRequest {
-                        head: RequestHead {
-                            method: request.method().to_owned(),
-                            target: request.target().clone(),
-                            headers: request.headers().clone(),
-                            source_version: HttpLegVersion::Http1,
-                        },
-                        body,
-                    },
-                    mode,
+            let request = CanonicalRequest {
+                head: RequestHead {
+                    method: request.method().to_owned(),
+                    target: request.target().clone(),
+                    headers: request.headers().clone(),
+                    source_version: HttpLegVersion::Http1,
+                },
+                body,
+            };
+            let response = if let Some(h3) = h3 {
+                let peer_port = request.head.target.port;
+                h3.execute(
+                    request,
+                    peer_port,
                     ReplayLimits::default().max_response_body_bytes,
-                    Duration::from_secs(10),
                 )
                 .await
-                .map_err(|_| ReplayExecutionError::new("canonical upstream replay failed"))?;
+                .map_err(|_| ReplayExecutionError::new("canonical upstream replay failed"))?
+                .response
+            } else {
+                client
+                    .execute(
+                        request,
+                        mode,
+                        ReplayLimits::default().max_response_body_bytes,
+                        Duration::from_secs(10),
+                    )
+                    .await
+                    .map_err(|_| ReplayExecutionError::new("canonical upstream replay failed"))?
+            };
             let mut bytes = Vec::new();
             for frame in response.body {
                 if let BodyFrame::Data(data) = frame {
@@ -585,6 +651,21 @@ impl ReplayExecutor for SystemReplayExecutor {
             })
         })
     }
+}
+
+fn bounded_replay<'a>(
+    cancellation: ExchangeCancellation,
+    execution: impl std::future::Future<Output = Result<ReplayResponse, ReplayExecutionError>>
+    + Send
+    + 'a,
+) -> BoxReplayFuture<'a> {
+    Box::pin(async move {
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(ReplayExecutionError::new("replay cancelled")),
+            result = tokio::time::timeout(Duration::from_secs(10), execution) => result.unwrap_or_else(|_| Err(ReplayExecutionError::new("replay timed out"))),
+        }
+    })
 }
 
 pub(crate) fn validate_stream_input(input: &ComposerRequest) -> Result<(), AppError> {

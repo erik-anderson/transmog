@@ -93,11 +93,15 @@ impl HyperUpstreamService {
                 return Err(contract_error("outbound caller pool capacity reached"));
             }
         }
-        let client = Arc::new(self.client.separate_pool().map_err(|error| {
-            let mut failure = map_hyper_error(&error);
-            failure.request_committed = false;
-            failure
-        })?);
+        let client = Arc::new(
+            self.client
+                .for_client_certificate_caller(format!("{key:?}"))
+                .map_err(|error| {
+                    let mut failure = map_hyper_error(&error);
+                    failure.request_committed = false;
+                    failure
+                })?,
+        );
         clients.insert(key.clone(), (Arc::clone(&client), Instant::now()));
         Ok(client)
     }

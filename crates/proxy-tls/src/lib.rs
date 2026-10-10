@@ -4,6 +4,10 @@ mod blocking_job;
 mod ca;
 /// Request-driven client identity selection and asynchronous signing.
 pub mod client_authentication;
+/// Connection and pool authorization for request-driven client certificates.
+pub mod client_connections;
+/// Bounded nonmodal certificate decisions owned by physical handshakes.
+pub mod client_prompts;
 mod downstream;
 mod evidence;
 mod resolver;

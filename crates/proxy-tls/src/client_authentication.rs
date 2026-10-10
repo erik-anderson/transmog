@@ -235,8 +235,23 @@ pub type ClientAuthenticationFuture =
 
 /// Embedding callback for actual verified server certificate requests.
 pub trait ClientAuthenticationResolver: Send + Sync + 'static {
-    /// Current authorization generation, used to retire old pools and stale choices.
+    /// Monotonically increasing authorization generation (initial zero is valid),
+    /// used to retire old pools and stale choices. Never reuse an earlier epoch.
     fn generation(&self) -> u64;
+    /// Whether this origin's choice is deterministic for the current generation.
+    /// Interactive or connection-specific embedding decisions must not enter a reusable pool.
+    fn permits_connection_reuse(&self, _host: &str, _port: u16) -> bool {
+        false
+    }
+    /// Confirms that the actual selected identity may enter this origin's reusable pool.
+    fn permits_selected_connection_reuse(
+        &self,
+        _host: &str,
+        _port: u16,
+        _identity: Option<&str>,
+    ) -> bool {
+        false
+    }
     /// Begins a decision. Dropping the future must unregister any pending UI request.
     fn resolve(
         &self,
@@ -346,6 +361,42 @@ impl PolicyClientAuthenticationResolver {
     }
 }
 impl ClientAuthenticationResolver for PolicyClientAuthenticationResolver {
+    fn permits_connection_reuse(&self, host: &str, port: u16) -> bool {
+        let state = self
+            .policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.1.matching_rule(host, port).map_or(
+            state.1.default == ClientCertificateDefault::NoCertificate,
+            |rule| match &rule.mode {
+                ClientCertificateAction::NoCertificate => true,
+                ClientCertificateAction::Automatic { selector } => selector.identity.is_some(),
+                ClientCertificateAction::Prompt => false,
+            },
+        )
+    }
+    fn permits_selected_connection_reuse(
+        &self,
+        host: &str,
+        port: u16,
+        identity: Option<&str>,
+    ) -> bool {
+        let state = self
+            .policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.1.matching_rule(host, port).map_or(
+            state.1.default == ClientCertificateDefault::NoCertificate && identity.is_none(),
+            |rule| match &rule.mode {
+                ClientCertificateAction::NoCertificate => identity.is_none(),
+                ClientCertificateAction::Automatic { selector } => selector
+                    .identity
+                    .as_deref()
+                    .is_some_and(|expected| identity == Some(expected)),
+                ClientCertificateAction::Prompt => false,
+            },
+        )
+    }
     fn generation(&self) -> u64 {
         self.policy
             .read()
@@ -502,6 +553,7 @@ enum SelectionState {
     Finished,
 }
 struct AttemptState {
+    selected_identity: Mutex<Option<String>>,
     resolver: Arc<dyn ClientAuthenticationResolver>,
     context: ClientAuthenticationContext,
     capture: crate::TlsCapture,
@@ -522,6 +574,31 @@ impl fmt::Debug for ClientAuthenticationAttempt {
     }
 }
 impl ClientAuthenticationAttempt {
+    /// Exact public source identity installed for this physical connection.
+    pub fn selected_identity(&self) -> Option<String> {
+        self.0
+            .selected_identity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    /// Whether the initial handshake is awaiting a decision or private operation.
+    pub fn is_waiting(&self) -> bool {
+        matches!(
+            *self
+                .0
+                .selection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            SelectionState::Waiting(_) | SelectionState::Polling
+        ) || self
+            .0
+            .signing_job
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|job| !job.is_finished())
+    }
     /// Creates an attempt. No resolver or inventory is queried until the peer asks.
     pub fn new(
         resolver: Arc<dyn ClientAuthenticationResolver>,
@@ -529,6 +606,7 @@ impl ClientAuthenticationAttempt {
         capture: crate::TlsCapture,
     ) -> Self {
         Self(Arc::new(AttemptState {
+            selected_identity: Mutex::new(None),
             resolver,
             context,
             capture,
@@ -540,13 +618,22 @@ impl ClientAuthenticationAttempt {
     }
     /// Registers the reactor's current task before polling the handshake driver.
     pub fn register(&self, waker: &Waker) {
+        if self.0.cancelled.load(Ordering::Acquire) {
+            return;
+        }
         let waker = waker.clone();
-        let previous = self
-            .0
-            .waker
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(waker);
+        let previous = {
+            let mut registration = self
+                .0
+                .waker
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if self.0.cancelled.load(Ordering::Acquire) {
+                Some(waker)
+            } else {
+                registration.replace(waker)
+            }
+        };
         drop(previous);
     }
     /// Invalidates a paused handshake and drops its owned resolver future.
@@ -586,7 +673,7 @@ impl ClientAuthenticationAttempt {
             .waker
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
+            .take();
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -865,6 +952,12 @@ impl ClientAuthenticationAttempt {
                 if transmog_tls_native::set_private_key_method(ssl, signer).is_err() {
                     return SelectionResult::Failed;
                 }
+                *self
+                    .0
+                    .selected_identity
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(credential.id.clone());
                 self.0.capture.authentication_detail(
                     "Client certificate",
                     "Selected; transmission not yet confirmed",
@@ -1045,6 +1138,35 @@ mod tests {
         ) -> ClientAuthenticationFuture {
             Box::pin(std::future::pending())
         }
+    }
+
+    #[test]
+    fn cancellation_releases_the_task_wake_handle_and_rejects_later_registration() {
+        struct Task(std::sync::atomic::AtomicUsize);
+        impl std::task::Wake for Task {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let task = Arc::new(Task(std::sync::atomic::AtomicUsize::new(0)));
+        let waker = Waker::from(task.clone());
+        let attempt = ClientAuthenticationAttempt::new(
+            Arc::new(PendingResolver),
+            ClientAuthenticationContext {
+                host: "localhost".into(),
+                port: 443,
+                caller: "test".into(),
+                generation: 1,
+            },
+            crate::TlsCapture::new(transmog_core::TlsEvidence::default()),
+        );
+        attempt.register(&waker);
+        assert_eq!(Arc::strong_count(&task), 3);
+        attempt.cancel("owner ended");
+        assert_eq!(task.0.load(Ordering::SeqCst), 1);
+        assert_eq!(Arc::strong_count(&task), 2);
+        attempt.register(&waker);
+        assert_eq!(Arc::strong_count(&task), 2);
     }
 
     #[tokio::test]

@@ -176,6 +176,18 @@ pub fn clear_client_credentials(ssl: &mut SslRef) {
     unsafe { boring_sys::SSL_certs_clear(ssl.as_ptr()) };
 }
 
+/// Clears a previously cached client session so the verified peer must ask again.
+/// # Errors
+/// Returns a native TLS configuration error.
+pub fn clear_client_session(ssl: &mut SslRef) -> Result<(), ErrorStack> {
+    // SAFETY: exclusive live SSL; null is the documented removal of its session.
+    if unsafe { boring_sys::SSL_set_session(ssl.as_ptr(), std::ptr::null_mut()) } == 1 {
+        Ok(())
+    } else {
+        Err(ErrorStack::get())
+    }
+}
+
 /// Checks the leaf's EKU, key usage and CA constraints for TLS client signing.
 pub fn permits_client_authentication(certificate: &X509Ref) -> bool {
     // SAFETY: borrowed certificate is live. BoringSSL may populate its internal

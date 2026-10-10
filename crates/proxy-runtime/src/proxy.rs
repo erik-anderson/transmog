@@ -144,6 +144,8 @@ impl Default for ProxyConfig {
 /// value so configuration cannot change after the listener starts.
 #[derive(Clone)]
 pub struct ProxyComponents {
+    authentication:
+        Option<Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>>,
     network_isolation: Arc<dyn NetworkIsolationPolicy>,
     hooks: InterceptorChainFactory,
     content: ContentPolicy,
@@ -173,6 +175,16 @@ impl std::fmt::Debug for ProxyComponents {
 }
 
 impl ProxyComponents {
+    /// Installs a controller for verified upstream certificate requests.
+    /// Caller isolation remains mandatory for these connections even if general isolation is off.
+    #[must_use]
+    pub fn with_client_certificate_resolver(
+        mut self,
+        resolver: Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>,
+    ) -> Self {
+        self.authentication = Some(resolver);
+        self
+    }
     /// Creates component configuration with explicit hooks and certificates.
     #[must_use]
     pub fn new(
@@ -181,6 +193,7 @@ impl ProxyComponents {
     ) -> Self {
         Self {
             hooks,
+            authentication: None,
             network_isolation: Arc::new(CallerNetworkIsolation),
             content: ContentPolicy::default(),
             observers: ObserverHub::default(),
@@ -418,6 +431,7 @@ impl ProxyControl {
             self.state.config.h3,
             self.state.config.happy_eyeballs,
             self.state.outbound_protocols.clone(),
+            self.state.authentication.clone(),
         )?);
         let mut active = self.state.upstream.write().await;
         if next.trust_generation <= active.trust_generation {
@@ -527,11 +541,13 @@ impl ProxyServer {
             config.h3,
             config.happy_eyeballs,
             outbound_protocols.clone(),
+            components.authentication.clone(),
         )?);
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
         let (websocket_evidence, _) = broadcast::channel(1_024);
         let state = Arc::new(ProxyState {
+            authentication: components.authentication,
             activity: Arc::new(ActivityTracker::default()),
             final_shutdown: ExchangeCancellation::new(),
             tunnels: Mutex::new(JoinSet::new()),
@@ -687,6 +703,8 @@ impl ProxyServer {
 }
 
 struct ProxyState {
+    authentication:
+        Option<Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>>,
     decrypt_https: AtomicBool,
     outbound_protocols: OutboundProtocolPolicy,
     network_isolation: Arc<dyn NetworkIsolationPolicy>,
@@ -747,9 +765,15 @@ impl UpstreamGeneration {
         h3_limits: H3TransportLimits,
         happy_eyeballs: HappyEyeballsConfig,
         protocols: OutboundProtocolPolicy,
+        authentication: Option<
+            Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>,
+        >,
     ) -> Result<Self, ProxyRuntimeError> {
         h3_limits.validate().map_err(H3OriginError::from)?;
-        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        let mut tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        if let Some(resolver) = authentication {
+            tls = tls.with_client_certificate_resolver(resolver, "proxy");
+        }
         let hyper =
             HyperOriginClient::with_connection_policy(&tls, happy_eyeballs, protocols.clone())?;
         let h3 = H3OriginClient::with_happy_eyeballs(tls.clone(), h3_limits, happy_eyeballs)
@@ -797,7 +821,11 @@ impl UpstreamGeneration {
             } else {
                 let client = Arc::new(Self {
                     hyper: HyperOriginClient::with_connection_policy(
-                        &self.partitions.tls,
+                        &self
+                            .partitions
+                            .tls
+                            .clone()
+                            .for_client_certificate_caller(format!("{key:?}")),
                         self.partitions.happy,
                         self.partitions.protocols.clone(),
                     )?,
@@ -1372,6 +1400,15 @@ impl ProxyState {
             key
         } else {
             NetworkIsolationKey::shared()
+        };
+        let isolation_key = if self.authentication.is_some() {
+            NetworkIsolationKey::new(format!(
+                "{isolation_key:?}/certificate:{:?}/connection:{}",
+                NetworkIsolationKey::for_caller(chain.context().metadata()),
+                chain.context().metadata().downstream_connection_id.0,
+            ))
+        } else {
+            isolation_key
         };
         let selected = self
             .upstream
@@ -3470,6 +3507,12 @@ impl ProxyState {
         {
             Ok(response) => Ok(response),
             Err(h3_error) => {
+                if matches!(
+                    h3_error,
+                    ProxyRuntimeError::H3Origin(H3OriginError::ClientAuthenticationFailed)
+                ) {
+                    return Err(h3_error);
+                }
                 self.alt_svc
                     .lock()
                     .await
@@ -6248,6 +6291,7 @@ mod tests {
             H3TransportLimits::default(),
             HappyEyeballsConfig::default(),
             OutboundProtocolPolicy::default(),
+            None,
         )
         .unwrap();
         let first = Arc::new(StdMutex::new(None));
