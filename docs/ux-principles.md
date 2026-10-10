@@ -233,6 +233,12 @@ trace. Save trace and explicit recording write files. Display the resolved limit
 storage location and installed RAM in Settings. Changing storage applies to new
 body boundaries without spilling previously retained memory bodies to disk.
 
+Retaining Traffic and recording captures apply flow control: a full event or
+storage queue slows requests until the consumer catches up. Queue pressure must
+not silently discard entries, body chunks or completion evidence. Keep queues
+bounded and report actual storage failures; configured retention budgets and
+explicit body limits still govern what data is kept.
+
 Request-body retention defaults to **25 MB** (25,000,000 bytes). **Unlimited**
 removes the per-request cap while preserving the selected circular buffer budget.
 Saved trace files have no byte-size or record-count ceiling; storage errors remain

@@ -85,17 +85,24 @@ subscriber lag, observer sequence gaps, stale events, eviction,
 bounded-detail loss and WebSocket evidence lag are monotonic and
 visible.
 
+The service observer waits for capacity in its bounded event queue. Storage
+pressure slows request processing instead of discarding authoritative evidence.
+Application-owned retention callbacks have no time deadline while waiting for
+storage; panic and cancellation containment remain active. Whole-catalog
+presentation queries select admission order first, then snapshot entries one at
+a time and format them outside the writer lock, allowing ingestion to continue.
+
 ## Dynamic capture
 
 `CaptureManager` owns one dedicated bounded writer queue. Starting capture uses
 create-new file semantics and never overwrites an artifact. Stopping appends the
 native seal and flushes. Starting twice and stopping while idle are typed.
 
-The service observer never performs file I/O. It updates the catalog and tries
-to enqueue the privacy-filtered event. Queue saturation, configured quota exhaustion
-and writer errors move capture to a visible failed state without changing proxy
-traffic or corrupting catalog state. The native append format retains a
-recoverable valid prefix after interruption. Capture policy independently
+The service observer never performs file I/O. It enqueues the privacy-filtered
+event and updates the catalog. A full writer queue waits for capacity off the
+async executor and propagates pressure back to requests. Configured quota
+exhaustion and writer errors move capture to a visible failed state. The native
+append format retains a recoverable valid prefix after interruption. Capture policy independently
 controls body-sample retention.
 
 ## Interactive control

@@ -4,7 +4,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use transmog_core::observe::{
@@ -69,28 +68,30 @@ impl SessionObserver {
 
 impl Observer for SessionObserver {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
-        let event = if self.redact_sensitive.load(Ordering::Acquire) {
-            event.redacted()
-        } else {
-            event
-        };
-        if let Some(control) = &self.control {
-            control.publish(&event);
-        }
-        self.capture.record(event.clone());
-        if self.retain_traffic {
-            self.catalog.apply(event);
-        }
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            let event = if self.redact_sensitive.load(Ordering::Acquire) {
+                event.redacted()
+            } else {
+                event
+            };
+            if let Some(control) = &self.control {
+                control.publish(&event);
+            }
+            self.capture.record(event.clone()).await;
+            if self.retain_traffic {
+                self.catalog.apply(event);
+            }
+            Ok(())
+        })
     }
 }
 
 /// Recommended bounded runtime registration for [`SessionObserver`].
 ///
 /// Full samples are requested because both catalog and capture apply their own
-/// explicit retention policy. Queue saturation drops the newest event and is
-/// observable through both runtime observer statistics and catalog sequence
-/// gaps.
+/// explicit retention policy. Saturation waits for capacity and slows requests
+/// instead of dropping start, body or terminal evidence. No callback deadline
+/// interrupts application-owned storage while it is catching up.
 pub fn session_observer_config(queue_capacity: NonZeroUsize) -> ObserverConfig {
     ObserverConfig {
         interest: ObservationInterest {
@@ -100,8 +101,8 @@ pub fn session_observer_config(queue_capacity: NonZeroUsize) -> ObserverConfig {
             response_body: BodyObservation::Full,
         },
         queue_capacity,
-        delivery: ObserverDeliveryPolicy::DropNewest,
-        callback_timeout: Duration::from_secs(2),
+        delivery: ObserverDeliveryPolicy::WaitForCapacity,
+        callback_timeout: None,
     }
 }
 
@@ -114,25 +115,35 @@ impl From<SessionObserver> for Arc<dyn Observer> {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, num::NonZeroUsize, sync::Arc, time::SystemTime};
+    use std::{
+        future::{Future, poll_fn},
+        net::SocketAddr,
+        num::NonZeroUsize,
+        sync::Arc,
+        task::Poll,
+        time::{Duration, SystemTime},
+    };
+
+    use tokio::sync::Notify;
 
     use transmog_core::{
         ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
-        intercept::{ExchangeId, ExchangeMetadata},
-        observe::{ObserverEvent, ObserverEventKind},
+        intercept::{
+            ExchangeFailure, ExchangeFailureKind, ExchangeId, ExchangeMetadata, ExchangeStage,
+        },
+        observe::{
+            ExchangeBoundary, ObservedBodyChunk, ObserverDelivery, ObserverEvent,
+            ObserverEventKind, ObserverHub,
+        },
     };
 
     use super::*;
     use crate::{CaptureStatus, SessionLimits};
 
-    #[tokio::test]
-    async fn observer_updates_catalog_while_capture_is_idle() {
-        let catalog = SessionCatalog::new(SessionLimits::default());
-        let capture = CaptureManager::new(NonZeroUsize::new(2).unwrap()).unwrap();
-        let observer = SessionObserver::new(catalog.clone(), capture.clone());
-        let metadata = Arc::new(ExchangeMetadata::from_session_at(
+    fn metadata(id: u128) -> Arc<ExchangeMetadata> {
+        Arc::new(ExchangeMetadata::from_session_at(
             &SessionMetadata {
-                session_id: SessionId(1),
+                session_id: SessionId(id),
                 downstream_connection_id: ConnectionId(2),
                 stream_id: StreamId(3),
                 client_addr: "127.0.0.1:1000".parse::<SocketAddr>().unwrap(),
@@ -150,7 +161,15 @@ mod tests {
                 query: None,
             },
             SystemTime::UNIX_EPOCH,
-        ));
+        ))
+    }
+
+    #[tokio::test]
+    async fn observer_updates_catalog_while_capture_is_idle() {
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        let capture = CaptureManager::new(NonZeroUsize::new(2).unwrap()).unwrap();
+        let observer = SessionObserver::new(catalog.clone(), capture.clone());
+        let metadata = metadata(1);
         observer
             .on_event(ObserverEvent {
                 exchange_id: ExchangeId(1),
@@ -163,6 +182,115 @@ mod tests {
         assert_eq!(capture.status(), CaptureStatus::Idle);
         capture.shutdown().await;
     }
+
+    struct GatedObserver {
+        observer: SessionObserver,
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+
+    impl Observer for GatedObserver {
+        fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+            Box::pin(async move {
+                if event.exchange_id == ExchangeId(0) && event.sequence == 1 {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.observer.on_event(event).await
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn saturation_preserves_admission_body_and_terminal_evidence() {
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        let capture = CaptureManager::new(NonZeroUsize::new(2).unwrap()).unwrap();
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let hub = ObserverHub::new(vec![(
+            Arc::new(GatedObserver {
+                observer: SessionObserver::new(catalog.clone(), capture.clone()),
+                entered: entered.clone(),
+                release: release.clone(),
+            }),
+            session_observer_config(NonZeroUsize::new(1).unwrap()),
+        )]);
+        let exchanges = (0..3)
+            .map(|id| hub.start_exchange(metadata(id)))
+            .collect::<Vec<_>>();
+        exchanges[0]
+            .emit(ObserverEventKind::ExchangeStarted {
+                metadata: metadata(0),
+            })
+            .await;
+        entered.notified().await;
+        // The worker is paused on the first event and the one-slot queue is full.
+        exchanges[1]
+            .emit(ObserverEventKind::ExchangeStarted {
+                metadata: metadata(1),
+            })
+            .await;
+        let mut admission = Box::pin(exchanges[2].emit(ObserverEventKind::ExchangeStarted {
+            metadata: metadata(2),
+        }));
+        let early = poll_fn(|cx| Poll::Ready(admission.as_mut().poll(cx))).await;
+        // Hold pressure beyond both the old 25 ms admission deadline and the
+        // two-second callback deadline. Healthy storage must retain the event.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        let late = if early.is_pending() {
+            poll_fn(|cx| Poll::Ready(admission.as_mut().poll(cx))).await
+        } else {
+            Poll::Pending
+        };
+        release.notify_one();
+        let waited = early.is_pending() && late.is_pending();
+        let admission = match early {
+            Poll::Ready(result) => result,
+            Poll::Pending => match late {
+                Poll::Ready(result) => result,
+                Poll::Pending => admission.await,
+            },
+        };
+        for (id, exchange) in exchanges.iter().enumerate() {
+            exchange
+                .emit(ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 4,
+                    sample: Some(bytes::Bytes::from_static(b"data")),
+                    truncated: false,
+                }))
+                .await;
+            exchange
+                .emit(ObserverEventKind::BodyCompleted {
+                    boundary: ExchangeBoundary::ClientRequest,
+                })
+                .await;
+            exchange
+                .failed(ExchangeFailure {
+                    metadata: metadata(id as u128),
+                    stage: ExchangeStage::Upstream,
+                    kind: ExchangeFailureKind::Upstream,
+                    request_committed: true,
+                    response_committed: false,
+                    message: "synthetic terminal failure".into(),
+                })
+                .await;
+        }
+        hub.shutdown().await;
+        capture.shutdown().await;
+        assert!(waited, "retention abandoned an event during slow storage");
+        assert_eq!(admission.deliveries(), [ObserverDelivery::Delivered]);
+        assert_eq!(hub.stats()[0].dropped, 0);
+        assert_eq!(catalog.counters().sequence_gaps, 0);
+        assert_eq!(catalog.counters().unknown_exchange_events, 0);
+        for id in 0..3 {
+            let session = catalog.get(ExchangeId(id)).unwrap();
+            assert_eq!(session.last_sequence, 4);
+            assert!(session.terminal.is_some());
+            assert_eq!(session.bodies[0].observed_bytes, 4);
+        }
+    }
+
     #[tokio::test]
     async fn file_only_observer_records_without_retaining_traffic() {
         let catalog = SessionCatalog::new(SessionLimits::default());

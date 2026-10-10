@@ -761,16 +761,24 @@ impl SessionCatalog {
 
     /// Projects all retained exchanges into lightweight owned read models.
     ///
-    /// The configured session limit bounds the result. The callback must not
-    /// re-enter this catalog; only one temporary snapshot is alive at a time.
+    /// Membership and admission order are selected at the start. Each entry is
+    /// snapshotted separately; entries removed before their turn are omitted.
+    /// Projection runs outside the writer lock, so formatting a large traffic
+    /// list cannot stall observer ingestion. Only one temporary snapshot is
+    /// alive at a time, and the callback may query this catalog.
     pub fn project_retained<T>(&self, mut project: impl FnMut(&SessionSnapshot) -> T) -> Vec<T> {
-        let state = self.lock_state();
-        state
-            .order
-            .values()
-            .filter(|id| !state.dismissed.contains(id))
-            .filter_map(|id| state.by_id.get(id))
-            .map(|session| project(&session.snapshot()))
+        let ids = {
+            let state = self.lock_state();
+            state
+                .order
+                .values()
+                .filter(|id| !state.dismissed.contains(id))
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        ids.into_iter()
+            .filter_map(|id| self.get(id))
+            .map(|snapshot| project(&snapshot))
             .collect()
     }
 
@@ -1144,6 +1152,42 @@ mod tests {
     #[test]
     fn default_policy_retains_metadata_only() {
         assert_eq!(SessionLimits::default().body_bytes_per_session, 0);
+    }
+
+    #[test]
+    fn slow_projection_allows_ingestion_and_preserves_initial_admission_order() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        start(&catalog, 1, "one.test");
+        start(&catalog, 2, "two.test");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let reader_catalog = catalog.clone();
+        let reader = thread::spawn(move || {
+            reader_catalog.project_retained(|snapshot| {
+                if snapshot.exchange_id == ExchangeId(1) {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }
+                (snapshot.exchange_id, snapshot.terminal.is_some())
+            })
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (applied_tx, applied_rx) = mpsc::channel();
+        let writer = thread::spawn(move || {
+            fail(&catalog, 2, 2);
+            start(&catalog, 3, "three.test");
+            applied_tx.send(()).unwrap();
+        });
+        let progressed = applied_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        // Always release the reader, even when testing an implementation that
+        // incorrectly holds the writer lock across the projection callback.
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let rows = reader.join().unwrap();
+        assert!(progressed, "traffic projection blocked observer ingestion");
+        assert_eq!(rows, [(ExchangeId(1), false), (ExchangeId(2), true)]);
     }
 
     #[test]

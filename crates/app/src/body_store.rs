@@ -10,7 +10,6 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
-    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -21,8 +20,8 @@ use transmog_core::{
     intercept::ExchangeId,
     observe::{
         BodyDirection, BodyObservation, BoxObserverFuture, ExchangeBoundary, ObservationInterest,
-        ObservedBodyChunk, Observer, ObserverConfig, ObserverDeliveryPolicy, ObserverEvent,
-        ObserverEventKind,
+        ObservedBodyChunk, Observer, ObserverConfig, ObserverDeliveryPolicy, ObserverError,
+        ObserverEvent, ObserverEventKind,
     },
 };
 
@@ -658,7 +657,7 @@ impl BodyStore {
     }
 
     /// Runtime observer settings for exact response bytes and optional request
-    /// bytes with a finite backpressure deadline.
+    /// bytes with flow control when the bounded storage queue fills.
     pub fn observer_config(&self) -> ObserverConfig {
         ObserverConfig {
             interest: ObservationInterest {
@@ -668,10 +667,8 @@ impl BodyStore {
                 response_body: BodyObservation::Full,
             },
             queue_capacity: self.inner.config.queue_capacity,
-            delivery: ObserverDeliveryPolicy::Backpressure {
-                timeout: Duration::from_millis(25),
-            },
-            callback_timeout: Duration::from_secs(2),
+            delivery: ObserverDeliveryPolicy::WaitForCapacity,
+            callback_timeout: None,
         }
     }
 
@@ -1015,19 +1012,20 @@ impl BodyStore {
         synchronized
     }
 
-    fn enqueue(&self, event: ObserverEvent) {
-        let event = if self.inner.redact_sensitive.load(Ordering::Acquire) {
+    fn prepare_event(&self, event: ObserverEvent) -> ObserverEvent {
+        if self.inner.redact_sensitive.load(Ordering::Acquire) {
             event.redacted()
         } else {
             event
-        };
-        if let Err(
-            mpsc::TrySendError::Full(WorkerCommand::Event(event))
-            | mpsc::TrySendError::Disconnected(WorkerCommand::Event(event)),
-        ) = self
+        }
+    }
+
+    #[cfg(test)]
+    fn enqueue(&self, event: ObserverEvent) {
+        if let Err(mpsc::SendError(WorkerCommand::Event(event))) = self
             .inner
             .sender
-            .try_send(WorkerCommand::Event(Box::new(event)))
+            .send(WorkerCommand::Event(Box::new(self.prepare_event(event))))
         {
             mark_dropped_event(&self.inner, &event);
         }
@@ -1043,8 +1041,27 @@ impl BodyStore {
 
 impl Observer for BodyStore {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
-        self.enqueue(event);
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            let command = WorkerCommand::Event(Box::new(self.prepare_event(event)));
+            let result = match self.inner.sender.try_send(command) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::TrySendError::Full(command)) => {
+                    let sender = self.inner.sender.clone();
+                    // Only saturated sends need a blocking-pool task. The
+                    // dedicated storage thread drains the finite queue while
+                    // the async observer and its producers wait for capacity.
+                    tokio::task::spawn_blocking(move || sender.send(command))
+                        .await
+                        .map_err(|_| ObserverError::new("body-store sender task failed"))?
+                }
+                Err(mpsc::TrySendError::Disconnected(command)) => Err(mpsc::SendError(command)),
+            };
+            if let Err(mpsc::SendError(WorkerCommand::Event(event))) = result {
+                mark_dropped_event(&self.inner, &event);
+                return Err(ObserverError::new("body-store worker disconnected"));
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1463,7 +1480,11 @@ fn mark_dropped_event(inner: &BodyStoreInner, event: &ObserverEvent) {
             .observed_bytes
             .saturating_add(u64::try_from(chunk.byte_count).unwrap_or(u64::MAX));
     }
-    mark_exchange_loss(&mut state, event.exchange_id, "body-store queue saturated");
+    mark_exchange_loss(
+        &mut state,
+        event.exchange_id,
+        "body-store worker disconnected",
+    );
 }
 
 fn mark_exchange_loss(state: &mut StoreState, exchange_id: ExchangeId, reason: &'static str) {
@@ -1547,7 +1568,12 @@ fn remove_record_file(record: &StoredBody) {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, time::SystemTime};
+    use std::{
+        future::poll_fn,
+        net::SocketAddr,
+        task::Poll,
+        time::{Duration, SystemTime},
+    };
 
     use bytes::Bytes;
     use transmog_core::{
@@ -1693,6 +1719,75 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    #[tokio::test]
+    async fn saturated_storage_queue_waits_and_retains_the_exact_complete_body() {
+        let root = root("flow-control");
+        let mut settings = config(root.clone(), 1024);
+        settings.queue_capacity = NonZeroUsize::new(1).unwrap();
+        let store = BodyStore::new(settings).unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let inner = store.inner.clone();
+        let blocker = std::thread::spawn(move || {
+            let _guard = inner.state.lock().unwrap();
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The first event is taken by the worker, which waits for the state
+        // lock. The second occupies the only queue slot.
+        store.enqueue(started(1));
+        store.enqueue(head(1, 2));
+        let mut delivery = store.on_event(chunk(1, 3, b"exact bytes"));
+        let early = poll_fn(|cx| Poll::Ready(delivery.as_mut().poll(cx))).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let late = if early.is_pending() {
+            poll_fn(|cx| Poll::Ready(delivery.as_mut().poll(cx))).await
+        } else {
+            Poll::Pending
+        };
+        release_tx.send(()).unwrap();
+        blocker.join().unwrap();
+        let waited = early.is_pending() && late.is_pending();
+        match early {
+            Poll::Ready(result) => result.unwrap(),
+            Poll::Pending => match late {
+                Poll::Ready(result) => result.unwrap(),
+                Poll::Pending => delivery.as_mut().await.unwrap(),
+            },
+        }
+        store
+            .on_event(event(
+                1,
+                4,
+                ObserverEventKind::BodyCompleted {
+                    boundary: ExchangeBoundary::UpstreamResponse,
+                },
+            ))
+            .await
+            .unwrap();
+        store.on_event(completed(1, 5)).await.unwrap();
+        store.flush().unwrap();
+        assert!(
+            waited,
+            "body retention discarded data instead of slowing the producer"
+        );
+        let body = &store.metadata(ExchangeId(1))[0];
+        assert_eq!(body.availability, BodyAvailability::Complete);
+        assert_eq!(body.retained_bytes, 11);
+        assert_eq!(store.counters().dropped_events, 0);
+        assert_eq!(
+            store
+                .read_range(ExchangeId(1), ExchangeBoundary::UpstreamResponse, 0, 11)
+                .unwrap()
+                .bytes,
+            b"exact bytes"
+        );
+        drop(delivery);
+        drop(store);
+        let _ = fs::remove_dir_all(root);
     }
 
     fn request_head(id: u128, sequence: u64) -> ObserverEvent {

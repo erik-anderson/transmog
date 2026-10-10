@@ -91,6 +91,9 @@ impl Default for ObservationInterest {
 /// Behavior when one observer's finite queue is full.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObserverDeliveryPolicy {
+    /// Wait for queue capacity until the worker closes, slowing the producer
+    /// instead of discarding evidence. Use for application-owned retention.
+    WaitForCapacity,
     /// Wait for queue capacity for no longer than the configured duration.
     Backpressure {
         /// Maximum time to wait for queue capacity.
@@ -111,8 +114,10 @@ pub struct ObserverConfig {
     pub queue_capacity: NonZeroUsize,
     /// Queue saturation behavior.
     pub delivery: ObserverDeliveryPolicy,
-    /// Maximum duration of one observer callback.
-    pub callback_timeout: Duration,
+    /// Maximum duration of one observer callback. None allows application-owned
+    /// storage to apply flow control without losing events during a slow write.
+    /// Panic and cancellation containment still apply without a deadline.
+    pub callback_timeout: Option<Duration>,
 }
 
 impl Default for ObserverConfig {
@@ -121,7 +126,7 @@ impl Default for ObserverConfig {
             interest: ObservationInterest::default(),
             queue_capacity: NonZeroUsize::new(256).expect("256 is nonzero"),
             delivery: ObserverDeliveryPolicy::DropNewest,
-            callback_timeout: Duration::from_secs(2),
+            callback_timeout: Some(Duration::from_secs(2)),
         }
     }
 }
@@ -408,6 +413,10 @@ impl ObserverDispatcher {
             return ObserverDelivery::Delivered;
         };
         let delivery = match self.delivery {
+            ObserverDeliveryPolicy::WaitForCapacity => match self.sender.send(event).await {
+                Ok(()) => ObserverDelivery::Delivered,
+                Err(_) => ObserverDelivery::AlreadyDisconnected,
+            },
             ObserverDeliveryPolicy::Backpressure { timeout: deadline } => {
                 match timeout(deadline, self.sender.send(event)).await {
                     Ok(Ok(())) => ObserverDelivery::Delivered,
@@ -513,15 +522,20 @@ impl Drop for ObserverDispatcher {
 async fn deliver_observer_event(
     observer: Arc<dyn Observer>,
     event: ObserverEvent,
-    callback_timeout: Duration,
+    callback_timeout: Option<Duration>,
     force_stop: &ExchangeCancellation,
 ) -> bool {
     let mut task = AbortOnDrop::new(tokio::spawn(async move { observer.on_event(event).await }));
     let outcome = tokio::select! {
-        outcome = timeout(callback_timeout, task.handle()) => Some(outcome),
+        outcome = async {
+            match callback_timeout {
+                Some(deadline) => timeout(deadline, task.handle()).await.ok(),
+                None => Some(task.handle().await),
+            }
+        } => outcome,
         () = force_stop.cancelled() => None,
     };
-    if matches!(outcome, Some(Ok(Ok(Ok(()))))) {
+    if matches!(outcome, Some(Ok(Ok(())))) {
         return true;
     }
     if !task.is_finished() {
@@ -1087,7 +1101,7 @@ mod tests {
                 ObserverConfig {
                     queue_capacity: NonZeroUsize::new(1).unwrap(),
                     delivery: policy,
-                    callback_timeout: Duration::from_millis(50),
+                    callback_timeout: Some(Duration::from_millis(50)),
                     ..ObserverConfig::default()
                 },
             )]);
@@ -1107,6 +1121,68 @@ mod tests {
             }
             hub.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn lossless_queue_wait_is_released_when_the_worker_is_cancelled() {
+        use std::{future::poll_fn, task::Poll};
+
+        let hub = ObserverHub::new(vec![(
+            Arc::new(WaitingObserver),
+            ObserverConfig {
+                queue_capacity: NonZeroUsize::new(1).unwrap(),
+                delivery: ObserverDeliveryPolicy::WaitForCapacity,
+                callback_timeout: None,
+                ..ObserverConfig::default()
+            },
+        )]);
+        let metadata = metadata();
+        let exchange = hub.start_exchange(metadata.clone());
+        exchange.emit(started(&metadata)).await;
+        while hub.dispatchers[0].sender.capacity() == 0 {
+            tokio::task::yield_now().await;
+        }
+        exchange.emit(started(&metadata)).await;
+        let mut delivery = Box::pin(exchange.emit(started(&metadata)));
+        assert!(poll_fn(|cx| Poll::Ready(delivery.as_mut().poll(cx).is_pending())).await);
+        hub.dispatchers[0].force_stop.cancel();
+        let result = timeout(Duration::from_secs(1), delivery).await.unwrap();
+        assert_eq!(result.deliveries(), [ObserverDelivery::AlreadyDisconnected]);
+        assert_eq!(hub.stats()[0].dropped, 0);
+        hub.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn callbacks_without_deadlines_still_contain_panics() {
+        struct PanickingObserver;
+        impl Observer for PanickingObserver {
+            fn on_event(&self, _: ObserverEvent) -> BoxObserverFuture<'_> {
+                panic!("synthetic callback construction panic");
+            }
+        }
+        let hub = ObserverHub::new(vec![(
+            Arc::new(PanickingObserver),
+            ObserverConfig {
+                delivery: ObserverDeliveryPolicy::WaitForCapacity,
+                callback_timeout: None,
+                ..ObserverConfig::default()
+            },
+        )]);
+        let metadata = metadata();
+        let exchange = hub.start_exchange(metadata.clone());
+        exchange.emit(started(&metadata)).await;
+        timeout(Duration::from_secs(1), async {
+            while !hub.stats()[0].disconnected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            exchange.emit(started(&metadata)).await.deliveries(),
+            [ObserverDelivery::AlreadyDisconnected]
+        );
+        hub.shutdown().await;
     }
 
     #[tokio::test]

@@ -22,7 +22,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use bytes::Bytes;
@@ -256,12 +255,10 @@ fn build_components(
         components = components.with_observers(ObserverHub::new(vec![(
             observer,
             ObserverConfig {
-                // A requested recording should absorb short writer bursts rather
-                // than immediately discard evidence when its bounded queue fills.
-                // Keep the same finite deadline as product body retention.
-                delivery: ObserverDeliveryPolicy::Backpressure {
-                    timeout: Duration::from_millis(25),
-                },
+                // Recording is flow control: a full bounded queue slows the
+                // producer until the writer can retain the next event.
+                delivery: ObserverDeliveryPolicy::WaitForCapacity,
+                callback_timeout: None,
                 interest: ObservationInterest {
                     lifecycle: true,
                     sensitive_headers: false,

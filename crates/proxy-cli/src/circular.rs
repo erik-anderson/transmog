@@ -5,7 +5,6 @@ use std::{
     num::NonZeroUsize,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use transmog_capture::{
     CaptureBodyRetention, CaptureEncoding, CaptureLimits, CapturePolicy, CaptureRecordKind,
@@ -113,10 +112,8 @@ impl CircularObserver {
                 response_body: BodyObservation::Full,
             },
             queue_capacity: NonZeroUsize::new(2048).unwrap_or(NonZeroUsize::MIN),
-            delivery: ObserverDeliveryPolicy::Backpressure {
-                timeout: Duration::from_millis(25),
-            },
-            callback_timeout: Duration::from_secs(10),
+            delivery: ObserverDeliveryPolicy::WaitForCapacity,
+            callback_timeout: None,
         }
     }
     pub(crate) fn check(&self) -> io::Result<()> {

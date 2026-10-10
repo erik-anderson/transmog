@@ -237,18 +237,27 @@ impl CaptureManager {
         .await;
     }
 
-    /// Enqueues one observer event without waiting for disk I/O.
-    pub(crate) fn record(&self, event: ObserverEvent) {
+    /// Enqueues one observer event, waiting for the bounded writer queue when
+    /// it is full. The wait runs off the async executor; saturation is flow
+    /// control rather than a failed capture or a missing record.
+    pub(crate) async fn record(&self, event: ObserverEvent) {
         if !matches!(self.status(), CaptureStatus::Active { .. }) {
             return;
         }
         match self.inner.sender.try_send(Command::Record(event)) {
             Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_)) => {
-                set_failure(
-                    &self.inner.status,
-                    "capture event queue saturated; artifact has a recoverable prefix",
-                );
+            Err(mpsc::TrySendError::Full(command)) => {
+                let sender = self.inner.sender.clone();
+                if run_command(move || {
+                    sender
+                        .send(command)
+                        .map_err(|_| CaptureServiceError::WorkerUnavailable)
+                })
+                .await
+                .is_err()
+                {
+                    set_failure(&self.inner.status, "capture worker disconnected");
+                }
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 set_failure(&self.inner.status, "capture worker disconnected");
@@ -573,6 +582,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn saturated_writer_queue_waits_instead_of_failing_the_recording() {
+        use std::{future::poll_fn, task::Poll, time::Duration};
+
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let manager = CaptureManager {
+            inner: Arc::new(CaptureInner {
+                sender,
+                status: Arc::new(Mutex::new(CaptureStatus::Active {
+                    path: temp_path(),
+                    bytes_written: 0,
+                })),
+                worker: Mutex::new(None),
+            }),
+        };
+        manager
+            .inner
+            .sender
+            .send(Command::Record(start_event(1)))
+            .unwrap();
+        let mut record = Box::pin(manager.record(start_event(2)));
+        let early = poll_fn(|cx| Poll::Ready(record.as_mut().poll(cx))).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let late = if early.is_pending() {
+            poll_fn(|cx| Poll::Ready(record.as_mut().poll(cx))).await
+        } else {
+            Poll::Pending
+        };
+        assert!(matches!(receiver.recv().unwrap(), Command::Record(event) if event.sequence == 1));
+        let waited = early.is_pending() && late.is_pending();
+        if waited {
+            record.as_mut().await;
+        }
+        drop(record);
+        assert!(waited, "recording failed instead of slowing the producer");
+        assert!(matches!(manager.status(), CaptureStatus::Active { .. }));
+        assert!(matches!(receiver.recv().unwrap(), Command::Record(event) if event.sequence == 2));
+        drop(receiver);
+    }
+
+    #[tokio::test]
     async fn capture_is_create_new_streaming_and_sealed() {
         let path = temp_path();
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
@@ -586,7 +635,7 @@ mod tests {
             })
             .await
             .unwrap();
-        manager.record(start_event(1));
+        manager.record(start_event(1)).await;
         let sealed = manager.stop().await.unwrap();
         assert_eq!(sealed.path, path);
         let recovered =
@@ -605,7 +654,7 @@ mod tests {
         let path = temp_path();
         let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
         manager.start(CaptureStart{encoding:transmog_capture::CaptureEncoding::default(),path:path.clone(),limits:CaptureLimits::default(),policy:CapturePolicy::default(),metadata:Some(serde_json::json!({"networkContext":{"platform":"fixture","output":"original machine"}}))}).await.unwrap();
-        manager.record(start_event(1));
+        manager.record(start_event(1)).await;
         let sealed = manager.stop().await.unwrap();
         let capture = recover(File::open(&sealed.path).unwrap(), CaptureLimits::default()).unwrap();
         assert!(capture.sealed);
@@ -683,7 +732,7 @@ mod tests {
             })
             .await
             .unwrap();
-        manager.record(start_event(1));
+        manager.record(start_event(1)).await;
         // A serialized start record exceeds the deliberately tiny record bound.
         while matches!(manager.status(), CaptureStatus::Active { .. }) {
             tokio::task::yield_now().await;

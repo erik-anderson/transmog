@@ -165,16 +165,20 @@ service; see [the product shell](product-shell.md).
 ## Resource and failure model
 
 `RuntimeLimits`, `HookLimits`, `ContentLimits`, and `H3TransportLimits` make
-every queue, buffer, deadline, connection count, and paused-callback count
-finite. A slow observer uses one declared delivery policy: bounded
-backpressure, drop-newest with a visible counter, or disconnect. Body bytes and
+every queue, buffer, connection count, and paused-callback count finite. A slow
+observer uses one declared delivery policy: wait for capacity, backpressure with
+a deadline, drop-newest with a visible counter, or disconnect. Desktop retention
+and CLI recordings wait for capacity throughout their bounded storage pipeline,
+slowing requests rather than losing evidence under pressure. Body bytes and
 credential fields are excluded or redacted by default for library observers.
 The desktop and guided CLI explicitly retain bodies and sensitive headers under
 product privacy preferences; diagnostics and support bundles remain redacted.
 
 Hook, route-selector, upstream-service, body-filter, and observer callbacks run
-behind panic, timeout, cancellation, and drop containment. Dropping a boundary
-future aborts its spawned task. A failing observer never changes traffic.
+behind panic, timeout, cancellation, and drop containment. Application-owned
+retention observers explicitly omit callback deadlines so a slow storage write
+does not disconnect retention. Dropping a boundary future aborts its spawned
+task. Observer failures do not rewrite traffic.
 Traffic-affecting failures are typed and fail closed; trust or certificate
 errors are never converted to success by a hook default.
 

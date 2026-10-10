@@ -89,6 +89,9 @@ body buffer must contain twice that amount for original/effective boundaries.
 Selected body metadata must be complete. The populated Traffic list must remain
 virtualized, select its offscreen final row with End, select every retained entry
 with Ctrl+A, and render without JavaScript exceptions.
+Exchange count and terminal state are independent gates: losing a start event
+can hide an entire exchange without a per-entry gap marker, and losing a final
+event can leave a completed request displayed as pending.
 The harness saves a native trace, checks its body completeness and integrity,
 then clears Traffic and verifies that both the catalog and retained-body count
 return to zero. Small smoke captures retain the normal Clear all Undo until
@@ -101,6 +104,17 @@ hosts whose resolved budget cannot hold both observed boundaries of the entire
 workload. Entry retention remains unlimited in both modes. Allow several GiB of
 free disk space for live bodies and saved captures; keep more space for repeated
 runs. Bodies are deterministic pseudo-random blocks, not zero-filled fixtures.
+
+Retention and recording use bounded queues that wait for capacity. Under storage
+pressure, requests slow down instead of dropping start events, body chunks or
+completion events. Traffic-list projection releases the catalog writer lock
+between snapshots and formats rows outside that lock. The same zero-loss gates
+apply to both storage modes; reducing concurrency or increasing queue capacity
+is not a fix for lost evidence. Small regression tests cover saturated event,
+body and recording queues, slow list projection, and cancellation/panic handling.
+Exercise both desktop storage modes when changing this pipeline. The memory
+path can produce events faster than the disk path, exposing pressure that a
+passing disk run does not rule out.
 
 Each unique directory under ignored `artifacts/load/` contains `report.json`,
 `report.md`, per-target results and logs, one-second process-tree memory samples,
