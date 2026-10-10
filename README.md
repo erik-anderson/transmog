@@ -67,8 +67,8 @@ The repository currently builds the application from source. Install the
 checked-in application:
 
 ```powershell
-pwsh ./scripts/dev-env.ps1 -Check
-pwsh ./scripts/build-desktop.ps1 -Configuration Debug -LockedDependencies
+python ./scripts/dev-env.py --check
+python ./scripts/build-desktop.py --configuration Debug --locked-dependencies
 . ./scripts/dev-env.ps1
 cargo run --locked -p transmog-desktop
 ```
@@ -202,17 +202,21 @@ code, `llvm-lib` archives it, Ninja executes native builds, and the Windows SDK
 provides platform libraries and the linker. BoringSSL additionally requires
 CMake and NASM.
 
+Python 3.11 or newer is required for local development. Portable repository
+commands run on Windows, Linux, and macOS; PowerShell remains available for
+interactive conveniences and Windows integration checks.
+
 Run the complete local gate with:
 
 ```powershell
-pwsh ./scripts/test.ps1
+python ./scripts/test.py
 ```
 
 The opt-in interoperability suite drives the real proxy with standalone curl,
 Chromium, and digest-pinned Nginx, Apache, and Caddy endpoints:
 
 ```powershell
-pwsh ./scripts/test-interop.ps1
+python ./scripts/test-interop.py
 ```
 
 The Linux gate runs the complete workspace test matrix and a release build as
@@ -220,7 +224,7 @@ Linux binaries in a pinned Debian container. On Windows, Docker Desktop executes
 that container on its WSL2 Linux kernel:
 
 ```powershell
-pwsh ./scripts/test-linux-docker.ps1
+python ./scripts/test-linux-docker.py
 ```
 
 This provides strong portability coverage for the Rust engine and headless

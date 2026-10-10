@@ -4,6 +4,20 @@ Transmog compiles BoringSSL, quiche, and the bundled zstd C sources from
 source. A Rust-only installation is therefore insufficient even for
 `cargo check --workspace`.
 
+Python 3.11 or newer is mandatory on every development platform, including agent
+environments. The portable build, test, Docker, and fuzz runners use only its
+standard library. Verify that `python --version` launches an installed interpreter;
+on systems where the command is named `python3`, use that name. PowerShell
+convenience wrappers accept an explicit interpreter through `TRANSMOG_PYTHON`.
+Windows certificate-store, installer, signing, and WebView2 integration checks
+retain PowerShell where they exercise Windows behavior.
+
+`python scripts/dev-env.py --check` checks the native toolchain. Python runners
+configure their child processes without changing the parent shell. For a direct
+command, use `python scripts/dev-env.py --run cargo check --workspace --locked`.
+Dot-sourcing `scripts/dev-env.ps1` remains convenient for interactive PowerShell;
+it obtains the same native environment from Python.
+
 ## Windows
 
 The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all
@@ -44,8 +58,8 @@ also supported.
 After installing prerequisites, open a new PowerShell and run:
 
 ```powershell
-pwsh ./scripts/dev-env.ps1 -Check
-pwsh ./scripts/test.ps1
+python ./scripts/dev-env.py --check
+python ./scripts/test.py
 ```
 
 `dev-env.ps1` prepends repository-local tools when present, selects `clang-cl`,

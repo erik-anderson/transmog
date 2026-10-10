@@ -6,11 +6,12 @@ per-run evidence, not maintained test-status reports.
 
 ## Repository gate
 
-On Windows, enter the LLVM/Ninja environment and run:
+Python 3.11 or newer is mandatory. The runner configures native tools for its
+child processes; on Windows this is the LLVM/Ninja environment. Run:
 
 ```powershell
-. ./scripts/dev-env.ps1
-./scripts/test.ps1
+python ./scripts/dev-env.py --check
+python ./scripts/test.py
 ```
 
 The gate checks formatting, strict workspace Clippy, locked tests, dependency

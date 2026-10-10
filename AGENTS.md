@@ -1,5 +1,14 @@
 # Repository guidance
 
+Python 3.11 or newer is mandatory for local development and agent verification.
+Use the portable Python commands in `scripts`; human-facing PowerShell wrappers
+are conveniences, while Windows integration checks may remain PowerShell.
+Run `python scripts/dev-env.py --check` before building. To run Cargo with the
+configured native tools, use `python scripts/dev-env.py --run cargo ...` or
+dot-source `scripts/dev-env.ps1` in PowerShell. `TRANSMOG_PYTHON` can select an
+explicit interpreter for wrappers. Do not rely on a Windows Store alias that
+cannot execute Python.
+
 Before changing desktop behavior visible to a user, read
 [the UX design principles](docs/ux-principles.md). This includes UI changes and
 changes to commands, defaults, validation, status messages, or asynchronous

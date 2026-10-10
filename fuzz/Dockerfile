@@ -12,6 +12,7 @@ RUN apt-get update \
         ninja-build \
         perl \
         pkg-config \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN rustup toolchain install nightly-2026-10-01 --profile minimal \

@@ -1,0 +1,21 @@
+"""Run the complete portable local validation gate."""
+import argparse
+import sys
+from repo_tools import ROOT, command, development_environment, main_guard
+
+
+def main():
+    argparse.ArgumentParser(description=__doc__).parse_args()
+    env = development_environment()
+    command([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests"], env=env)
+    command(["cargo", "fmt", "--all", "--", "--check"], env=env)
+    command(["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], env=env)
+    command(["cargo", "test", "--workspace", "--all-features", "--locked"], env=env)
+    command(["cargo", "deny", "check"], env=env)
+    command(["cargo", "deny", "--manifest-path", "fuzz/Cargo.toml", "--config", "fuzz/deny.toml", "--locked", "check"], env=env)
+    command([sys.executable, ROOT / "scripts/check-crypto-graph.py"], env=env)
+    command([sys.executable, ROOT / "scripts/generate-supply-chain-artifacts.py"], env=env)
+
+
+if __name__ == "__main__":
+    main_guard(main)

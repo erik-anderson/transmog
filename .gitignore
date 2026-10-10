@@ -27,3 +27,4 @@ apps/desktop/binaries/*.exe
 verification/private/
 verification/live-report.json
 verification/live-report.md
+**/__pycache__/
