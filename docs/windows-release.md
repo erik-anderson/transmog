@@ -11,13 +11,19 @@ release checksums, signature evidence and provenance. Qualification verifies its
 version command and confirms that the app installer contains no CLI executable.
 Local packaging returns both the installer and the standalone CLI paths.
 
-The interactive installer offers **Register Transmog to open .saz files**. This
-adds a current-user Open with/default-app registration and establishes a default
+The interactive installer offers independent **Use Transmog** choices for TMCap,
+SAZ and HAR, with TMCap checked on a first install. These add current-user
+Open with/default-app registrations and establish a default
 only when none exists. Windows' existing default remains authoritative; users
 can select Transmog through Open with or default-app settings. Silent installs
-preserve the saved registration choice; `/SAZ=1` or `/SAZ=0` sets it explicitly.
+preserve saved choices; `/TMCAP=1`, `/SAZ=1`, or `/HAR=1` enables each handler,
+and the corresponding `=0` disables it.
 Updates preserve registration, and uninstall removes only registrations owned by
-that installation's exact command path.
+that installation's exact command path. Interactive and silent upgrades install
+in place, running the old executable's update cleanup before replacing files.
+Preferences, certificate identity, and saved captures remain available; a failed
+cleanup stops installation before any application files are replaced. Disallowed
+downgrades are rejected in every install mode.
 
 ## Crash investigation symbols
 

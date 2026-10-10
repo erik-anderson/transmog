@@ -145,7 +145,10 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri packaging failed with exit code $LASTEXITCODE"
     }
-    if (-not $BuildOnly -and $UnsignedDevelopment) { & (Join-Path $PSScriptRoot 'test-saz-association.ps1') }
+    if (-not $BuildOnly -and $UnsignedDevelopment) {
+        & (Join-Path $PSScriptRoot 'test-capture-associations.ps1')
+        & (Join-Path $PSScriptRoot 'test-capture-upgrade.ps1')
+    }
 } finally {
     $env:CARGO_NET_OFFLINE = $priorCargoOffline
     $env:TEMP = $priorTemp

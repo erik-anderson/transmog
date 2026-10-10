@@ -223,9 +223,12 @@ Show collector, machine, purpose and time for newly collected network context;
 older context stays explicitly original without invented provenance. Report
 incomplete bodies and keep existing destination files intact when a save fails.
 
-The installer offers SAZ registration as an explicit choice. Preserve an existing
-Windows default, explain how Windows may ask for a default-app choice, and remove
-only registrations owned by the uninstalling executable's exact path.
+The installer offers independent TMCap, SAZ and HAR handler choices, with TMCap
+checked on a first install. Preserve saved choices on updates and existing Windows
+defaults, explain how Windows may ask for a default-app choice, and remove only
+registrations owned by the uninstalling executable's exact path. Install upgrades
+over the existing version after proxy and capture cleanup, preserving preferences
+and saved captures; do not suggest uninstalling first.
 
 Turning the proxy off restores the host proxy settings first. Show **Finishing
 requests** while admitted requests, TLS handshakes or upgraded connections

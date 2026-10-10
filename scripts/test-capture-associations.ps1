@@ -6,7 +6,7 @@ if (-not (Test-Path -LiteralPath $MakensisPath -PathType Leaf)) { throw 'Compile
 & (Join-Path $PSScriptRoot 'test-release-uninstall.ps1') -MakensisPath $MakensisPath
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $id = [Guid]::NewGuid().ToString('N')
-$fixtureRoot = Join-Path $repositoryRoot "artifacts\saz-association-$id"
+$fixtureRoot = Join-Path $repositoryRoot "artifacts\capture-associations-$id"
 $registryRoot = "Software\TransmogAssociationTests\$id"
 $registryPath = "HKCU:\$registryRoot"
 if (Test-Path -LiteralPath $registryPath) { throw 'Association test namespace already exists.' }
@@ -25,45 +25,68 @@ RequestExecutionLevel user
 !include "__INCLUDE__"
 Var PassiveMode
 Var UpdateMode
-Name "Transmog SAZ association verification"
+Name "Transmog capture handler verification"
 OutFile "__OUTPUT__"
 InstallDir "C:\Transmog association fixture"
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro TRANSMOG_SAZ_PAGE
+!insertmacro TRANSMOG_ASSOC_PAGE
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 Function .onInit
-  !insertmacro TRANSMOG_SAZ_INIT
+  !insertmacro TRANSMOG_ASSOC_INIT
 FunctionEnd
 Section
+  WriteINIStr "__REPORT__" "Checks" "InitialChoices" "$TmcapRegistrationChoice,$SazRegistrationChoice,$HarRegistrationChoice"
   WriteRegStr HKCU "${TRANSMOG_CLASSES_KEY}\.saz" "" "Other.Saz"
+  WriteRegStr HKCU "${TRANSMOG_CLASSES_KEY}\.har" "" "Other.Har"
   StrCpy $SazRegistrationChoice 1
-  !insertmacro TRANSMOG_SAZ_INSTALL
+  StrCpy $HarRegistrationChoice 1
+  !insertmacro TRANSMOG_ASSOC_INSTALL
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\.saz" ""
   WriteINIStr "__REPORT__" "Checks" "ExistingDefault" "$0"
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\Transmog.Saz\shell\open\command" ""
   WriteINIStr "__REPORT__" "Checks" "OpenCommand" "$0"
   ReadRegStr $0 HKCU "${TRANSMOG_REGISTERED_APPS_KEY}" "Transmog"
   WriteINIStr "__REPORT__" "Checks" "RegisteredApp" "$0"
-  !insertmacro TRANSMOG_SAZ_REMOVE
+  ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\.tmcap" ""
+  WriteINIStr "__REPORT__" "Checks" "TmcapDefault" "$0"
+  ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\Transmog.Har\shell\open\command" ""
+  WriteINIStr "__REPORT__" "Checks" "HarCommand" "$0"
+  !insertmacro TRANSMOG_ASSOC_INIT
+  WriteINIStr "__REPORT__" "Checks" "SavedChoices" "$TmcapRegistrationChoice,$SazRegistrationChoice,$HarRegistrationChoice"
+  StrCpy $SazRegistrationChoice 0
+  !insertmacro TRANSMOG_ASSOC_INSTALL
+  ReadRegStr $0 HKCU "${MANUPRODUCTKEY}\Capabilities\FileAssociations" ".saz"
+  ReadRegStr $1 HKCU "${MANUPRODUCTKEY}\Capabilities\FileAssociations" ".tmcap"
+  ReadRegStr $2 HKCU "${MANUPRODUCTKEY}\Capabilities\FileAssociations" ".har"
+  WriteINIStr "__REPORT__" "Checks" "IndependentChoices" "$0,$1,$2"
+  StrCpy $SazRegistrationChoice 1
+  !insertmacro TRANSMOG_ASSOC_INSTALL
+  !insertmacro TRANSMOG_ASSOC_REMOVE
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\.saz" ""
   WriteINIStr "__REPORT__" "Checks" "DefaultAfterRemoval" "$0"
+  ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\.tmcap" ""
+  WriteINIStr "__REPORT__" "Checks" "TmcapDefaultAfterRemoval" "$0"
+  ReadRegStr $0 HKCU "${TRANSMOG_REGISTERED_APPS_KEY}" "Transmog"
+  WriteINIStr "__REPORT__" "Checks" "RegisteredAppAfterRemoval" "$0"
   ClearErrors
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\Transmog.Saz\shell\open\command" ""
   ${If} ${Errors}
     WriteINIStr "__REPORT__" "Checks" "OwnedRegistrationRemoved" "true"
   ${EndIf}
   DeleteRegValue HKCU "${TRANSMOG_CLASSES_KEY}\.saz" ""
-  !insertmacro TRANSMOG_SAZ_INSTALL
+  !insertmacro TRANSMOG_ASSOC_INSTALL
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\.saz" ""
   WriteINIStr "__REPORT__" "Checks" "UnassignedDefault" "$0"
   WriteRegStr HKCU "${TRANSMOG_CLASSES_KEY}\Transmog.Saz\shell\open\command" "" "another installation"
-  !insertmacro TRANSMOG_SAZ_REMOVE
+  !insertmacro TRANSMOG_ASSOC_REMOVE
   ReadRegStr $0 HKCU "${TRANSMOG_CLASSES_KEY}\Transmog.Saz\shell\open\command" ""
   WriteINIStr "__REPORT__" "Checks" "AnotherInstallationPreserved" "$0"
+  ReadRegStr $0 HKCU "${MANUPRODUCTKEY}\Capabilities\FileAssociations" ".saz"
+  WriteINIStr "__REPORT__" "Checks" "AnotherCapabilityPreserved" "$0"
 SectionEnd
 '@
-$source = $source.Replace('__ROOT__', $registryRoot).Replace('__INCLUDE__', (Join-Path $repositoryRoot 'apps\desktop\windows\saz-association.nsh')).Replace('__OUTPUT__', (Join-Path $fixtureRoot 'association-fixture.exe')).Replace('__REPORT__', (Join-Path $fixtureRoot 'report.ini'))
+$source = $source.Replace('__ROOT__', $registryRoot).Replace('__INCLUDE__', (Join-Path $repositoryRoot 'apps\desktop\windows\capture-associations.nsh')).Replace('__OUTPUT__', (Join-Path $fixtureRoot 'association-fixture.exe')).Replace('__REPORT__', (Join-Path $fixtureRoot 'report.ini'))
 $sourcePath = Join-Path $fixtureRoot 'fixture.nsi'
 $source | Set-Content -LiteralPath $sourcePath -Encoding utf8NoBOM
 try {
@@ -71,12 +94,13 @@ try {
     $process = Start-Process -FilePath (Join-Path $fixtureRoot 'association-fixture.exe') -ArgumentList '/S' -PassThru -WindowStyle Hidden
     if (-not $process.WaitForExit(30000)) { Stop-Process -Id $process.Id -Force; throw 'Association fixture timed out.' }
     if ($process.ExitCode -ne 0) { throw 'Association fixture failed.' }
-    $report = Get-Content -Raw -LiteralPath (Join-Path $fixtureRoot 'report.ini')
-    foreach ($expected in @('ExistingDefault=Other.Saz', 'DefaultAfterRemoval=Other.Saz', 'OwnedRegistrationRemoved=true', 'UnassignedDefault=Transmog.Saz', 'AnotherInstallationPreserved=another installation')) {
-        if (-not $report.Contains($expected)) { throw "Association behavior failed: $expected" }
+    $reportLines = Get-Content -LiteralPath (Join-Path $fixtureRoot 'report.ini')
+    $report = $reportLines -join "`n"
+    foreach ($expected in @('InitialChoices=1,0,0', 'SavedChoices=1,1,1', 'IndependentChoices=,Transmog.Tmcap,Transmog.Har', 'TmcapDefault=Transmog.Tmcap', 'TmcapDefaultAfterRemoval=', 'RegisteredAppAfterRemoval=', 'ExistingDefault=Other.Saz', 'DefaultAfterRemoval=Other.Saz', 'OwnedRegistrationRemoved=true', 'UnassignedDefault=Transmog.Saz', 'AnotherInstallationPreserved=another installation', 'AnotherCapabilityPreserved=Transmog.Saz')) {
+        if ($expected -cnotin $reportLines) { throw "Association behavior failed: $expected" }
     }
     if (-not $report.Contains('transmog.exe') -or -not $report.Contains('RegisteredApp=' + $registryRoot + '\Product\Capabilities')) { throw 'SAZ command or default-app registration is missing.' }
-    Write-Host 'SAZ association checks passed in an isolated registry namespace.'
+    Write-Host 'Capture handler checks passed in an isolated registry namespace.'
 } finally {
     # This exact generated key is wholly owned by the fixture. Real Classes,
     # RegisteredApplications and Explorer UserChoice are never mutated.

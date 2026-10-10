@@ -1,4 +1,4 @@
-; Tauri 2.12.1 template with an optional SAZ registration page; standard SemVer handling.
+; Tauri 2.12.1 template with capture handlers and in-place updates; standard SemVer handling.
 Unicode true
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
@@ -75,7 +75,7 @@ ${StrLoc}
 Var PassiveMode
 Var UpdateMode
 Var NoShortcutMode
-Var WixMode
+
 Var OldMainBinaryName
 
 Name "${PRODUCTNAME}"
@@ -183,214 +183,55 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !endif
 
-; 4. Custom page to ask user if he wants to reinstall/uninstall
-;    only if a previous installation was detected
-Var ReinstallPageCheck
-Page custom PageReinstall PageLeaveReinstall
-Function PageReinstall
-  ; Uninstall previous WiX installation if exists.
-  ;
-  ; A WiX installer stores the installation info in registry
-  ; using a UUID and so we have to loop through all keys under
-  ; `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`
-  ; and check if `DisplayName` and `Publisher` keys match ${PRODUCTNAME} and ${MANUFACTURER}
-  ;
-  ; This has a potential issue that there maybe another installation that matches
-  ; our ${PRODUCTNAME} and ${MANUFACTURER} but wasn't installed by our WiX installer,
-  ; however, this should be fine since the user will have to confirm the uninstallation
-  ; and they can chose to abort it if doesn't make sense.
-  StrCpy $0 0
-  wix_loop:
-    EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall" $0
-    StrCmp $1 "" wix_loop_done ; Exit loop if there is no more keys to loop on
-    IntOp $0 $0 + 1
-    ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "DisplayName"
-    ReadRegStr $R1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "Publisher"
-    StrCmp "$R0$R1" "${PRODUCTNAME}${MANUFACTURER}" 0 wix_loop
-    ReadRegStr $R0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1" "UninstallString"
-    ${StrCase} $R1 $R0 "L"
-    ${StrLoc} $R0 $R1 "msiexec" ">"
-    StrCmp $R0 0 0 wix_loop_done
-    StrCpy $WixMode 1
-    StrCpy $R6 "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$1"
-    Goto compare_version
-  wix_loop_done:
-
-  ; Check if there is an existing installation, if not, abort the reinstall page
-  ReadRegStr $R0 SHCTX "${UNINSTKEY}" ""
-  ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-  ${IfThen} "$R0$R1" == "" ${|} Abort ${|}
-
-  ; Compare this installar version with the existing installation
-  ; and modify the messages presented to the user accordingly
-  compare_version:
-  StrCpy $R4 "$(older)"
-  ${If} $WixMode = 1
-    ReadRegStr $R0 HKLM "$R6" "DisplayVersion"
-  ${Else}
-    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+; 4. Existing versions are updated in place. Downgrades remain explicit policy.
+Var ExistingInstallation
+Var ExistingVersion
+Page custom PageReinstall
+Function DetectExistingInstallation
+  StrCpy $ExistingInstallation 0
+  ReadRegStr $ExistingVersion SHCTX "${UNINSTKEY}" "DisplayVersion"
+  ReadRegStr $0 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} "$ExistingVersion$0" == ""
+    Return
   ${EndIf}
-  ${IfThen} $R0 == "" ${|} StrCpy $R4 "$(unknown)" ${|}
-
-  nsis_tauri_utils::SemverCompare "${VERSION}" $R0
-  Pop $R0
-  ; Reinstalling the same version
-  ${If} $R0 = 0
-    StrCpy $R1 "$(alreadyInstalledLong)"
-    StrCpy $R2 "$(addOrReinstall)"
-    StrCpy $R3 "$(uninstallApp)"
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
-  ; Upgrading
-  ${ElseIf} $R0 = 1
-    StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
-    StrCpy $R2 "$(uninstallBeforeInstalling)"
-    StrCpy $R3 "$(dontUninstall)"
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
-  ; Downgrading
-  ${ElseIf} $R0 = -1
-    StrCpy $R1 "$(newerVersionInstalled)"
-    StrCpy $R2 "$(uninstallBeforeInstalling)"
-    !if "${ALLOWDOWNGRADES}" == "true"
-      StrCpy $R3 "$(dontUninstall)"
-    !else
-      StrCpy $R3 "$(dontUninstallDowngrade)"
+  StrCpy $ExistingInstallation 1
+  ${If} $ExistingVersion != ""
+    nsis_tauri_utils::SemverCompare "${VERSION}" $ExistingVersion
+    Pop $0
+    !if "${ALLOWDOWNGRADES}" == "false"
+      ${If} $0 = -1
+        ${IfNot} ${Silent}
+          MessageBox MB_ICONSTOP|MB_OK "A newer version of Transmog is installed. Install that version or a newer release."
+        ${EndIf}
+        SetErrorLevel 2
+        Abort
+      ${EndIf}
     !endif
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
-  ${Else}
+  ${EndIf}
+FunctionEnd
+Function PageReinstall
+  ${If} $ExistingInstallation <> 1
+  ${OrIf} $PassiveMode = 1
+  ${OrIf} $UpdateMode = 1
     Abort
   ${EndIf}
-
-  ; Skip showing the page if passive
-  ;
-  ; Note that we don't call this earlier at the beginning
-  ; of this function because we need to populate some variables
-  ; related to current installed version if detected and whether
-  ; we are downgrading or not.
-  ${If} $PassiveMode = 1
-    Call PageLeaveReinstall
-  ${Else}
-    nsDialogs::Create 1018
-    Pop $R4
-    ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
-
-    ${NSD_CreateLabel} 0 0 100% 24u $R1
-    Pop $R1
-
-    ${NSD_CreateRadioButton} 30u 50u -30u 8u $R2
-    Pop $R2
-    ${NSD_OnClick} $R2 PageReinstallUpdateSelection
-
-    ${NSD_CreateRadioButton} 30u 70u -30u 8u $R3
-    Pop $R3
-    ; Disable this radio button if downgrading and downgrades are disabled
-    !if "${ALLOWDOWNGRADES}" == "false"
-      ${IfThen} $R0 = -1 ${|} EnableWindow $R3 0 ${|}
-    !endif
-    ${NSD_OnClick} $R3 PageReinstallUpdateSelection
-
-    ; Check the first radio button if this the first time
-    ; we enter this page or if the second button wasn't
-    ; selected the last time we were on this page
-    ${If} $ReinstallPageCheck <> 2
-      SendMessage $R2 ${BM_SETCHECK} ${BST_CHECKED} 0
-    ${Else}
-      SendMessage $R3 ${BM_SETCHECK} ${BST_CHECKED} 0
-    ${EndIf}
-
-    ${NSD_SetFocus} $R2
-    nsDialogs::Show
+  !insertmacro MUI_HEADER_TEXT "Update Transmog" "Install over the existing version."
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
   ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 36u "Transmog $ExistingVersion is installed. Continue to install version ${VERSION} in place."
+  Pop $0
+  ${NSD_CreateLabel} 0 46u 100% 48u "Your preferences and saved captures are preserved. Close Transmog before continuing so proxy and capture work can finish."
+  Pop $0
+  nsDialogs::Show
 FunctionEnd
-Function PageReinstallUpdateSelection
-  ${NSD_GetState} $R2 $R1
-  ${If} $R1 == ${BST_CHECKED}
-    StrCpy $ReinstallPageCheck 1
-  ${Else}
-    StrCpy $ReinstallPageCheck 2
-  ${EndIf}
-FunctionEnd
-Function PageLeaveReinstall
-  ${NSD_GetState} $R2 $R1
-
-  ; If migrating from Wix, always uninstall
-  ${If} $WixMode = 1
-    Goto reinst_uninstall
-  ${EndIf}
-
-  ; In update mode, always proceeds without uninstalling
-  ${If} $UpdateMode = 1
-    Goto reinst_done
-  ${EndIf}
-
-  ; $R0 holds whether same(0)/upgrading(1)/downgrading(-1) version
-  ; $R1 holds the radio buttons state:
-  ;   1 => first choice was selected
-  ;   0 => second choice was selected
-  ${If} $R0 = 0 ; Same version, proceed
-    ${If} $R1 = 1              ; User chose to add/reinstall
-      Goto reinst_done
-    ${Else}                    ; User chose to uninstall
-      Goto reinst_uninstall
-    ${EndIf}
-  ${ElseIf} $R0 = 1 ; Upgrading
-    ${If} $R1 = 1              ; User chose to uninstall
-      Goto reinst_uninstall
-    ${Else}
-      Goto reinst_done         ; User chose NOT to uninstall
-    ${EndIf}
-  ${ElseIf} $R0 = -1 ; Downgrading
-    ${If} $R1 = 1              ; User chose to uninstall
-      Goto reinst_uninstall
-    ${Else}
-      Goto reinst_done         ; User chose NOT to uninstall
-    ${EndIf}
-  ${EndIf}
-
-  reinst_uninstall:
-    HideWindow
-    ClearErrors
-
-    ${If} $WixMode = 1
-      ReadRegStr $R1 HKLM "$R6" "UninstallString"
-      ExecWait '$R1' $0
-    ${Else}
-      ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
-      ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-      ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
-      ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
-      StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
-      ExecWait '$R1' $0
-    ${EndIf}
-
-    BringToFront
-
-    ${IfThen} ${Errors} ${|} StrCpy $0 2 ${|} ; ExecWait failed, set fake exit code
-
-    ${If} $0 <> 0
-    ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-      ; User cancelled wix uninstaller? return to select un/reinstall page
-      ${If} $WixMode = 1
-      ${AndIf} $0 = 1602
-        Abort
-      ${EndIf}
-
-      ; User cancelled NSIS uninstaller? return to select un/reinstall page
-      ${If} $0 = 1
-        Abort
-      ${EndIf}
-
-      ; Other errors? show generic error message and return to select un/reinstall page
-      MessageBox MB_ICONEXCLAMATION "$(unableToUninstall)"
-      Abort
-    ${EndIf}
-  reinst_done:
-FunctionEnd
-
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_DIRECTORY
 
-!insertmacro TRANSMOG_SAZ_PAGE
+!insertmacro TRANSMOG_ASSOC_PAGE
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
@@ -479,7 +320,7 @@ FunctionEnd
 {{/each}}
 
 Function .onInit
-  !insertmacro TRANSMOG_SAZ_INIT
+  !insertmacro TRANSMOG_ASSOC_INIT
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -500,6 +341,7 @@ Function .onInit
   !endif
 
   !insertmacro SetContext
+  Call DetectExistingInstallation
 
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
@@ -528,25 +370,6 @@ Function .onInit
   !endif
 FunctionEnd
 
-
-Section EarlyChecks
-  ; Abort silent installer if downgrades is disabled
-  !if "${ALLOWDOWNGRADES}" == "false"
-  ${If} ${Silent}
-    ; If downgrading
-    ${If} $R0 = -1
-      System::Call 'kernel32::AttachConsole(i -1)i.r0'
-      ${If} $0 <> 0
-        System::Call 'kernel32::GetStdHandle(i -11)i.r0'
-        System::call 'kernel32::SetConsoleTextAttribute(i r0, i 0x0004)' ; set red color
-        FileWrite $0 "$(silentDowngrades)"
-      ${EndIf}
-      Abort
-    ${EndIf}
-  ${EndIf}
-  !endif
-
-SectionEnd
 
 Section WebView2
   ; Check if Webview2 is already installed and skip this section
@@ -939,13 +762,10 @@ Function CreateOrUpdateStartMenuShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
-  ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
-      Return
-    ${EndIf}
+  ; Preserve existing shortcut choices during automatic updates.
+  ${If} $UpdateMode = 1
+  ${OrIf} $NoShortcutMode = 1
+    Return
   ${EndIf}
 
   !if "${STARTMENUFOLDER}" != ""
@@ -968,13 +788,10 @@ Function CreateOrUpdateDesktopShortcut
     Return
   ${EndIf}
 
-  ; Skip creating shortcut if in update mode or no shortcut mode
-  ; but always create if migrating from wix
-  ${If} $WixMode = 0
-    ${If} $UpdateMode = 1
-    ${OrIf} $NoShortcutMode = 1
-      Return
-    ${EndIf}
+  ; Preserve existing shortcut choices during automatic updates.
+  ${If} $UpdateMode = 1
+  ${OrIf} $NoShortcutMode = 1
+    Return
   ${EndIf}
 
   CreateShortcut "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
