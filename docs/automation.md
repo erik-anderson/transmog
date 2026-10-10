@@ -43,8 +43,10 @@ The editor includes 48 presets in ten groups and accepts custom values. `%s`
 and `%full%` resolve to the source browser's major version followed by `.0.0.0`;
 `%major%` resolves to the major alone. An optional major or dotted version
 overrides this automatic choice. Unknown source versions preserve fields that
-need version substitution. The supplied Googlebook preset's dynamic Android
-platform value is captured as `16.0.0`; all client-hint values remain editable.
+need version substitution. Choosing the Googlebook preset resolves its Android
+platform version using [Chromium's calendar heuristic](https://chromium.googlesource.com/devtools/devtools-frontend/+/HEAD/front_end/models/emulation/DeviceModeModel.ts): year minus 2011 through
+September, year minus 2010 from October. The resolved value is saved with the
+rule and remains editable, so an existing override does not change with the date.
 
 Replacements affect existing User-Agent and selected Sec-CH-UA fields only,
 preserving duplicate fields and never adding missing headers. Client hints can

@@ -213,7 +213,7 @@
           ],
           "fullVersion": "%s",
           "platform": "Android",
-          "platformVersion": "16.0.0",
+          "platformVersion": "%android%",
           "architecture": "x86",
           "bitness": "64",
           "model": "",

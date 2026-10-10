@@ -11,10 +11,12 @@ import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
+import { checkUserAgentPresets } from './check-user-agent-presets.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
 const root = fileURLToPath(new URL('../', import.meta.url));
+await checkUserAgentPresets(root);
 const initial = JSON.parse(await readFile(resolve(root, 'src/initial-state.json'), 'utf8'));
 const metadata = JSON.parse(await readFile(resolve(root, 'dist/client-metafile.json'), 'utf8'));
 const assets = JSON.parse(await readFile(resolve(root, 'dist/client-assets.json'), 'utf8'));

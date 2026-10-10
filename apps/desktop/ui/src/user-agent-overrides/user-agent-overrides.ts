@@ -48,6 +48,9 @@ export class UserAgentOverrides extends WorkspaceElement {
     this.uaStateChanged();
   }
   private ordered(status=this.uaState):AutomationRule[] {return (status?.rules??[]).filter(rule=>rule.request.userAgent).sort((a,b)=>a.priority-b.priority||a.id.localeCompare(b.id));}
+  private ranked(rules:AutomationRule[],ordered:AutomationRule[]):AutomationRule[] {
+    return [...rules.filter(rule=>!rule.request.userAgent),...ordered.map((rule,index)=>rule.priority===BASE+index?rule:{...rule,priority:BASE+index,revision:rule.revision+1})];
+  }
   uaStateChanged():void {
     const rules=this.ordered();this.uaRows=rules.map((rule,index)=>({id:rule.id,name:rule.displayName??'User-Agent override',scope:this.scope(rule.matcher.host,rule.matcher.pathPrefix),enabled:rule.enabled!==false,selected:rule.id===this.uaSelectedId,first:index===0,last:index===rules.length-1,dropBefore:rule.id===this.dropId&&!this.dropAfter,dropAfter:rule.id===this.dropId&&this.dropAfter}));
     if(this.ready&&!this.uaEditing&&rules[0])this.load(rules[0]);
@@ -64,7 +67,9 @@ export class UserAgentOverrides extends WorkspaceElement {
     const policy=rule?.request.userAgent;
     this.uaSelectedId=rule?.id??'';this.uaName=rule?.displayName??'';this.uaHost=rule?.matcher.host??'';this.uaPath=rule?.matcher.pathPrefix??'';
     this.uaValue=policy?.template??(rule?'':'Transmog/1.0');this.uaVersion=policy?.versionOverride??'';this.uaEnabled=rule?.enabled!==false;
-    this.uaPreset=userAgentPresets.find(preset=>preset.value===this.uaValue)?.id??'custom';
+    const presets=userAgentPresets.filter(preset=>preset.value===this.uaValue);
+    const platform=Object.entries(policy?.clientHints??{}).find(([name])=>name.toLowerCase()==='sec-ch-ua-platform')?.[1];
+    this.uaPreset=(presets.find(preset=>platform&&presetClientHints(preset)['Sec-CH-UA-Platform']===platform)??presets[0])?.id??'custom';
     this.uaHintMode=policy?.stripClientHints?'strip':Object.keys(policy?.clientHints??{}).length?'override':'preserve';this.hints(policy?.clientHints??{});
     this.uaEditing=true;this.uaDirty=false;this.uaStatus='';this.uaStateChanged();
   }
@@ -109,7 +114,9 @@ export class UserAgentOverrides extends WorkspaceElement {
       const target=duplicate??existing;
       const rule:AutomationRule=target?structuredClone(target):{id:'desktop-user-agent-'+crypto.randomUUID(),revision:0,priority:BASE+ordered.length,displayName:null,enabled:true,matcher:{method:null,url:null,scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null},request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:null,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
       rule.revision++;rule.enabled=this.uaEnabled;rule.displayName=this.uaName.trim()||'User-Agent / client hints';rule.matcher.host=host;rule.matcher.pathPrefix=path;rule.request.userAgent=policy;
-      const rules=current.rules.filter(candidate=>candidate.id!==rule.id&&(!duplicate||candidate.id!==this.uaSelectedId));rules.push(rule);
+      const next=ordered.filter(candidate=>!duplicate||candidate.id!==this.uaSelectedId).map(candidate=>candidate.id===rule.id?rule:candidate);
+      if(!target)next.push(rule);
+      const rules=this.ranked(current.rules,next);
       const status=await this.activate(current,rules);if(operation!==this.operation)return;
       this.accept(status);this.load(status.rules.find(candidate=>candidate.id===rule.id)??rule);this.uaStatus='Override saved for new matching requests.';
     }catch(error){if(operation===this.operation)this.uaStatus='Override could not be saved: '+describeError(error);}
@@ -125,7 +132,7 @@ export class UserAgentOverrides extends WorkspaceElement {
   async toggleRow(id:string):Promise<void> {const rule=this.ordered().find(rule=>rule.id===id);if(rule)await this.toggle(id,rule.enabled===false);}
   async remove():Promise<void> {
     if(!this.uaSelectedId||this.uaBusy||!this.leaveDraft())return;const id=this.uaSelectedId;let removed:{rule:AutomationRule;nextId:string|null}|null=null;
-    const saved=await this.mutate(current=>{const ordered=this.ordered(current),index=ordered.findIndex(rule=>rule.id===id),rule=ordered[index];if(!rule)throw new Error('This override was removed while you were editing. Refresh the list.');removed={rule:structuredClone(rule),nextId:ordered[index+1]?.id??null};return current.rules.filter(rule=>rule.id!==id);});
+    const saved=await this.mutate(current=>{const ordered=this.ordered(current),index=ordered.findIndex(rule=>rule.id===id),rule=ordered[index];if(!rule)throw new Error('This override was removed while you were editing. Refresh the list.');removed={rule:structuredClone(rule),nextId:ordered[index+1]?.id??null};return this.ranked(current.rules,ordered.filter(rule=>rule.id!==id));});
     if(saved){this.undoRule=removed;this.uaUndoAvailable=true;this.uaEditing=false;this.uaSelectedId='';this.uaDirty=false;this.uaStateChanged();this.uaStatus='Override deleted. Undo is available.';}
   }
   async undoDelete():Promise<void> {
@@ -133,14 +140,14 @@ export class UserAgentOverrides extends WorkspaceElement {
     const saved=await this.mutate(current=>{if(current.rules.some(rule=>rule.id===removed.rule.id))throw new Error('The deleted override ID is already in use. Your current rules were kept.');
       if(this.ordered(current).some(rule=>this.matcherKey(rule.matcher)===this.matcherKey(removed.rule.matcher)))throw new Error('Another override now uses these filters. Edit that override to replace it.');
       const ordered=this.ordered(current),index=ordered.findIndex(rule=>rule.id===removed.nextId);ordered.splice(index<0?ordered.length:index,0,{...removed.rule,revision:removed.rule.revision+1});
-      const ranked=ordered.map((rule,index)=>({...rule,priority:BASE+index,revision:rule.revision+(rule.priority!==BASE+index?1:0)}));return [...current.rules.filter(rule=>!rule.request.userAgent),...ranked];});
+      return this.ranked(current.rules,ordered);});
     if(saved){this.undoRule=null;this.uaUndoAvailable=false;const rule=this.ordered().find(rule=>rule.id===removed.rule.id);if(rule)this.load(rule);this.uaStatus='Deleted override restored.';}
   }
   async move(id:string,delta:number):Promise<void> {const ordered=this.ordered(),index=ordered.findIndex(rule=>rule.id===id),target=ordered[index+delta];if(index<0||!target)return;await this.reorder(id,target.id,delta>0);}
   private async reorder(id:string,target:string,after=false):Promise<void> {
     await this.mutate(current=>{const ordered=this.ordered(current),rule=ordered.find(rule=>rule.id===id);if(!rule)return current.rules;
       const others=ordered.filter(rule=>rule.id!==id),index=others.findIndex(rule=>rule.id===target);if(index<0)return current.rules;
-      others.splice(index+(after?1:0),0,rule);const ranked=new Map(others.map((rule,index)=>[rule.id,{...rule,priority:BASE+index,revision:rule.revision+1}]));return current.rules.map(rule=>ranked.get(rule.id)??rule);});
+      others.splice(index+(after?1:0),0,rule);return this.ranked(current.rules,others);});
   }
   private async mutate(change:(current:AutomationStatus)=>AutomationRule[]):Promise<boolean> {
     if(this.uaBusy)return false;this.uaBusy=true;const operation=++this.operation;
