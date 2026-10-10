@@ -448,6 +448,30 @@ impl StoredBody {
     }
 }
 
+fn memory_range_chunks(
+    chunks: &[bytes::Bytes],
+    mut offset: u64,
+    length: usize,
+) -> Vec<bytes::Bytes> {
+    let mut needed = length;
+    let mut selected = Vec::new();
+    for chunk in chunks {
+        if needed == 0 {
+            break;
+        }
+        if offset >= chunk.len() as u64 {
+            offset -= chunk.len() as u64;
+            continue;
+        }
+        let start = usize::try_from(offset).expect("offset within one memory chunk");
+        let take = needed.min(chunk.len() - start);
+        selected.push(chunk.slice(start..start + take));
+        needed -= take;
+        offset = 0;
+    }
+    selected
+}
+
 struct MemoryBodyReader {
     chunks: std::vec::IntoIter<bytes::Bytes>,
     current: bytes::Bytes,
@@ -483,7 +507,17 @@ impl Read for MemoryBodyReader {
 
 pub(crate) trait SavedBodySource: Send + Sync + std::fmt::Debug {
     fn open(&self) -> std::io::Result<Box<dyn Read + Send>>;
+    fn open_at(&self, offset: u64) -> std::io::Result<Box<dyn Read + Send>> {
+        let mut reader = self.open()?;
+        if std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())? != offset {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        Ok(reader)
+    }
     fn length(&self) -> Option<u64>;
+    fn prepare_ranges(&self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -800,6 +834,37 @@ impl BodyStore {
         offset: u64,
         length: usize,
     ) -> Result<BodyRange, BodyStoreError> {
+        self.read_range_inner(exchange_id, boundary, offset, length, false)
+    }
+
+    /// Reads one page with an exact source size, preparing compressed archive
+    /// random access once. Call from a blocking worker.
+    ///
+    /// # Errors
+    /// Returns a typed lookup, range, limit, or source preparation failure.
+    pub fn read_paged_range(
+        &self,
+        exchange_id: ExchangeId,
+        boundary: ExchangeBoundary,
+        offset: u64,
+        length: usize,
+    ) -> Result<BodyRange, BodyStoreError> {
+        self.read_range_inner(exchange_id, boundary, offset, length, true)
+    }
+
+    /// Per-call byte budget; the full body has no display-size ceiling.
+    pub fn range_read_limit(&self) -> usize {
+        self.inner.config.max_read_bytes
+    }
+
+    fn read_range_inner(
+        &self,
+        exchange_id: ExchangeId,
+        boundary: ExchangeBoundary,
+        offset: u64,
+        length: usize,
+        prepare: bool,
+    ) -> Result<BodyRange, BodyStoreError> {
         if length == 0 || length > self.inner.config.max_read_bytes {
             return Err(BodyStoreError::ReadLimitExceeded);
         }
@@ -822,37 +887,38 @@ impl BodyStore {
             (
                 path,
                 source,
-                record.memory.clone(),
+                record
+                    .memory
+                    .as_ref()
+                    .map(|chunks| memory_range_chunks(chunks, offset, length)),
                 record.retained_bytes,
                 record.availability,
             )
         };
         let result = if let Some(source) = &source {
-            source
-                .open()
-                .and_then(|mut reader| {
-                    let skipped =
-                        std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())?;
-                    if skipped != offset {
-                        return Err(std::io::ErrorKind::UnexpectedEof.into());
-                    }
-                    let mut bytes = Vec::new();
-                    // One additional read observes the ZIP checksum/EOF when this
-                    // range reaches the end, rather than hiding it behind Take.
-                    reader.take(length as u64 + 1).read_to_end(&mut bytes)?;
-                    bytes.truncate(length);
-                    Ok(bytes)
-                })
-                .map_err(|_| BodyStoreError::ReadUnavailable)
+            (if prepare {
+                source.prepare_ranges()
+            } else {
+                Ok(())
+            })
+            .and_then(|()| source.open_at(offset))
+            .and_then(|reader| {
+                let mut bytes = Vec::new();
+                // One additional read observes the ZIP checksum/EOF when this
+                // range reaches the end, rather than hiding it behind Take.
+                reader.take(length as u64 + 1).read_to_end(&mut bytes)?;
+                bytes.truncate(length);
+                Ok(bytes)
+            })
+            .map_err(|_| BodyStoreError::ReadUnavailable)
         } else if let Some(chunks) = memory {
-            let mut reader = MemoryBodyReader::new(chunks);
-            std::io::copy(&mut reader.by_ref().take(offset), &mut std::io::sink())
-                .and_then(|_| {
-                    let mut bytes = Vec::new();
-                    reader.take(length as u64).read_to_end(&mut bytes)?;
-                    Ok(bytes)
-                })
-                .map_err(|_| BodyStoreError::ReadUnavailable)
+            let reader = MemoryBodyReader::new(chunks);
+            (|| -> std::io::Result<Vec<u8>> {
+                let mut bytes = Vec::new();
+                reader.take(length as u64).read_to_end(&mut bytes)?;
+                Ok(bytes)
+            })()
+            .map_err(|_| BodyStoreError::ReadUnavailable)
         } else {
             path.as_ref()
                 .ok_or(BodyStoreError::ReadUnavailable)

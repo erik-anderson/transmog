@@ -1,6 +1,6 @@
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import type { BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
+import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
@@ -36,6 +36,7 @@ export class MessageInspector extends WebUIElement {
   @observable viewerLabel = 'Auto';
   @observable imageUrl = '';
   @observable hexPreview: HexPreview | null = null;
+  @observable pagedHex = false;
   @observable detailsText = '';
   @observable loading = false;
   @observable viewer = 'auto';
@@ -105,6 +106,7 @@ export class MessageInspector extends WebUIElement {
     const body = this.detail?.storedBodies.find((body) => body.boundary === this.boundary);
     const previewKey = [this.detail?.id, this.boundary, this.viewer, this.decodeContent].join(':');
     if (this.hexPreview?.key !== previewKey) this.hexPreview = null;
+    this.pagedHex = false;
     this.imageUrl = ''; this.loading = false;
     if (!this.detail) { this.hexPreview = null; return; }
     const head = this.heads().find((head) => head.boundary === this.boundary);
@@ -123,6 +125,9 @@ export class MessageInspector extends WebUIElement {
     if (!body.retainedBytes) { this.hexPreview = null; this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
     this.loading = true; this.bodyText = this.hexPreview ? '' : 'Loading preview…';
     try {
+      if(this.viewer==='bytes') {
+        await this.inspectRawHex(previewKey,generation);return;
+      }
       const inspection = await invoke<BodyInspection>('inspect_body',{request:{sessionId:this.detail.id,boundary:this.boundary,representation:this.viewer,decodeContent:this.viewer !== 'bytes' && this.decodeContent,offset:0,maxBytes:Number(this.bodyLimit?.value ?? 262144)}});
       if (generation !== this.generation || !this.isConnected) return;
       this.bodyMetadata = inspection.metadata;
@@ -130,9 +135,11 @@ export class MessageInspector extends WebUIElement {
       this.viewerLabel = (this.viewer === 'auto' ? 'Auto · ' : '')+(labels[inspection.representation] ?? inspection.representation);
       this.bodyFacts = this.retentionFacts(inspection.metadata)+' · '+formatBytes(inspection.displayBytes)+' shown'+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
       if (inspection.representation === 'bytes' && inspection.bytesBase64 !== null) {
-        this.hexPreview = { key: previewKey, bytesBase64: inspection.bytesBase64, offset: inspection.byteOffset,
-          truncated: inspection.truncated };
-        this.bodyText = inspection.warning ?? '';
+        if(!inspection.decoded) await this.inspectRawHex(previewKey,generation,inspection.warning??'');
+        else {
+          this.hexPreview = { key: previewKey, bytesBase64: inspection.bytesBase64, offset: inspection.byteOffset,truncated: inspection.truncated };
+          this.bodyText = inspection.warning ?? '';
+        }
       } else {
         this.hexPreview = null;
         this.bodyText = inspection.display || inspection.warning || (inspection.representation === 'image' ? '' : 'No body content.');
@@ -143,6 +150,19 @@ export class MessageInspector extends WebUIElement {
     } catch (error:unknown) {
       if (generation === this.generation) { this.hexPreview = null; this.bodyText = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.'; }
     } finally { if (generation === this.generation) this.loading = false; }
+  }
+  private async inspectRawHex(key:string,generation:number,warning=''):Promise<void> {
+    if(!this.detail)return;
+    const sessionId=this.detail.id,boundary=this.boundary;
+    const page=await invoke<BodyBytePage>('read_body_range',{request:{sessionId,boundary,offset:'0',maxBytes:65536}});
+    if(generation!==this.generation||!this.isConnected)return;
+    this.bodyMetadata=page.metadata;this.pagedHex=true;
+    this.viewerLabel=(this.viewer==='auto'?'Auto · ':'')+'Hex';
+    this.bodySummary=formatBytes(page.metadata.retainedBytes)+' · '+page.metadata.availability;
+    this.bodyFacts=this.retentionFacts(page.metadata)+' · All retained bytes available, loaded in pages · raw bytes';
+    this.hexPreview={key,bytesBase64:page.bytesBase64,offset:'0',truncated:false,source:{sessionId,boundary,totalBytes:page.totalBytes,readLimit:page.readLimit}};
+    this.bodyText=warning;
+    if(page.metadata.availability!=='complete')this.bodyText=this.retentionReason(page.metadata)+'\n\n'+this.bodyText;
   }
   private retentionFacts(body:StoredBodyMetadata):string {
     const bytes = (value:number) => body.availability === 'complete' ? formatBytes(value) : value.toLocaleString()+' B';

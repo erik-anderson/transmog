@@ -33,7 +33,7 @@ export async function smokeHexViewer(evaluate, call) {
     const selection = await evaluate(`(() => {
       const viewer=globalThis.__hexSmoke.viewer;
       const selected=column=>[...viewer.querySelectorAll('[data-selected][data-column="'+column+'"]')].map(cell=>Number(cell.dataset.byte));
-      return {hex:selected('hex'),text:selected('text'),caret:viewer.caret,
+      return {hex:selected('hex'),text:selected('text'),caret:Number(viewer.caret),
         caretAnimation:getComputedStyle(viewer.querySelector('[data-caret]'),'::before').animationName,
         allLabel:viewer.selectAllLabel,reducedMotion:matchMedia('(prefers-reduced-motion:reduce)').matches,
         focused:viewer.viewport.matches(':focus'),events:globalThis.__hexSmoke.events};
@@ -51,9 +51,9 @@ export async function smokeHexViewer(evaluate, call) {
     await key('c',67,2);
     assert.equal(await evaluate('globalThis.__hexSmoke.copied'),'AUcBVwFbAWU=');
     await key('ArrowLeft',37,2);
-    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd]})()'),[6,-1,-1]);
+    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()'),[6,-1,-1]);
     await key('ArrowRight',39,8);
-    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd]})()'),[7,6,7]);
+    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()'),[7,6,7]);
     await key('F10',121,8);
     await key('ArrowDown',40);
     await key('ArrowRight',39);

@@ -710,7 +710,7 @@ pub(crate) async fn inspect_body(
             false,
         ));
     }
-    let read_length = if request.decode_content {
+    let read_length = if request.decode_content && !metadata.content_codings.is_empty() {
         usize::try_from(metadata.retained_bytes)
             .ok()
             .filter(|length| *length <= crate::body_store::MAX_BODY_READ_BYTES)
@@ -761,7 +761,7 @@ pub(crate) async fn inspect_body(
         request.offset,
     );
     let consumed = bytes.len();
-    let next_offset = (!request.decode_content
+    let next_offset = (!decoded
         && request.offset.saturating_add(consumed as u64) < metadata.retained_bytes)
         .then_some(request.offset.saturating_add(consumed as u64));
     Ok(BodyInspection {
@@ -885,7 +885,7 @@ pub(crate) fn parse_session_id(id: &str) -> Result<u128, AppError> {
     })
 }
 
-fn parse_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
+pub(crate) fn parse_boundary(value: &str) -> Result<ExchangeBoundary, AppError> {
     match value {
         "client-request" => Ok(ExchangeBoundary::ClientRequest),
         "upstream-request" => Ok(ExchangeBoundary::UpstreamRequest),

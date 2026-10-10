@@ -171,6 +171,14 @@ impl SavedBodySource for JsonBody {
         source.seek(SeekFrom::Start(self.offset))?;
         Ok(Box::new(source.take(self.bytes)))
     }
+    fn open_at(&self, offset: u64) -> std::io::Result<Box<dyn Read + Send>> {
+        if offset > self.bytes {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        let mut source = SourceReader::new(self.file.reopen()?)?;
+        source.seek(SeekFrom::Start(self.offset + offset))?;
+        Ok(Box::new(source.take(self.bytes - offset)))
+    }
     fn length(&self) -> Option<u64> {
         Some(self.bytes)
     }

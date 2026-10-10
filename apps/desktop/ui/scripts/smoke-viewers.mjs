@@ -53,7 +53,7 @@ async function connect(target){
   let sequence=0;const pending=new Map();
   socket.addEventListener('message',({data})=>{const result=JSON.parse(String(data));if(result.id){const reply=pending.get(result.id);pending.delete(result.id);if(reply){clearTimeout(reply.timer);if(result.error)reply.reject(new Error(result.error.message));else reply.resolve(result.result);}}});
   const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(method+' timed out'));},15000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
-  const evaluate=async expression=>{const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result?.value;};
+  const evaluate=async expression=>{let result;try{result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});}catch(error){throw new Error('Native evaluation failed: '+expression.slice(0,300),{cause:error});}if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result?.value;};
   return {call,evaluate};
 }
 async function targets(){
@@ -82,12 +82,14 @@ try{
     let denial='';try{await window.__TAURI_INTERNALS__.invoke('start_proxy',{request:{}});}catch(error){denial=String(error);}
     const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id});
     const headers=await window.__TAURI_INTERNALS__.invoke('copy_all_headers',{id});
+    const url=await window.__TAURI_INTERNALS__.invoke('copy_message_url',{id,boundary:'client-response'});
     const composer=await window.__TAURI_INTERNALS__.invoke('composer_source',{id});
     await workspace.selectTraffic(workspace.sessions[0],new MouseEvent('click'));
-    return {denial,sourceIp:detail.sourceIp,headers,body:composer.body,traceId:detail.traceId};
+    return {denial,sourceIp:detail.sourceIp,headers,url,body:composer.body,traceId:detail.traceId};
   })()`);
   assert.match(result.denial,/only in the main proxy window/);
   assert.equal(result.sourceIp,'192.0.2.25');assert.match(result.headers,/\r\n\r\n\r\nHTTP\/1\.1 200 Fixture/);assert.equal(result.body,'');assert.ok(result.traceId);
+  assert.equal(result.url,'https://example.invalid/path');
   process.stdout.write('Viewer inspection and permissions verified.\n');
   const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
   assert.equal(search.matches,1);assert.equal(search.selected,1);assert.doesNotMatch(search.status,/binary/i);
@@ -137,6 +139,48 @@ try{
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.closeTimings();await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(timingId)}],restore:false});await workspace.refreshSessions(undefined,true);})()`);
 
   await viewer.evaluate(`${traffic}.closeTimings()`);
+  // Real IPC and indexed TMCap pages must reach beyond the bounded preview limit.
+  const byteSource=join(dirname(source),'large-byte-fixture.tmcap'),byteLength=32*1024*1024+17;
+  const byteChunk=Array.from({length:1024*1024},(_,index)=>index%256);
+  const byteRecords=[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/large-byte-body',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[{name:Array.from(Buffer.from('Content-Type')),value:Array.from(Buffer.from('application/octet-stream'))}]}}];
+  for(let offset=0;offset<byteLength;offset+=byteChunk.length){const bytes=byteChunk.slice(0,Math.min(byteChunk.length,byteLength-offset));byteRecords.push({kind:'body-segment',payload:{boundary:'client-response',byte_count:bytes.length,bytes,truncated:false}});}
+  byteRecords.push({kind:'completed',payload:null});
+  await writeFile(byteSource,nativeFixture(byteRecords,103));
+  await viewer.evaluate(`void ${traffic}.importTrace(${JSON.stringify(byteSource)})`);
+  await waitFor(()=>viewer.evaluate(`!${traffic}.importingTrace`),'Large byte fixture import did not finish');
+  assert.ok(await viewer.evaluate(`${traffic}.sessions.some(row=>row.path==='/large-byte-body')`),'Large byte import failed: '+await viewer.evaluate(`${traffic}.importStatus`));
+  const byteId=await viewer.evaluate(`(async()=>{const workspace=${traffic},row=workspace.sessions.find(row=>row.path==='/large-byte-body');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
+  const responseInspector=root+'.shadowRoot.querySelector("message-inspector[side=response]")';
+  try {await waitFor(()=>viewer.evaluate(`${responseInspector}.detail?.id===${JSON.stringify(byteId)} && ${responseInspector}.pagedHex && !${responseInspector}.loading`),'Large raw Hex did not load');}
+  catch(error){const state=await viewer.evaluate(`({id:${responseInspector}.detail?.id,mode:${responseInspector}.mode,viewer:${responseInspector}.viewer,bodies:${responseInspector}.detail?.storedBodies,text:${responseInspector}.bodyText,facts:${responseInspector}.bodyFacts,loading:${responseInspector}.loading})`);throw new Error('Large raw Hex inspection: '+JSON.stringify(state),{cause:error});}
+  const byteKey=async(key,code,modifiers=0)=>{await viewer.call('Input.dispatchKeyEvent',{type:'keyDown',key,windowsVirtualKeyCode:code,modifiers});await viewer.call('Input.dispatchKeyEvent',{type:'keyUp',key,windowsVirtualKeyCode:code,modifiers});};
+  try {
+    await viewer.evaluate(`(()=>{const inspector=${responseInspector};globalThis.__largeByteProbe={viewer:inspector.querySelector('hex-viewer'),clipboard:Object.getOwnPropertyDescriptor(navigator,'clipboard')};Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__largeByteProbe.copied=text}});globalThis.__largeByteProbe.viewer.viewport.focus();})()`);
+    await byteKey('End',35,2);
+    await waitFor(()=>viewer.evaluate(`globalThis.__largeByteProbe.viewer.querySelector('[data-byte="${byteLength-1}"][data-column=hex]')?.textContent==='10'`),'Far native byte page did not load');
+    const byteView=await viewer.evaluate(`(()=>{const v=globalThis.__largeByteProbe.viewer;return {caret:v.caret,rows:v.hexRows.length,height:v.viewport.scrollHeight,full:v.preview.source.totalBytes,facts:${responseInspector}.bodyFacts};})()`);
+    assert.equal(byteView.caret,String(byteLength-1));assert.equal(byteView.full,String(byteLength));assert.ok(byteView.rows<100&&byteView.height<=4_000_100);assert.doesNotMatch(byteView.facts,/preview truncated/);
+    await byteKey('ArrowLeft',37,8);await byteKey('c',67,2);
+    await waitFor(()=>viewer.evaluate(`globalThis.__largeByteProbe.copied==='DxA='`),'Native paged selection did not copy exact tail bytes');
+    await byteKey('g',71,2);
+    assert.equal(await viewer.evaluate('globalThis.__largeByteProbe.viewer.offsetField.value'),String(byteLength-2));
+    await byteKey('Escape',27);
+    assert.ok(await viewer.evaluate('globalThis.__largeByteProbe.viewer.viewport===globalThis.__largeByteProbe.viewer.getRootNode().activeElement'));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-hex-pages.png'),Buffer.from(image.data,'base64'));}
+    await viewer.call('Emulation.setDeviceMetricsOverride',{width:640,height:720,deviceScaleFactor:1,mobile:false});
+    await waitFor(()=>viewer.evaluate('innerWidth===640'),'Compact byte inspection did not resize');
+    const messageSwitch=await viewer.evaluate(`(()=>{const workspace=${traffic},select=workspace.querySelector('.compact-inspector-side');select.value='request';select.dispatchEvent(new Event('change',{bubbles:true}));const request=workspace.inspectorSide==='request';select.value='response';select.dispatchEvent(new Event('change',{bubbles:true}));globalThis.__largeByteProbe.viewer.viewport.focus();return request&&workspace.inspectorSide==='response';})()`);
+    assert.ok(messageSwitch,'Compact message selector did not switch request and response');
+    await byteKey('End',35,2);
+    const reachability=await viewer.evaluate(`(()=>{const v=globalThis.__largeByteProbe.viewer,b=v.querySelector('.hex-status button').getBoundingClientRect(),viewport=v.viewport.getBoundingClientRect(),tail=v.querySelector('[data-byte="${byteLength-1}"][data-column=hex]')?.getBoundingClientRect();return {visible:b.width>0&&b.bottom<=innerHeight&&b.right<=innerWidth,rows:v.hexRows.length,tailVisible:!!tail&&tail.top>=viewport.top+v.rowHeight&&tail.bottom<=viewport.bottom};})()`);
+    assert.ok(reachability.visible&&reachability.rows<100&&reachability.tailVisible,'Compact Hex bytes or actions became unreachable: '+JSON.stringify(reachability));
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-hex-pages-compact.png'),Buffer.from(image.data,'base64'));}
+    process.stdout.write('Native paged Hex, full-body end navigation, byte selection, clipboard and compact layout verified.\n');
+  } finally {
+    await viewer.call('Emulation.clearDeviceMetricsOverride');
+    await viewer.evaluate(`(()=>{const saved=globalThis.__largeByteProbe;if(saved?.clipboard)Object.defineProperty(navigator,'clipboard',saved.clipboard);else delete navigator.clipboard;delete globalThis.__largeByteProbe;})()`);
+    await viewer.evaluate(`(async()=>{await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(byteId)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
+  }
   // Exercise a real viewer Composer upload. The only contacted endpoint is
   // this owned loopback fixture; no captured URL or outside service is replayed.
   const replayLength=5*1024*1024+7;let replayBytes=0,replayError='';

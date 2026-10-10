@@ -1,19 +1,24 @@
 import { WebUIElement, observable } from '@microsoft/webui-framework';
-import { decodeBytes, formatHexSelection, utf8Selection, type HexCopyFormat } from './hex-formats.js';
+import { formatHexSelection, utf8Selection, type HexCopyFormat } from './hex-formats.js';
+import { HexByteSource, HEX_COPY_BYTES } from './hex-byte-source.js';
+import { describeError } from '../utilities.js';
 
-export interface HexPreview { key: string; bytesBase64: string; offset: number; truncated: boolean; }
-interface HexCell { index: number; hex: string; text: string; hexId: string; textId: string; selection: string; }
-interface HexRow { index: number; address: string; top: string; cells: HexCell[]; }
+export interface HexPreview { key: string; bytesBase64: string; offset: number|string; truncated: boolean; source?:{sessionId:string;boundary:string;totalBytes:string;readLimit:number}; }
+interface HexCell { index: string; hex: string; text: string; hexId: string; textId: string; selection: string; selected:boolean; caretHex:boolean; caretText:boolean; }
+interface HexRow { index: string; address: string; top: string; cells: HexCell[]; }
 type Column = 'hex' | 'text';
 let nextViewer = 0;
+const MAX_CANVAS_HEIGHT = 4_000_000;
+const min = (a:bigint,b:bigint):bigint => a < b ? a : b;
+const max = (a:bigint,b:bigint):bigint => a > b ? a : b;
 
 export class HexViewer extends WebUIElement {
   @observable preview: HexPreview | null = null;
   @observable hexRows: HexRow[] = [];
   @observable canvasHeight = '0px';
-  @observable caret = -1;
-  @observable rangeStart = -1;
-  @observable rangeEnd = -1;
+  @observable caret = '-1';
+  @observable rangeStart = '-1';
+  @observable rangeEnd = '-1';
   @observable activeColumn: Column = 'hex';
   @observable activeCellId = '';
   @observable selectionSummary = 'No bytes selected';
@@ -23,6 +28,13 @@ export class HexViewer extends WebUIElement {
   @observable hexMenuX = '0px';
   @observable hexMenuY = '0px';
   @observable menuSide = 'right';
+  @observable wideOffsets = false;
+  @observable hasCaret = false;
+  @observable hasSelection = false;
+  @observable byteStatus = '';
+  @observable byteError = false;
+  @observable offsetInput = '';
+  @observable offsetError = '';
   viewport!: HTMLDivElement;
   columnHeader!: HTMLDivElement;
   hexHeader!: HTMLDivElement;
@@ -30,11 +42,19 @@ export class HexViewer extends WebUIElement {
   contextMenu!: HTMLDivElement;
   copyMenu!: HTMLDivElement;
   copyAsButton!: HTMLButtonElement;
-  private bytes: Uint8Array = new Uint8Array();
-  private anchor = -1;
+  offsetPopover!: HTMLDivElement;
+  offsetField!: HTMLInputElement;
+  private source: HexByteSource | null = null;
+  private anchor = -1n;
   private rowHeight = 19;
-  private firstRow = -1;
-  private lastRow = -1;
+  private firstRow = -1n;
+  private lastRow = -1n;
+  private logicalTop = 0n;
+  private nativeTop = -1;
+  private wheelRows = 0;
+  private copyRevision = 0;
+  private copying = false;
+  private validatingUtf8 = false;
   private readonly viewerId = 'hex-viewer-' + nextViewer++;
   private resizeObserver: ResizeObserver | null = null;
   private pointer: number | null = null;
@@ -56,67 +76,115 @@ export class HexViewer extends WebUIElement {
   previewChanged(previous: HexPreview | null | undefined): void {
     const reset = previous?.key !== this.preview?.key || previous?.offset !== this.preview?.offset;
     this.selectAllLabel = this.preview?.truncated ? 'Select all (truncated)' : 'Select all';
-    if (previous?.bytesBase64 !== this.preview?.bytesBase64 || reset) {
-      this.bytes = this.preview ? decodeBytes(this.preview.bytesBase64) : new Uint8Array();
+    if (this.preview !== previous) {
+      if(reset || !this.preview) { this.source?.dispose(); this.source = this.preview ? new HexByteSource(this.preview,()=>this.sourceChanged()) : null; }
+      else if(this.preview) this.source?.update(this.preview);
+      this.copyRevision++;
       if (reset) {
         this.stopDrag(); this.closeMenu(false);
-        this.viewport.scrollTop = 0;
-        this.caret = this.bytes.length ? 0 : -1;
-        this.anchor = this.caret;
-        this.rangeStart = this.rangeEnd = -1;
+        if(this.viewport) this.viewport.scrollTop = 0;
+        this.logicalTop = 0n; this.nativeTop = 0;
+        this.caret = this.length ? '0' : '-1';
+        this.anchor = BigInt(this.caret);
+        this.rangeStart = this.rangeEnd = '-1';
       } else {
-        this.caret = Math.min(this.caret, this.bytes.length - 1);
-        this.anchor = Math.min(this.anchor, this.bytes.length - 1);
-        this.rangeEnd = Math.min(this.rangeEnd, this.bytes.length - 1);
-        if (this.rangeStart > this.rangeEnd) this.rangeStart = this.rangeEnd = -1;
+        this.caret = min(BigInt(this.caret), this.length - 1n).toString();
+        this.anchor = min(this.anchor, this.length - 1n);
+        this.rangeEnd = min(BigInt(this.rangeEnd), this.length - 1n).toString();
+        if (BigInt(this.rangeStart) > BigInt(this.rangeEnd)) this.rangeStart = this.rangeEnd = '-1';
       }
       this.renderRows(true);
       this.describeSelection();
     }
   }
+  private get length():bigint { return this.source?.length ?? 0n; }
+  private get rowCount():bigint { return (this.length + 15n) / 16n; }
+  private get scaled():boolean { return Number(this.rowCount) * this.rowHeight > MAX_CANVAS_HEIGHT; }
+  private get visibleRows():number { return Math.max(1,Math.floor(this.viewport.clientHeight / this.rowHeight) - 1); }
+  private get maxTop():bigint { return max(0n,this.rowCount - BigInt(this.visibleRows)); }
+  private sourceChanged():void {
+    this.byteError = !!this.source?.error;
+    this.byteStatus = this.source?.error || (this.source?.loading ? 'Loading bytes…' : '');
+    this.renderRows(true); this.describeSelection();
+  }
+  retryBytes():void { this.source?.retry(); }
+  private currentTop():bigint {
+    if(!this.scaled) return BigInt(Math.max(0,Math.floor(this.viewport.scrollTop / this.rowHeight)));
+    if(this.viewport.scrollTop !== this.nativeTop) {
+      const extent = Math.max(1,this.viewport.scrollHeight - this.viewport.clientHeight);
+      this.logicalTop = min(this.maxTop,BigInt(Math.round(this.viewport.scrollTop / extent * Number(this.maxTop))));
+      this.nativeTop = this.viewport.scrollTop;
+    }
+    return this.logicalTop;
+  }
+  private scrollToRow(row:bigint):void {
+    this.logicalTop = min(this.maxTop,max(0n,row));
+    this.viewport.scrollTop = this.scaled
+      ? Number(this.logicalTop) / Math.max(1,Number(this.maxTop)) * Math.max(0,this.viewport.scrollHeight-this.viewport.clientHeight)
+      : Number(this.logicalTop) * this.rowHeight;
+    this.nativeTop = this.viewport.scrollTop;
+    this.renderRows(true);
+  }
+  wheel(event:WheelEvent):void {
+    if(!this.scaled || !event.deltaY || event.ctrlKey) return;
+    event.preventDefault();
+    this.wheelRows += event.deltaY * (event.deltaMode === 1 ? this.rowHeight : event.deltaMode === 2 ? this.viewport.clientHeight : 1) / this.rowHeight;
+    const rows = Math.trunc(this.wheelRows); this.wheelRows -= rows;
+    if(rows) this.scrollToRow(this.currentTop()+BigInt(rows));
+  }
 
   renderRows(force = false): void {
     if (!this.viewport || !this.columnHeader) return;
     this.rowHeight = this.columnHeader.getBoundingClientRect().height || this.rowHeight;
-    const rowCount = Math.ceil(this.bytes.length / 16);
-    this.canvasHeight = rowCount * this.rowHeight + 'px';
-    const first = Math.max(0, Math.floor(this.viewport.scrollTop / this.rowHeight) - 3);
-    const last = Math.min(rowCount, first + Math.ceil(this.viewport.clientHeight / this.rowHeight) + 7);
+    this.canvasHeight = Math.min(MAX_CANVAS_HEIGHT, Number(this.rowCount) * this.rowHeight) + 'px';
+    this.wideOffsets = this.length + BigInt(this.preview?.offset ?? 0) > 0xffffffffn;
+    const top = this.currentTop();
+    const first = max(0n, top - 3n);
+    const last = min(this.rowCount, first + BigInt(Math.ceil(this.viewport.clientHeight / this.rowHeight) + 7));
     if (!force && first === this.firstRow && last === this.lastRow) return;
     this.firstRow = first; this.lastRow = last;
     const rows: HexRow[] = [];
     for (let row = first; row < last; row++) {
       const cells: HexCell[] = [];
-      for (let index = row * 16; index < Math.min(this.bytes.length, (row + 1) * 16); index++) {
-        const byte = this.bytes[index]!;
-        cells.push({ index, hex: byte.toString(16).padStart(2, '0').toUpperCase(),
-          text: byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.',
-          hexId: this.cellId(index, 'hex'), textId: this.cellId(index, 'text'), selection: String(index >= this.rangeStart && index <= this.rangeEnd) });
+      for (let index = row * 16n; index < min(this.length, (row + 1n) * 16n); index++) {
+        const byte = this.source?.byte(index);
+        const selected = index >= BigInt(this.rangeStart) && index <= BigInt(this.rangeEnd);
+        cells.push({ index:index.toString(), hex: byte === undefined ? '··' : byte.toString(16).padStart(2, '0').toUpperCase(),
+          text: byte === undefined ? '·' : byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.',
+          hexId: this.cellId(index, 'hex'), textId: this.cellId(index, 'text'), selection: String(selected), selected,
+          caretHex: index === BigInt(this.caret) && this.activeColumn === 'hex', caretText: index === BigInt(this.caret) && this.activeColumn === 'text' });
       }
-      rows.push({ index: row, address: this.offset(row * 16), top: row * this.rowHeight + 'px', cells });
+      rows.push({ index:row.toString(), address: this.offset(row * 16n), top: (this.scaled ? this.viewport.scrollTop + Number(row-top)*this.rowHeight : Number(row)*this.rowHeight) + 'px', cells });
     }
     this.hexRows = rows;
+    this.source?.ensure(first*16n,last*16n);
   }
 
-  private cellId(index: number, column: Column): string { return this.viewerId + '-' + column + '-' + index; }
-  private offset(index: number): string { return ((this.preview?.offset ?? 0) + index).toString(16).padStart(8, '0').toUpperCase(); }
-  private selectedBytes(): Uint8Array { return this.rangeStart < 0 ? new Uint8Array() : this.bytes.subarray(this.rangeStart, this.rangeEnd + 1); }
+  private cellId(index: bigint, column: Column): string { return this.viewerId + '-' + column + '-' + index; }
+  private offset(index: bigint): string { return (BigInt(this.preview?.offset ?? 0) + index).toString(16).padStart(8, '0').toUpperCase(); }
+  private get selectionLength():bigint { return BigInt(this.rangeStart)<0n ? 0n : BigInt(this.rangeEnd)-BigInt(this.rangeStart)+1n; }
   private nativeSelection(): boolean { return !!window.getSelection()?.toString(); }
   private describeSelection(): void {
-    this.hexRows = this.hexRows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell, selection: String(cell.index >= this.rangeStart && cell.index <= this.rangeEnd) })) }));
-    this.activeCellId = this.caret < 0 ? '' : this.cellId(this.caret, this.activeColumn);
-    this.selectionSummary = this.rangeStart < 0
-      ? this.caret < 0 ? 'No bytes selected' : 'Offset ' + this.offset(this.caret) + ' · No bytes selected'
-      : this.offset(this.rangeStart) + '–' + this.offset(this.rangeEnd) + ' · ' + (this.rangeEnd - this.rangeStart + 1).toLocaleString() + ' bytes selected';
-    this.utf8Available = this.rangeStart >= 0 && utf8Selection(this.selectedBytes()) !== null;
+    this.hasCaret=BigInt(this.caret)>=0n;this.hasSelection=BigInt(this.rangeStart)>=0n;
+    this.hexRows = this.hexRows.map(row => ({ ...row, cells: row.cells.map(cell => {
+      const index=BigInt(cell.index),selected=index>=BigInt(this.rangeStart)&&index<=BigInt(this.rangeEnd);
+      return {...cell,selected,selection:String(selected),caretHex:index===BigInt(this.caret)&&this.activeColumn==='hex',caretText:index===BigInt(this.caret)&&this.activeColumn==='text'};
+    }) }));
+    this.activeCellId = this.hasCaret ? this.cellId(BigInt(this.caret), this.activeColumn) : '';
+    this.selectionSummary = !this.hasSelection
+      ? !this.hasCaret ? 'No bytes selected' : 'Offset ' + this.offset(BigInt(this.caret)) + ' · No bytes selected'
+      : this.offset(BigInt(this.rangeStart)) + '–' + this.offset(BigInt(this.rangeEnd)) + ' · ' + this.selectionLength.toLocaleString() + ' bytes selected';
+    const cached=this.hasSelection&&this.selectionLength<=65536n ? this.source?.cached(BigInt(this.rangeStart),this.selectionLength) : null;
+    this.utf8Available=!!cached&&utf8Selection(cached)!==null;
   }
-  private selectTo(index: number, extend: boolean): void {
-    if (!this.bytes.length) return;
-    const next = Math.max(0, Math.min(this.bytes.length - 1, index));
-    if (!extend || this.anchor < 0) this.anchor = next;
-    this.caret = next;
-    this.rangeStart = Math.min(this.anchor, next);
-    this.rangeEnd = Math.max(this.anchor, next);
+  private selectTo(index: bigint, extend: boolean): void {
+    if (!this.length) return;
+    const next = max(0n, min(this.length - 1n, index));
+    if (!extend || this.anchor < 0n) this.anchor = next;
+    this.caret = next.toString();
+    this.rangeStart = min(this.anchor, next).toString();
+    this.rangeEnd = max(this.anchor, next).toString();
+    this.copyRevision++;
     this.describeSelection();
   }
 
@@ -127,8 +195,8 @@ export class HexViewer extends WebUIElement {
     event.preventDefault(); this.closeMenu(false);
     window.getSelection()?.removeAllRanges();
     this.activeColumn = cell.dataset.column as Column;
-    if (event.shiftKey && this.rangeStart < 0) this.anchor = this.caret;
-    this.selectTo(Number(cell.dataset.byte), event.shiftKey);
+    if (event.shiftKey && !this.hasSelection) this.anchor = BigInt(this.caret);
+    this.selectTo(BigInt(cell.dataset.byte!), event.shiftKey);
     this.viewport.focus({ preventScroll: true });
     this.pointer = event.pointerId;
     this.pointerX = event.clientX; this.pointerY = event.clientY;
@@ -165,21 +233,21 @@ export class HexViewer extends WebUIElement {
     const header = (this.activeColumn === 'hex' ? this.hexHeader : this.textHeader).getBoundingClientRect();
     const column = Math.max(0, Math.min(15, Math.floor((this.pointerX - header.left) / (header.width / 16))));
     const y = Math.max(bounds.top + this.rowHeight, Math.min(bounds.bottom - 1, this.pointerY));
-    const row = Math.max(0, Math.floor((y - bounds.top + this.viewport.scrollTop - this.rowHeight) / this.rowHeight));
-    this.selectTo(row * 16 + column, true);
+    const row = this.currentTop() + BigInt(Math.max(0,Math.floor((y - bounds.top - this.rowHeight) / this.rowHeight)));
+    this.selectTo(row * 16n + BigInt(column), true);
   }
   private dragScroll(): void {
     if (this.pointer === null) return;
     const bounds = this.viewport.getBoundingClientRect();
     const direction = this.pointerY < bounds.top + this.rowHeight + 18 ? -1 : this.pointerY > bounds.bottom - 18 ? 1 : 0;
     if (!direction) return;
-    this.viewport.scrollTop += direction * this.rowHeight;
-    this.renderRows(); this.selectPointerByte();
+    this.scrollToRow(this.currentTop()+BigInt(direction)); this.selectPointerByte();
   }
 
   keyboard(event: KeyboardEvent): void {
-    if (!this.bytes.length || this.nativeSelection()) return;
+    if (!this.length || this.nativeSelection()) return;
     const control = event.ctrlKey || event.metaKey;
+    if(control && event.key.toLowerCase()==='g') { event.preventDefault(); this.openOffset(); return; }
     if (control && event.key.toLowerCase() === 'c') {
       event.preventDefault();
       if (event.altKey) this.openMenu(undefined, true);
@@ -194,62 +262,87 @@ export class HexViewer extends WebUIElement {
       }
       return;
     }
-    if (event.key === 'Escape') { event.preventDefault(); this.stopDrag(); this.rangeStart = this.rangeEnd = -1; this.anchor = this.caret; this.describeSelection(); return; }
+    if (event.key === 'Escape') { event.preventDefault(); this.stopDrag(); this.rangeStart = this.rangeEnd = '-1'; this.anchor = BigInt(this.caret); this.copyRevision++; this.describeSelection(); return; }
     if (event.altKey) return;
-    const current = Math.max(0, this.caret);
-    const page = Math.max(1, Math.floor(this.viewport.clientHeight / this.rowHeight) - 1) * 16;
-    let next: number;
+    const current = max(0n, BigInt(this.caret));
+    const page = BigInt(this.visibleRows) * 16n;
+    let next: bigint;
     switch (event.key) {
-      case 'ArrowLeft': next = current - 1; break;
-      case 'ArrowRight': next = current + 1; break;
-      case 'ArrowUp': next = current - 16; break;
-      case 'ArrowDown': next = current + 16; break;
-      case 'Home': next = control ? 0 : Math.floor(current / 16) * 16; break;
-      case 'End': next = control ? this.bytes.length - 1 : Math.floor(current / 16) * 16 + 15; break;
+      case 'ArrowLeft': next = current - 1n; break;
+      case 'ArrowRight': next = current + 1n; break;
+      case 'ArrowUp': next = current - 16n; break;
+      case 'ArrowDown': next = current + 16n; break;
+      case 'Home': next = control ? 0n : current / 16n * 16n; break;
+      case 'End': next = control ? this.length - 1n : current / 16n * 16n + 15n; break;
       case 'PageUp': next = current - page; break;
       case 'PageDown': next = current + page; break;
       default: return;
     }
     event.preventDefault(); event.stopPropagation(); this.stopDrag();
-    next = Math.max(0, Math.min(this.bytes.length - 1, next));
+    next = max(0n, min(this.length - 1n, next));
     if (event.shiftKey) {
-      if (this.rangeStart < 0) this.anchor = current;
+      if (!this.hasSelection) this.anchor = current;
       this.selectTo(next, true);
     } else {
-      this.caret = this.anchor = next;
-      this.rangeStart = this.rangeEnd = -1;
+      this.caret = next.toString(); this.anchor = next;
+      this.rangeStart = this.rangeEnd = '-1'; this.copyRevision++;
       this.describeSelection();
     }
     this.revealCaret();
   }
   private revealCaret(): void {
-    const top = Math.floor(this.caret / 16) * this.rowHeight;
-    const available = this.viewport.clientHeight - this.rowHeight;
-    if (top < this.viewport.scrollTop) this.viewport.scrollTop = top;
-    else if (top + this.rowHeight > this.viewport.scrollTop + available) this.viewport.scrollTop = top + this.rowHeight - available;
-    this.renderRows();
+    const row = BigInt(this.caret) / 16n, top = this.currentTop();
+    if(row<top) this.scrollToRow(row);
+    else if(row>=top+BigInt(this.visibleRows)) this.scrollToRow(row-BigInt(this.visibleRows)+1n);
+    else this.renderRows();
   }
   selectAll(): void {
-    if (!this.bytes.length) return;
-    this.anchor = 0; this.selectTo(this.bytes.length - 1, true);
+    if (!this.length) return;
+    this.anchor = 0n; this.selectTo(this.length - 1n, true);
     this.closeMenu(); this.revealCaret();
   }
   copyEvent(event: ClipboardEvent): void {
-    if (this.nativeSelection() || this.rangeStart < 0 || !event.clipboardData) return;
-    event.clipboardData.setData('text/plain', formatHexSelection(this.selectedBytes(), 'base64')!);
+    if (this.nativeSelection() || !this.hasSelection || !event.clipboardData) return;
+    const bytes=this.source?.cached(BigInt(this.rangeStart),this.selectionLength);
+    if(!bytes) { event.preventDefault(); void this.copySelection('base64'); return; }
+    event.clipboardData.setData('text/plain', formatHexSelection(bytes, 'base64')!);
     event.preventDefault();
   }
   async copySelection(format: HexCopyFormat): Promise<void> {
-    if (this.rangeStart < 0) return;
-    const text = formatHexSelection(this.selectedBytes(), format);
-    if (text === null) return;
-    await this.writeClipboard(text, 'Selected bytes copied.');
+    if (!this.hasSelection || !this.source || this.copying) return;
+    this.copying = true;
+    const revision=this.copyRevision,source=this.source,current=()=>revision===this.copyRevision&&source===this.source;
+    this.closeMenu();
+    try {
+      const bytes=await source.read(BigInt(this.rangeStart),this.selectionLength,current);
+      if(!current())return;
+      const text=formatHexSelection(bytes,format);
+      if(text===null){this.$emit('diagnostic','Selected bytes are not valid UTF-8.');return;}
+      await this.writeClipboard(text,'Selected bytes copied.');
+    } catch(error:unknown) { if(current())this.$emit('diagnostic',describeError(error)); }
+    finally {this.copying=false;}
   }
   async copyOffset(format: string): Promise<void> {
-    if (this.caret < 0) return;
-    const offset = (this.preview?.offset ?? 0) + this.caret;
+    if (!this.hasCaret) return;
+    const offset = BigInt(this.preview?.offset ?? 0) + BigInt(this.caret);
     await this.writeClipboard(format === 'hex' ? '0x' + offset.toString(16) : String(offset), 'Offset copied.');
   }
+  openOffset():void {
+    this.closeMenu(false);this.offsetInput=this.hasCaret?(BigInt(this.preview?.offset??0)+BigInt(this.caret)).toString():'0';this.offsetError='';
+    this.$flushUpdates();this.offsetField.value=this.offsetInput;this.offsetPopover.showPopover();this.offsetField.focus();this.offsetField.select();
+  }
+  changeOffset(event:Event):void { this.offsetInput=(event.currentTarget as HTMLInputElement).value;this.offsetError=''; }
+  goOffset(event:SubmitEvent):void {
+    event.preventDefault();
+    try {
+      if(!/^(?:\d+|0x[\da-f]+)$/i.test(this.offsetInput.trim()))throw new Error('Enter a decimal offset or hexadecimal offset beginning with 0x.');
+      const offset=BigInt(this.offsetInput.trim())-BigInt(this.preview?.offset??0);
+      if(offset<0n||offset>=this.length)throw new Error('The offset must be within the retained body.');
+      this.caret=offset.toString();this.anchor=offset;this.rangeStart=this.rangeEnd='-1';this.copyRevision++;
+      this.describeSelection();this.revealCaret();this.offsetPopover.hidePopover();this.viewport.focus({preventScroll:true});
+    }catch(error:unknown){this.offsetError=describeError(error);}
+  }
+  offsetKeyboard(event:KeyboardEvent):void {if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.offsetPopover.hidePopover();this.viewport.focus({preventScroll:true});}}
   private async writeClipboard(text: string, message: string): Promise<void> {
     try {
       const copying = navigator.clipboard.writeText(text);
@@ -262,8 +355,8 @@ export class HexViewer extends WebUIElement {
     const cell = (event.target as Element).closest<HTMLElement>('[data-byte]');
     if (!cell) return;
     event.preventDefault(); event.stopPropagation();
-    const index = Number(cell.dataset.byte);
-    if (index < this.rangeStart || index > this.rangeEnd) {
+    const index = BigInt(cell.dataset.byte!);
+    if (index < BigInt(this.rangeStart) || index > BigInt(this.rangeEnd)) {
       this.activeColumn = cell.dataset.column as Column;
       this.selectTo(index, false);
     }
@@ -280,7 +373,15 @@ export class HexViewer extends WebUIElement {
     this.hexMenuX = Math.max(this.menuSide === 'left' ? Math.min(220, window.innerWidth - 240) : 8, Math.min(x, window.innerWidth - 240)) + 'px';
     this.hexMenuY = Math.max(8, Math.min(event?.clientY ?? cell.bottom, window.innerHeight - 310)) + 'px';
     this.copyMenuOpen = submenu; this.$flushUpdates(); this.contextMenu.showPopover();
+    void this.validateUtf8();
     (submenu ? this.copyMenu : this.contextMenu).querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }
+  private async validateUtf8():Promise<void> {
+    if(!this.hasSelection||!this.source||this.validatingUtf8||this.selectionLength>BigInt(HEX_COPY_BYTES))return;
+    this.validatingUtf8=true;
+    const source=this.source,revision=this.copyRevision,current=()=>source===this.source&&revision===this.copyRevision;
+    try {const bytes=await source.read(BigInt(this.rangeStart),this.selectionLength,current);if(current())this.utf8Available=utf8Selection(bytes)!==null;}catch{ /* Copy reports unavailable byte ranges when requested. */ }
+    finally {this.validatingUtf8=false;}
   }
   showCopyMenu(focus = false): void {
     this.copyMenuOpen = true; this.$flushUpdates();
@@ -318,6 +419,7 @@ export class HexViewer extends WebUIElement {
 
   disconnectedCallback(): void {
     this.stopDrag(); this.resizeObserver?.disconnect(); this.resizeObserver = null;
+    this.copyRevision++;this.source?.dispose();this.source=null;
     super.disconnectedCallback();
   }
 }

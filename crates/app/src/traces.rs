@@ -1108,6 +1108,8 @@ fn apply_native_frame(
                 );
                 body.retained += captured as u64;
                 body.pieces.push(NativeBodyPiece {
+                    body_offset: body.retained - captured as u64,
+                    bytes: captured as u64,
                     offset: frame.offset,
                     index: frame.index,
                     codec: frame.codec.clone(),

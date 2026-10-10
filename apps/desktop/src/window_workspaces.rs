@@ -67,11 +67,13 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "session_detail"
             | "inspect_headers"
             | "copy_message_headers"
+            | "copy_message_url"
             | "request_command"
             | "copy_all_headers"
             | "composer_source"
             | "save_request_body"
             | "inspect_body"
+            | "read_body_range"
             | "save_response_body"
             | "save_traffic_trace"
             | "open_captured_page"
@@ -314,6 +316,8 @@ mod tests {
             "import_trace",
             "execute_composer",
             "request_command",
+            "read_body_range",
+            "copy_message_url",
             "open_main_window",
         ] {
             assert!(viewer_command_allowed(command));

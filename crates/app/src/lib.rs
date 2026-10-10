@@ -9,6 +9,7 @@
 mod artifacts;
 mod automation;
 mod autoresponse_batch;
+mod body_ranges;
 mod body_store;
 mod breakpoints;
 mod captured_page;
@@ -49,6 +50,7 @@ pub use automation::{
     AutomationStatus, ExampleResult, RuleDiagnostic, RuleUsage,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
+pub use body_ranges::{BodyBytePage, BodyRangeRequest};
 pub use body_store::{
     BodyAvailability, BodyRange, BodyReadLease, BodyStore, BodyStoreConfig, BodyStoreCounters,
     BodyStoreError, BufferLimit, BufferStatus, BufferStorage, DEFAULT_BODY_READ_BYTES,
@@ -1418,6 +1420,26 @@ impl Application {
             session_id,
             boundary,
         )
+    }
+
+    /// Reads a raw retained-body page without a total display-size ceiling.
+    ///
+    /// # Errors
+    /// Returns invalid offsets, unavailable bytes, or a per-call budget error.
+    pub async fn read_body_range(
+        &self,
+        request: BodyRangeRequest,
+    ) -> Result<BodyBytePage, AppError> {
+        let store = self.body_store.clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Body retention is not configured",
+                false,
+            )
+        })?;
+        tokio::task::spawn_blocking(move || body_ranges::read(&store, &request))
+            .await
+            .map_err(|_| AppError::new(ErrorCategory::Internal, "Byte range worker failed", true))?
     }
 
     /// Returns one bounded safe representation of a retained body boundary.

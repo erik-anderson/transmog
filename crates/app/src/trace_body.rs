@@ -64,6 +64,7 @@ pub(crate) struct SazBodySource {
     archive: SazArchive<SourceReader>,
     body: ArchiveBody,
     length: Arc<AtomicU64>,
+    range_cache: Mutex<Option<Arc<tempfile::NamedTempFile>>>,
 }
 impl SazBodySource {
     pub(crate) fn new(
@@ -80,6 +81,7 @@ impl SazBodySource {
             archive,
             body,
             length,
+            range_cache: Mutex::new(None),
         }
     }
 }
@@ -112,6 +114,59 @@ impl SavedBodySource for SazBodySource {
     fn length(&self) -> Option<u64> {
         let length = self.length.load(Ordering::Acquire);
         (length != u64::MAX).then_some(length)
+    }
+    fn prepare_ranges(&self) -> io::Result<()> {
+        let mut cache = self
+            .range_cache
+            .lock()
+            .map_err(|_| io::Error::other("Saved archive byte cache failed"))?;
+        if cache.is_some() {
+            return Ok(());
+        }
+        let mut file = tempfile::NamedTempFile::new()?;
+        let bytes = self
+            .archive
+            .clone()
+            .copy_body(&self.body, &mut file, || false)
+            .map_err(|_| io::Error::other("Saved body is incomplete, changed or corrupt"))?;
+        file.flush()?;
+        self.length.store(bytes, Ordering::Release);
+        *cache = Some(Arc::new(file));
+        Ok(())
+    }
+    fn open_at(&self, offset: u64) -> io::Result<Box<dyn Read + Send>> {
+        if offset > 0 {
+            self.prepare_ranges()?;
+        }
+        let cache = self
+            .range_cache
+            .lock()
+            .map_err(|_| io::Error::other("Saved archive byte cache failed"))?
+            .clone();
+        if let Some(cache) = cache {
+            let mut source = SourceReader::new(cache.reopen()?)?;
+            let length = self.length().ok_or(io::ErrorKind::UnexpectedEof)?;
+            if offset > length {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            source.seek(SeekFrom::Start(offset))?;
+            // Retain ownership of the temporary cache while this cursor is open.
+            return Ok(Box::new(CachedArchiveReader {
+                reader: source.take(length - offset),
+                _cache: cache,
+            }));
+        }
+        self.open()
+    }
+}
+
+struct CachedArchiveReader {
+    reader: io::Take<SourceReader>,
+    _cache: Arc<tempfile::NamedTempFile>,
+}
+impl Read for CachedArchiveReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.reader.read(buffer)
     }
 }
 
@@ -168,6 +223,8 @@ impl Read for ChunkReader {
 
 #[derive(Clone, Debug)]
 pub(crate) struct NativeBodyPiece {
+    pub body_offset: u64,
+    pub bytes: u64,
     pub offset: u64,
     pub index: u64,
     pub codec: transmog_capture::FrameCodec,
@@ -186,6 +243,26 @@ impl SavedBodySource for NativeBodySource {
             reader: self.reader.clone(),
             pieces: self.pieces.clone(),
             next: 0,
+            skip: 0,
+            current: io::Cursor::new(Vec::new()),
+        }))
+    }
+    fn open_at(&self, offset: u64) -> io::Result<Box<dyn Read + Send>> {
+        if offset > self.bytes {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+        let next = self
+            .pieces
+            .partition_point(|piece| piece.body_offset + piece.bytes <= offset);
+        let skip = self
+            .pieces
+            .get(next)
+            .map_or(0, |piece| offset - piece.body_offset);
+        Ok(Box::new(NativeBodyReader {
+            reader: self.reader.clone(),
+            pieces: self.pieces.clone(),
+            next,
+            skip,
             current: io::Cursor::new(Vec::new()),
         }))
     }
@@ -197,6 +274,7 @@ struct NativeBodyReader {
     reader: SourceReader,
     pieces: Arc<[NativeBodyPiece]>,
     next: usize,
+    skip: u64,
     current: io::Cursor<Vec<u8>>,
 }
 impl Read for NativeBodyReader {
@@ -230,10 +308,14 @@ impl Read for NativeBodyReader {
             else {
                 return Err(io::Error::other("Saved body frame is unavailable"));
             };
-            if <[u8; 32]>::from(Sha256::digest(&bytes)) != piece.digest {
+            if bytes.len() as u64 != piece.bytes
+                || <[u8; 32]>::from(Sha256::digest(&bytes)) != piece.digest
+            {
                 return Err(io::Error::other("Saved body bytes changed since import"));
             }
             self.current = io::Cursor::new(bytes);
+            self.current.set_position(self.skip);
+            self.skip = 0;
             self.next += 1;
         }
     }
@@ -251,6 +333,139 @@ impl fmt::Debug for ChunkReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chunked_saz(path: &std::path::Path, compression: zip::CompressionMethod) -> SazBodySource {
+        let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+        for (name, bytes) in [
+            (
+                "raw/1_c.txt",
+                "GET https://example.invalid/ HTTP/1.1\r\n\r\n",
+            ),
+            (
+                "raw/1_s.txt",
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            ),
+        ] {
+            zip.start_file(
+                name,
+                zip::write::SimpleFileOptions::default().compression_method(compression),
+            )
+            .unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        std::fs::write(path, zip.finish().unwrap().into_inner()).unwrap();
+        let mut archive = SazArchive::open(
+            SourceReader::new(File::open(path).unwrap()).unwrap(),
+            transmog_saz::SazImportLimits::default(),
+        )
+        .unwrap();
+        let mut index = archive.index(|_, _| {}, || false).unwrap();
+        let body = index.sessions.remove(0).response.unwrap().body;
+        SazBodySource::new(archive, body, None)
+    }
+
+    #[test]
+    fn compressed_saz_ranges_measure_once_and_release_the_cache_after_the_last_cursor() {
+        let root = tempfile::tempdir().unwrap();
+        let source = chunked_saz(
+            &root.path().join("trace.saz"),
+            zip::CompressionMethod::Deflated,
+        );
+        assert_eq!(source.length(), None);
+        source.prepare_ranges().unwrap();
+        assert_eq!(source.length(), Some(5));
+        let cache = source.range_cache.lock().unwrap().as_ref().unwrap().clone();
+        let cache_path = cache.path().to_owned();
+        source.prepare_ranges().unwrap();
+        assert!(Arc::ptr_eq(
+            &cache,
+            source.range_cache.lock().unwrap().as_ref().unwrap()
+        ));
+        let mut cursor = source.open_at(1).unwrap();
+        let mut bytes = Vec::new();
+        cursor.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"ello");
+        drop(cache);
+        drop(source);
+        assert!(cache_path.exists());
+        drop(cursor);
+        assert!(!cache_path.exists());
+    }
+
+    #[test]
+    fn corrupt_saz_cannot_publish_a_partial_range_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("corrupt.saz");
+        let source = chunked_saz(&path, zip::CompressionMethod::Stored);
+        let mut bytes = std::fs::read(&path).unwrap();
+        let offset = bytes
+            .windows(5)
+            .position(|bytes| bytes == b"hello")
+            .unwrap();
+        bytes[offset] ^= 1;
+        std::fs::write(path, bytes).unwrap();
+        assert!(source.prepare_ranges().is_err());
+        assert!(source.range_cache.lock().unwrap().is_none());
+        assert_eq!(source.length(), None);
+    }
+
+    #[test]
+    fn native_tail_ranges_skip_earlier_frames_and_validate_only_the_loaded_payload() {
+        use transmog_capture::{CaptureReader, CaptureRecord, CaptureWriter};
+        use transmog_core::observe::ExchangeBoundary;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("indexed.tmcap");
+        let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+        for (index, bytes) in [vec![7; 1000], vec![9; 57]].into_iter().enumerate() {
+            writer
+                .append(&CaptureRecord {
+                    sequence: index as u64 + 1,
+                    exchange_id: 1,
+                    kind: CaptureRecordKind::BodySegment {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        byte_count: bytes.len(),
+                        bytes: Some(bytes),
+                        truncated: false,
+                    },
+                })
+                .unwrap();
+        }
+        writer.seal().unwrap();
+        let bytes = writer.into_inner();
+        let mut reader =
+            CaptureReader::new(io::Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+        let first = reader.read_next().unwrap().unwrap();
+        let second = reader.read_next().unwrap().unwrap();
+        let pieces = [(&first, 0, vec![7; 1000]), (&second, 1000, vec![9; 57])]
+            .into_iter()
+            .map(|(frame, body_offset, body)| NativeBodyPiece {
+                body_offset,
+                bytes: body.len() as u64,
+                offset: frame.offset,
+                index: frame.index,
+                codec: frame.codec.clone(),
+                frame_bytes: frame.frame_bytes,
+                digest: Sha256::digest(&body).into(),
+            })
+            .collect::<Vec<_>>();
+        let mut corrupt = bytes;
+        corrupt[usize::try_from(first.offset + first.frame_bytes - 1).unwrap()] ^= 255;
+        std::fs::write(&path, corrupt).unwrap();
+        let source = NativeBodySource {
+            reader: SourceReader::new(File::open(path).unwrap()).unwrap(),
+            pieces: Arc::from(pieces),
+            bytes: 1057,
+        };
+        let mut tail = Vec::new();
+        source
+            .open_at(1001)
+            .unwrap()
+            .read_to_end(&mut tail)
+            .unwrap();
+        assert_eq!(tail, vec![9; 56]);
+        assert!(source.open().unwrap().read_to_end(&mut Vec::new()).is_err());
+        assert!(source.open_at(1058).is_err());
+    }
 
     #[test]
     fn independent_cursors_keep_the_indexed_file_boundary_when_a_source_grows() {

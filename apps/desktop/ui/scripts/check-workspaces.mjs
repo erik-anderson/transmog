@@ -222,6 +222,18 @@ await page.addInitScript((workspace) => {
           if (state.saveError) throw new Error('Fixture file write failed');
           return state.saveCancelled ? null : {fileName:'original.webp',bytes:4};
         }
+        case 'read_body_range': {
+          const request=args.request;state.lastRangeRequest=structuredClone(request);
+          state.rangeRequests??=[];state.rangeRequests.push(structuredClone(request));
+          const total=BigInt(state.hexLargeTotal??(state.hexBytes??[0,0x41,0xff,0x20]).length);
+          const offset=BigInt(request.offset),count=Number((total-offset)<BigInt(request.maxBytes)?total-offset:BigInt(request.maxBytes));
+          const bytes=state.hexLargeTotal?Array.from({length:count},(_,index)=>Number((offset+BigInt(index))%256n)):(state.hexBytes??[0,0x41,0xff,0x20]).slice(Number(offset),Number(offset)+count);
+          if(state.deferRangeOffset===request.offset){state.rangePending=true;await new Promise(resolve=>state.releaseRange=resolve);}
+          const metadata=detail(request.sessionId).storedBodies[0];if(state.bodyOverride)Object.assign(metadata,state.bodyOverride);
+          metadata.retainedBytes=Number(total);
+          const chunks=[];for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
+          return {metadata,totalBytes:total.toString(),offset:request.offset,bytesBase64:btoa(chunks.join('')),readLimit:16777216};
+        }
         case 'inspect_body': {
           if (state.deferBody===args.request.sessionId && args.request.representation==='original-text') { state.bodyPending=true; await new Promise(resolve=>state.releaseBody=resolve); }
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
@@ -620,7 +632,7 @@ try {
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).getAttribute('aria-pressed'),'true');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-wide.png')});
   await page.setViewportSize({width:760,height:520});
-  await page.getByRole('button',{name:'Request',exact:true}).click();
+  await page.getByRole('combobox',{name:'Message to inspect',exact:true}).selectOption('request');
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).isVisible(),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-small.png')});
   await page.setViewportSize({width:1280,height:800});
@@ -801,7 +813,7 @@ try {
   assert.equal(await saveBody.isEnabled(),false,'Save as accepts an incomplete response');
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');
   await responseInspector.locator('.body-facts strong').getByText('Hex',{exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastBodyRequest.decodeContent),false,'Hex tried to decode an incomplete compressed body');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastRangeRequest.offset),'0','Hex did not request raw retained bytes');
   assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isChecked(),false);
   assert.equal(await responseInspector.getByLabel('Decode',{exact:true}).isEnabled(),false);
   await checkHexViewer(page,responseInspector,resolve(root,'../../../target/ui-check/hex-selection.png'));

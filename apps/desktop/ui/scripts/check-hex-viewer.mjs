@@ -5,7 +5,7 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
   const grid = viewer.getByRole('grid');
   const cell = (index, column = 'hex') => viewer.locator(`.hex-cell[data-byte="${index}"][data-column="${column}"]`);
   const selected = column => viewer.locator(`.hex-cell[data-selected][data-column="${column}"]`).evaluateAll(cells => cells.map(cell => Number(cell.dataset.byte)));
-  const state = () => viewer.evaluate(element => [element.caret, element.rangeStart, element.rangeEnd, element.activeColumn]);
+  const state = () => viewer.evaluate(element => [Number(element.caret), Number(element.rangeStart), Number(element.rangeEnd), element.activeColumn]);
   const fixture = async (bytes, truncated = false) => {
     await inspector.evaluate(async (element, { bytes, truncated }) => {
       const fixture = globalThis.__workspaceFixture;
@@ -116,7 +116,7 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
         await page.screenshot({path:screenshotPath.replace('.png','-menu.png')});
       }
       assert.equal(await viewer.getByRole('menuitem', { name: 'UTF-8', exact: true }).isEnabled(), false);
-      assert.equal(await viewer.getByRole('menuitem', { name: 'Select all (truncated)', exact: false }).count(), 1);
+      assert.equal(await viewer.getByRole('menuitem', { name: 'Select all (truncated)', exact: false }).count(), 0,'Paged Hex inherited the text preview limit');
       await viewer.getByRole('menuitem', { name: label, exact: true }).click();
       assert.equal(await copied(), text, label + ' copy format differs');
     }
@@ -170,6 +170,49 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
     assert.ok((await state())[2] > 16, 'Dragging beyond the viewport did not extend the range');
     await grid.press('Control+a');
     assert.deepEqual((await state()).slice(0,3), [262143,0,262143]);
+    // A synthetic multi-petabyte source has no browser scroll-height or integer ceiling.
+    const total='9007199254741009',end='9007199254741008';
+    await page.evaluate(total=>{const f=globalThis.__workspaceFixture;f.hexLargeTotal=total;f.rangeRequests=[];},total);
+    await inspector.evaluate(element=>element.inspectBody());
+    await grid.press('Control+End');
+    assert.equal(await viewer.evaluate(element=>element.caret),end);
+    await cell(end).waitFor({state:'visible'});
+    await page.waitForFunction(end=>document.querySelector('app-shell').shadowRoot.querySelector('hex-viewer').querySelector(`[data-byte="${end}"][data-column="hex"]`)?.textContent==='10',end);
+    assert.ok(await viewer.locator('.hex-data-row').count()<100);
+    assert.ok(await grid.evaluate(element=>element.scrollHeight)<=4_000_100,'Native scroll canvas exceeded its bounded height');
+    await grid.press('Shift+F10');
+    await viewer.getByRole('menuitem',{name:'Copy Offset as Decimal',exact:true}).click();
+    assert.equal(await copied(),end);
+    await grid.press('Control+g');
+    const offsetField=viewer.getByRole('textbox',{name:'Byte offset'});
+    await offsetField.fill('0x20000000000002');await offsetField.press('Enter');
+    assert.equal(await viewer.evaluate(element=>element.caret),'9007199254740994');
+    assert.equal(await grid.evaluate(element=>element===element.getRootNode().activeElement),true,'Go to offset did not restore grid focus');
+    await grid.press('Shift+ArrowRight');
+    await grid.press('Control+c');
+    await page.waitForFunction(()=>globalThis.__hexCopied.at(-1)==='AgM=');
+    await grid.press('Control+a');
+    assert.equal(await viewer.evaluate(element=>element.rangeEnd),end);
+    await grid.press('Control+g');assert.equal(await offsetField.inputValue(),end,'Go to offset retained an earlier edited input');
+    await offsetField.press('Escape');
+    assert.equal(await grid.evaluate(element=>element===element.getRootNode().activeElement),true,'Escape did not return focus to the byte grid');
+    const before=await page.evaluate(()=>globalThis.__hexCopied.length);
+    await grid.press('Control+c');
+    assert.equal(await page.evaluate(()=>globalThis.__hexCopied.length),before,'An oversized selection was copied');
+    assert.ok(await page.evaluate(()=>globalThis.__workspaceFixture.rangeRequests.every(request=>request.maxBytes<=65536)),'Scrolling or selecting loaded the whole body');
+    await page.screenshot({path:screenshotPath.replace('.png','-huge.png')});
+    // Late pages from a previous body snapshot must not restore its old size or bytes.
+    await grid.press('Control+Home');
+    await page.evaluate(()=>{const f=globalThis.__workspaceFixture;f.deferRangeOffset='50003968';});
+    await grid.press('Control+g');await offsetField.fill('50004000');await offsetField.press('Enter');
+    await page.waitForFunction(()=>globalThis.__workspaceFixture.rangePending);
+    await page.evaluate(()=>delete globalThis.__workspaceFixture.hexLargeTotal);
+    await fixture([0x41,0x42]);
+    await page.evaluate(()=>{const f=globalThis.__workspaceFixture;delete f.deferRangeOffset;f.releaseRange();delete f.releaseRange;delete f.rangePending;});
+    await page.waitForTimeout(100);
+    assert.ok((await state())[0]<=1,'A stale page restored the previous source length');
+    await grid.press('Control+End');assert.equal((await state())[0],1);
+    assert.equal(await cell(1).textContent(),'42');
     await fixture([0x41,0x42]);
     assert.ok((await state())[2] <= 1, 'Shrinking a preview left the selection outside its bytes');
     await viewer.evaluate(element => element.preview = { ...element.preview, key: 'different-body' });
@@ -200,6 +243,7 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
       const fixture = globalThis.__workspaceFixture;
       fixture.bodyOverride = override;
       delete fixture.hexBytes; delete fixture.hexTruncated;
+      delete fixture.hexLargeTotal;delete fixture.rangeRequests;delete fixture.deferRangeOffset;
       if (globalThis.__hexClipboardDescriptor) Object.defineProperty(navigator, 'clipboard', globalThis.__hexClipboardDescriptor);
       else delete navigator.clipboard;
       delete globalThis.__hexClipboardDescriptor; delete globalThis.__hexCopied;

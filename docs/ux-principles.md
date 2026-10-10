@@ -245,6 +245,17 @@ older completed live entries, preserves imported entries and lets active request
 finish before eviction. Changing this limit applies immediately. Body bytes have
 a separate budget; the body limit is not a total application memory ceiling.
 
+Hex addresses every retained byte without a total display-size ceiling. Load
+visible pages on demand, keep exact offsets, and preserve selection while paging.
+The scrollbar spans the whole body; keyboard navigation and Go to offset reach
+exact positions even when native scrollbar pixels cannot. A preview limit belongs
+to bounded text and decoded previews, not the raw Hex view. Clipboard selections
+have a separate bounded budget with Save as guidance for larger selections.
+Compressed SAZ bodies may be validated and unpacked once into an owned temporary
+byte cache for random access; release it with the imported body and its readers.
+In a narrow Traffic inspector, put the request/response selector beside the URL
+and status so switching messages does not consume an extra row above the body.
+
 Live body retention uses a configurable circular buffer. Automatic chooses half
 installed physical RAM, stored in memory. Custom limits up to that threshold
 also stay in memory; larger limits and **No max size (writes to disk)** use an

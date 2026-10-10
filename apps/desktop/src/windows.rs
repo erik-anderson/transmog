@@ -1196,6 +1196,18 @@ fn trace_metadata(
 }
 
 #[tauri::command]
+async fn read_body_range(
+    request: transmog_app::BodyRangeRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::BodyBytePage, AppError> {
+    state
+        .window_application(&window)?
+        .read_body_range(request)
+        .await
+}
+
+#[tauri::command]
 async fn inspect_body(
     request: BodyInspectionRequest,
     window: tauri::WebviewWindow,
@@ -1721,6 +1733,7 @@ pub fn run() {
                 composer_source,
                 save_request_body,
                 inspect_body,
+                read_body_range,
                 save_response_body,
                 save_traffic_trace,
                 watch_sessions,

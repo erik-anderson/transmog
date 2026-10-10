@@ -37,7 +37,7 @@ export async function checkTrafficFailures(page, artifacts) {
     assert.doesNotMatch(await request.locator('.body-facts').textContent(),/incomplete|interrupted|lost/);
     await page.screenshot({path:resolve(artifacts,'failed-post-wide.png')});
     await page.setViewportSize({width:760,height:680});
-    await page.getByRole('button',{name:'Request',exact:true}).click();
+    await page.getByRole('combobox',{name:'Message to inspect',exact:true}).selectOption('request');
     assert.equal(await page.locator('.selection-bar .status-badge').textContent(),'Failed');
     assert.equal(await request.getByLabel('Body viewer',{exact:true}).isVisible(),true);
     await page.screenshot({path:resolve(artifacts,'failed-post-small.png')});
