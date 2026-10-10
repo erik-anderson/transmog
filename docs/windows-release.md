@@ -86,6 +86,59 @@ decisions. No push or tag automatically starts a release build.
    gh workflow run windows-release.yml --repo erik-anderson/transmog --ref main
    ```
 
+   For release automation, prefer the CLI or GitHub REST API over browser
+   automation. If `gh` is unavailable, check the existing Git credential helper
+   before opening a browser or installing another tool. A working authenticated
+   Git setup can dispatch and monitor the workflow directly from PowerShell; the
+   absence of `gh` does not require a browser session.
+   If the shell restricts network access, use its normal network-approval
+   mechanism before interpreting a failed Git/API request as missing
+   authentication.
+
+   For a Canary from a clean, already-pushed `main`, this fallback reuses the
+   configured GitHub credentials and checks that the remote source matches the
+   local commit before dispatching:
+
+   ```powershell
+   $ErrorActionPreference = 'Stop'
+   if ((git branch --show-current) -cne 'main' -or (git status --porcelain)) {
+       throw 'Dispatch a Canary from a clean main checkout.'
+   }
+   pwsh ./scripts/set-release-version.ps1 -Check
+   if ($LASTEXITCODE -ne 0) { throw 'Committed release versions differ.' }
+   $sourceCommit = git rev-parse HEAD
+   $credentialLines = "protocol=https`nhost=github.com`n`n" | git credential fill
+   if ($LASTEXITCODE -ne 0) { throw 'Authenticate Git with GitHub before dispatching.' }
+   $tokenLine = $credentialLines | Where-Object { $_.StartsWith('password=') }
+   if (-not $tokenLine) { throw 'The Git credential helper returned no GitHub token.' }
+   $headers = @{
+       Authorization = 'Bearer ' + $tokenLine.Substring(9)
+       Accept = 'application/vnd.github+json'
+       'X-GitHub-Api-Version' = '2022-11-28'
+       'User-Agent' = 'Transmog-release'
+   }
+   $api = 'https://api.github.com/repos/erik-anderson/transmog'
+   $remoteCommit = (Invoke-RestMethod -Uri "$api/branches/main" -Headers $headers).commit.sha
+   if ($remoteCommit -cne $sourceCommit) { throw 'Main changed or local changes are not pushed; review the source again.' }
+   $body = @{ ref = 'main'; inputs = @{ release_type = 'Canary' } } | ConvertTo-Json
+   $dispatch = Invoke-RestMethod -Method Post -Uri "$api/actions/workflows/windows-release.yml/dispatches" `
+       -Headers $headers -ContentType 'application/json' -Body $body
+   $dispatch | Select-Object workflow_run_id, html_url
+   ```
+
+   Keep the credential-helper output and authorization headers in memory. Never
+   print, log, or save them. These credentials need permission to run repository
+   workflows. If dispatch returns a run ID, use it for subsequent checks;
+   otherwise find the new run with `GET /repos/erik-anderson/transmog/actions/workflows/windows-release.yml/runs`
+   and match its source commit and dispatch time. Monitor that run through
+   `GET /repos/erik-anderson/transmog/actions/runs/<run-id>` and its `/jobs` and
+   `/pending_deployments` endpoints. Confirm its `head_sha` matches the reviewed
+   source commit before authorizing signing, including when dispatch returns a
+   run ID. Check for an existing run or draft before
+   retrying an uncertain dispatch, so a connection failure does not start a
+   duplicate build. API dispatch follows the same signing approval and installer
+   review process below.
+
    The workflow builds the selected branch's commit at dispatch. Later pushes to
    that branch do not change the run. Build and qualification progress is visible
    in the run; the release build includes a 3-minute WebView soak.
@@ -97,6 +150,14 @@ decisions. No push or tag automatically starts a release build.
    it does not publish a release. Wait for all six jobs to succeed, then follow
    the signed-draft link in the final job summary or open
    [Releases](https://github.com/erik-anderson/transmog/releases).
+
+   An eligible API reviewer can use that run's `/pending_deployments` response
+   to find the `release-signing` environment ID and confirm
+   `current_user_can_approve`. After checking the pinned source and successful
+   build, submit `POST /repos/erik-anderson/transmog/actions/runs/<run-id>/pending_deployments`
+   with `environment_ids` containing that ID, `state` set to `approved`, and a
+   `comment` recording the reviewed version and source commit. This uses the
+   configured reviewer gate; it does not require changing environment permissions.
 
 5. Download the installer from the `v<version>` draft, confirm the desired version
    and publisher, and exercise the app features you intend to ship. Review the
@@ -118,6 +179,18 @@ decisions. No push or tag automatically starts a release build.
 
    Keep internal checklist status in qualification reports. Omit checklist
    deferrals from release notes, which describe shipped changes and supported platforms.
+
+   The API equivalent edits the same draft through
+   `PATCH /repos/erik-anderson/transmog/releases/<release-id>`. Include the
+   reviewed `tag_name`, `target_commitish`, and `name` explicitly in each draft
+   edit, and verify they survive the update; an omitted tag can leave a draft
+   with an `untagged` placeholder. Set its `body`
+   to the reviewed notes, then publish with `draft: false`. For a Canary, keep
+   `prerelease: true` and set `make_latest: "false"`. Preserve its tag, pinned
+   `target_commitish`, and reviewed assets. Verify the returned release flags
+   and publication timestamp rather than treating the request alone as success.
+   See [GitHub's release API reference](https://docs.github.com/en/rest/releases/releases#update-a-release)
+   for the request fields.
 
 Once published, treat a version as final: the workflow refuses to overwrite it.
 Use a new patch or another unused semantic version for subsequent fixes.

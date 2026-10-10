@@ -21,6 +21,11 @@ resulting draft's installer, then edit and publish that same draft when ready.
 The [manual release process](../docs/windows-release.md#manual-github-release-process)
 documents version selection, rebuilds, previews, and publication. The workflow
 checks that Cargo, Tauri, and desktop UI versions agree before compiling.
+For automation, prefer GitHub CLI or REST calls. If `gh` is missing, reuse the
+existing Git credential helper with the
+[PowerShell API fallback](../docs/windows-release.md#manual-github-release-process)
+before trying browser automation. The fallback preserves the source-commit check
+and the protected signing approval.
 The canonical semantic version, source channel, and release track live in `release-version.json`;
 Cargo/npm/Tauri, release tags, installer names, and product diagnostics use that same semantic version.
 Published versions, wrong branch lines/tracks, and reserved Canary lines fail
