@@ -148,6 +148,15 @@ pub(crate) fn render(
         let _ = write!(attributes, " {name}=\"{}\"", xml(value));
     }
     let mut flags = BTreeMap::new();
+    flags.insert(
+        "x-transmog-terminal",
+        match session.terminal {
+            crate::TerminalState::Open => "active",
+            crate::TerminalState::Completed => "completed",
+            crate::TerminalState::Failed => "failed",
+        }
+        .into(),
+    );
     flags.insert("x-transmog-timer-semantics", "Local proxy observations; ClientBeginRequest means complete headers and ClientDoneResponse means processing ended, not peer receipt. Unmeasured required timers use DateTime.MinValue (0001-01-01T00:00:00).".into());
     if let Some(addr) = session
         .evidence

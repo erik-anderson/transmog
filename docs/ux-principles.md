@@ -111,6 +111,10 @@ its actual effect on the user's task.
 - Make empty, unavailable, incomplete, truncated, redacted, and expired states
   distinguishable. Explain the next useful step. Disable an unavailable action
   with an accessible explanation rather than presenting a broken interaction.
+- Pending traffic means the exchange is still active. A terminal failure without
+  an HTTP response shows Failed. Body completeness describes capture at its own
+  message boundary; a later exchange failure does not make a fully retained body
+  incomplete or establish whether the remote server processed it.
 - Keep captured markup inert in the workbench. A captured-page preview is an
   explicit exception: open a separate isolated browser window after a warning,
   with scripts disabled by default and an Enable scripts choice for that window.

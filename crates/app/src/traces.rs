@@ -653,6 +653,16 @@ fn import_saz(
             started,
         );
         let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), ended);
+        if matches!(
+            session
+                .metadata
+                .flags
+                .get("x-transmog-terminal")
+                .map(String::as_str),
+            Some("failed" | "active")
+        ) {
+            snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
+        }
         let mut raw_blocks = Vec::new();
         for (message, boundary, response_head) in [
             (session.request, ExchangeBoundary::ClientRequest, None),
@@ -851,6 +861,7 @@ struct NativeBody {
     retained: u64,
     incomplete: bool,
     framing_complete: bool,
+    body_completed: bool,
     trailers: Option<HeaderBlock>,
 }
 
@@ -981,10 +992,19 @@ fn apply_native_frame(
                     codings.len() > 16 || codings.iter().any(|value| !value.is_string())
                 })
                 || payload["observedBytes"].as_u64().is_none()
+                || payload["complete"].as_bool().is_none()
+                || payload["retainedBytes"].as_u64().is_none()
             {
                 return Err(invalid("Invalid or repeated saved body representation"));
             }
             body.representation = Some(payload);
+        }
+        CaptureRecordKind::Unknown { kind, payload } if kind == "body-completed" => {
+            let boundary = parse_boundary(payload["boundary"].as_str().unwrap_or_default())?;
+            row.bodies
+                .entry(crate::inspector::boundary(boundary))
+                .or_default()
+                .body_completed = true;
         }
         CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
             let bytes = serde_json::to_vec(&payload)
@@ -1073,6 +1093,9 @@ fn apply_native_frame(
                 .bodies
                 .entry(crate::inspector::boundary(boundary))
                 .or_default();
+            if body.body_completed {
+                return Err(invalid("Body data appears after its completion marker"));
+            }
             body.observed = body.observed.saturating_add(byte_count as u64);
             let captured = frame
                 .body
@@ -1327,9 +1350,15 @@ fn append_native(
                 response.headers = headers.clone();
             }
         }
-        let complete = (row.completed && !row.failed || body.framing_complete)
-            && !body.incomplete
-            && row.loss == 0;
+        // Saved boundary completeness is independent of the exchange's later outcome.
+        let finished = body.representation.as_ref().map_or(
+            row.completed && !row.failed || body.framing_complete || body.body_completed,
+            |representation| {
+                representation["complete"].as_bool() == Some(true)
+                    && representation["retainedBytes"].as_u64() == Some(body.retained)
+            },
+        );
+        let complete = finished && !body.incomplete && row.loss == 0;
         snapshot.bodies.push(BodySnapshot {
             boundary,
             observed_bytes: observed,
@@ -1827,6 +1856,135 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn saz_save_reopens_complete_bodies_without_erasing_exchange_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("failed.tmcap");
+        native(&path, Some(b"abc".to_vec()), 3);
+        let source =
+            transmog_capture::recover(File::open(&path).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let mut writer =
+            CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default()).unwrap();
+        let mut sequence = 0;
+        for mut record in source.records {
+            if matches!(record.kind, CaptureRecordKind::Seal { .. }) {
+                continue;
+            }
+            if let CaptureRecordKind::ResponseHead {
+                status, headers, ..
+            } = &mut record.kind
+            {
+                *status = 200;
+                headers.push(CapturedHeader {
+                    name: b"Content-Length".to_vec(),
+                    value: Some(b"3".to_vec()),
+                    original_value_bytes: None,
+                });
+            }
+            if matches!(record.kind, CaptureRecordKind::Completed) {
+                for kind in [
+                    CaptureRecordKind::BodySegment {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        byte_count: 3,
+                        bytes: Some(b"res".to_vec()),
+                        truncated: false,
+                    },
+                    CaptureRecordKind::Unknown {
+                        kind: "body-completed".into(),
+                        payload: serde_json::json!({"boundary":"client-request"}),
+                    },
+                    CaptureRecordKind::Unknown {
+                        kind: "body-completed".into(),
+                        payload: serde_json::json!({"boundary":"client-response"}),
+                    },
+                ] {
+                    sequence += 1;
+                    writer
+                        .append(&CaptureRecord {
+                            exchange_id: 7,
+                            sequence,
+                            kind,
+                        })
+                        .unwrap();
+                }
+                record.kind = CaptureRecordKind::Failed {
+                    category: "Body".into(),
+                    message: "downstream response-body consumer closed".into(),
+                };
+            }
+            if record.exchange_id != 0 {
+                sequence += 1;
+                record.sequence = sequence;
+            }
+            writer.append(&record).unwrap();
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        let workspace = app(&root.path().join("source"));
+        workspace
+            .import_trace(request(path, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        for (profile, format) in [
+            ("strict", crate::TraceSaveFormat::SazStrict),
+            ("extended", crate::TraceSaveFormat::SazExtended),
+        ] {
+            let path = root.path().join(format!("{profile}.saz"));
+            let saved = workspace
+                .save_traffic_trace(
+                    path.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..crate::TraceSaveOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.incomplete_bodies, 0);
+            let reopened = app(&root.path().join(profile));
+            reopened
+                .import_trace(request(path, profile), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let rows = reopened
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions;
+            assert_eq!(rows[0].terminal, "failed");
+            assert_eq!(rows[0].status, Some(200));
+            let detail = reopened.session_detail(&rows[0].id).unwrap();
+            assert_eq!(detail.terminal_state, "failed");
+            for (boundary, expected) in [("client-request", "abc"), ("client-response", "res")] {
+                let metadata = detail
+                    .stored_bodies
+                    .iter()
+                    .find(|body| body.boundary == boundary)
+                    .unwrap();
+                assert_eq!(
+                    metadata.availability,
+                    crate::BodyAvailability::Complete,
+                    "{profile}/{boundary}: {metadata:?}"
+                );
+                assert_eq!(metadata.retained_bytes, 3);
+                assert_eq!(metadata.reason, None);
+                let body = reopened
+                    .inspect_body(crate::BodyInspectionRequest {
+                        session_id: rows[0].id.clone(),
+                        boundary: boundary.into(),
+                        representation: crate::BodyRepresentation::OriginalText,
+                        decode_content: true,
+                        offset: 0,
+                        max_bytes: None,
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(body.display, expected);
+            }
+        }
+    }
+
     fn native(path: &std::path::Path, bytes: Option<Vec<u8>>, count: usize) {
         let mut writer =
             CaptureWriter::new(File::create(path).unwrap(), CaptureLimits::default()).unwrap();
@@ -1889,6 +2047,81 @@ mod tests {
         }
         writer.seal().unwrap();
     }
+    #[tokio::test]
+    async fn native_body_completion_preserves_chunked_bodies_in_failed_exchanges() {
+        let root = tempfile::tempdir().unwrap();
+        for (name, samples, finished, expected) in [
+            (
+                "finished",
+                Some(b"abc".to_vec()),
+                true,
+                crate::BodyAvailability::Complete,
+            ),
+            (
+                "unfinished",
+                Some(b"abc".to_vec()),
+                false,
+                crate::BodyAvailability::Lost,
+            ),
+            ("omitted", None, true, crate::BodyAvailability::Lost),
+        ] {
+            let path = root.path().join(format!("{name}.tmcap"));
+            native(&path, samples, 3);
+            let records =
+                transmog_capture::recover(File::open(&path).unwrap(), CaptureLimits::default())
+                    .unwrap()
+                    .records;
+            let mut writer =
+                CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default()).unwrap();
+            for mut record in records {
+                if matches!(record.kind, CaptureRecordKind::Seal { .. }) {
+                    continue;
+                }
+                if let CaptureRecordKind::RequestHead { headers, .. } = &mut record.kind {
+                    headers.retain(|header| !header.name.eq_ignore_ascii_case(b"content-length"));
+                }
+                if matches!(record.kind, CaptureRecordKind::Completed) {
+                    if finished {
+                        writer
+                            .append(&CaptureRecord {
+                                exchange_id: record.exchange_id,
+                                sequence: record.sequence,
+                                kind: CaptureRecordKind::Unknown {
+                                    kind: "body-completed".into(),
+                                    payload: serde_json::json!({"boundary":"client-request"}),
+                                },
+                            })
+                            .unwrap();
+                        record.sequence += 1;
+                    }
+                    record.kind = CaptureRecordKind::Failed {
+                        category: "Upstream".into(),
+                        message: "connection closed".into(),
+                    };
+                }
+                writer.append(&record).unwrap();
+            }
+            writer.seal().unwrap();
+            drop(writer);
+            let workspace = app(&root.path().join(name));
+            workspace
+                .import_trace(request(path, name), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let page = workspace
+                .query_sessions(SessionQueryInput::default())
+                .unwrap();
+            let detail = workspace.session_detail(&page.sessions[0].id).unwrap();
+            assert_eq!(detail.terminal_state, "failed");
+            let body = detail
+                .stored_bodies
+                .iter()
+                .find(|body| body.boundary == "client-request")
+                .unwrap();
+            assert_eq!(body.availability, expected, "{name}: {body:?}");
+        }
+    }
+
     fn saz(path: &std::path::Path) {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
         for (name, value) in [

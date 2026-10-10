@@ -8,6 +8,7 @@ import { checkHexViewer } from './check-hex-viewer.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
+import { checkTrafficFailures } from './check-traffic-failures.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -50,7 +51,7 @@ await page.addInitScript((workspace) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: 'GET', target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: [{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const ruleDiagnostics=()=>{
@@ -831,6 +832,7 @@ try {
   await page.locator('.selection-bar').getByText('Pending',{exact:true}).waitFor({state:'visible'});
   await page.evaluate(()=>{const state=globalThis.__workspaceFixture;Object.assign(state.sessions[0],{status:200,terminal:'completed',responseBytes:4});state.channel.onmessage({exchangeId:'first',sequence:2,lagged:false});});
   await page.locator('message-inspector[side="response"] .body-preview').getByText('body for first',{exact:true}).waitFor({state:'visible'});
+  await checkTrafficFailures(page,resolve(root,'../../../target/ui-check'));
   await page.locator('tr[data-session-id="second"]').click();
   await page.locator('message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button', { name: 'Create auto-response', exact: true }).isEnabled(), true);

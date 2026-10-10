@@ -369,6 +369,194 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
+    async fn upstream_disconnect_preserves_the_complete_client_post_body() {
+        let root = tempfile::tempdir().unwrap();
+        let ca = CaCreateRequest {
+            certificate_path: root.path().join("ca.pem"),
+            private_key_path: root.path().join("ca.key"),
+            common_name: "Failed POST test CA".into(),
+            validity_days: 2,
+        };
+        create_fixture_ca(ca.clone()).await;
+        let application = crate::Application::new(crate::AppConfig {
+            body_store: Some(crate::BodyStoreConfig::product_default(
+                root.path().join("bodies"),
+            )),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            read_http_head(&mut socket).await;
+            let mut body = [0; 629];
+            socket.read_exact(&mut body).await.unwrap();
+            assert_eq!(body, [b'x'; 629]);
+            // Close after receiving the full POST without sending a response.
+        });
+        application
+            .start_proxy(
+                ProxyStartRequest {
+                    ca_certificate_path: ca.certificate_path,
+                    ca_private_key_path: ca.private_key_path,
+                    route: ProxyRoute::Http1,
+                    ..ProxyStartRequest::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        let mut client = tokio::net::TcpStream::connect(application.status().listener.unwrap())
+            .await
+            .unwrap();
+        let mut request = format!(
+            "POST http://{origin_addr}/failed HTTP/1.1\r\nHost: {origin_addr}\r\nContent-Type: application/json\r\nContent-Length: 629\r\nConnection: close\r\n\r\n"
+        ).into_bytes();
+        request.extend_from_slice(&[b'x'; 629]);
+        client.write_all(&request).await.unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        origin_task.await.unwrap();
+        application.shutdown().await.unwrap();
+        let page = application
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap();
+        let row = &page.sessions[0];
+        assert_eq!(row.terminal, "failed");
+        assert_eq!(row.status, None);
+        let detail = application.session_detail(&row.id).unwrap();
+        assert_eq!(detail.terminal_state, "failed");
+        assert!(
+            detail.terminal.starts_with("failed at Upstream:"),
+            "{}",
+            detail.terminal
+        );
+        let body = detail
+            .stored_bodies
+            .iter()
+            .find(|body| body.boundary == "client-request")
+            .unwrap();
+        assert_eq!(
+            body.availability,
+            crate::BodyAvailability::Complete,
+            "{body:?}"
+        );
+        assert_eq!(body.observed_bytes, 629);
+        assert_eq!(body.retained_bytes, 629);
+        assert_eq!(body.wire_body_bytes, Some(629));
+        assert_eq!(body.reason, None);
+        let inspection = application
+            .inspect_body(crate::BodyInspectionRequest {
+                session_id: row.id.clone(),
+                boundary: "client-request".into(),
+                representation: crate::BodyRepresentation::OriginalText,
+                decode_content: true,
+                offset: 0,
+                max_bytes: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(inspection.display, "x".repeat(629));
+        let saved_path = root.path().join("failed-post.tmcap");
+        application
+            .save_traffic_trace(saved_path.clone(), crate::TraceSaveOptions::default())
+            .await
+            .unwrap();
+        let saved = transmog_capture::recover(
+            std::fs::File::open(&saved_path).unwrap(),
+            transmog_capture::CaptureLimits::default(),
+        )
+        .unwrap();
+        for variant in ["current", "wrong-length"] {
+            let path = root.path().join(format!("{variant}.tmcap"));
+            let mut writer = transmog_capture::CaptureWriter::new(
+                std::fs::File::create(&path).unwrap(),
+                transmog_capture::CaptureLimits::default(),
+            )
+            .unwrap();
+            for mut record in saved.records.clone() {
+                if matches!(
+                    record.kind,
+                    transmog_capture::CaptureRecordKind::Seal { .. }
+                ) {
+                    continue;
+                }
+                if let transmog_capture::CaptureRecordKind::Unknown { kind, payload } =
+                    &mut record.kind
+                    && kind == "body-representation"
+                    && payload["boundary"] == "client-request"
+                    && variant == "wrong-length"
+                {
+                    payload["retainedBytes"] = serde_json::json!(630);
+                }
+                writer.append(&record).unwrap();
+            }
+            writer.seal().unwrap();
+            drop(writer);
+            let reopened = crate::Application::new(crate::AppConfig {
+                body_store: Some(crate::BodyStoreConfig::product_default(
+                    root.path().join(format!("{variant}-bodies")),
+                )),
+                ..crate::AppConfig::default()
+            })
+            .unwrap();
+            reopened
+                .import_trace(
+                    crate::TraceImportRequest {
+                        password: None,
+                        path,
+                        operation_id: variant.into(),
+                        max_file_bytes: u64::MAX,
+                    },
+                    std::sync::Arc::new(|_| {}),
+                )
+                .await
+                .unwrap();
+            let rows = reopened
+                .query_sessions(crate::SessionQueryInput::default())
+                .unwrap();
+            let detail = reopened.session_detail(&rows.sessions[0].id).unwrap();
+            assert_eq!(detail.terminal_state, "failed");
+            let body = detail
+                .stored_bodies
+                .iter()
+                .find(|body| body.boundary == "client-request")
+                .unwrap();
+            assert_eq!(body.retained_bytes, 629);
+            if variant == "wrong-length" {
+                assert_eq!(body.availability, crate::BodyAvailability::Lost, "{body:?}");
+            } else {
+                assert_eq!(
+                    body.availability,
+                    crate::BodyAvailability::Complete,
+                    "{body:?}"
+                );
+                assert_eq!(body.wire_body_bytes, Some(629));
+                let inspection = reopened
+                    .inspect_body(crate::BodyInspectionRequest {
+                        session_id: rows.sessions[0].id.clone(),
+                        boundary: "client-request".into(),
+                        representation: crate::BodyRepresentation::OriginalText,
+                        decode_content: true,
+                        offset: 0,
+                        max_bytes: None,
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(inspection.display, "x".repeat(629));
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
     async fn restart_retains_distinct_exchanges_and_complete_compressed_bodies() {
         let root = std::env::temp_dir().join(format!(
             "transmog-app-restart-{}-{}",

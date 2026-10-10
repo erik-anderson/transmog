@@ -274,6 +274,8 @@ pub struct SessionDetail {
     pub route_attempts: Vec<String>,
     /// Terminal outcome detail.
     pub terminal: String,
+    /// Stable exchange state, independent of the terminal explanation.
+    pub terminal_state: &'static str,
     /// Bounded WebSocket terminal evidence.
     pub websocket: Option<String>,
     /// Missing observer sequence count for this exchange.
@@ -542,6 +544,11 @@ pub(crate) fn session_detail(
         route_selection,
         route_attempts,
         terminal,
+        terminal_state: match snapshot.terminal {
+            Some(SessionTerminal::Completed(_)) => "completed",
+            Some(SessionTerminal::Failed(_)) => "failed",
+            None => "active",
+        },
         websocket: snapshot.websocket.as_ref().map(bounded_debug),
         sequence_loss: snapshot.sequence_loss,
     })

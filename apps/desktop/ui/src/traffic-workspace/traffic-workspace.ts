@@ -5,7 +5,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { AutomationStatus, ColumnId, Lifecycle, SessionSummary, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
-import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTone } from '../table-model.js';
+import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusText, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
@@ -892,7 +892,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private setInspectionSummary(session?:SessionSummary):void {
     this.inspectionSummaryId=session?.id??'';
     this.selectedMethodText=session?.method??'…';this.selectedUrlText=session?.url??'Loading request…';
-    this.selectedStatusText=!session?'Loading…':session.status===304?'304 Not Modified':session.status===null?'Pending':String(session.status);
+    this.selectedStatusText=session?statusText(session):'Loading…';
     this.selectedTone=session?statusTone(session):'';
   }
   private async inspectTraffic(id:string,focus=false,current:()=>boolean=()=>true):Promise<void> {
@@ -914,8 +914,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.selectedDetail = detail;
     this.previewPageAvailable=detail.storedBodies.some(body=>body.boundary==='client-response'&&body.availability==='complete'&&(body.mediaType==='text/html'||body.mediaType==='application/xhtml+xml')); const reusable = clientResponseSource(detail) !== null;
     const status = detail.responses.find((head) => head.boundary === 'client-response')?.status ?? null;
-    this.selectedStatusText = status === 304 ? '304 Not Modified' : status === null ? 'Pending' : String(status);
-    this.selectedTone = statusTone({status,terminal:detail.terminal} as SessionSummary);
+    const responseStatus = {status,terminal:detail.terminalState};
+    this.selectedStatusText = statusText(responseStatus);
+    this.selectedTone = statusTone(responseStatus);
     this.reuseDisabled = !reusable; this.reuseTitle = reusable ? 'Create a rule from this response' : autoResponseUnavailableReason(detail);
     this.matchedRuleId = detail.autoResponse?.ruleId ?? ''; this.matchedRuleLabel = detail.autoResponse ? 'Show '+detail.autoResponse.ruleName : 'Show matched rule';
     this.$emit('selection-changed',{sessionId:detail.id,detail,reusable});

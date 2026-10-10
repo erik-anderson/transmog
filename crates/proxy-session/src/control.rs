@@ -618,6 +618,7 @@ fn event_kind(kind: &ObserverEventKind) -> Option<EventKind> {
         | ObserverEventKind::HookInitializationSkipped(_)
         | ObserverEventKind::RequestHeadFinalized(_)
         | ObserverEventKind::BodyTrailers(_)
+        | ObserverEventKind::BodyCompleted { .. }
         | ObserverEventKind::RouteSelected { .. }
         | ObserverEventKind::RouteAttempt(_)
         | ObserverEventKind::ResponseHeadFinalized(_) => None,

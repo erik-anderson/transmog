@@ -46,9 +46,16 @@ export function formatBytes(value: number): string {
   return (value/(1024*1024)).toFixed(1) + ' MB';
 }
 
-export function statusTone(row: SessionSummary): string {
-  if (row.status === 304) return 'not-modified';
+type ResponseStatus = Pick<SessionSummary, 'status' | 'terminal'>;
+
+export function statusText(row: ResponseStatus): string {
+  if (row.status === null) return row.terminal === 'active' ? 'Pending' : row.terminal === 'failed' ? 'Failed' : 'Unavailable';
+  return row.status === 304 ? '304 Not Modified' : String(row.status);
+}
+
+export function statusTone(row: ResponseStatus): string {
   if (row.terminal === 'failed') return 'failed';
+  if (row.status === 304) return 'not-modified';
   if (row.status === null) return 'pending';
   if (row.status >= 500) return 'failed';
   if (row.status >= 400) return 'warning';
@@ -59,7 +66,7 @@ export function statusTone(row: SessionSummary): string {
 export function cellText(row: SessionSummary, column: ColumnId): string {
   switch (column) {
     case 'method': return row.method;
-    case 'status': return row.status === null ? 'Pending' : row.status === 304 ? '304 Not Modified' : String(row.status);
+    case 'status': return statusText(row);
     case 'process': return row.caller.kind === 'remote' ? 'Remote' : (row.caller.processName ?? 'Unknown process') + (row.caller.processId === null ? '' : ' ('+row.caller.processId+')');
     case 'pid': return row.caller.processId?.toString() ?? '—';
     case 'host': return row.host;

@@ -80,6 +80,7 @@ export interface SessionDetail {
   routeSelection: string | null;
   routeAttempts: string[];
   terminal: string;
+  terminalState: SessionSummary['terminal'];
   websocket: string | null;
   sequenceLoss: number;
   autoResponse: AutoResponseMatch | null;

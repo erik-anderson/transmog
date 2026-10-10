@@ -397,6 +397,23 @@ impl StoredBody {
         }
     }
 
+    fn for_capture(mode: RetentionMode, storage: BufferStorage, loss_reason: Option<&str>) -> Self {
+        let mut record = Self::new(
+            if mode == RetentionMode::Off {
+                BodyAvailability::Disabled
+            } else if loss_reason.is_some() {
+                BodyAvailability::Lost
+            } else {
+                BodyAvailability::Capturing
+            },
+            storage,
+        );
+        if mode != RetentionMode::Off {
+            record.reason = loss_reason.map(ToOwned::to_owned);
+        }
+        record
+    }
+
     fn metadata(&self, key: BodyKey) -> StoredBodyMetadata {
         StoredBodyMetadata {
             length_known: self
@@ -477,7 +494,8 @@ struct StoreState {
     exchange_modes: HashMap<ExchangeId, ExchangeRetention>,
     records: HashMap<BodyKey, StoredBody>,
     terminal_order: VecDeque<BodyKey>,
-    lossy_exchanges: HashSet<ExchangeId>,
+    exchange_loss_reasons: HashMap<ExchangeId, &'static str>,
+    completed_bodies: HashMap<ExchangeId, HashSet<BoundaryKey>>,
     last_sequences: HashMap<ExchangeId, u64>,
     discarded: HashSet<ExchangeId>,
     counters: BodyStoreCounters,
@@ -622,7 +640,8 @@ impl BodyStore {
                 exchange_modes: HashMap::new(),
                 records: HashMap::new(),
                 terminal_order: VecDeque::new(),
-                lossy_exchanges: HashSet::new(),
+                exchange_loss_reasons: HashMap::new(),
+                completed_bodies: HashMap::new(),
                 last_sequences: HashMap::new(),
                 discarded: HashSet::new(),
                 counters: BodyStoreCounters::default(),
@@ -970,7 +989,8 @@ impl BodyStore {
             }
             state.exchange_modes.remove(id);
             state.last_sequences.remove(id);
-            state.lossy_exchanges.remove(id);
+            state.exchange_loss_reasons.remove(id);
+            state.completed_bodies.remove(id);
         }
         let keys = state
             .records
@@ -1061,7 +1081,7 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
         .last_sequences
         .insert(event.exchange_id, event.sequence)
         .unwrap_or(0);
-    if prior > 0 && event.sequence > prior.saturating_add(1) {
+    if event.sequence > prior.saturating_add(1) {
         mark_exchange_loss(
             &mut state,
             event.exchange_id,
@@ -1069,6 +1089,13 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
         );
     }
     match event.kind {
+        ObserverEventKind::BodyCompleted { boundary } => {
+            state
+                .completed_bodies
+                .entry(event.exchange_id)
+                .or_default()
+                .insert(BoundaryKey::from_boundary(boundary));
+        }
         ObserverEventKind::ExchangeStarted { .. } => {
             let retention = ExchangeRetention {
                 mode: state.mode,
@@ -1098,27 +1125,24 @@ fn process_event(inner: &BodyStoreInner, event: ObserverEvent) {
             &head,
         ),
         ObserverEventKind::BodyChunk(chunk) => {
+            let key = BodyKey {
+                exchange_id: event.exchange_id,
+                boundary: BoundaryKey::from_boundary(chunk.boundary),
+            };
             observe_chunk(inner, &mut state, event.exchange_id, chunk);
+            mark_late_body_data(&mut state, key);
         }
         ObserverEventKind::Completed(_) => {
-            finalize_exchange(inner, &mut state, event.exchange_id, true);
+            finalize_exchange(inner, &mut state, event.exchange_id, None);
             state.exchange_modes.remove(&event.exchange_id);
             state.last_sequences.remove(&event.exchange_id);
-            state.lossy_exchanges.remove(&event.exchange_id);
+            state.exchange_loss_reasons.remove(&event.exchange_id);
         }
         ObserverEventKind::Failed(failure) => {
-            mark_exchange_loss(
-                &mut state,
-                event.exchange_id,
-                &format!(
-                    "exchange failed at {:?} ({:?}) before completion",
-                    failure.stage, failure.kind
-                ),
-            );
-            finalize_exchange(inner, &mut state, event.exchange_id, false);
+            finalize_exchange(inner, &mut state, event.exchange_id, Some(&failure));
             state.exchange_modes.remove(&event.exchange_id);
             state.last_sequences.remove(&event.exchange_id);
-            state.lossy_exchanges.remove(&event.exchange_id);
+            state.exchange_loss_reasons.remove(&event.exchange_id);
         }
         _ => {}
     }
@@ -1172,16 +1196,11 @@ fn observe_headers(
     };
     let mode = exchange_mode(inner, state, exchange_id, key.boundary.direction());
     let storage = state.buffer.storage;
-    let record = state.records.entry(key).or_insert_with(|| {
-        StoredBody::new(
-            if mode == RetentionMode::Off {
-                BodyAvailability::Disabled
-            } else {
-                BodyAvailability::Capturing
-            },
-            storage,
-        )
-    });
+    let loss_reason = state.exchange_loss_reasons.get(&exchange_id).copied();
+    let record = state
+        .records
+        .entry(key)
+        .or_insert_with(|| StoredBody::for_capture(mode, storage, loss_reason));
     let content_type = header_text(headers, "content-type");
     if let Some(content_type) = content_type {
         let mut parts = content_type.split(';');
@@ -1217,18 +1236,12 @@ fn observe_chunk(
     } else {
         inner.config.max_body_bytes
     };
-    let lossy = state.lossy_exchanges.contains(&exchange_id);
+    let loss_reason = state.exchange_loss_reasons.get(&exchange_id).copied();
     let storage = state.buffer.storage;
-    let record = state.records.entry(key).or_insert_with(|| {
-        StoredBody::new(
-            if mode == RetentionMode::Off {
-                BodyAvailability::Disabled
-            } else {
-                BodyAvailability::Capturing
-            },
-            storage,
-        )
-    });
+    let record = state
+        .records
+        .entry(key)
+        .or_insert_with(|| StoredBody::for_capture(mode, storage, loss_reason));
     record.observed_bytes = record
         .observed_bytes
         .saturating_add(u64::try_from(chunk.byte_count).unwrap_or(u64::MAX));
@@ -1241,7 +1254,7 @@ fn observe_chunk(
     if chunk.byte_count == 0 && chunk.sample.as_ref().is_none_or(bytes::Bytes::is_empty) {
         return;
     }
-    if lossy || chunk.truncated || chunk.sample.is_none() {
+    if loss_reason.is_some() || chunk.truncated || chunk.sample.is_none() {
         record.availability = BodyAvailability::Lost;
         record
             .reason
@@ -1297,6 +1310,19 @@ fn observe_chunk(
     if take < sample.len() || desired < u64::try_from(sample.len()).unwrap_or(u64::MAX) {
         record.availability = BodyAvailability::Truncated;
         record.reason = Some("body retention quota reached".to_owned());
+    }
+}
+
+fn mark_late_body_data(state: &mut StoreState, key: BodyKey) {
+    if state
+        .completed_bodies
+        .get(&key.exchange_id)
+        .is_some_and(|boundaries| boundaries.contains(&key.boundary))
+        && let Some(record) = state.records.get_mut(&key)
+        && record.availability != BodyAvailability::Disabled
+    {
+        record.availability = BodyAvailability::Lost;
+        record.reason = Some("body bytes were observed after its completion marker".into());
     }
 }
 
@@ -1370,8 +1396,12 @@ fn finalize_exchange(
     inner: &BodyStoreInner,
     state: &mut StoreState,
     exchange_id: ExchangeId,
-    completed: bool,
+    failure: Option<&transmog_core::intercept::ExchangeFailure>,
 ) {
+    let completed_bodies = state
+        .completed_bodies
+        .remove(&exchange_id)
+        .unwrap_or_default();
     let keys = state
         .records
         .keys()
@@ -1398,10 +1428,15 @@ fn finalize_exchange(
             state.terminal_order.push_back(key);
         }
         if record.availability == BodyAvailability::Capturing {
-            record.availability = if completed {
-                BodyAvailability::Complete
-            } else {
-                BodyAvailability::Lost
+            record.availability = match failure {
+                Some(failure) if !completed_bodies.contains(&key.boundary) => {
+                    record.reason = Some(format!(
+                        "exchange failed at {:?} ({:?}) before this body completed",
+                        failure.stage, failure.kind
+                    ));
+                    BodyAvailability::Lost
+                }
+                _ => BodyAvailability::Complete,
             };
         }
     }
@@ -1414,7 +1449,6 @@ fn mark_dropped_event(inner: &BodyStoreInner, event: &ObserverEvent) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     state.counters.dropped_events = state.counters.dropped_events.saturating_add(1);
-    state.lossy_exchanges.insert(event.exchange_id);
     if let ObserverEventKind::BodyChunk(chunk) = &event.kind {
         let key = BodyKey {
             exchange_id: event.exchange_id,
@@ -1432,8 +1466,11 @@ fn mark_dropped_event(inner: &BodyStoreInner, event: &ObserverEvent) {
     mark_exchange_loss(&mut state, event.exchange_id, "body-store queue saturated");
 }
 
-fn mark_exchange_loss(state: &mut StoreState, exchange_id: ExchangeId, reason: &str) {
-    state.lossy_exchanges.insert(exchange_id);
+fn mark_exchange_loss(state: &mut StoreState, exchange_id: ExchangeId, reason: &'static str) {
+    state
+        .exchange_loss_reasons
+        .entry(exchange_id)
+        .or_insert(reason);
     for (key, record) in &mut state.records {
         if key.exchange_id == exchange_id
             && !record.terminal
@@ -1515,8 +1552,12 @@ mod tests {
     use bytes::Bytes;
     use transmog_core::{
         ConnectionId, HeaderField, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
-        intercept::{CompletedExchange, ExchangeMetadata},
+        intercept::{
+            CompletedExchange, ExchangeFailure, ExchangeFailureKind, ExchangeMetadata,
+            ExchangeStage,
+        },
         observe::ObservedBodyChunk,
+        performance::{Milestone, PerformanceEvidence, TimingPoint},
     };
 
     use super::*;
@@ -1652,6 +1693,390 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    fn request_head(id: u128, sequence: u64) -> ObserverEvent {
+        let ObserverEventKind::Completed(exchange) = completed(id, sequence).kind else {
+            unreachable!()
+        };
+        let mut head = exchange.request_head;
+        head.method = "POST".into();
+        head.headers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("content-type", "application/json").unwrap(),
+        ]);
+        event(
+            id,
+            sequence,
+            ObserverEventKind::RequestHeadObserved {
+                boundary: ExchangeBoundary::ClientRequest,
+                head,
+            },
+        )
+    }
+
+    fn request_chunk(id: u128, sequence: u64, bytes: &'static [u8]) -> ObserverEvent {
+        let mut event = chunk(id, sequence, bytes);
+        let ObserverEventKind::BodyChunk(chunk) = &mut event.kind else {
+            unreachable!()
+        };
+        chunk.boundary = ExchangeBoundary::ClientRequest;
+        event
+    }
+
+    fn body_done(id: u128, sequence: u64, boundary: ExchangeBoundary) -> ObserverEvent {
+        event(id, sequence, ObserverEventKind::BodyCompleted { boundary })
+    }
+
+    fn upstream_failed(id: u128, sequence: u64) -> ObserverEvent {
+        event(
+            id,
+            sequence,
+            ObserverEventKind::Failed(ExchangeFailure {
+                metadata: metadata(id),
+                stage: ExchangeStage::Upstream,
+                kind: ExchangeFailureKind::Upstream,
+                request_committed: true,
+                response_committed: false,
+                message: "client error (Connect)".into(),
+            }),
+        )
+    }
+
+    #[test]
+    fn complete_client_request_survives_upstream_failure_in_memory_and_on_disk() {
+        const BODY: &[u8] = &[b'x'; 629];
+        for storage in [BufferStorage::Memory, BufferStorage::Disk] {
+            let root = root("failed-post");
+            let mut settings = config(root.clone(), 4096);
+            settings.storage = storage;
+            settings.retain_requests = true;
+            let store = BodyStore::new(settings).unwrap();
+            let evidence = [
+                request_chunk(1, 3, BODY),
+                body_done(1, 4, ExchangeBoundary::ClientRequest),
+            ];
+            push(
+                &store,
+                [started(1), request_head(1, 2)]
+                    .into_iter()
+                    .chain(evidence)
+                    .chain([upstream_failed(1, 5)]),
+            );
+            let body = &store.metadata(ExchangeId(1))[0];
+            assert_eq!(body.availability, BodyAvailability::Complete, "{body:?}");
+            assert_eq!(body.observed_bytes, 629);
+            assert_eq!(body.retained_bytes, 629);
+            assert_eq!(body.wire_body_bytes, Some(629));
+            assert_eq!(body.reason, None);
+            assert_eq!(
+                body.sha256.as_deref(),
+                Some(format!("{:x}", Sha256::digest(BODY)).as_str())
+            );
+            let mut retained = Vec::new();
+            store
+                .open_complete(ExchangeId(1), ExchangeBoundary::ClientRequest)
+                .unwrap()
+                .read_to_end(&mut retained)
+                .unwrap();
+            assert_eq!(retained, BODY);
+            assert!(store.lock_state().completed_bodies.is_empty());
+            drop(store);
+            if root.exists() {
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn initial_delivery_gap_preserves_partial_bytes_without_claiming_completeness() {
+        for storage in [BufferStorage::Memory, BufferStorage::Disk] {
+            for boundary in [
+                ExchangeBoundary::ClientRequest,
+                ExchangeBoundary::UpstreamRequest,
+                ExchangeBoundary::UpstreamResponse,
+                ExchangeBoundary::ClientResponse,
+            ] {
+                for failed in [true, false] {
+                    let root = root("initial-body-gap");
+                    let mut settings = config(root.clone(), 4096);
+                    settings.storage = storage;
+                    settings.retain_requests = true;
+                    let store = BodyStore::new(settings).unwrap();
+                    let mut suffix = chunk(1, 4, b"tail");
+                    let ObserverEventKind::BodyChunk(body) = &mut suffix.kind else {
+                        unreachable!()
+                    };
+                    body.boundary = boundary;
+                    push(
+                        &store,
+                        [
+                            suffix,
+                            body_done(1, 5, boundary),
+                            if failed {
+                                upstream_failed(1, 6)
+                            } else {
+                                completed(1, 6)
+                            },
+                        ],
+                    );
+                    let metadata = &store.metadata(ExchangeId(1))[0];
+                    assert_eq!(
+                        metadata.availability,
+                        BodyAvailability::Lost,
+                        "{metadata:?}"
+                    );
+                    assert_eq!(
+                        metadata.reason.as_deref(),
+                        Some("observer delivery sequence gap")
+                    );
+                    assert_eq!(metadata.observed_bytes, 4);
+                    assert_eq!(metadata.retained_bytes, 4);
+                    assert_eq!(metadata.wire_body_bytes, None);
+                    assert_eq!(
+                        metadata.sha256.as_deref(),
+                        Some(format!("{:x}", Sha256::digest(b"tail")).as_str())
+                    );
+                    assert!(store.open_complete(ExchangeId(1), boundary).is_err());
+                    let retained = store.read_range(ExchangeId(1), boundary, 0, 4).unwrap();
+                    assert_eq!(retained.bytes, b"tail");
+                    assert_eq!(retained.availability, BodyAvailability::Lost);
+                    let inspection = crate::inspector::inspect_body(
+                        Some(&store),
+                        crate::BodyInspectionRequest {
+                            session_id: format!("{:032x}", 1),
+                            boundary: BoundaryKey::from_boundary(boundary).name().into(),
+                            representation: crate::BodyRepresentation::Bytes,
+                            decode_content: false,
+                            offset: 0,
+                            max_bytes: Some(4),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                    assert_eq!(inspection.bytes_base64.as_deref(), Some("dGFpbA=="));
+                    assert_eq!(inspection.display_bytes, 4);
+                    assert_eq!(inspection.metadata.availability, BodyAvailability::Lost);
+                    assert_eq!(inspection.metadata.reason, metadata.reason);
+                    drop(store);
+                    if root.exists() {
+                        fs::remove_dir_all(root).unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn initial_gap_is_inherited_by_later_head_and_empty_frame_records() {
+        for first in ["head", "empty-frame", "completion"] {
+            let root = root("initial-empty-body-gap");
+            let mut settings = config(root.clone(), 1024);
+            settings.retain_requests = true;
+            let store = BodyStore::new(settings).unwrap();
+            match first {
+                "head" => push(&store, [request_head(1, 4)]),
+                "empty-frame" => push(&store, [request_chunk(1, 4, b"")]),
+                "completion" => push(&store, [body_done(1, 4, ExchangeBoundary::ClientRequest)]),
+                _ => unreachable!(),
+            }
+            push(
+                &store,
+                [
+                    request_head(1, 5),
+                    body_done(1, 6, ExchangeBoundary::ClientRequest),
+                    upstream_failed(1, 7),
+                ],
+            );
+            let metadata = &store.metadata(ExchangeId(1))[0];
+            assert_eq!(
+                metadata.availability,
+                BodyAvailability::Lost,
+                "{first}: {metadata:?}"
+            );
+            assert_eq!(
+                metadata.reason.as_deref(),
+                Some("observer delivery sequence gap")
+            );
+            assert_eq!(metadata.observed_bytes, 0);
+            assert_eq!(metadata.retained_bytes, 0);
+            assert_eq!(metadata.wire_body_bytes, None);
+            assert_eq!(metadata.media_type.as_deref(), Some("application/json"));
+            assert!(
+                store
+                    .open_complete(ExchangeId(1), ExchangeBoundary::ClientRequest)
+                    .is_err()
+            );
+            drop(store);
+            if root.exists() {
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn body_completion_does_not_complete_other_boundaries_in_the_failed_exchange() {
+        let root = root("boundary-completion");
+        let mut settings = config(root.clone(), 1024);
+        settings.retain_requests = true;
+        let store = BodyStore::new(settings).unwrap();
+        let mut failure = upstream_failed(1, 7);
+        let ObserverEventKind::Failed(outcome) = &mut failure.kind else {
+            unreachable!()
+        };
+        outcome.stage = ExchangeStage::ResponseBody;
+        push(
+            &store,
+            [
+                started(1),
+                request_head(1, 2),
+                request_chunk(1, 3, b"post"),
+                body_done(1, 4, ExchangeBoundary::ClientRequest),
+                head(1, 5),
+                chunk(1, 6, b"partial"),
+                failure,
+            ],
+        );
+        let bodies = store.metadata(ExchangeId(1));
+        let request = bodies
+            .iter()
+            .find(|body| body.boundary == "client-request")
+            .unwrap();
+        let response = bodies
+            .iter()
+            .find(|body| body.boundary == "upstream-response")
+            .unwrap();
+        assert_eq!(request.availability, BodyAvailability::Complete);
+        assert_eq!(request.reason, None);
+        assert_eq!(response.availability, BodyAvailability::Lost);
+        assert!(response.reason.as_ref().unwrap().contains("ResponseBody"));
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_exchange_preserves_actual_capture_loss_and_limits() {
+        for (limit, finished, gap, expected, reason) in [
+            (
+                1024,
+                false,
+                false,
+                BodyAvailability::Lost,
+                "exchange failed at Upstream (Upstream) before this body completed",
+            ),
+            (
+                1024,
+                true,
+                true,
+                BodyAvailability::Lost,
+                "observer delivery sequence gap",
+            ),
+            (
+                2,
+                true,
+                false,
+                BodyAvailability::Truncated,
+                "body retention quota reached",
+            ),
+        ] {
+            let root = root("failed-body-evidence");
+            let mut settings = config(root.clone(), limit);
+            settings.retain_requests = true;
+            let store = BodyStore::new(settings).unwrap();
+            push(
+                &store,
+                [
+                    started(1),
+                    request_head(1, 2),
+                    request_chunk(1, if gap { 4 } else { 3 }, b"body"),
+                ],
+            );
+            let mut sequence = if gap { 5 } else { 4 };
+            if finished {
+                push(
+                    &store,
+                    [body_done(1, sequence, ExchangeBoundary::ClientRequest)],
+                );
+                sequence += 1;
+            }
+            push(&store, [upstream_failed(1, sequence)]);
+            let body = &store.metadata(ExchangeId(1))[0];
+            assert_eq!(body.availability, expected, "{body:?}");
+            assert_eq!(body.reason.as_deref(), Some(reason));
+            assert!(
+                store
+                    .open_complete(ExchangeId(1), ExchangeBoundary::ClientRequest)
+                    .is_err()
+            );
+            drop(store);
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn transport_eof_does_not_complete_unconsumed_response_frames() {
+        let root = root("transport-read-ahead");
+        let store = BodyStore::new(config(root.clone(), 1024)).unwrap();
+        let mut failure = upstream_failed(1, 5);
+        let ObserverEventKind::Failed(outcome) = &mut failure.kind else {
+            unreachable!()
+        };
+        outcome.stage = ExchangeStage::ResponseBody;
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b"prefix"),
+                event(
+                    1,
+                    4,
+                    ObserverEventKind::Performance(PerformanceEvidence {
+                        points: vec![TimingPoint {
+                            milestone: Milestone::UpstreamResponseDone,
+                            unix_millis: 1,
+                            offset_micros: 1,
+                        }],
+                        ..PerformanceEvidence::default()
+                    }),
+                ),
+                failure,
+            ],
+        );
+        let body = &store.metadata(ExchangeId(1))[0];
+        assert_eq!(body.availability, BodyAvailability::Lost, "{body:?}");
+        assert_eq!(body.wire_body_bytes, None);
+        assert!(
+            store
+                .open_complete(ExchangeId(1), ExchangeBoundary::UpstreamResponse)
+                .is_err()
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn body_data_after_completion_cannot_be_promoted_to_complete() {
+        let root = root("late-body-data");
+        let store = BodyStore::new(config(root.clone(), 1024)).unwrap();
+        push(
+            &store,
+            [
+                started(1),
+                head(1, 2),
+                chunk(1, 3, b"first"),
+                body_done(1, 4, ExchangeBoundary::UpstreamResponse),
+                chunk(1, 5, b"late"),
+                upstream_failed(1, 6),
+            ],
+        );
+        let body = &store.metadata(ExchangeId(1))[0];
+        assert_eq!(body.availability, BodyAvailability::Lost, "{body:?}");
+        assert_eq!(
+            body.reason.as_deref(),
+            Some("body bytes were observed after its completion marker")
+        );
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

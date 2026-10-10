@@ -1468,7 +1468,7 @@ impl ProxyState {
         let response = routed.response;
         observe_route_attempts(&chain, &routed.attempts).await;
         observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &response.head).await;
-        observe_body_frames(&chain, ExchangeBoundary::UpstreamResponse, &response.body).await;
+        observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &response.body).await;
         let response_outcome = chain
             .response_head(&request_head, response.head, Some(response.body), false)
             .await;
@@ -2887,6 +2887,7 @@ impl ProxyState {
         request: &RequestHead,
         response: &ResponseHead,
     ) {
+        observe_complete_body(chain, ExchangeBoundary::ClientResponse, &[]).await;
         observe_hook_effects(chain).await;
         let outcome = CompletedExchange {
             metadata: Arc::clone(chain.context().metadata()),
@@ -2984,13 +2985,14 @@ impl ProxyState {
         request_head: &RequestHead,
         frames: Vec<BodyFrame>,
     ) -> Result<ProcessedBody, ProxyRuntimeError> {
+        // The buffered ingress body is complete even if creating its hook pipeline fails.
+        observe_complete_body(chain, ExchangeBoundary::ClientRequest, &frames).await;
         let pipeline = chain
             .request_body_pipeline(request_head, self.body_pipeline_limits())
             .await?;
         observe_hook_effects(chain).await;
         self.process_body_pipeline(
             chain,
-            Some(ExchangeBoundary::ClientRequest),
             ExchangeBoundary::UpstreamRequest,
             pipeline,
             &request_head.headers,
@@ -3148,7 +3150,6 @@ impl ProxyState {
         observe_hook_effects(chain).await;
         self.process_body_pipeline(
             chain,
-            None,
             ExchangeBoundary::ClientResponse,
             pipeline,
             &response_head.headers,
@@ -3162,16 +3163,12 @@ impl ProxyState {
     async fn process_body_pipeline(
         &self,
         chain: &ExchangeChain,
-        input_boundary: Option<ExchangeBoundary>,
         output_boundary: ExchangeBoundary,
         pipeline: BodyPipeline,
         source_headers: &HeaderBlock,
         frames: Vec<BodyFrame>,
         limit: usize,
     ) -> Result<ProcessedBody, ProxyRuntimeError> {
-        if let Some(boundary) = input_boundary {
-            observe_body_frames(chain, boundary, &frames).await;
-        }
         let mut pipeline =
             ContentBodyPipeline::from_policy(pipeline, source_headers, self.content)?;
         let modified = pipeline.modifies_body();
@@ -3182,7 +3179,7 @@ impl ProxyState {
         }
         output.extend(pipeline.finish().await?);
         validate_frames(&output, limit)?;
-        observe_body_frames(chain, output_boundary, &output).await;
+        observe_complete_body(chain, output_boundary, &output).await;
         Ok(ProcessedBody {
             frames: output,
             headers,
@@ -3732,6 +3729,23 @@ async fn observe_body_frames(
     boundary: ExchangeBoundary,
     frames: &[BodyFrame],
 ) {
+    observe_body(chain, boundary, frames, false).await;
+}
+
+async fn observe_complete_body(
+    chain: &ExchangeChain,
+    boundary: ExchangeBoundary,
+    frames: &[BodyFrame],
+) {
+    observe_body(chain, boundary, frames, true).await;
+}
+
+async fn observe_body(
+    chain: &ExchangeChain,
+    boundary: ExchangeBoundary,
+    frames: &[BodyFrame],
+    complete: bool,
+) {
     let Some(observer) = runtime_observer(chain) else {
         return;
     };
@@ -3743,27 +3757,33 @@ async fn observe_body_frames(
     {
         recorder.mark(Milestone::UpstreamResponseFirstBody);
     }
-    for frame in frames {
-        match frame {
-            BodyFrame::Data(data) => {
-                observer
-                    .emit(ObserverEventKind::BodyChunk(ObservedBodyChunk {
-                        boundary,
-                        byte_count: data.len(),
-                        sample: Some(data.clone()),
-                        truncated: false,
-                    }))
-                    .await;
-            }
+    for (index, frame) in frames.iter().enumerate() {
+        let event = match frame {
+            BodyFrame::Data(data) => ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                boundary,
+                byte_count: data.len(),
+                sample: Some(data.clone()),
+                truncated: false,
+            }),
             BodyFrame::Trailers(trailers) => {
-                observer
-                    .emit(ObserverEventKind::BodyTrailers(ObservedBodyTrailers {
-                        boundary,
-                        trailers: trailers.clone(),
-                    }))
-                    .await;
+                ObserverEventKind::BodyTrailers(ObservedBodyTrailers {
+                    boundary,
+                    trailers: trailers.clone(),
+                })
             }
+        };
+        if complete && index + 1 == frames.len() {
+            observer
+                .emit_batch(vec![event, ObserverEventKind::BodyCompleted { boundary }])
+                .await;
+        } else {
+            observer.emit(event).await;
         }
+    }
+    if complete && frames.is_empty() {
+        observer
+            .emit(ObserverEventKind::BodyCompleted { boundary })
+            .await;
     }
 }
 
@@ -3853,6 +3873,7 @@ async fn collect_incoming(
     }
 }
 
+#[allow(clippy::too_many_lines)] // One ingress stream owns capture completion and forwarding failures.
 async fn stream_incoming_through_hooks(
     mut body: Incoming,
     sender: BodyStreamSender,
@@ -3863,6 +3884,7 @@ async fn stream_incoming_through_hooks(
 ) {
     let mut input = StreamingBodyTracker::new(limit);
     let mut output = StreamingBodyTracker::new(limit);
+    let mut client_body_completed = false;
     loop {
         let frame = match timeout(body_idle_timeout, body.frame()).await {
             Ok(Some(frame)) => frame,
@@ -3890,12 +3912,21 @@ async fn stream_incoming_through_hooks(
             fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
             return;
         }
-        observe_body_frames(
+        // A final ingress frame completes capture even if forwarding that frame fails.
+        if body.is_end_stream()
+            && let Some(recorder) = performance_recorder(&chain)
+        {
+            recorder.mark(Milestone::ClientRequestDone);
+        }
+        let complete = body.is_end_stream();
+        observe_body(
             &chain,
             ExchangeBoundary::ClientRequest,
             std::slice::from_ref(&canonical),
+            complete,
         )
         .await;
+        client_body_completed |= complete;
         let frames = match pipeline.process(canonical).await {
             Ok(frames) => frames,
             Err(error) => {
@@ -3924,10 +3955,13 @@ async fn stream_incoming_through_hooks(
             return;
         }
     }
+    if !client_body_completed {
+        observe_complete_body(&chain, ExchangeBoundary::ClientRequest, &[]).await;
+    }
     publish_performance(&chain, Some(Milestone::ClientRequestDone)).await;
     match pipeline.finish().await {
         Ok(frames) => {
-            observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
+            observe_complete_body(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
             if send_streaming_frames(
                 &sender,
                 &mut output,
@@ -4031,6 +4065,7 @@ async fn stream_response_through_hooks(
             return;
         }
     }
+    observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &[]).await;
     publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
     let frames = match pipeline.finish().await {
         Ok(frames) => frames,
@@ -4039,7 +4074,7 @@ async fn stream_response_through_hooks(
             return;
         }
     };
-    observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+    observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
     if send_streaming_frames(
         &sender,
         &mut output,
@@ -4146,7 +4181,7 @@ async fn stream_local_response_through_hooks(
             return;
         }
     };
-    observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+    observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
     if send_streaming_frames(
         &sender,
         &mut output,
@@ -5536,6 +5571,7 @@ mod tests {
                 ObserverEventKind::ResponseHeadFinalized(_) => "response-head",
                 ObserverEventKind::BodyChunk(_) => "body",
                 ObserverEventKind::BodyTrailers(_) => "trailers",
+                ObserverEventKind::BodyCompleted { .. } => return Box::pin(async { Ok(()) }),
                 ObserverEventKind::HookEffect(_) => "hook-effect",
                 ObserverEventKind::Completed(_) => "completed",
                 ObserverEventKind::Failed(_) => "failed",

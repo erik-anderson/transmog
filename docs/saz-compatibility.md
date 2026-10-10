@@ -87,9 +87,14 @@ timers and durations stay absent. The
 describes the metadata stream as XML.
 
 Redacted fields are omitted from raw headers. When body bytes were not retained,
-observer delivery was lost, or an exchange did not complete cleanly, conventional
+observer delivery was lost, or the body capture did not finish, conventional
 `log-drop-request-body` or `log-drop-response-body` flags disclose that the wire
-file is incomplete. Exchanges without both request and response heads are
+file is incomplete. Complete boundary captures remain complete after a later
+exchange failure. Saved representations require matching retained-byte counts;
+recordings retain ordered body-completion markers. The independent
+`x-transmog-terminal` session flag preserves the exchange outcome in both SAZ
+profiles without marking a fully retained body as dropped.
+Exchanges without both request and response heads are
 skipped and counted in the conversion report. Unsafe line breaks, invalid
 statuses, body-limit overflow, entry-limit overflow, and ZIP failures stop the
 conversion rather than producing ambiguous wire text.

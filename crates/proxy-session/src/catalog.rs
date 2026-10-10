@@ -913,7 +913,7 @@ fn apply_kind(
 ) {
     match kind {
         ObserverEventKind::Performance(evidence) => session.performance.merge(&evidence),
-        ObserverEventKind::ExchangeStarted { .. } => {}
+        ObserverEventKind::ExchangeStarted { .. } | ObserverEventKind::BodyCompleted { .. } => {}
         ObserverEventKind::HookInitializationSkipped(diagnostic) => push_bounded(
             &mut session.initialization_diagnostics,
             diagnostic,

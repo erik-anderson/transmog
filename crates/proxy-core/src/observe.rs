@@ -223,6 +223,11 @@ pub enum ObserverEventKind {
     BodyChunk(ObservedBodyChunk),
     /// Terminal body trailers.
     BodyTrailers(ObservedBodyTrailers),
+    /// Every body frame at this capture boundary has been observed successfully.
+    BodyCompleted {
+        /// Boundary whose body observations are complete.
+        boundary: ExchangeBoundary,
+    },
     /// Redacted, auditable route-selection evidence.
     RouteSelected {
         /// Stable route policy identity.
@@ -242,7 +247,10 @@ pub enum ObserverEventKind {
 
 impl ObserverEventKind {
     fn is_lifecycle(&self) -> bool {
-        !matches!(self, Self::BodyChunk(_) | Self::BodyTrailers(_))
+        !matches!(
+            self,
+            Self::BodyChunk(_) | Self::BodyTrailers(_) | Self::BodyCompleted { .. }
+        )
     }
 }
 
@@ -447,6 +455,7 @@ impl ObserverDispatcher {
         let boundary = match &event.kind {
             ObserverEventKind::BodyChunk(chunk) => chunk.boundary,
             ObserverEventKind::BodyTrailers(trailers) => trailers.boundary,
+            ObserverEventKind::BodyCompleted { boundary } => *boundary,
             _ => return Some(event),
         };
         let policy = match boundary.direction() {
@@ -613,6 +622,20 @@ impl ExchangeObserver {
             return ObserverDeliveryReport::default();
         }
         self.emit_locked(&mut state, kind).await
+    }
+
+    /// Emits consecutive non-terminal observations without a terminal event
+    /// interleaving the final body frames and their completion marker.
+    pub async fn emit_batch(&self, kinds: Vec<ObserverEventKind>) -> Vec<ObserverDeliveryReport> {
+        let mut state = self.state.lock().await;
+        if state.terminal {
+            return Vec::new();
+        }
+        let mut reports = Vec::with_capacity(kinds.len());
+        for kind in kinds {
+            reports.push(self.emit_locked(&mut state, kind).await);
+        }
+        reports
     }
 
     /// Emits successful terminal evidence exactly once.
@@ -1121,5 +1144,62 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[tokio::test]
+    async fn final_body_batch_cannot_be_split_by_a_concurrent_failure() {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![(
+            Arc::new(RecordingObserver {
+                events: Arc::clone(&events),
+            }),
+            ObserverConfig {
+                queue_capacity: NonZeroUsize::new(1).unwrap(),
+                delivery: ObserverDeliveryPolicy::Backpressure {
+                    timeout: Duration::from_secs(5),
+                },
+                ..ObserverConfig::default()
+            },
+        )]);
+        let metadata = metadata();
+        let observer = hub.start_exchange(Arc::clone(&metadata));
+        let batch = vec![
+            ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                boundary: ExchangeBoundary::ClientRequest,
+                byte_count: 4,
+                sample: Some(Bytes::from_static(b"last")),
+                truncated: false,
+            }),
+            ObserverEventKind::BodyCompleted {
+                boundary: ExchangeBoundary::ClientRequest,
+            },
+        ];
+        let failure = ExchangeFailure {
+            metadata,
+            stage: crate::intercept::ExchangeStage::Upstream,
+            kind: crate::intercept::ExchangeFailureKind::Upstream,
+            request_committed: true,
+            response_committed: false,
+            message: "connection failed".into(),
+        };
+        tokio::join!(biased; observer.emit_batch(batch), observer.failed(failure));
+        hub.shutdown().await;
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0].kind, ObserverEventKind::BodyChunk(_)));
+        assert!(matches!(
+            events[1].kind,
+            ObserverEventKind::BodyCompleted {
+                boundary: ExchangeBoundary::ClientRequest
+            }
+        ));
+        assert!(matches!(events[2].kind, ObserverEventKind::Failed(_)));
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
     }
 }

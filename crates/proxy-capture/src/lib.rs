@@ -1207,6 +1207,12 @@ pub fn record_from_observer(
                 response_headers(&trailers.trailers)
             },
         },
+        ObserverEventKind::BodyCompleted {
+            boundary: completed_boundary,
+        } => CaptureRecordKind::Unknown {
+            kind: "body-completed".into(),
+            payload: serde_json::json!({"boundary": boundary(*completed_boundary)}),
+        },
         ObserverEventKind::RouteSelected { policy_id, reason } => {
             CaptureRecordKind::RouteSelected {
                 policy_id: policy_id.to_string(),
@@ -1962,6 +1968,27 @@ mod tests {
             kind: ObserverEventKind::RequestHeadFinalized(head),
         };
         assert!(record_from_observer(&nonfinalized, &CapturePolicy::default()).is_none());
+    }
+
+    #[test]
+    fn body_completion_observation_survives_native_capture_encoding() {
+        let event = ObserverEvent {
+            exchange_id: ExchangeId(7),
+            sequence: 1,
+            kind: ObserverEventKind::BodyCompleted {
+                boundary: ExchangeBoundary::ClientRequest,
+            },
+        };
+        let record = record_from_observer(&event, &CapturePolicy::default()).unwrap();
+        let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+        writer.append(&record).unwrap();
+        writer.seal().unwrap();
+        let saved = recover(&writer.into_inner()[..], CaptureLimits::default()).unwrap();
+        assert_eq!(saved.records[0], record);
+        assert!(
+            matches!(&record.kind, CaptureRecordKind::Unknown { kind, payload }
+            if kind == "body-completed" && payload["boundary"] == "client-request")
+        );
     }
 
     #[test]

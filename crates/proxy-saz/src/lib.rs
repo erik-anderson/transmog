@@ -278,6 +278,8 @@ struct Session {
     response_body: Vec<u8>,
     request_body_incomplete: bool,
     response_body_incomplete: bool,
+    request_body_completion: BodyCompletion,
+    response_body_completion: BodyCompletion,
     loss: bool,
     terminal: TerminalState,
     request_representation: Option<serde_json::Value>,
@@ -290,6 +292,13 @@ enum TerminalState {
     Open,
     Completed,
     Failed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum BodyCompletion {
+    #[default]
+    Pending,
+    Complete,
 }
 
 struct CapturedRequest {
@@ -358,6 +367,18 @@ fn collect_sessions(
                     _ => {}
                 }
             }
+            CaptureRecordKind::Unknown { kind, payload } if kind == "body-completed" => {
+                match payload["boundary"].as_str() {
+                    Some("client-request") => {
+                        session.request_body_completion = BodyCompletion::Complete;
+                    }
+                    Some("client-response") => {
+                        session.response_body_completion = BodyCompletion::Complete;
+                    }
+                    Some("upstream-request" | "upstream-response") => {}
+                    _ => return Err(SazError::InvalidArchive),
+                }
+            }
             CaptureRecordKind::Trailers {
                 boundary: ExchangeBoundary::ClientRequest,
                 headers,
@@ -394,21 +415,24 @@ fn collect_sessions(
                 bytes,
                 truncated,
             } => {
-                let (body, incomplete) = match boundary {
+                let (body, incomplete, completed) = match boundary {
                     ExchangeBoundary::ClientRequest => (
                         &mut session.request_body,
                         &mut session.request_body_incomplete,
+                        session.request_body_completion,
                     ),
                     ExchangeBoundary::ClientResponse => (
                         &mut session.response_body,
                         &mut session.response_body_incomplete,
+                        session.response_body_completion,
                     ),
                     ExchangeBoundary::UpstreamRequest | ExchangeBoundary::UpstreamResponse => {
                         continue;
                     }
                 };
+                *incomplete |= completed == BodyCompletion::Complete;
                 let Some(bytes) = bytes else {
-                    *incomplete = *byte_count > 0;
+                    *incomplete |= *truncated || *byte_count > 0;
                     continue;
                 };
                 *incomplete |= *truncated || bytes.len() != *byte_count;
@@ -489,6 +513,21 @@ fn apply_representation(
         }
     }
     add("Content-Length", bytes.to_string());
+}
+
+fn body_finished(
+    representation: Option<&serde_json::Value>,
+    completion: BodyCompletion,
+    terminal: TerminalState,
+    retained_bytes: usize,
+) -> bool {
+    representation.map_or(
+        completion == BodyCompletion::Complete || terminal == TerminalState::Completed,
+        |saved| {
+            saved["complete"].as_bool() == Some(true)
+                && saved["retainedBytes"].as_u64() == u64::try_from(retained_bytes).ok()
+        },
+    )
 }
 
 fn render_request(
@@ -642,11 +681,22 @@ fn write_http_session<W: Write + Seek>(
     }
     let request = session.request.as_ref().ok_or(SazError::InvalidArchive)?;
     let response = session.response.as_ref().ok_or(SazError::InvalidArchive)?;
-    let request_incomplete =
-        session.request_body_incomplete || session.loss || session.terminal == TerminalState::Open;
+    let request_incomplete = session.request_body_incomplete
+        || session.loss
+        || !body_finished(
+            session.request_representation.as_ref(),
+            session.request_body_completion,
+            session.terminal,
+            session.request_body.len(),
+        );
     let response_incomplete = session.response_body_incomplete
         || session.loss
-        || session.terminal != TerminalState::Completed;
+        || !body_finished(
+            session.response_representation.as_ref(),
+            session.response_body_completion,
+            session.terminal,
+            session.response_body.len(),
+        );
     let request_wire = render_request(
         request,
         &session.request_body,
@@ -1011,6 +1061,194 @@ mod tests {
         let mut value = Vec::new();
         file.read_to_end(&mut value).unwrap();
         value
+    }
+
+    fn failed_capture(saved: bool) -> RecoveredCapture {
+        let mut source = capture(true, true);
+        let mut records = Vec::new();
+        for mut record in source.records {
+            if let CaptureRecordKind::BodySegment { boundary, .. } = record.kind {
+                let name = match boundary {
+                    ExchangeBoundary::ClientRequest => "client-request",
+                    ExchangeBoundary::ClientResponse => "client-response",
+                    _ => unreachable!(),
+                };
+                if saved {
+                    records.push(CaptureRecord {
+                        exchange_id: 42,
+                        sequence: 0,
+                        kind: CaptureRecordKind::Unknown {
+                            kind: "body-representation".into(),
+                            payload: serde_json::json!({
+                                "boundary":name,"complete":true,"observedBytes":3,
+                                "retainedBytes":3,"mediaType":"text/plain","charset":null,
+                                "contentCodings":[]
+                            }),
+                        },
+                    });
+                }
+                records.push(record);
+                if !saved {
+                    records.push(CaptureRecord {
+                        exchange_id: 42,
+                        sequence: 0,
+                        kind: CaptureRecordKind::Unknown {
+                            kind: "body-completed".into(),
+                            payload: serde_json::json!({"boundary":name}),
+                        },
+                    });
+                }
+                continue;
+            }
+            if matches!(record.kind, CaptureRecordKind::Completed) {
+                record.kind = CaptureRecordKind::Failed {
+                    category: "Body".into(),
+                    message: "downstream response-body consumer closed".into(),
+                };
+            }
+            records.push(record);
+        }
+        for (index, record) in records.iter_mut().enumerate() {
+            record.sequence = index as u64 + 1;
+        }
+        source.records = records;
+        source
+    }
+
+    #[test]
+    fn failed_exchanges_keep_complete_bodies_in_both_saz_profiles() {
+        for (evidence, saved) in [("saved", true), ("recorded", false)] {
+            for (profile, mode) in [("strict", SazMode::Strict), ("extended", SazMode::Extended)] {
+                let (bytes, report) = export(mode, &failed_capture(saved));
+                assert_eq!(report.incomplete_bodies, 0, "{profile}/{evidence}");
+                if let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR") {
+                    std::fs::write(
+                        std::path::PathBuf::from(directory)
+                            .join(format!("{profile}-failed-{evidence}-plain.saz")),
+                        &bytes,
+                    )
+                    .unwrap();
+                }
+                let mut archive =
+                    SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                let session = &index.sessions[0];
+                assert_eq!(session.metadata.flags["x-transmog-terminal"], "failed");
+                for (message, expected) in [
+                    (session.request.as_ref().unwrap(), b"req"),
+                    (session.response.as_ref().unwrap(), b"res"),
+                ] {
+                    assert!(!message.body.dropped, "{profile}/{evidence}");
+                    let mut retained = Vec::new();
+                    archive
+                        .copy_body(&message.body, &mut retained, || false)
+                        .unwrap();
+                    assert_eq!(retained, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn completion_evidence_does_not_hide_incomplete_bodies() {
+        for case in [
+            "wrong-length",
+            "unfinished",
+            "truncated",
+            "loss",
+            "omitted",
+            "no-marker",
+            "late-data",
+        ] {
+            let mut source = failed_capture(!matches!(case, "no-marker" | "late-data"));
+            if case == "no-marker" {
+                source.records.retain(|record| {
+                    !matches!(&record.kind,
+                        CaptureRecordKind::Unknown { kind, payload }
+                            if kind == "body-completed" && payload["boundary"] == "client-response"
+                    )
+                });
+            }
+            for record in &mut source.records {
+                match &mut record.kind {
+                    CaptureRecordKind::Unknown { kind, payload }
+                        if kind == "body-representation"
+                            && payload["boundary"] == "client-response" =>
+                    {
+                        if case == "wrong-length" {
+                            payload["retainedBytes"] = serde_json::json!(4);
+                        } else if case == "unfinished" {
+                            payload["complete"] = serde_json::json!(false);
+                        }
+                    }
+                    CaptureRecordKind::BodySegment {
+                        boundary: ExchangeBoundary::ClientResponse,
+                        bytes,
+                        truncated,
+                        ..
+                    } => {
+                        if case == "truncated" {
+                            *truncated = true;
+                        }
+                        if case == "omitted" {
+                            *bytes = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if case == "loss" {
+                source.records.push(CaptureRecord {
+                    exchange_id: 42,
+                    sequence: 9,
+                    kind: CaptureRecordKind::Loss {
+                        first_missing_sequence: 3,
+                        count: 1,
+                        reason: "observer delivery gap".into(),
+                    },
+                });
+            } else if case == "late-data" {
+                source.records.insert(
+                    source.records.len() - 1,
+                    CaptureRecord {
+                        exchange_id: 42,
+                        sequence: 9,
+                        kind: CaptureRecordKind::BodySegment {
+                            boundary: ExchangeBoundary::ClientResponse,
+                            byte_count: 4,
+                            bytes: Some(b"late".to_vec()),
+                            truncated: false,
+                        },
+                    },
+                );
+            }
+            for (profile, mode) in [("strict", SazMode::Strict), ("extended", SazMode::Extended)] {
+                let (bytes, report) = export(mode, &source);
+                assert_eq!(report.incomplete_bodies, 1, "{profile}/{case}");
+                if case == "unfinished"
+                    && let Some(directory) = std::env::var_os("TRANSMOG_SAZ_INTEROP_DIR")
+                {
+                    std::fs::write(
+                        std::path::PathBuf::from(directory)
+                            .join(format!("{profile}-failed-unfinished-plain.saz")),
+                        &bytes,
+                    )
+                    .unwrap();
+                }
+                let mut archive =
+                    SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                assert!(
+                    index.sessions[0].response.as_ref().unwrap().body.dropped,
+                    "{profile}/{case}"
+                );
+                assert_eq!(
+                    index.sessions[0].request.as_ref().unwrap().body.dropped,
+                    case == "loss",
+                    "{profile}/{case}"
+                );
+            }
+        }
     }
 
     #[test]

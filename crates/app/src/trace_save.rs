@@ -408,7 +408,7 @@ fn write_session<W: Write>(
             let recorded = body.metadata();
             emit(CaptureRecordKind::Unknown {
                 kind: "body-representation".into(),
-                payload: serde_json::json!({"boundary":crate::inspector::boundary(boundary),"observedBytes":recorded.observed_bytes,"mediaType":recorded.media_type,"charset":recorded.charset,"contentCodings":recorded.content_codings}),
+                payload: serde_json::json!({"boundary":crate::inspector::boundary(boundary),"observedBytes":recorded.observed_bytes,"retainedBytes":recorded.retained_bytes,"complete":true,"mediaType":recorded.media_type,"charset":recorded.charset,"contentCodings":recorded.content_codings}),
             })?;
             let expected = body.metadata().retained_bytes;
             let length_known = body.metadata().length_known;
