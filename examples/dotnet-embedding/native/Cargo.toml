@@ -16,10 +16,10 @@ http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-transmog-core = { version = "=0.1.1", path = "../../../crates/proxy-core" }
-transmog-h3 = { version = "=0.1.1", path = "../../../crates/proxy-h3" }
-transmog-http = { version = "=0.1.1", path = "../../../crates/proxy-http" }
-transmog-tls = { version = "=0.1.1", path = "../../../crates/proxy-tls" }
+transmog-core = { version = "=0.1.2", path = "../../../crates/proxy-core" }
+transmog-h3 = { version = "=0.1.2", path = "../../../crates/proxy-h3" }
+transmog-http = { version = "=0.1.2", path = "../../../crates/proxy-http" }
+transmog-tls = { version = "=0.1.2", path = "../../../crates/proxy-tls" }
 
 [lints.rust]
 missing_docs = "warn"

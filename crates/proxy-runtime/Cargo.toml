@@ -15,14 +15,14 @@ http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-transmog-core = { version = "=0.1.1", path = "../proxy-core" }
-transmog-client-identity = { version = "=0.1.1", path = "../client-identity" }
-transmog-content = { version = "=0.1.1", path = "../proxy-content" }
-transmog-h3 = { version = "=0.1.1", path = "../proxy-h3" }
-transmog-http = { version = "=0.1.1", path = "../proxy-http" }
-transmog-network = { version = "=0.1.1", path = "../network" }
-transmog-tls = { version = "=0.1.1", path = "../proxy-tls" }
-transmog-websocket = { version = "=0.1.1", path = "../proxy-websocket" }
+transmog-core = { version = "=0.1.2", path = "../proxy-core" }
+transmog-client-identity = { version = "=0.1.2", path = "../client-identity" }
+transmog-content = { version = "=0.1.2", path = "../proxy-content" }
+transmog-h3 = { version = "=0.1.2", path = "../proxy-h3" }
+transmog-http = { version = "=0.1.2", path = "../proxy-http" }
+transmog-network = { version = "=0.1.2", path = "../network" }
+transmog-tls = { version = "=0.1.2", path = "../proxy-tls" }
+transmog-websocket = { version = "=0.1.2", path = "../proxy-websocket" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-boring.workspace = true

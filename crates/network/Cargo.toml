@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-transmog-core = { version = "=0.1.1", path = "../proxy-core" }
-transmog-socket-info = { version = "=0.1.1", path = "../socket-info" }
+transmog-core = { version = "=0.1.2", path = "../proxy-core" }
+transmog-socket-info = { version = "=0.1.2", path = "../socket-info" }
 serde.workspace = true
 futures-util.workspace = true
 thiserror.workspace = true
