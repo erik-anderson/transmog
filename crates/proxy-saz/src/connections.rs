@@ -176,7 +176,7 @@ fn finish_summary(mut summary: Summary) -> Session {
     let status = status(&summary.session);
     let mut text = format!(
         "[Transmog] Recorded connection context: {}. This diagnostic was generated for SAZ export; it is not an HTTP response body from the origin.\r\n\r\n",
-        reason(&summary.session)
+        crate::connection_reason(&summary.session)
     );
     for transport in &summary.session.evidence.performance.transports {
         describe(&mut text, transport);
@@ -239,20 +239,6 @@ fn status(session: &Session) -> u16 {
         | TransportOutcome::TlsFailed
         | TransportOutcome::PolicyRejected => 502,
         TransportOutcome::Unavailable => 599,
-    }
-}
-
-pub(crate) fn reason(session: &Session) -> &'static str {
-    match upstream(session)
-        .map(|transport| transport.outcome)
-        .unwrap_or_default()
-    {
-        TransportOutcome::Connected => "Connection Established",
-        TransportOutcome::DnsFailed => "Transmog - DNS Lookup Failed",
-        TransportOutcome::TcpFailed => "Transmog - Connection Failed",
-        TransportOutcome::TlsFailed => "Transmog - TLS Handshake Failed",
-        TransportOutcome::PolicyRejected => "Transmog - Connection Rejected",
-        TransportOutcome::Unavailable => "Transmog - Upstream outcome unavailable",
     }
 }
 
@@ -406,10 +392,7 @@ pub(crate) fn opaque_transport(session: &Session) -> Option<&TransportObservatio
             .performance
             .transports
             .iter()
-            .any(|transport| {
-                transport.leg == "client"
-                    && (transport.tls_version.is_some() || transport.tls.is_some())
-            })
+            .any(|transport| transport.leg == "client" && transport.tls_version.is_some())
     {
         return None;
     }
@@ -423,7 +406,6 @@ pub(crate) fn opaque_transport(session: &Session) -> Option<&TransportObservatio
             transport.leg == "upstream"
                 && transport.tunnel_destination.is_some()
                 && transport.tls_version.is_none()
-                && transport.tls.is_none()
         })
 }
 
@@ -435,60 +417,22 @@ pub(crate) fn opaque_response(
         return None;
     }
     let transport = opaque_transport(session)?;
-    let mut headers = vec![header(
+    let mut headers = response.headers.clone();
+    headers.push(header(
         "Transmog-Tunnel",
         "Opaque CONNECT; traffic contents and origin TLS were not inspected",
-    )];
+    ));
     if let Some(peer) = &transport.peer {
         headers.push(header("Transmog-Peer", peer));
     }
-    let started = transport
-        .setup_timings
-        .iter()
-        .map(|timing| timing.began_offset_micros)
-        .min()
-        .and_then(|offset| at_offset(session, offset));
-    headers.extend(timing_headers(
-        started,
-        at_offset(session, transport.sampled_offset_micros),
-        None,
-        false,
-    ));
-    headers.extend(byte_headers(transport, true));
-    if session.terminal != TerminalState::Open
-        && let Some(point) = session
-            .evidence
-            .performance
-            .points
-            .iter()
-            .find(|point| point.milestone == Milestone::ExchangeDone)
-    {
-        let mut ended = timing_headers(
-            Some(i128::from(point.unix_millis) * 1000),
-            None,
-            None,
-            false,
-        );
-        for field in &mut ended {
-            if field.name == b"StartTime" {
-                field.name = b"EndTime".to_vec();
-            }
+    for (name, count) in [
+        ("Transmog-Tunnel-Bytes-Sent", transport.bytes_written),
+        ("Transmog-Tunnel-Bytes-Received", transport.bytes_read),
+    ] {
+        if let Some(count) = count {
+            headers.push(header(name, &count.to_string()));
         }
-        headers.extend(ended);
-        headers.push(header(
-            "Transmog-End-Time-Semantics",
-            "Local opaque tunnel forwarding ended",
-        ));
     }
-    let mut names = HashSet::new();
-    headers.retain(|field| {
-        !response
-            .headers
-            .iter()
-            .any(|original| original.name.eq_ignore_ascii_case(&field.name))
-            && names.insert(field.name.to_ascii_lowercase())
-    });
-    headers.splice(0..0, response.headers.iter().cloned());
     Some(CapturedResponse {
         status: response.status,
         headers,
@@ -713,96 +657,6 @@ pub(crate) mod tests {
         assert!(body.contains("Physical bytes read: 200 (shared connection total)"));
         assert!(!body.contains("Fiddler"));
         assert!(summaries[0].started_unix_nanos.is_none());
-    }
-
-    #[test]
-    fn opaque_tunnel_end_time_requires_a_recorded_terminal_event() {
-        use transmog_core::performance::{ConnectionTiming, TimingPoint};
-        let mut session = Session {
-            request: Some(CapturedRequest {
-                method: "CONNECT".into(),
-                target: "https://example.test:443/".into(),
-                headers: vec![],
-            }),
-            terminal: TerminalState::Completed,
-            ..Default::default()
-        };
-        session.evidence.performance.points = vec![
-            TimingPoint {
-                milestone: Milestone::RequestHeaders,
-                unix_millis: 1_800_000_000_000,
-                offset_micros: 0,
-            },
-            TimingPoint {
-                milestone: Milestone::ExchangeDone,
-                unix_millis: 1_800_000_000_010,
-                offset_micros: 10000,
-            },
-        ];
-        session
-            .evidence
-            .performance
-            .transports
-            .push(TransportObservation {
-                leg: "upstream".into(),
-                connection_id: "opaque".into(),
-                tunnel_destination: Some("example.test:443".into()),
-                outcome: TransportOutcome::Connected,
-                setup_timings: vec![ConnectionTiming {
-                    phase: "tcp".into(),
-                    began_offset_micros: 0,
-                    ended_offset_micros: 1000,
-                    request_wait_micros: 1000,
-                }],
-                sampled_offset_micros: 10000,
-                bytes_read: Some(11),
-                bytes_written: Some(22),
-                ..Default::default()
-            });
-        let response = CapturedResponse {
-            status: 200,
-            headers: vec![],
-        };
-        let projected = opaque_response(&session, &response).unwrap();
-        for (name, value) in [
-            ("StartTime", "08:00:00.000"),
-            ("EndTime", "08:00:00.010"),
-            ("ClientToServerBytes", "22"),
-            ("ServerToClientBytes", "11"),
-        ] {
-            assert!(
-                projected
-                    .headers
-                    .iter()
-                    .any(|field| field.name == name.as_bytes()
-                        && field.value.as_deref() == Some(value.as_bytes()))
-            );
-        }
-        assert_eq!(
-            projected
-                .headers
-                .iter()
-                .filter(|field| field.name == b"Transmog-Time-Zone")
-                .count(),
-            1
-        );
-        session.terminal = TerminalState::Open;
-        assert!(
-            !opaque_response(&session, &response)
-                .unwrap()
-                .headers
-                .iter()
-                .any(|field| field.name == b"EndTime")
-        );
-        session.terminal = TerminalState::Completed;
-        session.evidence.performance.points.pop();
-        assert!(
-            !opaque_response(&session, &response)
-                .unwrap()
-                .headers
-                .iter()
-                .any(|field| field.name == b"EndTime")
-        );
     }
 
     #[test]

@@ -777,6 +777,27 @@ const fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
+fn connection_reason(session: &Session) -> &'static str {
+    use transmog_core::performance::TransportOutcome;
+
+    match session
+        .evidence
+        .performance
+        .transports
+        .iter()
+        .find(|transport| transport.leg == "upstream")
+        .map(|transport| transport.outcome)
+        .unwrap_or_default()
+    {
+        TransportOutcome::Connected => "Connection Established",
+        TransportOutcome::DnsFailed => "Transmog - DNS Lookup Failed",
+        TransportOutcome::TcpFailed => "Transmog - Connection Failed",
+        TransportOutcome::TlsFailed => "Transmog - TLS Handshake Failed",
+        TransportOutcome::PolicyRejected => "Transmog - Connection Rejected",
+        TransportOutcome::Unavailable => "Transmog - Upstream outcome unavailable",
+    }
+}
+
 fn write_http_session<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     id: usize,
@@ -853,7 +874,7 @@ fn write_http_session<W: Write + Seek>(
     let reason = if session.response.is_none() {
         diagnostic.1
     } else if session.kind == SessionKind::ConnectionContext {
-        connections::reason(session)
+        connection_reason(session)
     } else if session
         .request
         .as_ref()
