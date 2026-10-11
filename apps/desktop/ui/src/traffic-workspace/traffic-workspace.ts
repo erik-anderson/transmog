@@ -9,15 +9,59 @@ import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTe
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
-import type { CertificateViewer } from '../certificate-viewer/certificate-viewer.js';
+import type { CertificateInspector } from '../certificate-inspector/certificate-inspector.js';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
-  certificateViewer!:CertificateViewer;
-  showCertificates(event:Event):void {if(this.selectedSessionId)void this.certificateViewer.show(this.selectedSessionId,event.currentTarget as HTMLElement);}
+  certificateInspector!:CertificateInspector;
+  detailsButton!:HTMLButtonElement;
+  actionsButton!:HTMLButtonElement;
+  requestActionsMenu!:HTMLElement;
+  private closePopover(menu:HTMLElement,trigger:HTMLElement):void {
+    const active=(this.getRootNode() as ShadowRoot).activeElement;
+    const restore=!!active&&menu.contains(active);
+    menu.hidePopover();
+    if(restore)trigger.focus({preventScroll:true});
+  }
+  closeRequestActions(event:Event):void {if((event.target as Element).closest('button'))this.closePopover(this.requestActionsMenu,this.actionsButton);}
+  @observable detailsTimingsSelected='true';
+  @observable detailsConnectionSelected='false';
+  @observable detailsCertificatesSelected='false';
+  @observable detailsSourceSelected='false';
+  @observable detailsTab='timings';
+  @observable detailsTimingsTabIndex=0;
+  @observable detailsConnectionTabIndex=-1;
+  @observable detailsCertificatesTabIndex=-1;
+  @observable detailsSourceTabIndex=-1;
+  @observable hasEnabledResponses=false;
+  autoresponseStateChanged():void {this.hasEnabledResponses=!!this.autoresponseState?.rules.some(rule=>rule.enabled!==false&&rule.request.responseAsset!==null);}
+  @observable detailsUrl='';
+  @observable detailsHasSource=false;
+  @observable emptyTrafficText='Start the proxy to capture traffic.';
+  private detailsCertificateLoaded=false;
+  private detailsSourceId='';
+  private detailsReturnFocus:HTMLElement|null=null;
+  showDetailsTab(tab:string):void {
+    this.detailsTimingsSelected=String(tab==='timings');
+    this.detailsConnectionSelected=String(tab==='connection');
+    this.detailsCertificatesSelected=String(tab==='certificates');
+    this.detailsSourceSelected=String(tab==='source');
+    this.detailsTab=tab;
+    this.detailsTimingsTabIndex=tab==='timings'?0:-1;this.detailsConnectionTabIndex=tab==='connection'?0:-1;this.detailsCertificatesTabIndex=tab==='certificates'?0:-1;this.detailsSourceTabIndex=tab==='source'?0:-1;
+    if((tab==='connection'||tab==='certificates')&&!this.detailsCertificateLoaded){
+      this.detailsCertificateLoaded=true;void this.certificateInspector.inspect(this.timingId);
+    }
+  }
+  detailsTabKeydown(event:KeyboardEvent):void {
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const tabs=['timings','connection','certificates',...(this.detailsHasSource?['source']:[])];
+    const index=tabs.indexOf(this.detailsTab),next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+    event.preventDefault();this.showDetailsTab(tabs[next]!);this.$flushUpdates();
+    this.timingDialog.querySelector<HTMLButtonElement>('[role="tab"][data-selected]')?.focus();
+  }
   @attr({attribute:'viewer-mode',mode:'boolean'}) viewerMode = false;
   @observable timingTitle="Timings and transport";
   @observable timingSummary="";
@@ -170,6 +214,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable fetchDestinations:string[]=[];
   @observable fetchDestinationSummary='All destinations';
   @observable fetchDestinationOptions=structuredClone(initialState.fetchDestinationOptions);
+  @observable trafficSearchKind='filter';
+  @observable searchPlaceholder='Filter URLs and processes';
+  private liveFilter='';
   @observable searchText = '';
   @observable searchingTraffic=false;
   @observable searchMode='text';
@@ -298,7 +345,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   cancelOpenedTrace(event?:Event):void {event?.preventDefault();this.openedTracePath='';this.openTraceDialog.close();void this.processOpenedTraces();}
   async openSavedTrace(separate:boolean):Promise<void> {
-    this.filesMenu.hidePopover();
+    this.closePopover(this.filesMenu,this.filesMenuButton);
     if(this.importingTrace)return;
     try {const path=await invoke<string|null>('pick_trace_path');if(!path||!this.isConnected)return;if(separate)await invoke('open_trace_viewer',{paths:[path]});else{this.openedFileQueue.push({path,ask:false});await this.processOpenedTraces();}}
     catch(error:unknown){this.importStatus='Capture could not be opened: '+describeError(error);await this.showError('Could not open capture',describeError(error));}
@@ -316,27 +363,35 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.traceMetadataRows=[...this.traceMetadataRows,result.trace];this.queryRevision++;await this.refreshSessions(undefined,true);
     }catch(error:unknown){if(this.isConnected&&this.importOperation===operationId){const message=describeError(error);if(message.includes('canceled'))this.importStatus='Import canceled. Traffic is unchanged.';else{failure=message;this.importStatus='Import failed: '+message;}}}
     finally{onProgress.onmessage=()=>{};if(this.importOperation===operationId){this.importOperation='';this.importingTrace=false;}}
-    if(failure&&this.isConnected){await this.showError('Import failed',(path.split(/[\\/]/).pop()??path)+'\n\n'+failure+'\n\nTraffic is unchanged. Choose another capture or try importing again.');if(this.isConnected&&this.view==='traffic')this.importButton.focus();}
+    if(failure&&this.isConnected){await this.showError('Import failed',(path.split(/[\\/]/).pop()??path)+'\n\n'+failure+'\n\nTraffic is unchanged. Choose another capture or try importing again.');if(this.isConnected&&this.view==='traffic')this.filesMenuButton.focus();}
   }
-  dismissImportStatus():void {if(this.importingTrace)return;this.importStatus='';this.importButton.focus();}
+  dismissImportStatus():void {if(this.importingTrace)return;this.importStatus='';this.filesMenuButton.focus();}
   async cancelImport():Promise<void> {if(this.importOperation){this.importStatus='Canceling import…';try{await invoke('cancel_trace_import',{operationId:this.importOperation});}catch(error:unknown){this.importStatus='Cancel could not be requested: '+describeError(error);}}}
   async showTimings():Promise<void> {
     this.trafficMenu.hidePopover();const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedDetail?.id;if(!id)return;
-    this.timingId=id;this.timingWaterfall=[];this.timingMinor=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.timingDialog.showModal();await this.refreshTimings();
+    const active=(this.getRootNode() as ShadowRoot).activeElement;
+    this.detailsReturnFocus=active instanceof HTMLElement&&active.closest('.selection-actions')?this.detailsButton:this.trafficTable;
+    this.showDetailsTab('timings');this.detailsUrl=this.selectedUrlText;this.detailsHasSource=false;this.detailsSourceId='';this.detailsCertificateLoaded=false;
+    this.timingId=id;this.timingWaterfall=[];this.timingMinor=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.$flushUpdates();this.timingDialog.showModal();await this.refreshTimings();
   }
   async refreshTimings():Promise<void> {
     const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
-    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const source=detail.traceId??'';this.detailsUrl=detail.requests[0]?.target??this.detailsUrl;if(source!==this.detailsSourceId){this.detailsSourceId=source;this.detailsHasSource=!!source;if(source)void this.loadDetailsSource(source);}const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
     catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
     finally {if(generation===this.timingGeneration)this.timingBusy=false;}
   }
   async copyTimings():Promise<void> {if(!this.timingReportText)return;try {await navigator.clipboard.writeText(this.timingReportText);this.timingStatus='Timing report copied.';}catch{this.timingReportVisible=true;this.timingStatus='Select the report text below and use Copy.';}}
   closeTimings():void {this.timingDialog.close();}
-  timingsClosed():void {if(this.timingDialog.open)return;this.timingGeneration++;this.timingBusy=false;}
+  timingsClosed():void {if(this.timingDialog.open)return;this.timingGeneration++;this.timingBusy=false;this.metadataGeneration++;this.certificateInspector.cancelInspection();this.detailsReturnFocus?.focus({preventScroll:true});this.detailsReturnFocus=null;}
+  private async loadDetailsSource(id:string):Promise<void> {
+    const generation=++this.metadataGeneration;this.metadataTraceName='Loading capture source…';this.metadataSummary='';this.metadataContext='';this.metadataNetworkTitle='';this.metadataNetworkContext='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataError='';
+    try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows;this.loadTraceMetadata(id);}
+    catch(error:unknown){if(generation===this.metadataGeneration)this.metadataError='Capture source unavailable: '+describeError(error);}
+  }
   async showTraceMetadata(id?:string):Promise<void> {
     const active=(this.getRootNode() as ShadowRoot).activeElement;
     this.metadataReturnFocus=active instanceof HTMLElement?(this.filesMenu.contains(active)?this.filesMenuButton:active):null;
-    this.filesMenu.hidePopover();
+    this.closePopover(this.filesMenu,this.filesMenuButton);
     this.metadataTraceName='Loading trace metadata…';this.metadataSummary='';this.metadataContext='';this.metadataNetworkTitle='';this.metadataNetworkContext='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataDialog.showModal();this.metadataBusy=true;this.metadataError='';const generation=++this.metadataGeneration;
     try{const rows=await invoke<TraceMetadata[]>('trace_metadata_list');if(!this.isConnected||generation!==this.metadataGeneration)return;this.traceMetadataRows=rows.sort((a,b)=>b.importedAt-a.importedAt);this.loadTraceMetadata(id??rows[0]?.id??'');}
     catch(error:unknown){if(generation===this.metadataGeneration)this.metadataError='Trace metadata could not be loaded: '+describeError(error);}
@@ -573,12 +628,24 @@ export class TrafficWorkspace extends WorkspaceElement {
   async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.fetchDestinations=[];this.queryRevision++;await this.refreshSessions(undefined,true);}
   searchChanged(event:Event):void {
     this.searchText=(event.currentTarget as HTMLInputElement).value;
-    // Content decoding starts on Search/Enter, rather than on each keystroke.
+    if(this.trafficSearchKind!=='filter')return;
+    this.liveFilter=this.searchText;this.queryRevision++;
+    window.clearTimeout(this.searchTimer);
+    this.searchTimer=window.setTimeout(()=>void this.refreshSessions(undefined,true),120);
+  }
+  async changeTrafficSearchKind(event:Event):Promise<void> {
+    const text=this.searchInput.value,kind=(event.currentTarget as HTMLSelectElement).value;
+    await this.clearContentSearch(false);
+    this.trafficSearchKind=kind;
+    this.searchPlaceholder=this.trafficSearchKind==='filter'?'Filter URLs and processes':'Search headers and bodies';
+    this.searchText=text;this.searchInput.value=text;
+    this.liveFilter=this.trafficSearchKind==='filter'?text:'';
+    this.searchInput.focus();this.queryRevision++;await this.refreshSessions(undefined,true);
   }
   setSearchOption(option:'searchCaseSensitive'|'searchIgnoreAccents'|'searchMetadata'|'searchRequestHeaders'|'searchResponseHeaders'|'searchRequestBodies'|'searchBodies'|'selectSearchMatches',event:Event):void {this[option]=(event.currentTarget as HTMLInputElement).checked;}
   setSearchMode(event:Event):void {this.searchMode=(event.currentTarget as HTMLSelectElement).value;}
   async runContentSearch(event?:Event):Promise<void> {
-    event?.preventDefault();if(this.searchingTraffic)return;
+    event?.preventDefault();if(this.trafficSearchKind==='filter'){window.clearTimeout(this.searchTimer);await this.refreshSessions(undefined,true);return;}if(this.searchingTraffic)return;
     const pattern=this.searchInput.value;this.searchText=pattern;
     if(!pattern){await this.clearContentSearch();return;}
     this.searchingTraffic=true;this.searchCancelRequested=false;this.contentSearchStatus='Searching captured traffic…';
@@ -590,7 +657,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       let view:TrafficView,revision:number;
       do {
         revision=this.queryRevision;
-        view=await invoke<TrafficView>('query_traffic_view',{query:{searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
+        view=await invoke<TrafficView>('query_traffic_view',{query:{search:this.liveFilter,searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
         if(!this.isConnected||this.searchOperation!==operationId){this.releaseView(view);return;}
         if(revision!==this.queryRevision)this.releaseView(view);
       }while(revision!==this.queryRevision);
@@ -667,7 +734,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async refreshSearchMatchIds():Promise<boolean> {
     if(!this.searchResultId)return false;
     const resultId=this.searchResultId, revision=this.queryRevision;
-    const ids=await invoke<string[]>('matching_traffic_ids',{query:{searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:{search:this.liveFilter,searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
     if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return false;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
     return true;
@@ -676,7 +743,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async clearContentSearch(refresh=true):Promise<void> {
     this.closeMatches();
     if(this.searchOperation){const operation=this.searchOperation;this.searchOperation='';void invoke('cancel_traffic_search',{operationId:operation}).catch(()=>{});}
-    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.searchInput.value='';this.clearTrafficSelection();this.queryRevision++;if(refresh)await this.refreshSessions(undefined,true);
+    this.searchingTraffic=false;this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentMatchCount=0;this.contentSearchLabel='';this.contentSearchStatus='';this.searchText='';this.liveFilter='';window.clearTimeout(this.searchTimer);this.searchInput.value='';this.clearTrafficSelection();this.queryRevision++;if(refresh)await this.refreshSessions(undefined,true);
   }
   startColumnDrag(id:ColumnId,event:PointerEvent):void {
     if (event.button !== 0) return;
@@ -748,7 +815,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const view = await invoke<TrafficView>('query_traffic_view',{query:{searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      const view = await invoke<TrafficView>('query_traffic_view',{query:{search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
       if (!this.isConnected || revision !== this.queryRevision) {this.releaseView(view);return;}
       if(view.page.retainedCount>0||view.ids.length)this.showTraceImportHelp=false;
       if(this.contentSearchActive){this.searchMatchIds=view.ids;this.contentMatchCount=view.ids.length;this.matchRevision=revision;}
@@ -962,7 +1029,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       const filtered = this.filterCount > 0 || this.searchText.length > 0;
       if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
       this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentSearchStatus='';this.contentSearchLabel='';this.contentMatchCount=0;
-      this.filters = []; this.fetchDestinations=[]; this.searchText = ''; this.searchInput.value = '';
+      this.filters = []; this.fetchDestinations=[]; this.searchText = ''; this.liveFilter='';window.clearTimeout(this.searchTimer);this.searchInput.value = '';
       this.followLatest = false;this.closeMatches();this.applyView(view);this.queryLoaded = true; this.queryError = '';
       this.renderSessionState(); this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
       const row=await this.revealCurrent(id,true);if(!row)throw new Error('Source no longer in Traffic.');
@@ -1016,22 +1083,24 @@ export class TrafficWorkspace extends WorkspaceElement {
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',draining:'Finishing active requests.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
-    const empty = this.filterCount || this.contentSearchActive ? 'No matching exchanges.' : state === 'running' ? 'Waiting for proxied requests.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    const empty = this.filterCount || this.liveFilter || this.contentSearchActive ? 'No matching traffic. Adjust or clear your filters.' : this.viewerMode ? 'Import a saved capture to view traffic.' : state === 'running' ? 'Waiting for traffic. Make a request through the proxy.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    this.emptyTrafficText=empty;
     const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' traffic entries.' : empty);
-    this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' saved entries.' : 'Import a SAZ or TMCap file to view saved traffic.') : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
+    this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' saved entries.' : empty) : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
     this.sessionKind = this.queryError || this.watchError || state === 'failed' ? 'error' : !this.queryLoaded || this.pending || state === 'stopping' ? 'progress' : state === 'running' ? 'success' : 'neutral';
   }
   private renderFollowState():void {
     const capturing = this.lifecycle === 'running' && !this.pending;
-    const held = this.selectedSessionId ? 'Inspection pinned' : 'Row positions held';
+    const held = 'Auto-scroll paused';
     this.followText = this.viewerMode ? 'Showing saved traffic' : this.followLatest ? capturing ? 'Following live traffic' : 'Showing captured traffic' : held+' · '+(capturing ? 'capture continues' : 'showing captured traffic');
   }
   showCapturedPage():void {
     this.trafficMenu.hidePopover();const detail=this.selectedDetail;if(!detail||!this.previewPageAvailable||this.previewPageBusy)return;
+    this.closePopover(this.requestActionsMenu,this.actionsButton);
     this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageStatus='';this.previewPageScope='original-trace';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
   }
   setPreviewScope(event:Event):void {this.previewPageScope=(event.currentTarget as HTMLSelectElement).value;}
-  async showPreviewReport():Promise<void> {this.previewReportFocus=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.previewReportDialog.showModal();await this.refreshPreviewReport();}
+  async showPreviewReport():Promise<void> {const active=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.previewReportFocus=active&&this.requestActionsMenu.contains(active)?this.actionsButton:active;this.previewReportDialog.showModal();await this.refreshPreviewReport();}
   async refreshPreviewReport():Promise<void> {
     const label=this.previewReportLabel,generation=++this.previewReportGeneration;this.previewReportBusy=true;this.previewReportError='';
     try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
@@ -1052,7 +1121,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   @observable saveTraceFormat='native';
   changeSaveTraceFormat(event:Event):void {this.saveTraceFormat=(event.target as HTMLSelectElement).value;}
-  showSaveTrace():void {if(this.savingTrace)return;this.saveTraceStatus='';this.saveTraceDialog.showModal();}
+  showSaveTrace():void {if(this.savingTrace)return;this.closePopover(this.filesMenu,this.filesMenuButton);this.saveTraceStatus='';this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';

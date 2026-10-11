@@ -8,7 +8,8 @@ feedback, keyboard behavior, and constrained-window layout work together.
 Use these principles when changing user-visible behavior, including backend
 defaults and responses consumed by the desktop. The current implementation is
 a starting point for consistency; a new component should still be reviewed for
-its actual effect on the user's task.
+its actual effect on the user's task. For a short per-change workflow, follow
+[Maintaining UX quality](ux-quality.md).
 
 ## Organize around the task
 
@@ -19,7 +20,8 @@ its actual effect on the user's task.
   Multiselection exposes useful batch actions. Selection, editing, and rule
   activation are separate operations and should have clear effects.
 - Keep the primary action visible near the content it affects. Put occasional
-  actions in More, advanced settings in disclosures, and technical evidence
+  actions in the relevant action menu, advanced settings in disclosures, and
+  technical evidence
   behind a readable summary. Avoid deep menu chains or hiding an essential
   action merely to save space.
 - Show context when it becomes useful: selection actions after selection,
@@ -41,7 +43,7 @@ its actual effect on the user's task.
 - Identify top-level navigations with a small neutral Page badge beside the
   traffic path and an accessible label. Use original client fetch metadata;
   do not infer navigation from HTML content, method or URL alone.
-- Put fetch-destination filtering inside the existing Filter menu, using a
+- Put fetch-destination filtering inside the existing Filters menu, using a
   checkbox dropdown. Combine selected destinations with OR, combine that group
   with other filters using AND, and show one removable chip for the group.
   No selections shows all traffic; an explicit empty destination is recorded
@@ -167,10 +169,10 @@ trace association, with a direct action to view that trace's original metadata.
 
 Traffic's drop helper appears only before any entries have been loaded in that
 window. Clearing entries or filtering them out must not bring the helper back;
-the list remains a drop target. Files imports into the current window, with an
-attached options button for importing into a separate viewer and viewing current
+the list remains a drop target. **Files** groups importing into the current
+window, saving a trace, importing into a separate viewer, and viewing current
 imports. Disable current-import metadata when this window has no imports, and
-return focus to the options button after closing its metadata dialog.
+return focus to **Files** after closing its metadata dialog.
 Copy URL beside Copy headers uses the complete corresponding request target from
 retained evidence, without display truncation.
 
@@ -313,7 +315,9 @@ Keep forwarding independent from capture limits; report a retained prefix as
 incomplete while preserving full measured byte counts. Explain that cache
 changes apply to new requests and recording changes to the next recording.
 
-Full traffic search starts with **Search** or Enter, so typing does not repeatedly
+Traffic defaults to a live metadata filter for URLs and processes, applied across
+all retained entries before virtual windowing. **Search contents** is an explicit
+mode that starts with **Search** or Enter, so typing does not repeatedly
 read and decode captured bodies. Results describe a completed search snapshot;
 new traffic remains capturable and a new search refreshes that snapshot. Search
 can select every matching entry across the entire list, and rerunning it replaces the
@@ -340,7 +344,14 @@ Undo. Preserve hints without authored replacements; allow explicit stripping.
 Preset replacements update existing headers only. Show enabled non-auto-response
 automation in navigation and enabled header rules beside Header overrides.
 
-Certificates opens the TLS context of that request's physical connections.
+The selected request’s **Details** dialog groups **Timings**, **Connection**,
+**Certificates**, and (for imports) **Capture source**. Keep headers, body inspection,
+and Copy URL directly accessible; occasional request operations belong in **Actions**.
+**Files** groups import and save; **View** groups columns, density, and layout.
+**Compare messages** is the default wide layout. Narrow inspectors show one message
+with a request/response selector. Header byte sizes are an optional disclosure.
+
+The Certificates tab opens the TLS context of that request's physical connections.
 Separate the client-facing proxy certificate from the origin server path and
 client authentication certificates. Show public certificate bytes, recorded
 verification and negotiation failures together. Label fingerprints or imported
@@ -348,7 +359,7 @@ summaries whose certificate bytes were omitted. Recorded trust belongs to the
 original connection; opening the viewer must not imply verification against the
 current computer's trust or expose private keys or session secrets.
 
-Timings opens a snapshot of the selected exchange, with an explicit Refresh.
+The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish
 zero from unavailable, shared connection setup from per-request work, and bytes
 queued by the proxy from delivery to the client. Response wait does not identify
@@ -377,3 +388,8 @@ Current flows and their semantics are described in
 [product state and support](product-state-and-support.md). When a deliberate
 design change replaces a convention, update the relevant guidance along with
 the implementation so future changes have one current explanation to follow.
+
+File recording chooses a destination before stopping live capture. Switching waits
+for active requests to drain and offers cancellation while waiting. Label the
+content choice **Headers only** or **Headers and bodies**; recording writes new
+traffic to the file without adding it to Traffic.

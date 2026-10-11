@@ -41,3 +41,11 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 .headers-view .inspector-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; text-align:left; }
 
 .header-pages {display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem;padding:.4rem .5rem;font-size:.73rem;}.authentication-details {font-size:.72rem;position:relative;}.authentication-details summary {cursor:pointer;}.authentication-details p {margin:.2rem;white-space:normal;}
+
+.header-options,.body-options { font-size:.73rem; }
+.header-options > summary,.body-options > summary { cursor:pointer; padding:.2rem; }
+.header-options[open],.body-options[open] { flex-basis:100%; }
+.header-options-panel,.body-options-panel { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem .65rem; padding:.4rem; border:1px solid var(--line); background:var(--panel-subtle); }
+.header-options-panel p { flex-basis:100%; margin:.2rem 0; }
+.header-options-panel .field-help { white-space:normal; }
+.body-options-panel .preview-options { margin:0; }

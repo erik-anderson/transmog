@@ -11,8 +11,8 @@ export async function checkCertificates(page, root) {
   }
   const inspection={certificates,connections:[{id:'upstream:failed',title:'Transmog → server',fields:[{label:'Recorded verification',value:'Rejected (code 20, depth 1)'},{label:'Offered cipher suites',value:'ECDHE-ECDSA-AES128-GCM-SHA256'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[certificates[0].sha256],errors:['Certificate issuer was not trusted by the recorded snapshot']},{id:'client:browser',title:'Client → Transmog',fields:[{label:'Recorded verification',value:'Not recorded or verification was not reached'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]}]};
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
-  const trigger=page.locator('.selection-actions').getByRole('button',{name:'Certificates…',exact:true});await trigger.click();
-  const dialog=page.locator('.certificate-dialog[open]');
+  const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
+  const dialog=page.locator('.details-dialog[open]');
   await dialog.getByText(inspection.connections[0].errors[0],{exact:true}).waitFor();
   await dialog.getByText('Client authentication certificate chain',{exact:true}).waitFor();
   await dialog.locator('.certificate-chain').first().getByRole('button').nth(1).click();
@@ -33,12 +33,12 @@ export async function checkCertificates(page, root) {
   assert.equal(await trigger.evaluate(node=>node===node.getRootNode().activeElement),true);
   await page.setViewportSize({width:1280,height:800});
   await page.evaluate(()=>globalThis.__workspaceFixture.certificateInspection={certificates:[],connections:[{id:'none',title:'TLS context unavailable',fields:[],serverChain:[],clientChain:[],errors:[]}]});
-  await trigger.click();await page.locator('.certificate-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
-  await page.locator('.certificate-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
+  await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();await page.locator('.details-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
+  await page.locator('.details-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
   // Late replies from a closed dialog must not replace the reopened selection.
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCertificates=true;});await trigger.click();await page.keyboard.press('Escape');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCertificates=true;});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();await page.keyboard.press('Escape');
   await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.deferCertificates=false;fixture.releaseCertificates();});
-  await trigger.click();await page.locator('.certificate-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
-  await page.locator('.certificate-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
+  await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();await page.locator('.details-dialog[open]').getByText('No public certificate was recorded',{exact:true}).waitFor();
+  await page.locator('.details-dialog[open]').getByRole('button',{name:'Close',exact:true}).click();
   await page.evaluate(()=>{delete globalThis.__workspaceFixture.certificateInspection;});
 }

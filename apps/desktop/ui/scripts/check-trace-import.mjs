@@ -6,15 +6,15 @@ export async function checkTraceImport(page, root, view) {
   await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.beforeDrop={sessions:structuredClone(state.sessions),traces:structuredClone(state.traces??[])};});
   const trafficDrop=page.locator('traffic-workspace trace-drop-target');
   assert.equal(await trafficDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Populated Traffic still shows the empty import helper');
-  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();
   const filesMenu=page.locator('#trace-files-menu');
   assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isDisabled(),true);
-  const menu=await filesMenu.boundingBox(),trigger=await page.getByRole('button',{name:'Files options',exact:true}).boundingBox();
+  const menu=await filesMenu.boundingBox(),trigger=await page.getByRole('button',{name:'Files',exact:true}).boundingBox();
   assert.ok(menu.y>=trigger.y+trigger.height-1&&menu.x+menu.width>=trigger.x,'Files menu was not anchored to its trigger');
   await page.evaluate(()=>globalThis.__workspaceFixture.pickedTrace='C:/captures/separate.jsonl');
   await filesMenu.getByRole('button',{name:'Import into separate viewer…',exact:true}).click();
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.openedViewer),['C:/captures/separate.jsonl']);
-  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();
   assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isDisabled(),true,'A separate viewer enabled current-window imports');
   await page.keyboard.press('Escape');
   const drag=async(target,type,paths=[],inside=true)=>target.evaluate((element,{type,paths,inside})=>{
@@ -39,7 +39,7 @@ export async function checkTraceImport(page, root, view) {
   await drag(trafficDrop,'drop',['C:/captures/drop.jsonl']);
   await page.waitForFunction(count=>globalThis.__workspaceFixture.calls.import_trace>count,importsBefore);
   await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
-  await page.getByRole('button',{name:'Files options',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();
   assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isEnabled(),true);
   await page.keyboard.press('Escape');
 

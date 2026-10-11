@@ -9,7 +9,8 @@ dot-source `scripts/dev-env.ps1` in PowerShell. `TRANSMOG_PYTHON` can select an
 explicit interpreter for wrappers. Do not rely on a Windows Store alias that
 cannot execute Python.
 
-Before changing desktop behavior visible to a user, read
+Before changing desktop behavior visible to a user, follow
+[the UX quality routine](docs/ux-quality.md) and read
 [the UX design principles](docs/ux-principles.md). This includes UI changes and
 changes to commands, defaults, validation, status messages, or asynchronous
 behavior that affect the desktop experience.

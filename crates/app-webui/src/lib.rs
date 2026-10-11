@@ -312,7 +312,7 @@ mod tests {
             .respond("GET", "/", &ShellView::from(&status()))
             .unwrap();
         let html = String::from_utf8(response.body).unwrap();
-        assert!(html.contains("No matching exchanges."));
+        assert!(html.contains("Start the proxy to capture traffic."));
         assert!(html.contains("Process / PID"));
         assert!(html.contains("popovertarget=\"table-settings\""));
         assert!(html.contains("popovertarget=\"proxy-status-tools\""));

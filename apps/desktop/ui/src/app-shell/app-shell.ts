@@ -172,6 +172,10 @@ export class AppShell extends WebUIElement {
     this.noticeVisible = true;
   }
   onStatus(event: CustomEvent<AppStatus>): void { this.applyStatus(event.detail); }
+  onCaptureStatus(event: CustomEvent<AppStatus>): void {
+    event.stopPropagation();
+    this.settings.acceptAppStatus(event.detail);
+  }
   private applyStatus(status: AppStatus): void {
     this.lifecycleLabel = status.lifecycle==='draining'?status.summary:lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;

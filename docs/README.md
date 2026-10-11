@@ -13,6 +13,8 @@ sources of truth.
   application, and build libraries and explains where they are contained.
 - [Product shell](product-shell.md) describes the Windows desktop behavior and
   its relationship to the reusable application facade.
+- [Maintaining UX quality](ux-quality.md) gives a short routine for changing,
+  verifying, and reviewing the desktop experience.
 - [UX design principles](ux-principles.md) guides interaction, density,
   alignment, accessibility, and review of user-visible changes.
 - [Current limitations](limitations.md) states what the implementation does

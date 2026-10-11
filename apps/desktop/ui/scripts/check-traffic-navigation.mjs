@@ -14,7 +14,7 @@ export async function checkTrafficNavigation(page) {
       await t.refreshSessions(undefined,true);
     });
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.sessions.every(row=>!row.loading));
-    if(search)await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;t.searchInput.value='navigation-';t.searchMetadata=true;t.searchBodies=false;await t.runContentSearch();});
+    if(search)await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;t.searchInput.value='navigation-';t.searchMetadata=true;t.searchBodies=false;await (t.trafficSearchKind='contents',t.runContentSearch());});
   };
   const hold=async(mode='after',command='traffic_view_rows')=>{
     await page.evaluate(({mode,command})=>{

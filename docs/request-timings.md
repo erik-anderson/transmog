@@ -1,7 +1,8 @@
 # Request timings and transport evidence
 
-Select a request and choose **Timings** or **Timings and transport…** in its
-context menu. The report is a snapshot; **Refresh** updates an active request
+Select a request and choose **Details → Timings**. The **Connection** tab
+contains physical connection measurements and TLS negotiation; **Certificates**
+shows recorded public certificate chains. The report is a snapshot; **Refresh** updates an active request
 without changing selection. The waterfall compares overlapping intervals,
 local operations and body milestones. **Copy report** includes the timeline,
 physical connection facts, source association and original imported timers.

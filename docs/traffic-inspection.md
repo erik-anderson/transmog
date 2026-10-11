@@ -2,7 +2,7 @@
 
 Traffic uses one selected-item inspector for live requests and imported captures.
 Selection and scroll position remain stable while new traffic arrives. Inspect
-request and response together in a wide pane or use pane tabs when space is
+request and response together in a wide pane or use the message selector when space is
 limited. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
@@ -19,7 +19,7 @@ fields. Sizes describe the recorded HTTP headers, not HPACK/QPACK compression or
 IP/TCP packet overhead. Redaction retains original lengths when measured; an
 unknown imported length remains unavailable rather than appearing as zero.
 
-The Authentication disclosure shows whether **Authorization** and
+Header options shows whether **Authorization** and
 **Proxy-Authorization** were present, including when values were redacted.
 Sensitive header values are captured by default in the desktop and guided CLI;
 Settings offers persistent redaction for new traffic. See
@@ -37,7 +37,7 @@ addresses do not reserve an extra field. See
 
 ## Copy a request
 
-The context menu and selection More menu offer **Copy as cURL**,
+The context menu and selected request’s Actions menu offer **Copy as cURL**,
 **Copy as PowerShell** on Windows, and **Copy all headers** for a single entry.
 They only put text on the clipboard; they never execute a request.
 
@@ -61,8 +61,8 @@ the blocks. An unrecorded protocol is labeled unavailable rather than guessed.
 
 ## Search and select
 
-**Search** or Enter searches retained evidence; typing alone does not repeatedly
-read bodies. **Search options** chooses metadata, request headers, response
+In **Search contents** mode, **Search** or Enter searches retained evidence;
+typing alone does not repeatedly read bodies. **Search options** chooses metadata, request headers, response
 headers and decoded text request/response bodies, literal text or regex, case
 sensitivity and accent handling. Content codings and supported text encodings are decoded.
 The bounded regex engine does not support backreferences or look-around.
@@ -115,3 +115,20 @@ edits, with links back to source traffic while it remains available.
 
 For latency interpretation see [request timings](request-timings.md). To share or
 inspect saved evidence see [trace saving](trace-saving.md).
+
+## Traffic workspace organization
+
+The main field defaults to a live URL and process filter across all retained
+metadata. Switch to **Search contents**, then press Search or Enter to inspect
+headers and bodies. Content searches remain snapshots; filtering never decodes
+bodies on each keystroke.
+
+**Compare messages** is the wide default, with the list above request and response
+inspectors. Narrow panes show one message and a request/response selector.
+Headers show Name and Value by default; **Header options** reveals byte sizes
+and ordering. **Body options** groups decoding and preview limits.
+
+**Details** groups Timings, Connection, Certificates, and imported Capture source.
+**Actions** groups replay, auto-response creation, page preview, and request copy
+commands. **Files** groups importing and saving; **View** groups layout, density,
+wrapping, and columns. Bulk actions appear for multiple selected requests.

@@ -18,6 +18,8 @@ export class MessageInspector extends WebUIElement {
   @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
   @observable headersSummaryTitle='';
   @observable headersSummary = '';
+  @observable showHeaderSizes=false;
+  toggleHeaderSizes(event:Event):void {this.showHeaderSizes=(event.currentTarget as HTMLInputElement).checked;}
   @observable largestFirst = false;
   @observable authorizationPresent = false;
   @observable proxyAuthorizationPresent = false;
@@ -82,7 +84,7 @@ export class MessageInspector extends WebUIElement {
     const total=summary?.totalFields??fields.length, measured=fields.every(header=>header.fieldBytes!=null);
     const bytes=summary?summary.serializedBytes:measured?this.headerRows.reduce((sum,row)=>sum+row.bytes,2):null;
     this.headersSummaryTitle=exactHeaderBytes(bytes)+' · Sum of original serialized fields and final CRLF, before redaction; HTTP/1 equivalent';
-    this.headersSummary=fields.length||summary?total+' fields · '+(bytes===null?'size unavailable':formatBytes(bytes)+' including final CRLF')+' · HTTP/1 equivalent':'';
+    this.headersSummary=fields.length||summary?total+' headers · '+(bytes===null?'size unavailable':formatBytes(bytes)):'';
     this.authorizationState=summary?.authorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='authorization')?'present':'absent':'unknown');
     this.proxyAuthorizationState=summary?.proxyAuthorization??(fields.length?fields.some(header=>header.name.toLowerCase()==='proxy-authorization')?'present':'absent':'unknown');
     this.authorizationPresent=this.authorizationState==='present';this.proxyAuthorizationPresent=this.proxyAuthorizationState==='present';

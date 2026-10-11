@@ -4,9 +4,11 @@ export async function smokeHexViewer(evaluate, call) {
   try {
     const points = await evaluate(`(async () => {
       const inspector = document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
-      globalThis.__hexSmoke = { inspector, mode:inspector.mode, preview:inspector.hexPreview, text:inspector.bodyText,
+      const traffic=document.querySelector('app-shell').traffic;
+      globalThis.__hexSmoke = { traffic,selectedId:traffic.selectedSessionId,side:traffic.inspectorSide,inspector, mode:inspector.mode, preview:inspector.hexPreview, text:inspector.bodyText,
         clipboard:Object.getOwnPropertyDescriptor(navigator,'clipboard') };
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__hexSmoke.copied=text}});
+      traffic.selectedSessionId='hex-smoke';traffic.inspectorSide='response';traffic.$flushUpdates();
       inspector.mode='body'; inspector.bodyText='';
       inspector.hexPreview={key:'webview-hex-check',bytesBase64:'AUcBVwFbAWU=',offset:16,truncated:true};
       inspector.$flushUpdates();
@@ -76,6 +78,7 @@ export async function smokeHexViewer(evaluate, call) {
       saved.viewer?.contextMenu.hidePopover();
       saved.inspector.hexPreview=saved.preview;saved.inspector.bodyText=saved.text;saved.inspector.mode=saved.mode;
       saved.inspector.$flushUpdates();
+      saved.traffic.selectedSessionId=saved.selectedId;saved.traffic.inspectorSide=saved.side;saved.traffic.$flushUpdates();
       if(saved.clipboard)Object.defineProperty(navigator,'clipboard',saved.clipboard);else delete navigator.clipboard;
       delete globalThis.__hexSmoke;
     })()`);

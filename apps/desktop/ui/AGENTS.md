@@ -8,6 +8,8 @@ the complete interaction, density, text alignment, state feedback, keyboard
 behavior, and constrained-window layout. Preserve established flows unless the
 task intentionally changes them, and verify populated states as well as empty
 ones. The principles apply to new features and small edits alike.
+Use [Maintaining UX quality](../../../docs/ux-quality.md) as the per-change
+walkthrough, including a review and fix pass before reporting completion.
 
 ## Framework and composition
 

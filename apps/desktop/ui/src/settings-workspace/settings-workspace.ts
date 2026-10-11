@@ -75,7 +75,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   private statusRevision = 0;
 
   protected hydratedCallback(): void { this.ready = this.initializeShell(); }
-  private renderAppStatus(status: AppStatus): void {
+  acceptAppStatus(status: AppStatus): void {
     this.statusRevision++;
     this.hostRecoveryPending = status.hostRestorePending;
     this.proxyLifecycle = status.lifecycle;
@@ -110,7 +110,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.populateSettings(productState);
       void this.refreshBufferStatus();
       this.applyTheme(productState.preferences.theme, productState.workspace);
-      this.renderAppStatus(status);
+      this.acceptAppStatus(status);
       this.updateCertificateState(bootstrap);
       const recovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
       const certificate = !this.decryptHttps ? 'HTTPS decryption is off. CONNECT tunnels forward bytes without inspecting their contents.' : recovery
@@ -173,7 +173,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     try {
       if (this.proxyLifecycle === 'draining' || this.proxyLifecycle === 'stopping') {
         const resumed = await invoke<AppStatus>('resume_application');
-        this.renderAppStatus(resumed);
+        this.acceptAppStatus(resumed);
         if (resumed.lifecycle === 'running') {
           this.setProxyOutput('Proxy resumed. Existing requests and connections remain active.', 'success');
           return;
@@ -215,7 +215,7 @@ export class SettingsWorkspace extends WorkspaceElement {
           allowRemoteClients: false,
         },
       });
-      this.renderAppStatus(status);
+      this.acceptAppStatus(status);
       const listener = status.listener ?? 'an unknown listener';
       this.dismissNotice();
       this.setProxyOutput(`Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`, 'success');
@@ -390,7 +390,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     this.setProxyOutput('Stopping and restoring host settings…', 'progress');
     try {
       const status = await invoke<AppStatus>('stop_application');
-      this.renderAppStatus(status);
+      this.acceptAppStatus(status);
       this.setProxyOutput(status.lifecycle==='draining'?'Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener.':'Proxy stopped and any current-user Windows proxy changes were restored.', status.lifecycle==='draining'?'progress':'success');
     } catch (error: unknown) {
       const message = `Stop failed: ${describeError(error)}`;
@@ -419,13 +419,13 @@ export class SettingsWorkspace extends WorkspaceElement {
 
   async refreshDiagnostics():Promise<void> {await this.runSupport(async()=>{try {const report=await invoke<{applicationVersion:string;runtime:{operatingSystem:string;architecture:string;webviewVersion:string|null};events:Array<{level:string}>;privacyNotice:string}>('diagnostics_report');this.supportFacts=[{label:'Transmog version',value:report.applicationVersion},{label:'Operating system',value:report.runtime.operatingSystem},{label:'Architecture',value:report.runtime.architecture},{label:'WebView2',value:report.runtime.webviewVersion??'Unavailable'},{label:'Recent events',value:String(report.events.length)},{label:'Warnings / errors',value:String(report.events.filter(event=>event.level!=='info').length)},{label:'Privacy',value:report.privacyNotice}];this.supportDetails=JSON.stringify(report,null,2);this.supportText='Diagnostics refreshed.';}catch(error:unknown){this.supportText='Diagnostics unavailable: '+describeError(error);}});}
   async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const destination=await invoke<string|null>('pick_support_path');if(destination===null){this.supportText='Support bundle canceled.';return;}const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination,includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);await this.showError('Support bundle could not be saved',describeError(error));}});}
-  async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.renderAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
+  async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.acceptAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
 
   async refreshStatus(): Promise<string | null> {
     const revision = this.statusRevision;
     try {
       const status = await invoke<AppStatus>('app_status');
-      if (revision === this.statusRevision) this.renderAppStatus(status);
+      if (revision === this.statusRevision) this.acceptAppStatus(status);
       return null;
     } catch (error: unknown) {
       const message = `Status unavailable: ${describeError(error)}`;

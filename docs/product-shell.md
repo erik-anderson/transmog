@@ -63,15 +63,15 @@ copying, timing reports, replay and reversible removal. See
 and request-copy behavior, and [request timings](request-timings.md) for how to
 interpret latency and shared transport measurements.
 
-**Import…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
+**Files → Import traffic…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
 the traffic list always imports them there. The list's drop target highlights
 accepted files, names the formats, and opens a picker with a click or keyboard.
-Each entry retains its source trace, with **Trace metadata** leading to the
+Each entry retains its source trace, with **Details → Capture source** leading to the
 original machine's network context and
 capture metadata. Imported bodies are read on demand from pinned source files;
 they are independent of live buffer eviction.
 
-**Files → Open in a separate viewer…** opens saved captures in an independent
+**Files → Import into separate viewer…** opens saved captures in an independent
 **Capture viewer** with Traffic and Composer. **Open main window** reaches the
 proxy experience. Proxy, certificate, recording, breakpoint and automation
 commands are restricted to the main window in both the UI and backend. Launching
@@ -79,17 +79,19 @@ with a capture path opens a viewer when no main window exists; otherwise the app
 asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
-**Save trace…** saves retained traffic across the entire list and searches, with optional
+**Files → Save trace…** saves retained traffic across the entire list and searches, with optional
 password encryption, export-only header redaction and network context for TMCap
 or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and
-extended-fidelity choices. File-only recording and conversion are in Captures.
+extended-fidelity choices. File-only recording and conversion are in Capture tools.
 Inspect / recover offers a drop/picker target and Import trace action that bring
 TMCap, SAZ or HAR files into Traffic. Inspect trace metadata reads the original
-context and displays the full path without importing entries. Convert/Export
-converts native recordings, using `exported` in suggested filenames. Record
+context and displays the full path without importing entries. Convert / export
+converts native recordings, using `exported` in suggested filenames. Record to file
 chooses a
 destination before starting its proxy and writes requests directly to that file
-without retaining them in Traffic. Stop recording seals the file and restores
+without retaining them in Traffic. Switching from live capture waits for active
+requests to finish and offers cancellation while waiting. Choose Headers only
+or Headers and bodies. Stop recording seals the file and restores
 Windows proxy settings. See
 [trace saving](trace-saving.md), [native capture encoding](native-capture-format.md)
 and [SAZ compatibility](saz-compatibility.md) for file behavior. The separate

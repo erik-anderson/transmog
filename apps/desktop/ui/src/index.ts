@@ -1,3 +1,4 @@
+import './certificate-inspector/certificate-inspector.js';
 import '@microsoft/webui-framework/lazy-hydration.js';
 import './proxy-toggle/proxy-toggle.js';
 import './pane-divider/pane-divider.js';

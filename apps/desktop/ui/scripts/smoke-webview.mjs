@@ -410,14 +410,14 @@ try {
     const settings = shell.shadowRoot.querySelector('settings-workspace');
     const before = await window.__TAURI_INTERNALS__.invoke('app_status');
     try {
-      settings.renderAppStatus({...before, lifecycle: 'draining', summary: 'Finishing 2 active requests'});
+      settings.acceptAppStatus({...before, lifecycle: 'draining', summary: 'Finishing 2 active requests'});
       settings.$flushUpdates(); shell.$flushUpdates();
       const toggle = shell.shadowRoot.querySelector('proxy-toggle'); toggle.$flushUpdates();
       const button = toggle.querySelector('button');
       if (button.disabled || button.textContent.trim() !== 'Start proxy') throw new Error('Cannot resume from drain');
       if (!shell.shadowRoot.querySelector('.listener-status').textContent.includes('Finishing 2 active requests')) throw new Error('Drain progress is missing');
       return {resumeEnabled: true, activeWorkExplained: true};
-    } finally {settings.renderAppStatus(before); settings.$flushUpdates(); shell.$flushUpdates();}
+    } finally {settings.acceptAppStatus(before); settings.$flushUpdates(); shell.$flushUpdates();}
   })()`);
 
   result.stoppedProxyBreakpoints = await evaluate(`(async () => {
@@ -465,11 +465,11 @@ try {
     const workspace=shell.shadowRoot.querySelector('capture-workspace');await workspace.loadRecordingDefaults();
     const preference=await window.__TAURI_INTERNALS__.invoke('product_state');
     const input=workspace.captureForm.elements.namedItem('bodies');
-    if(input.checked!==preference.privacy.retainBodySamples)throw new Error('Recording did not honor saved body defaults');
+    if((input.value==='bodies')!==preference.privacy.retainBodySamples)throw new Error('Recording did not honor saved body defaults');
     if(workspace.captureForm.elements.namedItem('quotaAmount')!==null)throw new Error('Recording still exposes an implicit quota');
-    const before=input.checked;const touched=workspace.bodyChoiceTouched;
-    try {input.checked=!before;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.checked!==!before)throw new Error('Recording defaults overwrote a draft');}
-    finally {input.checked=before;workspace.bodyChoiceTouched=touched;}
+    const before=input.value;const next=before==='bodies'?'headers':'bodies';const touched=workspace.bodyChoiceTouched;
+    try {input.value=next;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.value!==next)throw new Error('Recording defaults overwrote a draft');}
+    finally {input.value=before;workspace.recordingContent=before;workspace.bodyChoiceTouched=touched;workspace.$flushUpdates();}
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     return {savedDefault:true,draftPreserved:true};
   })()`);
@@ -545,7 +545,7 @@ try {
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-import-error-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    await evaluate(`(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.importButton.getRootNode().activeElement!==traffic.importButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`);
+    await evaluate(`(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.filesMenuButton.getRootNode().activeElement!==traffic.filesMenuButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`);
     await call('Emulation.clearDeviceMetricsOverride');
   }
   if (automationScreenshotPath !== undefined) {

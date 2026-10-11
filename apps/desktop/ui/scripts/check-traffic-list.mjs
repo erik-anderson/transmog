@@ -49,7 +49,8 @@ export async function checkTrafficList(page,outputDirectory) {
   await page.keyboard.press('Control+Home');await page.waitForFunction(()=>document.querySelector('app-shell').traffic.trafficSelection.focused==='virtual-0');
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.trafficSelection.ids.has('virtual-99999')),true,'Ctrl+Home changed selection');
   await page.locator('.traffic-table').focus();await page.keyboard.press('Escape');
-  await page.getByLabel('Search traffic',{exact:true}).fill('VirtualNeedle');await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByLabel('Traffic search mode',{exact:true}).selectOption('contents');
+  await page.getByLabel('Filter or search traffic',{exact:true}).fill('VirtualNeedle');await page.locator('#traffic .filters').getByRole('button',{name:'Search',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.totalMatched===20);
   await page.getByRole('button',{name:'View matches…',exact:true}).click();
   const dialog=page.locator('.search-match-dialog[open]');
