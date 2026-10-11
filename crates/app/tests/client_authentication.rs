@@ -51,6 +51,317 @@ fn text(response: ReplayResponse) -> String {
 }
 
 #[tokio::test]
+async fn a_closed_viewer_cancels_its_composer_wait_without_revoking_other_callers() {
+    use transmog_app::{AppConfig, Application, ClientCertificateManager};
+    for route in [ProxyRoute::Http1, ProxyRoute::Http2, ProxyRoute::Http3] {
+        let fixture = Fixture::new();
+        let tcp = origin(
+            &fixture,
+            matches!(route, ProxyRoute::Http2),
+            false,
+            Duration::from_secs(5),
+        )
+        .await;
+        let udp = quic::origin(&fixture).await;
+        let port = if matches!(route, ProxyRoute::Http3) {
+            udp.port
+        } else {
+            tcp.port
+        };
+        let broker = ClientCertificateBroker::default();
+        let resolver = Arc::new(
+            PolicyClientAuthenticationResolver::new(
+                ClientCertificatePolicy {
+                    default: ClientCertificateDefault::Prompt,
+                    ..Default::default()
+                },
+                fixture.source.clone(),
+                Some(Arc::new(broker.clone())),
+            )
+            .unwrap(),
+        );
+        let manager =
+            ClientCertificateManager::new(fixture.source.clone(), resolver.clone(), broker.clone());
+        let app = |caller| {
+            Application::new(AppConfig {
+                replay_executor: Some(Arc::new(
+                    SystemReplayExecutor::with_tls_factory(route, factory(&fixture))
+                        .unwrap()
+                        .with_client_certificate_resolver(resolver.clone(), caller)
+                        .unwrap(),
+                )),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        let viewer = app("composer:viewer-1");
+        let main = app("composer:main");
+        let input = || {
+            serde_json::from_value(
+                serde_json::json!({"method":"GET","url":format!("https://localhost:{port}/")}),
+            )
+            .unwrap()
+        };
+        let owner = viewer.clone();
+        let request = input();
+        let waiting_viewer = tokio::spawn(async move { owner.execute_composer(request).await });
+        wait_pending(&broker, 1).await;
+        let owner = main.clone();
+        let request = input();
+        let waiting_main = tokio::spawn(async move { owner.execute_composer(request).await });
+        wait_pending(&broker, 2).await;
+        viewer.cancel_composer_requests();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), waiting_viewer)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        wait_pending(&broker, 1).await;
+        assert!(manager.status(Some("composer:viewer-1")).pending.is_empty());
+        let live = manager.status(Some("composer:main")).pending.remove(0);
+        manager
+            .answer(
+                &live.id,
+                transmog_app::ClientCertificateDecision::NoCertificate,
+            )
+            .unwrap();
+        assert!(
+            waiting_main
+                .await
+                .unwrap()
+                .unwrap()
+                .body
+                .ends_with(":false")
+        );
+        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn main_shutdown_preserves_open_viewer_certificate_handshakes() {
+    use transmog_app::{
+        AppConfig, Application, ClientCertificateDecision, ClientCertificateManager,
+    };
+    use transmog_tls::client_authentication::ClientAuthenticationResolver;
+    for route in [ProxyRoute::Http1, ProxyRoute::Http2, ProxyRoute::Http3] {
+        let fixture = Fixture::new();
+        let tcp = origin(
+            &fixture,
+            matches!(route, ProxyRoute::Http2),
+            false,
+            Duration::from_secs(5),
+        )
+        .await;
+        let udp = quic::origin(&fixture).await;
+        let port = if matches!(route, ProxyRoute::Http3) {
+            udp.port
+        } else {
+            tcp.port
+        };
+        let broker = ClientCertificateBroker::default();
+        let resolver = Arc::new(
+            PolicyClientAuthenticationResolver::new(
+                ClientCertificatePolicy::default(),
+                fixture.source.clone(),
+                Some(Arc::new(broker.clone())),
+            )
+            .unwrap(),
+        );
+        let manager =
+            ClientCertificateManager::new(fixture.source.clone(), resolver.clone(), broker.clone());
+        let main = Application::new(AppConfig {
+            client_certificates: Some(manager.clone()),
+            ..Default::default()
+        })
+        .unwrap();
+        main.save_client_certificate_policy(ClientCertificatePolicy {
+            default: ClientCertificateDefault::Prompt,
+            rules: vec![],
+        })
+        .unwrap();
+        let generation = resolver.generation();
+        let viewer = Application::new(AppConfig {
+            replay_executor: Some(Arc::new(
+                SystemReplayExecutor::with_tls_factory(route, factory(&fixture))
+                    .unwrap()
+                    .with_client_certificate_resolver(resolver.clone(), "composer:viewer-1")
+                    .unwrap(),
+            )),
+            ..Default::default()
+        })
+        .unwrap();
+        let request = serde_json::from_value(
+            serde_json::json!({"method":"GET", "url":format!("https://localhost:{port}/")}),
+        )
+        .unwrap();
+        let waiting = tokio::spawn(async move { viewer.execute_composer(request).await });
+        wait_pending(&broker, 1).await;
+        let id = manager.status(Some("composer:viewer-1")).pending[0]
+            .id
+            .clone();
+        main.shutdown().await.unwrap();
+        assert_eq!(resolver.generation(), generation);
+        assert_eq!(manager.status(Some("composer:viewer-1")).pending[0].id, id);
+        manager
+            .answer(&id, ClientCertificateDecision::NoCertificate)
+            .unwrap();
+        assert!(waiting.await.unwrap().unwrap().body.ends_with(":false"));
+        wait_pending(&broker, 0).await;
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn application_certificate_commands_drive_live_composer_handshakes_on_every_route() {
+    use transmog_app::{
+        AppConfig, Application, ClientCertificateDecision, ClientCertificateManager,
+    };
+    for route in [
+        ProxyRoute::Http1,
+        ProxyRoute::Http2,
+        ProxyRoute::Http3,
+        ProxyRoute::Auto,
+    ] {
+        let fixture = Fixture::new();
+        let tcp = origin(
+            &fixture,
+            matches!(route, ProxyRoute::Http2),
+            false,
+            Duration::from_secs(5),
+        )
+        .await;
+        let udp = quic::origin(&fixture).await;
+        let port = if matches!(route, ProxyRoute::Http3 | ProxyRoute::Auto) {
+            udp.port
+        } else {
+            tcp.port
+        };
+        let broker = ClientCertificateBroker::default();
+        let resolver = Arc::new(
+            PolicyClientAuthenticationResolver::new(
+                ClientCertificatePolicy::default(),
+                fixture.source.clone(),
+                Some(Arc::new(broker.clone())),
+            )
+            .unwrap(),
+        );
+        let manager =
+            ClientCertificateManager::new(fixture.source.clone(), resolver.clone(), broker.clone());
+        let executor = SystemReplayExecutor::with_tls_factory(route, factory(&fixture))
+            .unwrap()
+            .with_client_certificate_resolver(resolver, "composer:main")
+            .unwrap();
+        let app = Application::new(AppConfig {
+            client_certificates: Some(manager.clone()),
+            replay_executor: Some(Arc::new(executor)),
+            ..Default::default()
+        })
+        .unwrap();
+        if matches!(route, ProxyRoute::Auto) {
+            let mut state = app.product_state();
+            state.preferences.allowed_outbound_protocols =
+                transmog_core::connection_policy::AllowedHttpProtocols {
+                    http1: false,
+                    http2: false,
+                    http3: true,
+                };
+            app.save_product_state(state).unwrap();
+        }
+        let input = || {
+            serde_json::from_value(
+                serde_json::json!({"method":"GET","url":format!("https://localhost:{port}/")}),
+            )
+            .unwrap()
+        };
+        assert_eq!(app.execute_composer(input()).await.unwrap().body, "1:false");
+        assert_eq!(
+            manager.identities().await.unwrap()[0].fingerprint,
+            fixture.source.credential.fingerprint().unwrap()
+        );
+        app.save_client_certificate_policy(ClientCertificatePolicy {
+            default: ClientCertificateDefault::Prompt,
+            ..Default::default()
+        })
+        .unwrap();
+        let task_app = app.clone();
+        let request = input();
+        let waiting = tokio::spawn(async move { task_app.execute_composer(request).await });
+        wait_pending(&broker, 1).await;
+        let status = manager.status(None);
+        assert!(manager.status(Some("composer:other")).pending.is_empty());
+        let id = status.pending[0].id.clone();
+        let detail = manager.request(&id).unwrap();
+        assert_eq!(detail.pending.caller, "Composer");
+        assert_eq!(detail.choices[0].subject, "CN=Client");
+        assert!(!serde_json::to_string(&detail).unwrap().contains("private"));
+        assert!(
+            manager
+                .answer(
+                    &id,
+                    ClientCertificateDecision::Certificate {
+                        identity: "not-an-eligible-identity".into()
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(manager.status(None).pending.len(), 1);
+        manager
+            .answer(
+                &id,
+                ClientCertificateDecision::Certificate {
+                    identity: "test-client".into(),
+                },
+            )
+            .unwrap();
+        let authenticated = waiting.await.unwrap().unwrap();
+        assert_eq!(authenticated.body, "2:true");
+        assert!(
+            authenticated
+                .detail
+                .performance
+                .transports
+                .iter()
+                .filter_map(|transport| transport.tls.as_ref())
+                .any(|tls| tls.client_chain.len() == 1)
+        );
+        assert!(
+            app.inspect_certificates(&authenticated.detail.id)
+                .unwrap()
+                .connections
+                .iter()
+                .any(|connection| connection.client_chain.len() == 1)
+        );
+        assert!(
+            manager
+                .answer(&id, ClientCertificateDecision::NoCertificate)
+                .is_err()
+        );
+        let task_app = app.clone();
+        let request = input();
+        let waiting = tokio::spawn(async move { task_app.execute_composer(request).await });
+        wait_pending(&broker, 1).await;
+        app.shutdown().await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), waiting)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        wait_pending(&broker, 0).await;
+        app.save_client_certificate_policy(automatic(port)).unwrap();
+        assert_eq!(app.execute_composer(input()).await.unwrap().body, "4:true");
+        app.save_client_certificate_policy(ClientCertificatePolicy::default())
+            .unwrap();
+        assert_eq!(app.execute_composer(input()).await.unwrap().body, "5:false");
+        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
 async fn composer_routes_use_the_real_certificate_handshake_and_a_separate_caller_pool() {
     for route in [ProxyRoute::Http1, ProxyRoute::Http2, ProxyRoute::Http3] {
         let fixture = Fixture::new();

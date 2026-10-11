@@ -4,8 +4,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { ComposerSource, ComposerResult, ComposerSnapshot, SessionDetail } from '../models.js';
 import { describeError, parseHeaderLines, shortUrl } from '../utilities.js';
+import type {CertificateViewer} from '../certificate-viewer/certificate-viewer.js';
 
 export class ComposerWorkspace extends WorkspaceElement {
+ certificateViewer!:CertificateViewer;
+ showCertificates(event:Event):void {if(this.composerResult)void this.certificateViewer.show(this.composerResult.detail.id,event.currentTarget as HTMLElement);}
  @attr view='traffic';
  @observable composerText=initialState.composerText;
  @observable composerError='';

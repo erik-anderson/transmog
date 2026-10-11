@@ -1,4 +1,6 @@
 import initialState from '../initial-state.json';
+import '../client-certificate-settings/client-certificate-settings.js';
+import type {ClientCertificateSettings} from '../client-certificate-settings/client-certificate-settings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
@@ -6,6 +8,7 @@ import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePr
 import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
+  clientCertificates!:ClientCertificateSettings;
   @observable credits:Array<{id:string;name:string;version:string;license:string;text:string}>=[];
   @observable creditsSummary='';
   @observable creditsStatus='';

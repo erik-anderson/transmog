@@ -1,16 +1,44 @@
 # Client certificate implementation
 
-The handshake, Windows provider and production transport phases are implemented.
+The handshake, Windows provider, production transport and desktop phases are implemented.
 Proxy and Composer transports support request-driven certificates on HTTP/1.1,
 HTTP/2 and HTTP/3, with connection ownership, pool isolation and a bounded pending
-decision broker. Advanced desktop settings and the nonmodal selection interface
-are the next phase. No desktop certificate configuration or defaults change yet.
+decision broker, advanced desktop host rules and a nonmodal selection interface.
+Unconfigured hosts continue without a certificate.
+
+## Desktop settings and selection
+
+Open Settings → Preferences → Advanced network settings → Client certificates.
+The global choice is No certificate or Prompt. Exact host/HTTPS-port rules add
+No certificate, Prompt, or Automatic with an exact public identity or explicit
+subject/issuer renewal attributes. The first enabled match wins, with drag handles
+and Move up/down controls. Edits apply only after Save certificate settings;
+missing, incompatible or ambiguous automatic matches continue anonymously without
+trying another rule. Separate persistence preserves these rules during unrelated
+settings, layout and window writes. Corrupt latest-state recovery retains rule
+drafts disabled and restores No certificate instead of resurrecting authorization.
+Recovery writes this safe generation before quarantining corrupt state. If that
+write fails, the corrupt generations remain as evidence for subsequent launches.
+
+Pending physical handshakes appear in the persistent connection indicator.
+Its nonmodal panel shows public eligible choices and actual server constraints.
+An answer applies only to the displayed live connections. Expired entries retain
+their inspected context and disable actions; late answers are rejected. Viewer
+Composer requests use separate caller scopes and refer selection to the main
+window, whose command boundary enforces configuration and decision permissions.
+Closing a viewer cancels its admitted Composer work without revoking other callers.
+Closing the main window likewise preserves open viewers' pending choices and
+authorization generation; final controller teardown cancels the shared broker.
+Composer preserves received TLS/client-certificate evidence in its response
+certificate viewer, and includes recorded certificate state in send-failure feedback.
+With only HTTP/3 allowed, Auto Composer uses its verified QUIC transport.
 
 Use `PolicyClientAuthenticationResolver` with
 `WindowsCurrentUserCertificateSource` and a connection-owned
 `ClientAuthenticationAttempt`. Unconfigured origins continue without a
-certificate. The source is queried after an actual verified CertificateRequest;
-there is no anonymous probe or signing challenge during inventory. Keep the
+certificate. Handshake selection queries the source after an actual verified CertificateRequest;
+there is no anonymous probe or signing challenge during inventory. Explicit
+settings inventory and monitoring are separate from TLS authorization. Keep the
 inventory monitor only while a controller needs identity-change invalidation.
 `WindowsClientCertificateController` owns that monitor and the decision broker
 for one application run. Keep the controller alive while installing its shared
@@ -135,6 +163,8 @@ python scripts/dev-env.py --run cargo test --locked -p transmog-core -p transmog
 python scripts/dev-env.py --run cargo test --locked -p transmog-http -p transmog-h3 -p transmog-runtime -p transmog-app --test client_authentication
 python scripts/dev-env.py --run cargo test --locked -p transmog-tls --test windows_client_certificates -- --ignored --nocapture
 python scripts/dev-env.py --run cargo test --locked -p transmog-runtime -p transmog-app --test client_authentication -- --ignored --nocapture
+# PowerShell 7, Windows/WebView2; builds an opt-in test binary in the development profile.
+./scripts/test-windows-client-certificate-ui.ps1
 ```
 
 The Windows test is explicitly ignored in ordinary runs because it creates owned
@@ -150,6 +180,17 @@ another identity. Certificate removal is also checked. Owned keys and public
 issuers are removed on normal completion and test unwinding; no root trust is added.
 The Windows release gate invokes this test and the production Windows integration
 tests explicitly before signing credentials.
+
+Desktop acceptance uses a harness-owned profile, owned non-exportable CNG keys,
+and local H1/H2/H3 servers through actual WebView2/Tauri commands. It exercises
+certificate selection, anonymous continuation, cancellation, QUIC peer timeout,
+automatic pinned and renewal host rules, exact key deletion and restart persistence. Browser checks
+cover ordering, draft/save separation, renewal attributes, unavailable pins,
+errors, keyboard access and constrained layouts under enforced Trusted Types.
+The `desktop-test-fixtures` feature and isolated-profile environment flag are
+required for native fixture commands and embedded fixture trust; ordinary
+packages include neither. Fixture public thumbprints support exact cleanup
+after interruption, and no Windows root trust is changed.
 
 Production integration tests use live TLS/HTTP and QUIC peers with different
 authenticated and anonymous response bytes. They cover H1/H2/H3 reuse, mandatory
@@ -198,5 +239,14 @@ TCP ciphertext buffering, QUIC registry and driver ownership, broker
 bounds/coalescing, wake-handle cleanup, controller shutdown and Composer
 cancellation. Resolver callbacks and pool construction run outside pool registry
 locks, and concurrent builders cannot roll back a newer authorization epoch.
-Hardware/device behavior and desktop
-settings/selection acceptance remain separate gates.
+Hardware/device behavior remains a separate future acceptance gate.
+
+The desktop review covered narrow preference persistence, corrupt-state recovery,
+window command permissions, request identifier precision, late asynchronous results,
+focus and popover behavior, inventory metadata, recorded response evidence and
+window-close cancellation. Verification corrected native form restoration,
+removal undo, compact Composer space and the screen-reader announcement layout.
+Further regression checks cover durable recovery after a failed write, independent
+main/viewer closure, the idle header row and accessible request selection.
+Native acceptance waits for rendered controls and public choices before operating
+them or capturing populated prompts. No actionable findings remain in this phase.

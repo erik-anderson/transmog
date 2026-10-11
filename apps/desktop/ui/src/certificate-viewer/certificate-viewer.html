@@ -1,6 +1,6 @@
 <template>
-  <dialog w-ref="{certificateDialog}" class="certificate-dialog" aria-labelledby="certificate-heading" @close="{closed()}">
-    <h2 id="certificate-heading">Certificates and TLS</h2>
+  <dialog w-ref="{certificateDialog}" class="certificate-dialog" aria-label="Certificates and TLS" @close="{closed()}">
+    <h2>Certificates and TLS</h2>
     <label>Connection<select aria-label="Certificate connection" @change="{changeConnection(e)}" ?disabled="{{certificateBusy}}"><for each="connection in certificateConnections"><option key="{{connection.id}}" value="{{connection.id}}" ?selected="{{connection.selected}}">{{connection.title}}</option></for></select></label>
     <div class="certificate-scroll">
       <p class="field-help">Verification and trust describe the original connection. Opening this viewer does not verify the chain against this computer’s current trust.</p>

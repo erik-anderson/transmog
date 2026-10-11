@@ -9,6 +9,7 @@ import { checkTrafficList } from './check-traffic-list.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
+import {checkClientCertificates} from './check-client-certificates.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
 import { checkUserAgentPresets } from './check-user-agent-presets.mjs';
@@ -144,8 +145,13 @@ await page.addInitScript((workspace) => {
           if(state.caTrustError)throw new Error('Fixture Windows trust canceled');
           state.caBootstrap={...state.caBootstrap,ownedCaTrusted:true};return;
         }
+        case 'client_certificate_status': return {supported:true,pending:structuredClone(state.certificatePending??[])};
+        case 'client_certificate_identities': return structuredClone(state.certificateIdentities??=[{id:'windows:first',fingerprint:'1'.repeat(64),subject:'CN=Client one',issuer:'CN=Fixture issuer',validUntil:'Oct 10 2027 GMT'},{id:'windows:second',fingerprint:'2'.repeat(64),subject:'CN=Client two',issuer:'CN=Fixture issuer',validUntil:'Oct 10 2027 GMT'}]);
+        case 'client_certificate_request': {const pending=state.certificatePending?.find(row=>row.id===args.id);if(!pending)throw new Error('This connection is no longer waiting. It may have closed or timed out.');return {pending:structuredClone(pending),choices:pending.choiceCount?[{id:'windows:first',fingerprint:'1'.repeat(64),subject:'CN=Client one',issuer:'CN=Fixture issuer',validUntil:'Oct 10 2027 GMT'},{id:'windows:second',fingerprint:'2'.repeat(64),subject:'CN=Client two',issuer:'CN=Fixture issuer',validUntil:'Oct 10 2027 GMT'}]:[],tlsVersion:'TLS 1.3',acceptedIssuers:1,signatureAlgorithms:['0x0804']};}
+        case 'decide_client_certificate': {if(!state.certificatePending?.some(row=>row.id===args.id))throw new Error('This connection is no longer waiting.');state.certificateDecision=structuredClone(args);state.certificatePending=state.certificatePending.filter(row=>row.id!==args.id);return {supported:true,pending:structuredClone(state.certificatePending)};}
+        case 'save_client_certificate_policy': {if(state.certificateSaveError)throw {category:'unavailable',message:'Fixture certificate policy persistence failed',retryable:true};state.certificatePolicy=structuredClone(args.policy);localStorage.setItem('certificatePolicy',JSON.stringify(state.certificatePolicy));return structuredClone(state.certificatePolicy);}
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': if(state.savedProduct)return {...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)};return { schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };
+        case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': if(state.holdProxyStart)await new Promise(resolve=>state.releaseProxyStart=resolve);else await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
@@ -339,7 +345,7 @@ await page.addInitScript((workspace) => {
           state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
           ruleDiagnostics();
           return structuredClone(state.automation);
-        case 'save_product_state': state.savedProduct=structuredClone(args.productState);return structuredClone(state.savedProduct);
+        case 'save_product_state': state.savedProduct=structuredClone(args.productState);state.savedProduct.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??{default:'noCertificate',rules:[]});return structuredClone(state.savedProduct);
         case 'pick_support_path': return state.supportPick??null;
         case 'diagnostics_report': return {applicationVersion:'0.1.0',runtime:{operatingSystem:'Windows fixture',architecture:'x64',webviewVersion:'test'},events:[{level:'warning',message:'safe fixture'}],privacyNotice:'Traffic bodies and credentials are omitted'};
         case 'create_support_bundle': state.supportInput=structuredClone(args);return {destination:args.destination,bytes:4096,includedRecentPaths:args.includeRecentPaths};
@@ -1750,6 +1756,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.releaseImport();globalThis.__workspaceFixture.deferImport=false;});
   await page.locator('.trace-import-status').getByText('Import canceled. Traffic is unchanged.',{exact:true}).waitFor();
   assert.equal(await page.locator('.operation-error-dialog[open]').count(),0);
+  await checkClientCertificates(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);

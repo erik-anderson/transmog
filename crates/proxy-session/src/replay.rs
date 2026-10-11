@@ -140,6 +140,14 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
+    /// Binds public connection evidence to one execution while sharing pools.
+    /// Providers without native transport observation may retain the default.
+    fn with_performance(
+        &self,
+        _recorder: transmog_core::performance::PerformanceRecorder,
+    ) -> Option<Arc<dyn ReplayExecutor>> {
+        None
+    }
     /// Updates admission for newly created outbound connections. Executors that
     /// expose their own routing policy may keep the default no-op implementation.
     /// Existing connections continue serving requests until they close.

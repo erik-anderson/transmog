@@ -6,16 +6,21 @@
         <span>Transmog</span>
       </div>
       <span class="top-spacer"></span>
+      <div class="connection-status">
+      <client-certificate-requests ?viewer-mode="{{viewerMode}}" @client-certificate-settings-request="{openClientCertificateSettings()}" @client-certificate-panel-closed="{certificatePanelClosed()}"></client-certificate-requests>
       <if condition="!viewerMode"><div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <strong>{{lifecycleLabel}}</strong>
         <button type="button" class="listener-copy" title="Copy proxy address" @click="{copyListener()}">{{listener}}</button><button type="button" class="secondary status-tools" aria-label="Proxy status and tools" title="Proxy status and tools" popovertarget="proxy-status-tools">⋯</button>
       </div>
+      </if><if condition="viewerMode"><strong class="viewer-mode-label">Capture viewer</strong></if>
+      </div>
+      <if condition="!viewerMode">
       <div class="top-actions">
         <app-updates w-ref="{updates}" @install-update="{onInstallUpdate(e)}"></app-updates>
         <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
       </div>
-      </if><if condition="viewerMode"><strong class="viewer-mode-label">Capture viewer</strong><button type="button" class="secondary" @click="{openMainWindow()}">Open main window</button></if>
+      </if><if condition="viewerMode"><button type="button" class="secondary" @click="{openMainWindow()}">Open main window</button></if>
     </header>
 
     <section class="notice" role="alert" aria-live="assertive" ?hidden="{{!noticeVisible}}">

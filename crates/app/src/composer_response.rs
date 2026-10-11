@@ -81,6 +81,7 @@ impl ComposerResponse {
         started_at: SystemTime,
         redact: bool,
         origin: Option<crate::ComposerOrigin>,
+        mut performance: transmog_core::performance::PerformanceEvidence,
     ) -> Result<(Arc<Self>, SessionDetail), AppError> {
         let PreparedComposerResponse { exchange_id, store } = prepared;
         let mut head = ResponseHead {
@@ -117,18 +118,20 @@ impl ComposerResponse {
             started_at,
         });
         let snapshot = SessionSnapshot {
-            performance: transmog_core::performance::PerformanceEvidence {
-                protocols: vec![transmog_core::performance::ProtocolObservation {
-                    boundary: "client-response".into(),
-                    version: match response.source_version {
-                        transmog_core::HttpLegVersion::Http1 => "HTTP/1.1",
-                        transmog_core::HttpLegVersion::Http2 => "HTTP/2",
-                        transmog_core::HttpLegVersion::Http3 => "HTTP/3",
-                    }
-                    .into(),
-                    reason: None,
-                }],
-                ..transmog_core::performance::PerformanceEvidence::default()
+            performance: {
+                performance
+                    .protocols
+                    .push(transmog_core::performance::ProtocolObservation {
+                        boundary: "client-response".into(),
+                        version: match response.source_version {
+                            transmog_core::HttpLegVersion::Http1 => "HTTP/1.1",
+                            transmog_core::HttpLegVersion::Http2 => "HTTP/2",
+                            transmog_core::HttpLegVersion::Http3 => "HTTP/3",
+                        }
+                        .into(),
+                        reason: None,
+                    });
+                performance
             },
             imported: false,
             exchange_id,

@@ -66,6 +66,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
     matches!(
         command,
         "app_status"
+            | "client_certificate_status"
             | "product_state"
             | "save_workspace_preferences"
             | "desktop_bootstrap"
@@ -153,8 +154,30 @@ pub(super) fn create_viewer(
         .prefix("transmog-viewer-")
         .tempdir()
         .map_err(|_| error("Viewer storage could not be created"))?;
-    let replay = SystemReplayExecutor::new(ProxyRoute::Auto)
-        .map_err(|_| error("Composer trust could not be initialized"))?;
+    let label = format!(
+        "viewer-{}",
+        ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    #[cfg(feature = "desktop-test-fixtures")]
+    let replay = match &state.certificate_test_fixture {
+        Some(fixture) => {
+            SystemReplayExecutor::with_tls_factory(ProxyRoute::Auto, fixture.factory())
+        }
+        None => SystemReplayExecutor::new(ProxyRoute::Auto),
+    };
+    #[cfg(not(feature = "desktop-test-fixtures"))]
+    let replay = SystemReplayExecutor::new(ProxyRoute::Auto);
+    let replay = replay
+        .map_err(|_| error("Composer trust could not be initialized"))?
+        .with_client_certificate_resolver(
+            state
+                .application
+                .client_certificates()
+                .expect("desktop certificate controller")
+                .resolver(),
+            format!("composer:{label}"),
+        )
+        .map_err(|_| error("Composer certificate transport could not be initialized"))?;
     let application = Application::new(AppConfig {
         replay_executor: Some(Arc::new(replay)),
         body_store: Some(BodyStoreConfig::product_default(root.path().join("bodies"))),
@@ -162,10 +185,6 @@ pub(super) fn create_viewer(
         ..AppConfig::default()
     })?;
     application.save_product_state(state.application.product_state())?;
-    let label = format!(
-        "viewer-{}",
-        ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    );
     // These windows all render the trusted application shell. Sharing its
     // browser profile avoids a browser process per viewer; evidence and IPC
     // permissions remain isolated by the window's Rust application instance.
@@ -402,6 +421,10 @@ mod tests {
             "activate_automation",
             "enable_breakpoints",
             "save_product_state",
+            "save_client_certificate_policy",
+            "client_certificate_identities",
+            "client_certificate_request",
+            "decide_client_certificate",
         ] {
             assert!(!viewer_command_allowed(command), "{command}");
         }

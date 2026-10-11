@@ -1,6 +1,6 @@
 //! Shared local QUIC server that distinguishes authenticated responses.
 #![allow(dead_code)]
-use crate::support::Fixture;
+use super::support::Fixture;
 use boring::{
     ssl::{SslContext, SslMethod, SslVerifyMode},
     x509::store::X509StoreBuilder,

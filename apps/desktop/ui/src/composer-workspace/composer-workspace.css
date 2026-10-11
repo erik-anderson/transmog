@@ -12,3 +12,4 @@ composer-workspace { display:contents; }
 .composer-body-source { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.5rem; align-items:baseline; }.composer-file-body { display:flex; flex-wrap:wrap; gap:.5rem; align-items:baseline; }.composer-file-body .full-value { min-width:0; flex:1; overflow-wrap:anywhere; font-size:.8125rem; }.composer-file-body .field-help { flex-basis:100%; margin:0; }
 
 .composer-history { grid-row:5; font-size:.8125rem; min-height:0; overflow:auto; max-height:min(11rem,20dvh); }.composer-history-list > div { display:flex; align-items:baseline; gap:.5rem; padding:.3rem 0; border-bottom:1px solid var(--line); }.composer-history-list .full-value { flex:1; min-width:0; overflow-wrap:anywhere; }.composer-history-list small { display:block; color:var(--muted); }
+@media (max-height:600px) { .composer-page { gap:.3rem; }.composer-result-header { padding:.25rem .5rem; } }

@@ -61,6 +61,9 @@ pub enum ThemePreference {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductPreferences {
+    /// Public host authorization only; private keys and transient answers are never persisted.
+    #[serde(default)]
+    pub client_certificate_policy: transmog_core::client_authentication::ClientCertificatePolicy,
     /// Decrypt HTTPS traffic; false forwards CONNECT contents without inspection.
     #[serde(default = "enabled_by_default")]
     pub decrypt_https: bool,
@@ -81,6 +84,8 @@ pub struct ProductPreferences {
 impl Default for ProductPreferences {
     fn default() -> Self {
         Self {
+            client_certificate_policy:
+                transmog_core::client_authentication::ClientCertificatePolicy::default(),
             decrypt_https: true,
             isolate_outbound_connections: true,
             allowed_outbound_protocols:
@@ -249,6 +254,14 @@ impl ProductStateManager {
         let mut inner = self.inner.lock().unwrap();
         // Main settings/window writes must not overwrite independently saved layout.
         let state = validate(ProductState {
+            preferences: ProductPreferences {
+                client_certificate_policy: inner
+                    .state
+                    .preferences
+                    .client_certificate_policy
+                    .clone(),
+                ..state.preferences
+            },
             workspace: inner.state.workspace.clone(),
             ..state
         })?;
@@ -267,6 +280,18 @@ impl ProductStateManager {
         })?;
         self.persist(&mut inner, &state)?;
         Ok(state.workspace)
+    }
+
+    pub(crate) fn save_client_certificate_policy(
+        &self,
+        policy: transmog_core::client_authentication::ClientCertificatePolicy,
+    ) -> Result<transmog_core::client_authentication::ClientCertificatePolicy, AppError> {
+        let mut inner = self.inner.lock().unwrap();
+        let mut state = inner.state.clone();
+        state.preferences.client_certificate_policy = policy;
+        let state = validate(state)?;
+        self.persist(&mut inner, &state)?;
+        Ok(state.preferences.client_certificate_policy)
     }
 
     fn persist(&self, inner: &mut Inner, state: &ProductState) -> Result<(), AppError> {
@@ -296,6 +321,11 @@ impl ProductStateManager {
 pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
+    }
+    if !state.preferences.client_certificate_policy.valid() {
+        return Err(invalid(
+            "Client certificate rules require an exact host, a valid port and a certificate selector for automatic selection",
+        ));
     }
     if !(640..=16_384).contains(&state.window.width)
         || !(480..=16_384).contains(&state.window.height)
@@ -338,27 +368,72 @@ fn load_generations(prefix: &Path) -> (ProductState, u64, Option<String>) {
     entries.sort_by_key(|(generation, _)| std::cmp::Reverse(*generation));
     let next = entries
         .first()
-        .map_or(1, |(generation, _)| generation.saturating_add(1));
-    let mut corrupt = false;
+        .map_or(Some(1), |(generation, _)| generation.checked_add(1));
+    let mut corrupt = Vec::new();
     for (_, path) in entries {
         if let Ok(state) = read_state(&path) {
-            return (
+            if corrupt.is_empty() {
+                return (state, next.unwrap_or(u64::MAX), None);
+            }
+            return recover_state(
+                prefix,
                 state,
                 next,
-                corrupt.then(|| {
-                    "newest product state was corrupt; recovered a prior valid generation"
-                        .to_owned()
-                }),
+                &corrupt,
+                "newest product state was corrupt; recovered a prior valid generation with client certificate rules disabled",
             );
         }
-        corrupt = true;
-        quarantine(&path);
+        corrupt.push(path);
     }
-    (
+    if corrupt.is_empty() {
+        return (ProductState::default(), next.unwrap_or(u64::MAX), None);
+    }
+    recover_state(
+        prefix,
         ProductState::default(),
         next,
-        corrupt.then(|| "product state was corrupt; safe defaults were loaded".to_owned()),
+        &corrupt,
+        "product state was corrupt; safe defaults were loaded",
     )
+}
+
+fn recover_state(
+    prefix: &Path,
+    mut state: ProductState,
+    next: Option<u64>,
+    corrupt: &[PathBuf],
+    warning: &str,
+) -> (ProductState, u64, Option<String>) {
+    // The missing latest state might have revoked disclosure. Persist the safe
+    // recovery before removing evidence of that uncertainty from later loads.
+    state.preferences.client_certificate_policy.default =
+        transmog_core::client_authentication::ClientCertificateDefault::NoCertificate;
+    for rule in &mut state.preferences.client_certificate_policy.rules {
+        rule.enabled = false;
+    }
+    if let Some(generation) = next
+        && write_generation(prefix, generation, &state).is_ok()
+    {
+        for path in corrupt {
+            quarantine(path);
+        }
+        prune_generations(prefix);
+        (
+            state,
+            generation.saturating_add(1),
+            Some(warning.to_owned()),
+        )
+    } else {
+        // Keep the corrupt generations when persistence fails. The next launch
+        // must not mistake the older authorization for an ordinary valid load.
+        (
+            state,
+            next.unwrap_or(u64::MAX),
+            Some(format!(
+                "{warning}; recovery could not be saved, so client certificate rules remain disabled"
+            )),
+        )
+    }
 }
 
 fn read_state(path: &Path) -> Result<ProductState, ()> {
@@ -475,6 +550,7 @@ mod tests {
         preferences.remove("isolateOutboundConnections");
         preferences.remove("decryptHttps");
         preferences.remove("allowedOutboundProtocols");
+        preferences.remove("clientCertificatePolicy");
         preferences.insert("configureSystemProxy".into(), serde_json::json!(false));
         let restored: ProductState = serde_json::from_value(value).unwrap();
         assert!(restored.preferences.isolate_outbound_connections);
@@ -484,6 +560,54 @@ mod tests {
             transmog_core::connection_policy::AllowedHttpProtocols::default()
         );
         assert!(!restored.preferences.configure_system_proxy);
+        assert_eq!(
+            restored.preferences.client_certificate_policy,
+            transmog_core::client_authentication::ClientCertificatePolicy::default()
+        );
+    }
+
+    #[test]
+    fn certificate_policy_survives_restart_and_stale_settings_and_layout_saves() {
+        let path = prefix("client-certificates");
+        cleanup(&path);
+        let (store, _) = ProductStateManager::load(Some(path.clone()));
+        let mut stale = store.snapshot();
+        let policy =
+            transmog_core::client_authentication::ClientCertificatePolicy {
+                default: transmog_core::client_authentication::ClientCertificateDefault::Prompt,
+                rules: vec![transmog_core::client_authentication::ClientCertificateRule {
+                id: "host".into(), enabled: true, host: "localhost".into(), port: 443,
+                mode: transmog_core::client_authentication::ClientCertificateAction::Automatic {
+                    selector: transmog_core::client_authentication::ClientCertificateSelector {
+                        identity: Some("public-fingerprint".into()), ..Default::default()
+                    },
+                },
+            }],
+            };
+        store
+            .save_client_certificate_policy(policy.clone())
+            .unwrap();
+        stale.preferences.theme = ThemePreference::Dark;
+        store.save(stale).unwrap();
+        let mut workspace = store.snapshot().workspace;
+        workspace.sidebar_collapsed = true;
+        store.save_workspace(workspace).unwrap();
+        let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(
+            reloaded.snapshot().preferences.client_certificate_policy,
+            policy
+        );
+        assert_eq!(reloaded.snapshot().preferences.theme, ThemePreference::Dark);
+        assert!(reloaded.snapshot().workspace.sidebar_collapsed);
+        let mut invalid = policy.clone();
+        invalid.rules[0].host = "https://invalid.example/path".into();
+        assert!(reloaded.save_client_certificate_policy(invalid).is_err());
+        assert_eq!(
+            reloaded.snapshot().preferences.client_certificate_policy,
+            policy
+        );
+        cleanup(&path);
     }
 
     fn prefix(label: &str) -> PathBuf {
@@ -526,6 +650,12 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut current = ProductState::default();
         current.window.width = 900;
+        current.preferences.client_certificate_policy = transmog_core::client_authentication::ClientCertificatePolicy {
+            default: transmog_core::client_authentication::ClientCertificateDefault::Prompt,
+            rules: vec![transmog_core::client_authentication::ClientCertificateRule { id: "recovered".into(), enabled: true, host: "localhost".into(), port: 443,
+                mode: transmog_core::client_authentication::ClientCertificateAction::Automatic { selector: transmog_core::client_authentication::ClientCertificateSelector { identity: Some("public-certificate".into()), ..Default::default() } }
+            }],
+        };
         fs::write(
             generation_path(&path, 1),
             serde_json::to_vec(&current).unwrap(),
@@ -536,6 +666,105 @@ mod tests {
         assert!(warning.is_some());
         assert_eq!(store.snapshot().window.width, 900);
         assert_eq!(store.snapshot().schema_version, CURRENT_SCHEMA);
+        assert_eq!(
+            store
+                .snapshot()
+                .preferences
+                .client_certificate_policy
+                .default,
+            transmog_core::client_authentication::ClientCertificateDefault::NoCertificate
+        );
+        assert!(!store.snapshot().preferences.client_certificate_policy.rules[0].enabled);
+        assert!(
+            generation_path(&path, 2)
+                .with_extension("json.corrupt")
+                .exists()
+        );
+        let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(
+            reloaded.snapshot().preferences.client_certificate_policy,
+            store.snapshot().preferences.client_certificate_policy
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn failed_recovery_persistence_preserves_uncertainty_across_launches() {
+        let path = prefix("recovery-write-failure");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut current = ProductState::default();
+        current.preferences.client_certificate_policy.default =
+            transmog_core::client_authentication::ClientCertificateDefault::Prompt;
+        fs::write(
+            generation_path(&path, 1),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        fs::write(generation_path(&path, 2), b"{broken").unwrap();
+        let blocked_temp = path.parent().unwrap().join(format!(
+            ".transmog-state-{:020}-{}.tmp",
+            3,
+            std::process::id()
+        ));
+        fs::create_dir(&blocked_temp).unwrap();
+        for _ in 0..2 {
+            let (store, warning) = ProductStateManager::load(Some(path.clone()));
+            assert!(warning.unwrap().contains("recovery could not be saved"));
+            assert_eq!(
+                store
+                    .snapshot()
+                    .preferences
+                    .client_certificate_policy
+                    .default,
+                transmog_core::client_authentication::ClientCertificateDefault::NoCertificate
+            );
+            assert!(generation_path(&path, 2).exists());
+        }
+        fs::remove_dir(blocked_temp).unwrap();
+        let (_, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(!warning.unwrap().contains("recovery could not be saved"));
+        let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(
+            reloaded
+                .snapshot()
+                .preferences
+                .client_certificate_policy
+                .default,
+            transmog_core::client_authentication::ClientCertificateDefault::NoCertificate
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn exhausted_recovery_generation_never_quarantines_the_uncertain_latest_state() {
+        let path = prefix("recovery-exhausted");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut current = ProductState::default();
+        current.preferences.client_certificate_policy.default =
+            transmog_core::client_authentication::ClientCertificateDefault::Prompt;
+        fs::write(
+            generation_path(&path, 1),
+            serde_json::to_vec(&current).unwrap(),
+        )
+        .unwrap();
+        fs::write(generation_path(&path, u64::MAX), b"{broken").unwrap();
+        for _ in 0..2 {
+            let (store, warning) = ProductStateManager::load(Some(path.clone()));
+            assert!(warning.unwrap().contains("recovery could not be saved"));
+            assert_eq!(
+                store
+                    .snapshot()
+                    .preferences
+                    .client_certificate_policy
+                    .default,
+                transmog_core::client_authentication::ClientCertificateDefault::NoCertificate
+            );
+            assert!(generation_path(&path, u64::MAX).exists());
+        }
         cleanup(&path);
     }
 

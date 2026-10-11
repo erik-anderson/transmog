@@ -109,6 +109,9 @@ pub struct CaIdentity {
 }
 
 pub(crate) struct ProxyStartResources<'a> {
+    pub upstream_trust: Option<Arc<TrustSnapshot>>,
+    pub client_certificate_resolver:
+        Option<Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>>,
     pub service: &'a ApplicationSessionService,
     pub runtime_ids: Arc<AtomicRuntimeIdGenerator>,
     pub body_store: Option<&'a BodyStore>,
@@ -169,6 +172,8 @@ pub(crate) async fn start_proxy(
     host: Option<Arc<dyn HostIntegration>>,
 ) -> Result<(), AppError> {
     let ProxyStartResources {
+        upstream_trust,
+        client_certificate_resolver,
         service,
         runtime_ids,
         body_store,
@@ -204,13 +209,16 @@ pub(crate) async fn start_proxy(
         },
         ..ProxyConfig::default()
     };
-    let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).map_err(|_| {
-        AppError::new(
-            ErrorCategory::Unavailable,
-            "operating-system trust roots could not be loaded",
-            true,
-        )
-    })?);
+    let trust = match upstream_trust {
+        Some(trust) => trust,
+        None => Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "operating-system trust roots could not be loaded",
+                true,
+            )
+        })?),
+    };
     let hooks = InterceptorChainFactory::new(Vec::new(), config.limits.hooks)
         .with_registration_provider(
             "active Transmog automation",
@@ -230,6 +238,9 @@ pub(crate) async fn start_proxy(
         .with_content_policy(ContentPolicy::preserve_original_output(
             ContentLimits::default(),
         ));
+    if let Some(resolver) = client_certificate_resolver {
+        components = components.with_client_certificate_resolver(resolver);
+    }
     if let Some(body_store) = body_store.filter(|_| !request.recording_only) {
         components =
             components.with_observer(Arc::new(body_store.clone()), body_store.observer_config());
@@ -1112,6 +1123,8 @@ mod tests {
         let assets = crate::response_assets::ResponseAssetStore::load(None).unwrap();
         let error = start_proxy(
             ProxyStartResources {
+                upstream_trust: None,
+                client_certificate_resolver: None,
                 service: &service,
                 runtime_ids: Arc::new(AtomicRuntimeIdGenerator::new()),
                 body_store: None,

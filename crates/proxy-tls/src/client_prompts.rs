@@ -16,6 +16,12 @@ pub struct ClientCertificateChoice {
     pub id: String,
     /// SHA-256 leaf fingerprint.
     pub fingerprint: String,
+    /// Bounded public leaf subject for human selection.
+    pub subject: String,
+    /// Bounded public leaf issuer.
+    pub issuer: String,
+    /// Public certificate expiration.
+    pub valid_until: String,
 }
 /// One transient decision displayed by an embedding controller.
 #[derive(Clone, Debug)]
@@ -129,13 +135,20 @@ impl ClientCertificateBroker {
     }
     /// Cancels all pending decisions and rejects new ones for this controller run.
     pub fn shutdown(&self) {
+        self.clear(true);
+    }
+    /// Cancels current decisions while permitting later connections in this run.
+    pub fn cancel_pending(&self) {
+        self.clear(false);
+    }
+    fn clear(&self, close: bool) {
         let entries = {
             let mut state = self
                 .0
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state.closed = true;
+            state.closed |= close;
             state.bytes = 0;
             std::mem::take(&mut state.entries)
         };
@@ -288,6 +301,9 @@ fn prepare_choices(
             Some(ClientCertificateChoice {
                 id: c.id.clone(),
                 fingerprint: c.fingerprint()?,
+                subject: certificate_name(c.chain.first()?.subject_name()),
+                issuer: certificate_name(c.chain.first()?.issuer_name()),
+                valid_until: c.chain.first()?.not_after().to_string(),
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -297,6 +313,26 @@ fn prepare_choices(
         .flat_map(|c| &c.chain)
         .try_fold(0usize, |n, c| n.checked_add(c.to_der().ok()?.len()))?;
     (bytes <= 32 * 1024 * 1024).then_some((choices, bytes))
+}
+
+/// Formats a public certificate name without native provider metadata.
+pub fn certificate_name(name: &boring::x509::X509NameRef) -> String {
+    name.entries()
+        .map(|entry| {
+            let label = entry.object().nid().short_name().unwrap_or("Attribute");
+            let value = entry
+                .data()
+                .as_utf8()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            format!("{label}={value}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(512)
+        .collect()
 }
 
 #[cfg(test)]

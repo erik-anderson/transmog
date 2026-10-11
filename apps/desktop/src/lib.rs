@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod file_dialogs;
 
+#[cfg(all(windows, feature = "desktop-test-fixtures"))]
+mod certificate_test_fixture;
 #[cfg(windows)]
 mod windows;
 

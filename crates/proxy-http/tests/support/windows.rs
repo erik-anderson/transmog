@@ -30,6 +30,9 @@ impl WindowsFixture {
     pub fn change(&self, action: &str) {
         fixture_command(action, Some(&self.thumbprint), None);
     }
+    pub fn cleanup_thumbprints(&self) -> (&str, &str) {
+        (&self.thumbprint, &self.issuer_thumbprint)
+    }
 }
 impl Drop for WindowsFixture {
     fn drop(&mut self) {

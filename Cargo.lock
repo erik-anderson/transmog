@@ -7014,8 +7014,15 @@ name = "transmog-desktop"
 version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
+ "boring",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "minisign-verify",
  "percent-encoding",
+ "quiche",
  "rfd",
  "semver",
  "serde",
@@ -7026,10 +7033,14 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "tokio-boring",
  "transmog-app",
  "transmog-app-webui",
+ "transmog-core",
  "transmog-host-windows",
+ "transmog-http",
  "transmog-session",
+ "transmog-tls",
  "transmog-webview-preview-windows",
 ]
 

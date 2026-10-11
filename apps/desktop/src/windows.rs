@@ -71,6 +71,10 @@ fn progress_due(
 
 #[derive(Clone)]
 struct DesktopState {
+    #[cfg(feature = "desktop-test-fixtures")]
+    certificate_test_fixture: Option<Arc<crate::certificate_test_fixture::Fixture>>,
+    _client_certificate_controller:
+        Arc<transmog_tls::windows_client_certificates::WindowsClientCertificateController>,
     workspaces: Arc<workspaces::WindowWorkspaces>,
     webview_data_path: PathBuf,
     application: Application,
@@ -234,6 +238,139 @@ fn product_state(
 ) -> Result<ProductState, AppError> {
     let application = state.window_application(&window)?;
     Ok(application.product_state())
+}
+
+#[tauri::command]
+fn client_certificate_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ClientCertificateStatus, AppError> {
+    state.window_application(&window)?;
+    let caller = (window.label() != "main").then(|| format!("composer:{}", window.label()));
+    Ok(state
+        .application
+        .client_certificates()
+        .expect("desktop certificate controller")
+        .status(caller.as_deref()))
+}
+
+#[tauri::command]
+fn client_certificate_request(
+    id: String,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ClientCertificateRequestDetail, AppError> {
+    state
+        .application
+        .client_certificates()
+        .expect("desktop certificate controller")
+        .request(&id)
+}
+
+#[tauri::command]
+async fn client_certificate_identities(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<transmog_app::ClientCertificateIdentity>, AppError> {
+    state
+        .application
+        .client_certificates()
+        .expect("desktop certificate controller")
+        .identities()
+        .await
+}
+
+#[tauri::command]
+fn decide_client_certificate(
+    id: String,
+    decision: transmog_app::ClientCertificateDecision,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ClientCertificateStatus, AppError> {
+    let manager = state
+        .application
+        .client_certificates()
+        .expect("desktop certificate controller");
+    manager.answer(&id, decision)?;
+    Ok(manager.status(None))
+}
+
+#[tauri::command]
+fn save_client_certificate_policy(
+    policy: transmog_app::ClientCertificatePolicy,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ClientCertificatePolicy, AppError> {
+    state.application.save_client_certificate_policy(policy)
+}
+
+#[cfg(feature = "desktop-test-fixtures")]
+#[tauri::command]
+fn certificate_test_info(
+    state: State<'_, DesktopState>,
+) -> Result<crate::certificate_test_fixture::Info, String> {
+    let mut info = state
+        .certificate_test_fixture
+        .as_ref()
+        .ok_or("Certificate acceptance fixture is not enabled")?
+        .info
+        .clone();
+    info.authorization_generation =
+        transmog_tls::client_authentication::ClientAuthenticationResolver::generation(
+            state
+                .application
+                .client_certificates()
+                .expect("desktop certificate controller")
+                .resolver()
+                .as_ref(),
+        )
+        .to_string();
+    Ok(info)
+}
+#[cfg(feature = "desktop-test-fixtures")]
+#[tauri::command]
+async fn delete_certificate_test_key(state: State<'_, DesktopState>) -> Result<(), String> {
+    let fixture = state
+        .certificate_test_fixture
+        .clone()
+        .ok_or("Certificate acceptance fixture is not enabled")?;
+    tokio::task::spawn_blocking(move || fixture.delete_key())
+        .await
+        .map_err(|_| "Owned certificate fixture deletion failed".to_owned())
+}
+
+#[cfg(feature = "desktop-test-fixtures")]
+#[tauri::command]
+fn close_certificate_test_main(
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    if state.certificate_test_fixture.is_none() {
+        return Err("Certificate acceptance fixture is not enabled".into());
+    }
+    app.get_webview_window("main")
+        .ok_or("Owned main window is unavailable")?
+        .close()
+        .map_err(|_| "Owned main window could not close".into())
+}
+
+#[cfg(feature = "desktop-test-fixtures")]
+#[tauri::command]
+fn close_certificate_test_viewer(
+    label: String,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    if state.certificate_test_fixture.is_none()
+        || !state
+            .workspaces
+            .viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&label)
+    {
+        return Err("Owned certificate acceptance viewer is unavailable".into());
+    }
+    app.get_webview_window(&label)
+        .ok_or("Owned viewer is unavailable")?
+        .destroy()
+        .map_err(|_| "Owned viewer could not close".into())
 }
 
 #[tauri::command]
@@ -1544,12 +1681,49 @@ fn unique_artifact_path(root: &std::path::Path, prefix: &str, extension: &str) -
 #[allow(clippy::too_many_lines)]
 pub fn run() {
     exit_for_maintenance_if_requested();
-    let replay = SystemReplayExecutor::new(ProxyRoute::Auto)
-        .expect("operating-system trust must initialize for composer replay");
     let state_root = std::env::var_os("LOCALAPPDATA")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("Transmog");
+    #[cfg(feature = "desktop-test-fixtures")]
+    let certificate_test_fixture = std::env::var_os("TRANSMOG_DESKTOP_CERTIFICATE_TEST")
+        .filter(|value| value == "1")
+        .map(|_| {
+            Arc::new(tauri::async_runtime::block_on(
+                crate::certificate_test_fixture::Fixture::create(&state_root),
+            ))
+        });
+    let certificate_controller = Arc::new(
+        tauri::async_runtime::block_on(
+            transmog_tls::windows_client_certificates::WindowsClientCertificateController::new(
+                transmog_app::ClientCertificatePolicy::default(),
+            ),
+        )
+        .expect("default certificate policy must be valid"),
+    );
+    let certificates = transmog_app::ClientCertificateManager::new(
+        Arc::new(transmog_tls::windows_client_certificates::WindowsCurrentUserCertificateSource),
+        certificate_controller.resolver(),
+        certificate_controller.broker(),
+    );
+    #[cfg(feature = "desktop-test-fixtures")]
+    let replay = match &certificate_test_fixture {
+        Some(fixture) => {
+            SystemReplayExecutor::with_tls_factory(ProxyRoute::Auto, fixture.factory())
+        }
+        None => SystemReplayExecutor::new(ProxyRoute::Auto),
+    };
+    #[cfg(not(feature = "desktop-test-fixtures"))]
+    let replay = SystemReplayExecutor::new(ProxyRoute::Auto);
+    let replay = replay
+        .expect("operating-system trust must initialize for composer replay")
+        .with_client_certificate_resolver(certificates.resolver(), "composer:main")
+        .expect("Composer certificate transport must initialize");
     let application = Application::new(AppConfig {
+        #[cfg(feature = "desktop-test-fixtures")]
+        upstream_trust: certificate_test_fixture
+            .as_ref()
+            .map(|fixture| fixture.trust.clone()),
+        client_certificates: Some(certificates),
         replay_executor: Some(Arc::new(replay)),
         product_state_path: Some(state_root.join("preferences")),
         automation_path: Some(state_root.join("automation-v1")),
@@ -1617,6 +1791,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates)
         .manage(DesktopState {
+            #[cfg(feature = "desktop-test-fixtures")]
+            certificate_test_fixture,
+            _client_certificate_controller: certificate_controller,
             workspaces: Arc::new(workspaces::WindowWorkspaces::default()),
             webview_data_path,
             application: application.clone(),
@@ -1680,6 +1857,11 @@ pub fn run() {
                 app_status,
                 buffer_status,
                 product_state,
+                client_certificate_status,
+                client_certificate_request,
+                client_certificate_identities,
+                decide_client_certificate,
+                save_client_certificate_policy,
                 save_product_state,
                 save_workspace_preferences,
                 desktop_bootstrap,
@@ -1776,6 +1958,11 @@ pub fn run() {
                     && (label == "main"
                         || workspaces::viewer_command_allowed(invoke.message.command()));
                 if allowed {
+                    #[cfg(feature = "desktop-test-fixtures")]
+                    if matches!(invoke.message.command(), "certificate_test_info" | "delete_certificate_test_key" | "close_certificate_test_viewer" | "close_certificate_test_main") {
+                        let dispatch_test: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![certificate_test_info, delete_certificate_test_key, close_certificate_test_viewer, close_certificate_test_main];
+                        return dispatch_test(invoke);
+                    }
                     dispatch(invoke)
                 } else {
                     invoke
@@ -1799,13 +1986,14 @@ pub fn run() {
                 if window.label() == "main" {
                     close_guard.store(false, Ordering::Release);
                 } else {
-                    window
+                    let removed = window
                         .state::<DesktopState>()
                         .workspaces
                         .viewers
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .remove(window.label());
+                    if let Some(viewer) = removed { viewer.application.cancel_composer_requests(); }
                 }
             }
             if window.label() == "main"

@@ -247,6 +247,29 @@ checkbox in Advanced network settings. Outbound protocol choices apply when
 creating connections; established connections may continue serving new requests
 until they close. Saving these choices must not restart the proxy or interrupt traffic.
 
+Client certificate authorization lives behind Advanced network settings. Its
+default continues without a certificate; ordered exact host/port rules can
+continue without one, pause for selection, or select one compatible Windows
+software identity automatically. Rule edits remain drafts until their explicit
+Save. Store only public identity fingerprints and authored subject/issuer
+attributes. Independent settings, layout and window saves must preserve this
+authorization. Recovery from an uncertain latest preference generation disables
+recovered certificate rules until the user reviews and re-enables them.
+That disabled state survives subsequent launches and interrupted recovery.
+
+An actual verified server CertificateRequest can create a blocked-connection
+indicator. Keep selection nonmodal and preserve work in other panes. Show the
+host, owner, public certificate subject/issuer, expiration and fingerprint.
+Offer a certificate, continuation without one, or cancellation for those live
+connections only; answering never silently creates a saved host rule. Peer
+closure, deadlines, policy changes and closing the owning window expire the
+choice. Preserve an inspected expired context with disabled actions, reject
+late answers, and avoid stealing focus during background refresh or light
+dismissal. Capture viewers refer selection to the main window. Composer's
+received-response certificate view uses its actual recorded connection evidence.
+Closing the main window stops its own work while open viewers retain their
+connections and can reopen the main window for certificate selection.
+
 Disabling HTTPS decryption forwards opaque CONNECT bytes and records the destination,
 connection outcome and byte counts without implying knowledge of the tunneled protocol
 or contents. This choice applies on the next proxy start. Starting with decryption off

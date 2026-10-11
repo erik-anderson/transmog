@@ -177,12 +177,20 @@ export interface TrafficSearchResult {id:string;operationId:string;ids:string[];
 export interface TrafficSearchProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {
   schemaVersion: number;
-  preferences: { theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
+  preferences: { clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
   privacy: { maxLiveEntries: number | null; bufferLimit: {mode: 'automatic'} | {mode: 'custom'; bytes: number} | {mode: 'unlimited'}; retainRequestBodies: boolean; requestBodyLimit: number | null; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
   workspace: WorkspacePreferences;
 }
+
+export interface ClientCertificateIdentity {id:string;fingerprint:string;subject:string;issuer:string;validUntil:string}
+export type ClientCertificateAction = {action:'noCertificate'}|{action:'prompt'}|{action:'automatic';selector:{identity:string|null;subject:Record<string,string>;issuer:Record<string,string>}};
+export interface ClientCertificateRule {id:string;enabled:boolean;host:string;port:number;mode:ClientCertificateAction}
+export interface ClientCertificatePolicy {default:'noCertificate'|'prompt';rules:ClientCertificateRule[]}
+export interface ClientCertificatePending {id:string;host:string;port:number;caller:string;connections:number;choiceCount:number;warning:string|null}
+export interface ClientCertificateStatus {supported:boolean;pending:ClientCertificatePending[]}
+export interface ClientCertificateRequestDetail {pending:ClientCertificatePending;choices:ClientCertificateIdentity[];tlsVersion:string;acceptedIssuers:number;signatureAlgorithms:string[]}
 
 export type ColumnId = 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
 export interface ColumnPreference { id: ColumnId; width: number; visible: boolean; pinned: boolean; }

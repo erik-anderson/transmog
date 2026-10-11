@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[features]
+# Owned loopback peers and public fixture metadata for opt-in desktop acceptance.
+# No fixture is created unless the isolated-profile environment flag is present.
+desktop-test-fixtures = ["dep:boring", "dep:bytes", "dep:http", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:quiche", "dep:tokio-boring", "dep:transmog-core", "dep:transmog-http"]
+
 [lib]
 name = "transmog_desktop"
 path = "src/lib.rs"
@@ -30,6 +35,17 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+boring = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+quiche = { workspace = true, optional = true }
+tokio-boring = { workspace = true, optional = true }
+transmog-core = { version = "=0.1.2", path = "../../crates/proxy-core", optional = true }
+transmog-http = { version = "=0.1.2", path = "../../crates/proxy-http", optional = true }
+transmog-tls = { version = "=0.1.2", path = "../../crates/proxy-tls" }
 transmog-webview-preview-windows = { version = "=0.1.2", path = "../../crates/webview-preview-windows" }
 rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }

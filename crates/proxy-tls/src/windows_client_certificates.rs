@@ -33,7 +33,8 @@ pub struct WindowsClientCertificateController {
 impl WindowsClientCertificateController {
     /// Starts silent software-key monitoring with a bounded nonmodal decision broker.
     /// # Errors
-    /// Returns a generic configuration or inventory failure.
+    /// Returns a generic configuration failure. Initial inventory failure is
+    /// monitored for recovery and remains visible to request/settings lookups.
     pub async fn new(
         policy: transmog_core::client_authentication::ClientCertificatePolicy,
     ) -> Result<Self, String> {
@@ -45,7 +46,8 @@ impl WindowsClientCertificateController {
         )?);
         let monitor = WindowsCurrentUserCertificateSource
             .monitor(Arc::downgrade(&resolver))
-            .await?;
+            .await
+            .unwrap_or_else(|_| start_monitor(Arc::downgrade(&resolver), None));
         Ok(Self {
             resolver,
             broker,
@@ -183,38 +185,41 @@ impl WindowsCurrentUserCertificateSource {
         &self,
         resolver: Weak<PolicyClientAuthenticationResolver>,
     ) -> Result<WindowsCertificateInventoryMonitor, String> {
-        let mut previous = snapshot(
+        let previous = snapshot(
             tokio::time::timeout(Duration::from_secs(5), self.credentials())
                 .await
                 .map_err(|_| "Windows client certificate inventory is unavailable".to_owned())??,
         );
-        let source = *self;
-        Ok(WindowsCertificateInventoryMonitor(tokio::spawn(
-            async move {
-                loop {
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    if resolver.strong_count() == 0 {
-                        break;
-                    }
-                    let current =
-                        tokio::time::timeout(Duration::from_secs(5), source.credentials())
-                            .await
-                            .ok()
-                            .and_then(Result::ok)
-                            .and_then(snapshot);
-                    if current != previous {
-                        let Some(resolver) = resolver.upgrade() else {
-                            break;
-                        };
-                        if resolver.inventory_changed().is_err() {
-                            break;
-                        }
-                        previous = current;
-                    }
-                }
-            },
-        )))
+        Ok(start_monitor(resolver, previous))
     }
+}
+fn start_monitor(
+    resolver: Weak<PolicyClientAuthenticationResolver>,
+    mut previous: Option<Vec<(String, Vec<Vec<u8>>)>>,
+) -> WindowsCertificateInventoryMonitor {
+    let source = WindowsCurrentUserCertificateSource;
+    WindowsCertificateInventoryMonitor(tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if resolver.strong_count() == 0 {
+                break;
+            }
+            let current = tokio::time::timeout(Duration::from_secs(5), source.credentials())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .and_then(snapshot);
+            if current != previous {
+                let Some(resolver) = resolver.upgrade() else {
+                    break;
+                };
+                if resolver.inventory_changed().is_err() {
+                    break;
+                }
+                previous = current;
+            }
+        }
+    }))
 }
 fn snapshot(credentials: Vec<Arc<ClientCredential>>) -> Option<Vec<(String, Vec<Vec<u8>>)>> {
     let mut entries = credentials

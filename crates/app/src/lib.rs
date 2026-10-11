@@ -15,6 +15,7 @@ mod breakpoints;
 mod captured_page;
 mod captured_page_report;
 mod certificates;
+mod client_certificates;
 mod composer;
 mod composer_response;
 mod diagnostics;
@@ -69,6 +70,10 @@ pub use captured_page_report::{
 pub use certificates::{
     CertificateConnection, CertificateField, CertificateInspection, CertificateView,
 };
+pub use client_certificates::{
+    ClientCertificateDecision, ClientCertificateIdentity, ClientCertificateManager,
+    ClientCertificatePending, ClientCertificateRequestDetail, ClientCertificateStatus,
+};
 pub use composer::{
     ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,
     ComposerSnapshot, SystemReplayExecutor,
@@ -111,6 +116,7 @@ pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
 pub use traces::{
     TraceImportProgress, TraceImportRequest, TraceImportResult, TraceInspection, TraceMetadataView,
 };
+pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
 pub use transmog_script::{ScriptAction, ScriptInvocation};
 use transmog_session::{
@@ -242,6 +248,10 @@ pub struct AppStatus {
 /// Construction settings for the application facade.
 #[derive(Clone, Default)]
 pub struct AppConfig {
+    /// Optional immutable embedding trust snapshot; None uses operating-system roots.
+    pub upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
+    /// Optional shared request-driven certificate controller for this owning application.
+    pub client_certificates: Option<ClientCertificateManager>,
     /// Session-service limits and same-build identity.
     pub service: ServiceConfig,
     /// Route-aware executor shared by composer/replay operations.
@@ -268,6 +278,11 @@ impl std::fmt::Debug for AppConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AppConfig")
+            .field(
+                "upstream_trust",
+                &self.upstream_trust.as_ref().map(|trust| trust.generation()),
+            )
+            .field("client_certificates", &self.client_certificates.is_some())
             .field("service", &self.service)
             .field("replay_executor", &self.replay_executor.is_some())
             .field("product_state_path", &self.product_state_path)
@@ -285,6 +300,9 @@ impl std::fmt::Debug for AppConfig {
 /// Cloneable owner of authoritative application state.
 #[derive(Clone)]
 pub struct Application {
+    upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
+    client_certificates: Option<ClientCertificateManager>,
+    certificate_policy_operation: Arc<std::sync::Mutex<()>>,
     service: ApplicationSessionService,
     runtime_ids: Arc<transmog_runtime::AtomicRuntimeIdGenerator>,
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
@@ -319,10 +337,14 @@ impl Application {
     /// # Errors
     ///
     /// Returns a bounded application error if the owned service cannot start.
+    #[allow(clippy::too_many_lines)]
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
         let initial_state = product_state.snapshot();
+        if let Some(manager) = &config.client_certificates {
+            manager.replace_policy(initial_state.preferences.client_certificate_policy.clone())?;
+        }
         let apply_buffer_preferences = config
             .body_store
             .as_ref()
@@ -395,6 +417,9 @@ impl Application {
             );
         }
         Ok(Self {
+            upstream_trust: config.upstream_trust,
+            client_certificates: config.client_certificates,
+            certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
             service: service.clone(),
             runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
@@ -423,6 +448,35 @@ impl Application {
         self.product_state.snapshot()
     }
 
+    /// Shared public decision controller, when supported by the desktop host.
+    #[must_use]
+    pub fn client_certificates(&self) -> Option<&ClientCertificateManager> {
+        self.client_certificates.as_ref()
+    }
+
+    /// Crash-safely saves only client-certificate host authorization and applies it to new admissions.
+    /// # Errors
+    /// Returns validation/persistence errors without replacing live policy on a failed save.
+    pub fn save_client_certificate_policy(
+        &self,
+        policy: ClientCertificatePolicy,
+    ) -> Result<ClientCertificatePolicy, AppError> {
+        let manager = self.client_certificates.as_ref().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Client certificates are unavailable in this application",
+                false,
+            )
+        })?;
+        let _operation = self
+            .certificate_policy_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let policy = self.product_state.save_client_certificate_policy(policy)?;
+        manager.replace_policy(policy.clone())?;
+        Ok(policy)
+    }
+
     /// Applies the owning desktop's protocol policy to this window's replay
     /// executor without replacing its independent workspace preferences.
     /// Existing connections remain usable until close.
@@ -431,6 +485,11 @@ impl Application {
         allowed: transmog_core::connection_policy::AllowedHttpProtocols,
     ) {
         self.composer.set_outbound_protocols(allowed);
+    }
+    /// Cancels this window's admitted Composer work, including certificate waits.
+    /// Later requests from a reopened owning window remain usable.
+    pub fn cancel_composer_requests(&self) {
+        self.composer.cancel_all();
     }
 
     /// Saves non-sensitive workspace presentation without overwriting other settings.
@@ -903,6 +962,7 @@ impl Application {
     ///
     /// Returns a retryable safe error when drain or restoration fails.
     pub async fn shutdown(&self) -> Result<(), AppError> {
+        self.cancel_composer_requests();
         self.breakpoints.disable().await;
         let result = self.service.stop_now().await.map_err(AppError::from);
         self.diagnostics.record(
@@ -960,6 +1020,13 @@ impl Application {
         }
         let result = lifecycle::start_proxy(
             lifecycle::ProxyStartResources {
+                upstream_trust: self.upstream_trust.clone(),
+                client_certificate_resolver: self.client_certificates.as_ref().map(|manager| {
+                    manager.resolver()
+                        as Arc<
+                            dyn transmog_tls::client_authentication::ClientAuthenticationResolver,
+                        >
+                }),
                 service: &self.service,
                 runtime_ids: Arc::clone(&self.runtime_ids),
                 body_store: self.body_store.as_ref(),
@@ -1607,6 +1674,9 @@ impl Application {
         &self,
         request: ComposerRequest,
     ) -> Result<ComposerResult, AppError> {
+        // Admission precedes body/file preparation, so closing the owning
+        // window also cancels a request which has not reached its executor yet.
+        let admission = self.composer.admit();
         if request.body_source.is_some() {
             composer::validate_stream_input(&request)?;
         }
@@ -1678,12 +1748,13 @@ impl Application {
             None => None,
         };
         self.composer
-            .execute(
+            .execute_admitted(
                 &self.service,
                 request,
                 file,
                 source,
                 self.product_state().privacy.redact_sensitive_headers,
+                &admission.cancellation,
             )
             .await
     }

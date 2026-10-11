@@ -1,0 +1,26 @@
+<template>
+  <if condition="!viewerMode"><button w-ref="{certificateRequestButton}" type="button" class="secondary certificate-request-indicator" ?hidden="{{certificateBlockedCount == 0 && !certificatePanelOpen}}" aria-haspopup="dialog" aria-controls="client-certificate-requests" aria-expanded="{{certificatePanelOpen}}" popovertarget="client-certificate-requests">{{certificateBlockedLabel}}</button></if>
+  <if condition="viewerMode"><button type="button" class="secondary certificate-request-indicator" ?hidden="{{certificateBlockedCount == 0}}" @click="{togglePanel()}">Waiting for a client certificate · open main window</button></if>
+  <span class="sr-only" role="status" aria-live="polite" ?hidden="{{certificateBlockedCount == 0}}">{{certificateBlockedLabel}}</span>
+  <section w-ref="{certificateRequestPanel}" id="client-certificate-requests" popover="auto" class="certificate-request-panel" role="dialog" aria-modal="false" aria-labelledby="certificate-request-heading" @toggle="{panelToggled(e)}">
+    <header><h2 id="certificate-request-heading">Connections waiting for a client certificate</h2><button type="button" class="secondary compact-button" aria-label="Close certificate requests" @click="{closePanel()}">Close</button></header>
+    <p class="field-help">These verified servers requested a certificate on the live connection. Selection applies only to the waiting connections shown here. Servers may close a connection while waiting.</p>
+    <div class="certificate-request-layout"><nav aria-label="Waiting certificate requests">
+      <if condition="!certificatePending.length"><p class="field-help">No connections are waiting.</p></if>
+      <for each="pending in certificatePending"><button key="{{pending.id}}" data-request-id="{{pending.id}}" type="button" class="secondary certificate-pending-row" ?data-selected="{{pending.selected}}" aria-pressed="{{pending.selected}}" @click="{choose(pending.id)}"><strong>{{pending.origin}}</strong><span>{{pending.caller}} · {{pending.countLabel}}</span></button></for>
+    </nav><div class="certificate-request-detail">
+      <p role="status" ?hidden="{{!certificateDetailBusy}}">Loading certificate choices…</p>
+      <if condition="certificateRequest"><h3>{{certificateRequest.pending.host}}:{{certificateRequest.pending.port}}</h3>
+        <p class="field-help">{{certificateRequest.pending.caller}} · {{certificateRequest.tlsVersion}}</p>
+        <p class="field-error" ?hidden="{{!certificateRequest.pending.warning}}">{{certificateRequest.pending.warning}}</p>
+        <label>Eligible client certificate <select aria-label="Eligible client certificate" @change="{chooseCertificate(e)}" ?disabled="{{certificateDecisionBusy || certificateRequestExpired}}"><option value="" ?selected="{{!certificateChoiceId}}">Choose a certificate</option><for each="choice in certificateRequest.choices"><option value="{{choice.id}}" ?selected="{{choice.id == certificateChoiceId}}">{{choice.subject}} · expires {{choice.validUntil}} · {{choice.fingerprint}}</option></for></select></label>
+        <if condition="!certificateRequest.choices.length"><p class="field-help">No compatible certificates are available. You can still try this connection without a certificate.</p></if>
+        <if condition="certificateChoiceId"><for each="choice in certificateRequest.choices"><if condition="choice.id == certificateChoiceId"><dl class="certificate-choice-facts"><dt>Subject</dt><dd>{{choice.subject}}</dd><dt>Issuer</dt><dd>{{choice.issuer}}</dd><dt>Expires</dt><dd>{{choice.validUntil}}</dd><dt>SHA-256</dt><dd>{{choice.fingerprint}}</dd></dl></if></for></if>
+        <details><summary>Server request details</summary><p>{{certificateRequest.acceptedIssuers}} accepted issuer restrictions</p><ul><for each="algorithm in certificateRequest.signatureAlgorithms"><li>{{algorithm}}</li></for></ul></details>
+        <div class="actions"><button type="button" @click="{decide('certificate')}" ?disabled="{{certificateDecisionBusy || certificateRequestExpired || !certificateChoiceId}}">Use selected certificate</button><button type="button" class="secondary" @click="{decide('noCertificate')}" ?disabled="{{certificateDecisionBusy || certificateRequestExpired}}">Continue without a certificate</button><button type="button" class="secondary" @click="{decide('cancel')}" ?disabled="{{certificateDecisionBusy || certificateRequestExpired}}">Cancel connection</button></div>
+      </if>
+      <p role="status" class="field-help" ?hidden="{{!certificateRequestText}}">{{certificateRequestText}}</p><p role="status" class="field-error" ?hidden="{{!certificateRequestError}}">{{certificateRequestError}}</p><button type="button" class="secondary compact-button" @click="{dismissStatus()}" ?hidden="{{!certificateRequestText && !certificateRequestError}}">Dismiss certificate status</button>
+    </div></div>
+    <footer class="actions"><button type="button" class="secondary" @click="{refresh()}">Refresh waiting connections</button><button type="button" class="secondary" @click="{settings()}">Client certificate settings</button><p class="field-help">Answers never create an automatic host rule.</p></footer>
+  </section>
+</template>

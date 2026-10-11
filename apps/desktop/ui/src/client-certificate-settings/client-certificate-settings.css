@@ -1,0 +1,14 @@
+client-certificate-settings {display:block;min-width:0;}
+.certificate-policy {display:grid;gap:.65rem;font-size:.8125rem;}
+.certificate-policy fieldset {border:0;padding:0;margin:0;min-width:0;display:grid;gap:.55rem;}
+.certificate-policy label {display:grid;gap:.25rem;min-width:0;}.certificate-policy select,.certificate-policy input {max-width:100%;min-width:0;}
+.certificate-policy .field-help,.certificate-policy .field-error {margin:0;line-height:1.4;}.certificate-policy .field-help {color:var(--muted);}
+.certificate-rules {border:1px solid var(--line);border-radius:.3rem;max-height:15rem;overflow:auto;padding:.25rem;}
+.certificate-rule {display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;align-items:center;gap:.3rem;padding:.2rem;}
+.certificate-rule[data-selected] {background:var(--accent-soft);}
+.rule-select {text-align:left;display:grid;gap:.15rem;white-space:normal;overflow-wrap:anywhere;border-color:transparent;}.rule-select span {font-size:.75rem;color:var(--muted);}
+.certificate-rule-editor {display:grid;gap:.55rem;border-top:1px solid var(--line);padding-top:.6rem;}
+.host-fields {display:grid;grid-template-columns:minmax(0,1fr) 7rem;gap:.5rem;}
+.certificate-attributes {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.5rem;padding:.5rem 0;}
+.certificate-settings-save {position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:.5rem 0;}
+@media(max-width:620px) {.certificate-attributes {grid-template-columns:minmax(0,1fr);}.host-fields {grid-template-columns:minmax(0,1fr);}}

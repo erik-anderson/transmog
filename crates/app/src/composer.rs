@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::Duration,
@@ -149,6 +149,7 @@ struct History {
 
 #[derive(Clone)]
 pub(crate) struct ComposerManager {
+    active: Arc<Mutex<HashMap<u64, ExchangeCancellation>>>,
     executor: Option<Arc<dyn ReplayExecutor>>,
     history: Arc<Mutex<History>>,
     response: Arc<Mutex<Option<Arc<crate::composer_response::ComposerResponse>>>>,
@@ -173,6 +174,7 @@ impl ComposerManager {
     }
     pub(crate) fn new(executor: Option<Arc<dyn ReplayExecutor>>) -> Self {
         Self {
+            active: Arc::new(Mutex::new(HashMap::new())),
             executor,
             response: Arc::new(Mutex::new(None)),
             history: Arc::new(Mutex::new(History {
@@ -181,7 +183,33 @@ impl ComposerManager {
             })),
         }
     }
+    pub(crate) fn admit(&self) -> ActiveReplay {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let cancellation = ExchangeCancellation::new();
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, cancellation.clone());
+        ActiveReplay {
+            id,
+            registry: self.active.clone(),
+            cancellation,
+        }
+    }
+    pub(crate) fn cancel_all(&self) {
+        let active = std::mem::take(
+            &mut *self
+                .active
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        for (_, cancellation) in active {
+            cancellation.cancel();
+        }
+    }
 
+    #[cfg(test)]
     pub(crate) async fn execute(
         &self,
         service: &ApplicationSessionService,
@@ -189,6 +217,28 @@ impl ComposerManager {
         file: Option<(std::fs::File, u64)>,
         source: Option<ComposerOrigin>,
         redact: bool,
+    ) -> Result<ComposerResult, AppError> {
+        let admission = self.admit();
+        self.execute_admitted(
+            service,
+            input,
+            file,
+            source,
+            redact,
+            &admission.cancellation,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub(crate) async fn execute_admitted(
+        &self,
+        service: &ApplicationSessionService,
+        input: ComposerRequest,
+        file: Option<(std::fs::File, u64)>,
+        source: Option<ComposerOrigin>,
+        redact: bool,
+        cancellation: &ExchangeCancellation,
     ) -> Result<ComposerResult, AppError> {
         if input.body_source.is_some() != file.is_some() {
             return Err(AppError::new(
@@ -204,6 +254,13 @@ impl ComposerManager {
                 false,
             )
         })?;
+        let performance = transmog_core::performance::PerformanceRecorder::new(
+            std::time::SystemTime::now(),
+            std::time::Instant::now(),
+        );
+        let executor = executor
+            .with_performance(performance.clone())
+            .unwrap_or(executor);
         let (mut request, target) = build_request(&input)?;
         let executor: Arc<dyn ReplayExecutor> = if let Some((file, length)) = file {
             request.headers.remove_all("content-length");
@@ -226,11 +283,28 @@ impl ComposerManager {
             source_version: HttpLegVersion::Http1,
         };
         let started_at = std::time::SystemTime::now();
-        let cancellation = ExchangeCancellation::new();
         let response = service
-            .replay(executor, request, ReplayLimits::default(), &cancellation)
+            .replay(executor, request, ReplayLimits::default(), cancellation)
             .await
-            .map_err(|error| replay_error(&error))?;
+            .map_err(|error| {
+                use std::fmt::Write as _;
+                let mut error = replay_error(&error);
+                if let Some(tls) = performance
+                    .snapshot()
+                    .transports
+                    .iter()
+                    .rev()
+                    .find_map(|transport| transport.tls.as_ref())
+                {
+                    if let Some(status) = tls.details.get("Client certificate") {
+                        let _ = write!(error.message, ". Client certificate: {status}");
+                    }
+                    if let Some(required) = tls.details.get("Client certificate requirement") {
+                        let _ = write!(error.message, ". {required}");
+                    }
+                }
+                error
+            })?;
         let id = self.record(method, target, Some(response.status), source.clone());
         let (retained, detail) = crate::composer_response::ComposerResponse::retain(
             prepared,
@@ -239,6 +313,7 @@ impl ComposerManager {
             started_at,
             redact,
             source.clone(),
+            performance.snapshot(),
         )?;
         *self
             .response
@@ -326,6 +401,21 @@ impl ComposerManager {
     }
 }
 
+pub(crate) struct ActiveReplay {
+    id: u64,
+    registry: Arc<Mutex<HashMap<u64, ExchangeCancellation>>>,
+    pub(crate) cancellation: ExchangeCancellation,
+}
+impl Drop for ActiveReplay {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        self.registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+    }
+}
+
 fn replay_error(error: &transmog_session::ReplayError) -> AppError {
     use transmog_session::ReplayError;
     let category = match error {
@@ -393,6 +483,7 @@ impl ReplayExecutor for FileReplayExecutor {
 /// Canonical TLS-verifying HTTP replay executor.
 #[derive(Clone)]
 pub struct SystemReplayExecutor {
+    force_http3: bool,
     client: HyperOriginClient,
     h3: Option<transmog_h3::H3OriginClient>,
     mode: HyperEgressMode,
@@ -469,7 +560,8 @@ impl SystemReplayExecutor {
             )
         })?;
         Ok(Self {
-            h3: matches!(route, ProxyRoute::Http3).then(|| {
+            force_http3: matches!(route, ProxyRoute::Http3),
+            h3: matches!(route, ProxyRoute::Auto | ProxyRoute::Http3).then(|| {
                 transmog_h3::H3OriginClient::new(factory, transmog_h3::H3TransportLimits::default())
                     .with_outbound_protocols(protocols.clone())
             }),
@@ -481,6 +573,17 @@ impl SystemReplayExecutor {
 }
 
 impl ReplayExecutor for SystemReplayExecutor {
+    fn with_performance(
+        &self,
+        recorder: transmog_core::performance::PerformanceRecorder,
+    ) -> Option<Arc<dyn ReplayExecutor>> {
+        let mut executor = self.clone();
+        executor.client = executor.client.with_performance(Some(recorder.clone()));
+        executor.h3 = executor
+            .h3
+            .map(|client| client.with_performance(Some(recorder)));
+        Some(Arc::new(executor))
+    }
     fn set_outbound_protocols(
         &self,
         allowed: transmog_core::connection_policy::AllowedHttpProtocols,
@@ -495,7 +598,11 @@ impl ReplayExecutor for SystemReplayExecutor {
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
         let client = self.client.clone();
-        let h3 = self.h3.clone();
+        let allowed = self.protocols.snapshot();
+        let h3 = self
+            .h3
+            .clone()
+            .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
@@ -596,7 +703,11 @@ impl ReplayExecutor for SystemReplayExecutor {
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
         let client = self.client.clone();
-        let h3 = self.h3.clone();
+        let allowed = self.protocols.snapshot();
+        let h3 = self
+            .h3
+            .clone()
+            .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
