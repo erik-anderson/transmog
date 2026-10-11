@@ -1,11 +1,12 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io,
+    io::{self, Write},
     num::NonZeroUsize,
     path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use thiserror::Error;
@@ -35,7 +36,7 @@ pub struct CaptureStart {
 pub struct SealedCapture {
     /// Artifact path.
     pub path: PathBuf,
-    /// Bytes durably written, including the seal.
+    /// Bytes written to the operating system, including the seal.
     pub bytes_written: u64,
 }
 
@@ -57,7 +58,7 @@ pub enum CaptureStatus {
     Active {
         /// Artifact path.
         path: PathBuf,
-        /// Bytes committed as of the most recent append.
+        /// Bytes published by the most recent checkpoint.
         bytes_written: u64,
     },
     /// Capture stopped cleanly with a final seal.
@@ -94,7 +95,7 @@ pub enum CaptureServiceError {
 #[derive(Debug)]
 enum Command {
     Start(CaptureStart, mpsc::Sender<Result<(), CaptureServiceError>>),
-    Record(ObserverEvent),
+    Record(ObserverEvent, Option<tokio::sync::OwnedSemaphorePermit>),
     Stop(mpsc::Sender<Result<SealedCapture, CaptureServiceError>>),
     Shutdown(mpsc::Sender<()>),
 }
@@ -109,6 +110,7 @@ struct ActiveCapture {
 
 struct CaptureInner {
     sender: mpsc::SyncSender<Command>,
+    byte_budget: Arc<tokio::sync::Semaphore>,
     status: Arc<Mutex<CaptureStatus>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -156,6 +158,7 @@ impl CaptureManager {
         let status = Arc::new(Mutex::new(CaptureStatus::Idle));
         let inner = Arc::new(CaptureInner {
             sender,
+            byte_budget: Arc::new(tokio::sync::Semaphore::new(32 * 1024 * 1024)),
             status: Arc::clone(&status),
             worker: Mutex::new(None),
         });
@@ -240,11 +243,26 @@ impl CaptureManager {
     /// Enqueues one observer event, waiting for the bounded writer queue when
     /// it is full. The wait runs off the async executor; saturation is flow
     /// control rather than a failed capture or a missing record.
-    pub(crate) async fn record(&self, event: ObserverEvent) {
+    pub async fn record(&self, event: ObserverEvent) {
         if !matches!(self.status(), CaptureStatus::Active { .. }) {
             return;
         }
-        match self.inner.sender.try_send(Command::Record(event)) {
+        let charge =
+            u32::try_from(event.retained_bytes().min(32 * 1024 * 1024)).unwrap_or(32 * 1024 * 1024);
+        let Ok(permit) = self
+            .inner
+            .byte_budget
+            .clone()
+            .acquire_many_owned(charge)
+            .await
+        else {
+            return;
+        };
+        match self
+            .inner
+            .sender
+            .try_send(Command::Record(event, Some(permit)))
+        {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(command)) => {
                 let sender = self.inner.sender.clone();
@@ -276,13 +294,36 @@ async fn run_command<T: Send + 'static>(
 
 fn capture_worker(receiver: &mpsc::Receiver<Command>, status: &Mutex<CaptureStatus>) {
     let mut active: Option<ActiveCapture> = None;
-    while let Ok(command) = receiver.recv() {
+    let mut last_checkpoint = Instant::now();
+    loop {
+        if last_checkpoint.elapsed() >= Duration::from_secs(1) {
+            if let Some(capture) = active.as_mut()
+                && matches!(current_status(status), CaptureStatus::Active { .. })
+            {
+                match capture.writer.checkpoint() {
+                    Ok(()) => set_status(
+                        status,
+                        CaptureStatus::Active {
+                            path: capture.path.clone(),
+                            bytes_written: capture.writer.bytes_written(),
+                        },
+                    ),
+                    Err(error) => set_failure(status, error.to_string()),
+                }
+            }
+            last_checkpoint = Instant::now();
+        }
+        let command = match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match command {
             Command::Start(request, reply) => {
                 let result = start_capture(&mut active, status, request);
                 let _ = reply.send(result);
             }
-            Command::Record(event) => {
+            Command::Record(event, _permit) => {
                 if matches!(current_status(status), CaptureStatus::Failed(_)) {
                     continue;
                 }
@@ -377,6 +418,7 @@ fn prepare_writer(
 ) -> Result<CaptureWriter<File>, CaptureServiceError> {
     let mut writer = CaptureWriter::with_encoding(file, limits, encoding)
         .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
+    writer.enable_checkpoint_locators();
     if let Some(metadata) = metadata {
         writer
             .append(&transmog_capture::CaptureRecord {
@@ -389,6 +431,9 @@ fn prepare_writer(
             })
             .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
     }
+    writer
+        .checkpoint()
+        .map_err(|error| CaptureServiceError::Writer(error.to_string()))?;
     Ok(writer)
 }
 
@@ -404,9 +449,27 @@ fn stop_capture(
         set_failure(status, &message);
         return Err(CaptureServiceError::Writer(message));
     }
+    let mut bytes_written = capture.writer.bytes_written();
+    let compact = capture.writer.compact_sealed_bytes();
+    drop(capture.writer);
+    // Compaction is optional. A failed replacement leaves the already sealed
+    // original intact; no password/nonce context is reused for the replacement.
+    if let Ok(Some(bytes)) = compact {
+        let parent = capture
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        if let Ok(mut temporary) = tempfile::NamedTempFile::new_in(parent)
+            && temporary.write_all(&bytes).is_ok()
+            && temporary.persist(&capture.path).is_ok()
+        {
+            bytes_written = bytes.len() as u64;
+        }
+    }
     let sealed = SealedCapture {
         path: capture.path,
-        bytes_written: capture.writer.bytes_written(),
+        bytes_written,
     };
     if matches!(current_status(status), CaptureStatus::Failed(_)) {
         return Err(CaptureServiceError::Writer(
@@ -582,6 +645,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_capture_publishes_a_checkpoint_then_compacts_atomically_on_stop() {
+        let path = temp_path();
+        let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
+        manager
+            .start(CaptureStart {
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                path: path.clone(),
+                limits: CaptureLimits::default(),
+                policy: CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        manager.record(start_event(1)).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let mut reader = transmog_capture::CaptureReader::new(
+                    File::open(&path).unwrap(),
+                    CaptureLimits::default(),
+                )
+                .unwrap();
+                if reader.read_next_indexed().unwrap().is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+        let sealed = manager.stop().await.unwrap();
+        assert!(sealed.bytes_written < before);
+        assert!(sealed.bytes_written < 5 * 1024);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            sealed.bytes_written
+        );
+        let capture = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(capture.sealed);
+        assert!(matches!(
+            capture.records[0].kind,
+            CaptureRecordKind::ExchangeStarted { .. }
+        ));
+        manager.shutdown().await;
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
     async fn saturated_writer_queue_waits_instead_of_failing_the_recording() {
         use std::{future::poll_fn, task::Poll, time::Duration};
 
@@ -589,6 +700,7 @@ mod tests {
         let manager = CaptureManager {
             inner: Arc::new(CaptureInner {
                 sender,
+                byte_budget: Arc::new(tokio::sync::Semaphore::new(32 * 1024 * 1024)),
                 status: Arc::new(Mutex::new(CaptureStatus::Active {
                     path: temp_path(),
                     bytes_written: 0,
@@ -599,7 +711,7 @@ mod tests {
         manager
             .inner
             .sender
-            .send(Command::Record(start_event(1)))
+            .send(Command::Record(start_event(1), None))
             .unwrap();
         let mut record = Box::pin(manager.record(start_event(2)));
         let early = poll_fn(|cx| Poll::Ready(record.as_mut().poll(cx))).await;
@@ -609,7 +721,9 @@ mod tests {
         } else {
             Poll::Pending
         };
-        assert!(matches!(receiver.recv().unwrap(), Command::Record(event) if event.sequence == 1));
+        assert!(
+            matches!(receiver.recv().unwrap(), Command::Record(event, _) if event.sequence == 1)
+        );
         let waited = early.is_pending() && late.is_pending();
         if waited {
             record.as_mut().await;
@@ -617,7 +731,9 @@ mod tests {
         drop(record);
         assert!(waited, "recording failed instead of slowing the producer");
         assert!(matches!(manager.status(), CaptureStatus::Active { .. }));
-        assert!(matches!(receiver.recv().unwrap(), Command::Record(event) if event.sequence == 2));
+        assert!(
+            matches!(receiver.recv().unwrap(), Command::Record(event, _) if event.sequence == 2)
+        );
         drop(receiver);
     }
 
@@ -724,7 +840,7 @@ mod tests {
                 metadata: None,
                 path: path.clone(),
                 limits: CaptureLimits {
-                    max_file_bytes: 1024,
+                    max_file_bytes: 64 * 1024,
                     max_record_bytes: 16,
                     max_records: 2,
                 },

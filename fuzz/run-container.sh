@@ -34,8 +34,18 @@ run_target() {
         "$@"
 }
 
-run_target content_encoding 16384 -dict=fuzz/dictionaries/content_encoding.dict
-run_target decode_stream 8192
-run_target codec_roundtrip 16384
-run_target content_pipeline 8192
-run_target websocket_frames 8192
+targets="${FUZZ_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames capture_reader capture_crypto}"
+capture_selected=0
+for target in $targets; do
+    case "$target" in
+        content_encoding) run_target "$target" 16384 -dict=fuzz/dictionaries/content_encoding.dict ;;
+        decode_stream|content_pipeline|websocket_frames) run_target "$target" 8192 ;;
+        codec_roundtrip) run_target "$target" 16384 ;;
+        capture_reader) run_target "$target" 65537; capture_selected=1 ;;
+        capture_crypto) run_target "$target" 256; capture_selected=1 ;;
+        *) echo "Unknown fuzz target: $target" >&2; exit 2 ;;
+    esac
+done
+if [[ "$capture_selected" == 1 ]]; then
+    bash fuzz/verify-native-sanitizers.sh capture
+fi

@@ -41,8 +41,8 @@ crates, while the crypto-graph check verifies exactly one `boring` and
 | Content coding | `async-compression` | Bounded streaming gzip, Brotli, DEFLATE/zlib, and zstd decoding and re-encoding in `transmog-content`. |
 | WebSocket compression and handshake primitives | `flate2`, `sha1`, `base64`, `getrandom` | Per-message DEFLATE plus RFC handshake and masking primitives in the bounded `transmog-websocket` implementation. |
 | Structured data | `serde`, `serde_json` | Control models, persisted application state, diagnostics, capture metadata, and narrow process/FFI messages. |
-| Native capture compression and integrity | `flate2`, `crc32fast`, `sha2` | Independent DEFLATE frames, corruption checks and indexed body digests for lazy `.tmcap` reads. |
-| Native capture encryption | `aes-gcm`, `argon2`, `getrandom`, `zeroize` | Optional per-frame AES-256-GCM after compression, password-derived keys, fresh randomness and secret cleanup in `transmog-capture`. |
+| Native capture compression and integrity | `zstd`, `crc32fast`, `sha2` | Adaptive independent zstd chunks, block corruption checks and indexed body digests for lazy `.tmcap` reads. |
+| Native capture encryption | `aes-gcm`, `argon2`, `hkdf`, `getrandom`, `zeroize` | Optional fixed-block AES-256-GCM, Argon2id password derivation, domain-separated epoch/locator keys, fresh randomness and secret cleanup in `transmog-capture`. |
 | SAZ compatibility | `zip` | Indexed Fiddler-compatible import and finalized export, including supported password encryption. Native `.tmcap` remains the streaming capture format. |
 | Safe raster previews | `image` | GIF, JPEG, PNG, and WebP decoding inside the isolated, resource-bounded preview worker. SVG previews use an opaque image URL rather than parsing active content in the application page. |
 

@@ -276,7 +276,8 @@ async fn run_capture(
         false,
         None,
         false,
-    )?;
+    )
+    .await?;
     if let Some(circular) = &circular {
         components = components.with_observer(circular.clone(), circular.config());
     }

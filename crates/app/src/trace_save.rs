@@ -160,10 +160,12 @@ fn write(
     if let Some(native) = native {
         write_saz(native, temporary.as_file_mut(), format, password)?;
     }
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|_| error("Trace could not be flushed"))?;
+    if format != TraceSaveFormat::Native {
+        temporary
+            .as_file()
+            .sync_all()
+            .map_err(|_| error("Trace could not be flushed"))?;
+    }
     let bytes = temporary
         .as_file()
         .metadata()

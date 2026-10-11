@@ -5,6 +5,7 @@ ENV PATH="/usr/local/cargo/bin:${PATH}"
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         clang \
+        libclang-rt-dev \
         binutils \
         cmake \
         llvm \
@@ -25,6 +26,7 @@ ENV CC=clang \
     CXX=clang++ \
     AR=llvm-ar \
     CFLAGS="-fsanitize=address -fno-omit-frame-pointer -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp" \
+    CXXFLAGS="-fsanitize=address -fno-omit-frame-pointer -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp" \
     CMAKE_GENERATOR=Ninja
 
 WORKDIR /work

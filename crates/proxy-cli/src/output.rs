@@ -65,12 +65,6 @@ impl PendingOutput {
     }
 
     pub(crate) fn publish(self) -> Result<(), PublishError> {
-        if let Err(error) = self.file.as_file().sync_all() {
-            return Err(PublishError {
-                error,
-                file: self.file,
-            });
-        }
         self.file
             .persist_noclobber(&self.destination)
             .map(|_| ())
@@ -82,11 +76,10 @@ impl PendingOutput {
 }
 
 pub(crate) fn preserve(mut file: NamedTempFile) -> PathBuf {
-    // Even a failed sync or Windows temporary-attribute change must not delete
+    // A failed Windows temporary-attribute change must not delete
     // available evidence when the error or file handle is dropped.
     file.disable_cleanup(true);
     let path = file.path().to_path_buf();
-    let _ = file.as_file().sync_all();
     file.keep().map_or(path, |(_, path)| path)
 }
 

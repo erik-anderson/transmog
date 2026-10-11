@@ -122,8 +122,10 @@ material is created. Do not share it with a support contact.
 ## Recover an interrupted capture
 
 If the console or computer closed unexpectedly, keep `support-trace.tmcap`;
-it may contain a recoverable, unsealed prefix. Restore CLI-owned proxy/certificate
-state first:
+it may contain a recoverable, unsealed checkpoint. Live recording writes a
+checkpoint about once a second without forcing disk-cache synchronization. Recent
+uncommitted data can be lost after a process crash; power-failure durability is
+not guaranteed. Restore CLI-owned proxy/certificate state first:
 
 ```powershell
 .\transmog-cli.exe roots cleanup

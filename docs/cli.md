@@ -179,8 +179,8 @@ If inspection reports an unsealed file, write a recovered copy:
 .\transmog-cli.exe capture validate --input .\recovered-trace.tmcap
 ```
 
-`seal` preserves complete records and the input's encryption, omits an
-interrupted tail, and leaves the input untouched. It rejects an already sealed
+`seal` preserves records through the latest complete checkpoint and the input's
+encryption, omits an uncommitted or interrupted tail, and leaves the input untouched. It rejects an already sealed
 input. A new destination appears only after the recovered file is sealed
 successfully. Missing bytes cannot be reconstructed; retain the original when
 investigating corruption or incomplete evidence.

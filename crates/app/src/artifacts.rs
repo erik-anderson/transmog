@@ -516,6 +516,7 @@ mod tests {
                 },
             })
             .unwrap();
+        writer.checkpoint().unwrap();
         drop(writer);
         OpenOptions::new()
             .append(true)

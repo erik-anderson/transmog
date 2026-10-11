@@ -11,6 +11,7 @@ allow = [
     "0BSD",
     "Apache-2.0",
     "BSD-3-Clause",
+    "ISC", # libloading through BoringSSL bindgen; also allowed by the shipping policy
     "MIT",
     "NCSA",
     "Unicode-3.0",

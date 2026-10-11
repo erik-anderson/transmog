@@ -416,7 +416,18 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("indexed.tmcap");
         let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
-        for (index, bytes) in [vec![7; 1000], vec![9; 57]].into_iter().enumerate() {
+        // Corruption is detected per encrypted storage block. Use an earlier
+        // body spanning distinct blocks so the selected tail is independent.
+        let mut seed = 123_456_789_u32;
+        let earlier: Vec<u8> = (0..32768)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed.to_le_bytes()[0]
+            })
+            .collect();
+        for (index, bytes) in [earlier.clone(), vec![9; 57]].into_iter().enumerate() {
             writer
                 .append(&CaptureRecord {
                     sequence: index as u64 + 1,
@@ -431,12 +442,12 @@ mod tests {
                 .unwrap();
         }
         writer.seal().unwrap();
-        let bytes = writer.into_inner();
+        let bytes = writer.into_inner().unwrap();
         let mut reader =
             CaptureReader::new(io::Cursor::new(&bytes), CaptureLimits::default()).unwrap();
         let first = reader.read_next().unwrap().unwrap();
         let second = reader.read_next().unwrap().unwrap();
-        let pieces = [(&first, 0, vec![7; 1000]), (&second, 1000, vec![9; 57])]
+        let pieces = [(&first, 0, earlier), (&second, 32768, vec![9; 57])]
             .into_iter()
             .map(|(frame, body_offset, body)| NativeBodyPiece {
                 body_offset,
@@ -449,22 +460,22 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let mut corrupt = bytes;
-        corrupt[usize::try_from(first.offset + first.frame_bytes - 1).unwrap()] ^= 255;
+        corrupt[usize::try_from(first.offset + 64).unwrap()] ^= 255;
         std::fs::write(&path, corrupt).unwrap();
         let source = NativeBodySource {
             reader: SourceReader::new(File::open(path).unwrap()).unwrap(),
             pieces: Arc::from(pieces),
-            bytes: 1057,
+            bytes: 32825,
         };
         let mut tail = Vec::new();
         source
-            .open_at(1001)
+            .open_at(32769)
             .unwrap()
             .read_to_end(&mut tail)
             .unwrap();
         assert_eq!(tail, vec![9; 56]);
         assert!(source.open().unwrap().read_to_end(&mut Vec::new()).is_err());
-        assert!(source.open_at(1058).is_err());
+        assert!(source.open_at(32826).is_err());
     }
 
     #[test]

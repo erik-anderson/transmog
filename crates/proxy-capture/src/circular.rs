@@ -1,7 +1,7 @@
 //! Bounded circular capture retaining complete exchange groups in admission order.
 use crate::{
-    CaptureEncoding, CaptureError, CaptureLimits, CaptureRecord, CaptureRecordKind, CaptureWriter,
-    FrameCodec, read_indexed_frame_with_codec,
+    CaptureEncoding, CaptureError, CaptureLimits, CaptureRecord, CaptureRecordKind, FrameCodec,
+    ScratchWriter, read_scratch_frame_with_codec,
 };
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -11,6 +11,7 @@ use std::{
 
 struct Frame {
     certificate: Option<String>,
+    body: bool,
     index: u64,
     bytes: u64,
     offset: u64,
@@ -28,7 +29,7 @@ struct Entry {
 /// Disk mode stores encoded frames in owned temporary files; encrypted runs store ciphertext.
 pub struct CircularCapture {
     certificate_references: HashMap<String, usize>,
-    encoder: CaptureWriter<Vec<u8>>,
+    encoder: ScratchWriter<Vec<u8>>,
     encoding: CaptureEncoding,
     limits: CaptureLimits,
     maximum: Option<u64>,
@@ -55,7 +56,7 @@ impl CircularCapture {
         if let Some(root) = &directory {
             std::fs::create_dir_all(root)?;
         }
-        let mut encoder = CaptureWriter::with_encoding(
+        let mut encoder = ScratchWriter::with_encoding(
             Vec::new(),
             CaptureLimits {
                 max_file_bytes: u64::MAX,
@@ -96,7 +97,7 @@ impl CircularCapture {
         self.record_certificate_references(record)?;
         self.encoder.append(record)?;
         let encoded = std::mem::take(&mut self.encoder.output);
-        let mut scanner = crate::CaptureReader {
+        let mut scanner = crate::ScratchReader {
             certificates: HashMap::new(),
             certificate_bytes: 0,
             input: std::io::Cursor::new(&encoded),
@@ -133,6 +134,7 @@ impl CircularCapture {
             };
             let charge = frame.frame_bytes + std::mem::size_of::<Frame>() as u64;
             entry.frames.push(Frame {
+                body: frame.body.is_some(),
                 certificate: match &frame.record.kind {
                     CaptureRecordKind::Unknown { kind, payload }
                         if kind == "public-certificate" =>
@@ -171,6 +173,7 @@ impl CircularCapture {
             self.order.retain(|id| *id != candidate);
             if let Some(entry) = self.entries.remove(&candidate) {
                 self.retained = self.retained.saturating_sub(entry.charged);
+                self.encoder.bodies.retain(|(id, _), _| *id != candidate);
                 self.evicted = self.evicted.saturating_add(1);
                 self.release_certificates(entry.certificates)?;
             }
@@ -304,7 +307,7 @@ impl CircularCapture {
     /// # Errors
     /// Returns authentication, bounded decode, quota or destination errors.
     pub fn write(&mut self, output: impl Write) -> Result<u64, CaptureError> {
-        let mut writer = CaptureWriter::with_encoding(output, self.limits, &self.encoding)?;
+        let mut writer = crate::CaptureWriter::with_encoding(output, self.limits, &self.encoding)?;
         let codec = self.encoder.codec.clone();
         for id in std::iter::once(0).chain(self.order.iter().copied()) {
             if let Some(entry) = self.entries.get_mut(&id) {
@@ -319,12 +322,27 @@ impl CircularCapture {
 fn write_entry(
     entry: &mut Entry,
     codec: &FrameCodec,
-    writer: &mut CaptureWriter<impl Write>,
+    writer: &mut crate::CaptureWriter<impl Write>,
     limits: CaptureLimits,
 ) -> Result<(), CaptureError> {
     for frame in &entry.frames {
+        if frame.body {
+            let bytes = if let Some(bytes) = &frame.memory {
+                bytes.clone()
+            } else {
+                let file = entry.disk.as_mut().ok_or(CaptureError::InvalidMagic)?;
+                file.as_file_mut().seek(SeekFrom::Start(frame.offset))?;
+                let mut bytes =
+                    vec![0; usize::try_from(frame.bytes).map_err(|_| CaptureError::QuotaExceeded)?];
+                file.read_exact(&mut bytes)?;
+                bytes
+            };
+            let (stored, body) = compressed_body(&bytes, codec, frame.index, limits)?;
+            writer.append_compressed(stored, body)?;
+            continue;
+        }
         let record = if let Some(bytes) = &frame.memory {
-            read_indexed_frame_with_codec(
+            read_scratch_frame_with_codec(
                 bytes.as_slice(),
                 frame.bytes,
                 limits,
@@ -334,7 +352,7 @@ fn write_entry(
         } else {
             let file = entry.disk.as_mut().ok_or(CaptureError::InvalidMagic)?;
             file.as_file_mut().seek(SeekFrom::Start(frame.offset))?;
-            read_indexed_frame_with_codec(
+            read_scratch_frame_with_codec(
                 file.as_file_mut().take(frame.bytes),
                 frame.bytes,
                 limits,
@@ -345,6 +363,44 @@ fn write_entry(
         writer.append(&record)?;
     }
     Ok(())
+}
+fn compressed_body(
+    bytes: &[u8],
+    codec: &FrameCodec,
+    index: u64,
+    limits: CaptureLimits,
+) -> Result<(crate::StoredRecord, crate::compression::CompressedChunk), CaptureError> {
+    fn unframe(bytes: &[u8]) -> Result<(&[u8], &[u8]), CaptureError> {
+        if bytes.len() < 8 {
+            return Err(CaptureError::InvalidMagic);
+        }
+        let length = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        let end = length.checked_add(8).ok_or(CaptureError::QuotaExceeded)?;
+        let payload = bytes.get(8..end).ok_or(CaptureError::InvalidMagic)?;
+        if crc32fast::hash(payload) != u32::from_le_bytes(bytes[4..8].try_into().unwrap()) {
+            return Err(CaptureError::AuthenticationFailed);
+        }
+        Ok((payload, &bytes[end..]))
+    }
+    let (metadata, remaining) = unframe(bytes)?;
+    let stored: crate::StoredRecord =
+        serde_json::from_slice(&codec.decode(metadata, index, limits.max_record_bytes)?)?;
+    let (_, descriptor) = stored.clone().load_metadata()?;
+    let descriptor = descriptor.ok_or(CaptureError::InvalidMagic)?;
+    descriptor.validate(limits.max_record_bytes)?;
+    if descriptor.frame_bytes != remaining.len() as u64 {
+        return Err(CaptureError::InvalidMagic);
+    }
+    let (encoded, remaining) = unframe(remaining)?;
+    if !remaining.is_empty() {
+        return Err(CaptureError::InvalidMagic);
+    }
+    let body =
+        codec.decode_compressed(encoded, index, true, crate::compression::BODY_CHUNK_BYTES)?;
+    if body.expanded != descriptor.bytes {
+        return Err(CaptureError::AuthenticationFailed);
+    }
+    Ok((stored, body))
 }
 #[cfg(test)]
 mod tests {
@@ -388,7 +444,11 @@ mod tests {
         ring.append(&terminal(1)).unwrap();
         let mut output = Vec::new();
         ring.write(&mut output).unwrap();
-        let capture = crate::recover(output.as_slice(), CaptureLimits::default()).unwrap();
+        let capture = crate::recover(
+            std::io::Cursor::new(output.as_slice()),
+            CaptureLimits::default(),
+        )
+        .unwrap();
         let ids = capture
             .records
             .iter()
@@ -454,7 +514,11 @@ mod tests {
         assert!(ring.retains_exchange(5));
         let mut bytes = Vec::new();
         ring.write(&mut bytes).unwrap();
-        let saved = crate::recover(bytes.as_slice(), CaptureLimits::default()).unwrap();
+        let saved = crate::recover(
+            std::io::Cursor::new(bytes.as_slice()),
+            CaptureLimits::default(),
+        )
+        .unwrap();
         assert_eq!(saved.records.iter().filter(|record|matches!(&record.kind,CaptureRecordKind::Unknown {kind,..} if kind=="public-certificate")).count(),1);
         for record in saved.records {
             if let CaptureRecordKind::Performance(evidence) = record.kind {
@@ -533,7 +597,11 @@ mod tests {
             }
             let mut bytes = Vec::new();
             ring.write(&mut bytes).unwrap();
-            let saved = crate::recover(bytes.as_slice(), CaptureLimits::default()).unwrap();
+            let saved = crate::recover(
+                std::io::Cursor::new(bytes.as_slice()),
+                CaptureLimits::default(),
+            )
+            .unwrap();
             for record in saved.records {
                 if let CaptureRecordKind::Performance(evidence) = record.kind {
                     assert!(
@@ -565,7 +633,7 @@ mod tests {
         let mut bytes = Vec::new();
         ring.write(&mut bytes).unwrap();
         let result = crate::recover_with_password(
-            bytes.as_slice(),
+            std::io::Cursor::new(bytes.as_slice()),
             CaptureLimits::default(),
             Some(&password),
         )

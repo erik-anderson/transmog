@@ -10,7 +10,7 @@ mod roots;
 mod support;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     env,
     error::Error,
     fs::{self, File, OpenOptions},
@@ -19,16 +19,15 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
 
 use bytes::Bytes;
 use transmog_capture::{
-    CaptureBodyRetention, CaptureExporter, CaptureLimits, CapturePolicy, CaptureReader,
-    CaptureSummary, CaptureWriter, JsonLinesExporter, RecoveredCapture, loss_record,
-    record_from_observer,
+    CaptureExporter, CaptureLimits, CapturePolicy, CaptureReader, CaptureSummary, CaptureWriter,
+    JsonLinesExporter, RecoveredCapture,
 };
 use transmog_content::{ContentLimits, ContentPolicy};
 use transmog_core::{
@@ -158,7 +157,8 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         proof_id.is_some(),
         capture_path.as_deref(),
         capture_bodies,
-    )?;
+    )
+    .await?;
     let proxy = ProxyServer::bind_with_components(config, trust, components).await?;
     let actual_addr = proxy.local_addr()?;
     let mut evidence = proxy.subscribe_evidence();
@@ -217,7 +217,7 @@ fn load_upstream_trust(arguments: &[String]) -> Result<Arc<TrustSnapshot>, Box<d
     Ok(Arc::new(TrustSnapshot::load(&composite, 1)?))
 }
 
-fn build_components(
+async fn build_components(
     config: &ProxyConfig,
     ca: ProxyCa,
     interceptor: Arc<dyn InterceptorFactory>,
@@ -245,12 +245,11 @@ fn build_components(
         ));
     }
     let capture = if let Some(path) = capture_path {
-        let state = open_live_capture(path)?;
         let mut policy = CapturePolicy::default();
         policy.retain_body_samples = capture_bodies;
+        let state = open_live_capture(path, policy).await?;
         let observer = Arc::new(FileCaptureObserver {
-            state: Arc::clone(&state),
-            policy,
+            state: state.clone(),
         });
         components = components.with_observers(ObserverHub::new(vec![(
             observer,
@@ -283,100 +282,41 @@ fn build_components(
     Ok((components, capture))
 }
 
-struct LiveCaptureState {
-    writer: CaptureWriter<File>,
-    retention: CaptureBodyRetention,
-    last_sequences: HashMap<u128, u64>,
-}
-
-type LiveCapture = Arc<Mutex<LiveCaptureState>>;
+type LiveCapture = transmog_session::CaptureManager;
 
 struct FileCaptureObserver {
     state: LiveCapture,
-    policy: CapturePolicy,
 }
-
 impl Observer for FileCaptureObserver {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
-        let state = Arc::clone(&self.state);
-        let policy = self.policy.clone();
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || append_observer_event(&state, &policy, &event))
-                .await
-                .map_err(|_| ObserverError::new("capture writer task failed"))?
-                .map_err(|error| ObserverError::new(error.to_string()))
+            self.state.record(event).await;
+            if let transmog_session::CaptureStatus::Failed(failure) = self.state.status() {
+                return Err(ObserverError::new(failure.message));
+            }
+            Ok(())
         })
     }
 }
-
-fn open_live_capture(path: &Path) -> Result<LiveCapture, Box<dyn Error>> {
-    let file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    let writer = CaptureWriter::with_encoding(
-        file,
-        CaptureLimits::default(),
-        &transmog_capture::CaptureEncoding::default(),
-    )?;
-    Ok(Arc::new(Mutex::new(LiveCaptureState {
-        writer,
-        retention: CaptureBodyRetention::default(),
-        last_sequences: HashMap::new(),
-    })))
+async fn open_live_capture(
+    path: &Path,
+    policy: CapturePolicy,
+) -> Result<LiveCapture, Box<dyn Error>> {
+    let manager = transmog_session::CaptureManager::new(NonZeroUsize::new(2048).unwrap())?;
+    manager
+        .start(transmog_session::CaptureStart {
+            path: path.to_owned(),
+            policy,
+            limits: CaptureLimits::default(),
+            encoding: transmog_capture::CaptureEncoding::default(),
+            metadata: None,
+        })
+        .await?;
+    Ok(manager)
 }
-
-fn append_observer_event(
-    state: &Mutex<LiveCaptureState>,
-    policy: &CapturePolicy,
-    event: &ObserverEvent,
-) -> Result<(), transmog_capture::CaptureError> {
-    let mut state = state
-        .lock()
-        .map_err(|_| io::Error::other("capture state is unavailable"))?;
-    let exchange_id = event.exchange_id.0;
-    let previous = state.last_sequences.get(&exchange_id).copied().unwrap_or(0);
-    if event.sequence > previous.saturating_add(1) {
-        let first_missing = previous.saturating_add(1);
-        let missing = event.sequence.saturating_sub(first_missing);
-        state.writer.append(&loss_record(
-            exchange_id,
-            first_missing,
-            missing,
-            "observer-delivery-gap",
-        ))?;
-    } else if event.sequence <= previous {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "capture observer sequence moved backward",
-        )
-        .into());
-    }
-    if let Some(mut record) = record_from_observer(event, policy) {
-        state.retention.apply(&mut record, policy);
-        state.writer.append(&record)?;
-    }
-    if matches!(
-        event.kind,
-        transmog_core::observe::ObserverEventKind::Completed(_)
-            | transmog_core::observe::ObserverEventKind::Failed(_)
-    ) {
-        state.last_sequences.remove(&exchange_id);
-    } else {
-        state.last_sequences.insert(exchange_id, event.sequence);
-    }
-    Ok(())
-}
-
 async fn seal_live_capture(state: &LiveCapture) -> Result<(), Box<dyn Error>> {
-    let state = Arc::clone(state);
-    tokio::task::spawn_blocking(move || {
-        state
-            .lock()
-            .map_err(|_| io::Error::other("capture state is unavailable"))?
-            .writer
-            .seal()
-            .map_err(io::Error::other)
-    })
-    .await
-    .map_err(|_| io::Error::other("capture sealing task failed"))??;
+    state.stop().await?;
+    state.shutdown().await;
     Ok(())
 }
 
@@ -436,7 +376,7 @@ fn with_capture_password<T>(
 }
 
 fn scan_capture(
-    input: impl Read,
+    input: impl Read + std::io::Seek,
     password: Option<&transmog_capture::CapturePassword>,
     count_exchanges: bool,
 ) -> Result<(CaptureSummary, u64), transmog_capture::CaptureError> {
@@ -1010,20 +950,30 @@ mod tests {
                 })
                 .unwrap();
         }
-        writer.append(&loss_record(8, 1, 1, "fixture")).unwrap();
+        writer
+            .append(&transmog_capture::loss_record(8, 1, 1, "fixture"))
+            .unwrap();
         writer.seal().unwrap();
-        let bytes = writer.into_inner();
-        let recovered =
-            transmog_capture::recover(bytes.as_slice(), CaptureLimits::default()).unwrap();
-        let (summary, valid_bytes) = scan_capture(bytes.as_slice(), None, true).unwrap();
+        let bytes = writer.into_inner().unwrap();
+        let recovered = transmog_capture::recover(
+            std::io::Cursor::new(bytes.as_slice()),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        let (summary, valid_bytes) =
+            scan_capture(std::io::Cursor::new(bytes.as_slice()), None, true).unwrap();
         assert_eq!(summary, recovered.summary());
         assert_eq!(valid_bytes, bytes.len() as u64);
 
-        let mut reader = CaptureReader::new(bytes.as_slice(), CaptureLimits::default()).unwrap();
+        let mut reader = CaptureReader::new(
+            std::io::Cursor::new(bytes.as_slice()),
+            CaptureLimits::default(),
+        )
+        .unwrap();
         let frame = reader.read_next().unwrap().unwrap();
         let mut damaged = bytes;
         damaged[usize::try_from(frame.offset + frame.frame_bytes - 1).unwrap()] ^= 1;
-        assert!(scan_capture(damaged.as_slice(), None, false).is_err());
+        assert!(scan_capture(std::io::Cursor::new(damaged.as_slice()), None, false).is_err());
     }
 
     #[test]
@@ -1124,13 +1074,18 @@ mod tests {
         let source_record = transmog_capture::loss_record(7, 2, 1, "test-gap");
         let mut source = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
         source.append(&source_record).unwrap();
-        let recovered =
-            transmog_capture::recover(&source.into_inner()[..], CaptureLimits::default()).unwrap();
+        let recovered = transmog_capture::recover(
+            std::io::Cursor::new(&source.into_inner().unwrap()[..]),
+            CaptureLimits::default(),
+        )
+        .unwrap();
         assert!(!recovered.sealed);
 
         let mut output = Vec::new();
         write_sealed_capture(&mut output, &recovered).unwrap();
-        let sealed = transmog_capture::recover(&output[..], CaptureLimits::default()).unwrap();
+        let sealed =
+            transmog_capture::recover(std::io::Cursor::new(&output[..]), CaptureLimits::default())
+                .unwrap();
         assert!(sealed.sealed);
         assert_eq!(sealed.records.first(), Some(&source_record));
     }

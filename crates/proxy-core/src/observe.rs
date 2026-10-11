@@ -11,7 +11,11 @@ use std::{
 
 use bytes::Bytes;
 use thiserror::Error;
-use tokio::{sync::mpsc, task::JoinHandle, time::timeout};
+use tokio::{
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
+    task::JoinHandle,
+    time::timeout,
+};
 
 use crate::{
     ExchangeExtensions, HeaderBlock, RequestHead, ResponseHead,
@@ -271,6 +275,43 @@ pub struct ObserverEvent {
 }
 
 impl ObserverEvent {
+    /// Conservative retained-payload charge for bounded observer/capture queues.
+    /// Shared bytes are charged on each queue so slow consumers cannot pin an
+    /// unbounded sequence of bodies. A single oversized input takes the entire budget.
+    pub fn retained_bytes(&self) -> usize {
+        let headers = |head: &HeaderBlock| {
+            head.iter().fold(0_usize, |n, field| {
+                n.saturating_add(field.name().len())
+                    .saturating_add(field.value().len())
+                    .saturating_add(64)
+            })
+        };
+        let payload = match &self.kind {
+            ObserverEventKind::BodyChunk(chunk) => chunk.sample.as_ref().map_or(0, Bytes::len),
+            ObserverEventKind::RequestHeadObserved { head, .. }
+            | ObserverEventKind::RequestHeadFinalized(head) => headers(&head.headers)
+                .saturating_add(head.method.len())
+                .saturating_add(head.target.authority.len())
+                .saturating_add(head.target.path.len())
+                .saturating_add(head.target.query.as_ref().map_or(0, String::len))
+                .saturating_add(head.target.host.len())
+                .saturating_add(head.target.scheme.len()),
+            ObserverEventKind::ResponseHeadObserved { head, .. }
+            | ObserverEventKind::ResponseHeadFinalized(head) => headers(&head.headers),
+            ObserverEventKind::BodyTrailers(trailers) => headers(&trailers.trailers),
+            ObserverEventKind::Performance(evidence) => evidence
+                .transports
+                .iter()
+                .filter_map(|transport| transport.tls.as_ref())
+                .flat_map(|tls| tls.server_chain.iter().chain(&tls.client_chain))
+                .fold(4096_usize, |n, certificate| {
+                    n.saturating_add(certificate.der.len())
+                }),
+            _ => 4096,
+        };
+        payload.saturating_add(std::mem::size_of::<Self>())
+    }
+
     /// Applies credential redaction before an application stores an event.
     #[must_use]
     pub fn redacted(mut self) -> Self {
@@ -324,8 +365,14 @@ pub struct ObserverStats {
     pub disconnected: bool,
 }
 
+const OBSERVER_QUEUE_BYTES: usize = 32 * 1024 * 1024;
+struct QueuedEvent {
+    event: ObserverEvent,
+    bytes: OwnedSemaphorePermit,
+}
 struct ObserverDispatcher {
-    sender: mpsc::Sender<ObserverEvent>,
+    sender: mpsc::Sender<QueuedEvent>,
+    byte_budget: Arc<Semaphore>,
     interest: ObservationInterest,
     delivery: ObserverDeliveryPolicy,
     delivered: AtomicU64,
@@ -339,7 +386,7 @@ struct ObserverDispatcher {
 // Keep events inline rather than allocating a box for every queue admission.
 #[allow(clippy::large_enum_variant)]
 enum ObserverAdmission<'a> {
-    Reserved(mpsc::Permit<'a, ObserverEvent>, ObserverEvent),
+    Reserved(mpsc::Permit<'a, QueuedEvent>, QueuedEvent),
     Skipped,
     Unavailable(ObserverDelivery),
 }
@@ -357,7 +404,7 @@ impl std::fmt::Debug for ObserverDispatcher {
 
 impl ObserverDispatcher {
     fn new(observer: Arc<dyn Observer>, config: ObserverConfig) -> Arc<Self> {
-        let (sender, mut receiver) = mpsc::channel(config.queue_capacity.get());
+        let (sender, mut receiver) = mpsc::channel::<QueuedEvent>(config.queue_capacity.get());
         let disconnected = Arc::new(AtomicBool::new(false));
         let worker_disconnected = Arc::clone(&disconnected);
         let force_stop = ExchangeCancellation::new();
@@ -371,7 +418,9 @@ impl ObserverDispatcher {
                     () = worker_stop.cancelled() => break,
                     () = worker_drain.cancelled() => {
                         receiver.close();
-                        while let Some(event) = receiver.recv().await {
+                        while let Some(queued) = receiver.recv().await {
+                            let event = queued.event;
+                            let _bytes = queued.bytes;
                             if !deliver_observer_event(
                                 Arc::clone(&observer),
                                 event,
@@ -384,9 +433,11 @@ impl ObserverDispatcher {
                         break;
                     },
                 };
-                let Some(event) = event else {
+                let Some(queued) = event else {
                     break;
                 };
+                let event = queued.event;
+                let _bytes = queued.bytes;
                 if !deliver_observer_event(
                     Arc::clone(&observer),
                     event,
@@ -402,6 +453,7 @@ impl ObserverDispatcher {
         });
         Arc::new(Self {
             sender,
+            byte_budget: Arc::new(Semaphore::new(OBSERVER_QUEUE_BYTES)),
             interest: config.interest,
             delivery: config.delivery,
             delivered: AtomicU64::new(0),
@@ -423,15 +475,29 @@ impl ObserverDispatcher {
         let Some(event) = self.prepare(event) else {
             return ObserverAdmission::Skipped;
         };
+        let charge = u32::try_from(event.retained_bytes().min(OBSERVER_QUEUE_BYTES))
+            .expect("queue budget fits u32");
+        let acquire = async {
+            let bytes = tokio::select! {
+                permit = self.byte_budget.clone().acquire_many_owned(charge) => permit.map_err(|_| ())?,
+                () = self.sender.closed() => return Err(()),
+            };
+            let permit = self.sender.reserve().await.map_err(|_| ())?;
+            Ok::<_, ()>((permit, bytes))
+        };
         match self.delivery {
-            ObserverDeliveryPolicy::WaitForCapacity => match self.sender.reserve().await {
-                Ok(permit) => ObserverAdmission::Reserved(permit, event),
-                Err(_) => ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected),
+            ObserverDeliveryPolicy::WaitForCapacity => match acquire.await {
+                Ok((permit, bytes)) => {
+                    ObserverAdmission::Reserved(permit, QueuedEvent { event, bytes })
+                }
+                Err(()) => ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected),
             },
             ObserverDeliveryPolicy::Backpressure { timeout: deadline } => {
-                match timeout(deadline, self.sender.reserve()).await {
-                    Ok(Ok(permit)) => ObserverAdmission::Reserved(permit, event),
-                    Ok(Err(_)) => {
+                match timeout(deadline, acquire).await {
+                    Ok(Ok((permit, bytes))) => {
+                        ObserverAdmission::Reserved(permit, QueuedEvent { event, bytes })
+                    }
+                    Ok(Err(())) => {
                         ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
                     }
                     Err(_) => {
@@ -439,19 +505,25 @@ impl ObserverDispatcher {
                     }
                 }
             }
-            ObserverDeliveryPolicy::DropNewest => match self.sender.try_reserve() {
-                Ok(permit) => ObserverAdmission::Reserved(permit, event),
-                Err(mpsc::error::TrySendError::Full(())) => {
-                    ObserverAdmission::Unavailable(ObserverDelivery::Dropped)
+            ObserverDeliveryPolicy::DropNewest | ObserverDeliveryPolicy::Disconnect => {
+                let unavailable = if self.delivery == ObserverDeliveryPolicy::DropNewest {
+                    ObserverDelivery::Dropped
+                } else {
+                    ObserverDelivery::Disconnected
+                };
+                match self.byte_budget.clone().try_acquire_many_owned(charge) {
+                    Ok(bytes) => match self.sender.try_reserve() {
+                        Ok(permit) => {
+                            ObserverAdmission::Reserved(permit, QueuedEvent { event, bytes })
+                        }
+                        Err(mpsc::error::TrySendError::Closed(())) => {
+                            ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
+                        }
+                        Err(_) => ObserverAdmission::Unavailable(unavailable),
+                    },
+                    Err(_) => ObserverAdmission::Unavailable(unavailable),
                 }
-                Err(mpsc::error::TrySendError::Closed(())) => {
-                    ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
-                }
-            },
-            ObserverDeliveryPolicy::Disconnect => match self.sender.try_reserve() {
-                Ok(permit) => ObserverAdmission::Reserved(permit, event),
-                Err(_) => ObserverAdmission::Unavailable(ObserverDelivery::Disconnected),
-            },
+            }
         }
     }
 
@@ -858,6 +930,63 @@ mod tests {
         ObserverEventKind::ExchangeStarted {
             metadata: Arc::clone(metadata),
         }
+    }
+
+    #[tokio::test]
+    async fn byte_budget_backpressures_even_when_event_slots_are_free_and_cancellation_releases_it()
+    {
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let dispatcher = ObserverDispatcher::new(
+            Arc::new(RecordingObserver { events }),
+            ObserverConfig {
+                delivery: ObserverDeliveryPolicy::WaitForCapacity,
+                ..ObserverConfig::default()
+            },
+        );
+        let held = dispatcher
+            .byte_budget
+            .clone()
+            .acquire_many_owned(u32::try_from(OBSERVER_QUEUE_BYTES).unwrap())
+            .await
+            .unwrap();
+        let event = ObserverEvent {
+            exchange_id: ExchangeId(1),
+            sequence: 1,
+            kind: started(&metadata()),
+        };
+        assert!(
+            timeout(Duration::from_millis(10), dispatcher.reserve(event.clone()))
+                .await
+                .is_err()
+        );
+        assert_eq!(dispatcher.byte_budget.available_permits(), 0);
+        drop(held);
+        let reservation = timeout(Duration::from_secs(1), dispatcher.reserve(event.clone()))
+            .await
+            .unwrap();
+        assert!(matches!(reservation, ObserverAdmission::Reserved(_, _)));
+        assert!(dispatcher.byte_budget.available_permits() < OBSERVER_QUEUE_BYTES);
+        drop(reservation);
+        assert_eq!(
+            dispatcher.byte_budget.available_permits(),
+            OBSERVER_QUEUE_BYTES
+        );
+        // Closing the event receiver must also wake an admission waiting for bytes.
+        let held = dispatcher
+            .byte_budget
+            .clone()
+            .acquire_many_owned(u32::try_from(OBSERVER_QUEUE_BYTES).unwrap())
+            .await
+            .unwrap();
+        dispatcher.shutdown().await;
+        let result = timeout(Duration::from_secs(1), dispatcher.reserve(event))
+            .await
+            .unwrap();
+        assert!(matches!(
+            result,
+            ObserverAdmission::Unavailable(ObserverDelivery::AlreadyDisconnected)
+        ));
+        drop(held);
     }
 
     #[tokio::test]

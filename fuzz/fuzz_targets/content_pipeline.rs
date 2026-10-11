@@ -274,6 +274,7 @@ fn metadata() -> ExchangeMetadata {
             downstream_connection_id: ConnectionId(2),
             stream_id: StreamId(3),
             client_addr: "127.0.0.1:1000".parse().expect("static client address"),
+            client_identity: Default::default(),
             proxy_addr: "127.0.0.1:2000".parse().expect("static proxy address"),
             ingress_version: HttpLegVersion::Http2,
             egress_version: None,

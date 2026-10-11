@@ -1,0 +1,1 @@
+	{"version":1,"layout":"indexed-blocks","block_size":0,"compression":"zstd","cipher":"aes-256-gcm","kdf":"argon2id","salt":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"nonce_prefix":[0,0,0,0],"memory_kib":65536,"iterations":3,"lanes":1}

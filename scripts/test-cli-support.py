@@ -5,6 +5,7 @@ Each CLI gets a hidden new console; Ctrl+C targets only that console.
 """
 import argparse
 import ctypes
+import hashlib
 import http.client
 import http.server
 import json
@@ -131,7 +132,20 @@ def main():
             assert response.status == 200 and response.read() == b'captured'
             connection.close()
             if crash:
-                time.sleep(.5)  # Allow the async recorder to persist its valid prefix.
+                # Wait for the bounded periodic checkpoint, not an assumed
+                # per-event filesystem write. Preserve actual body evidence.
+                deadline = time.monotonic() + 5
+                while True:
+                    result = subprocess.run(
+                        [str(executable), 'capture', 'inspect', '--input', str(output)],
+                        env=environment, stdin=subprocess.DEVNULL,
+                        capture_output=True, text=True)
+                    retained = re.search(r'RETAINED_BODY_BYTES=(\d+)', result.stdout)
+                    if result.returncode == 0 and retained and int(retained.group(1)) > 0:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise AssertionError('No body checkpoint published within five seconds')
+                    time.sleep(.05)
                 process.kill()
                 process.wait(timeout=10)
                 assert list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
@@ -174,16 +188,56 @@ def main():
     def export_rejections(source):
         # Valid checksummed native fixtures can have incomplete or unsafe heads.
         data = source.read_bytes()
-        header = data[:13 + struct.unpack('<I', data[9:13])[0]]
+        header_end = 13 + struct.unpack('<I', data[9:13])[0]
+        header = data[:header_end]
+        header_json = data[13:header_end]
+        geometry = json.loads(header_json)
+        assert geometry['cipher'] == 'none' and geometry['layout'] == 'indexed-blocks'
+        block_size = geometry['block_size']
+        payload_size = block_size - 5
+        block_bytes = block_size + 16
 
         def write_native(path, records):
+            # Independent raw-codec encoder keeps this rejection fixture valid
+            # without relying on the production writer to accept unsafe heads.
             records = [*records, {'revision': 3, 'sequence': 0, 'exchange_id': 0,
                                   'kind': 'seal', 'payload': {'record_count': len(records)}}]
-            encoded = bytearray(header)
+            encoded = bytearray(header + struct.pack('<I', block_size) + bytes(512))
+            start = len(encoded)
+            ordinal = 0
+
+            def put(kind, payload):
+                nonlocal ordinal
+                assert len(payload) <= payload_size
+                plain = bytes([kind]) + struct.pack('<I', len(payload)) + payload
+                plain += bytes(block_size - len(plain))
+                aad = header_json + struct.pack('<Q', ordinal) + b'TMCap block'
+                encoded.extend(plain + hashlib.sha256(aad + plain).digest()[:16])
+                ordinal += 1
+
+            def packed(value):
+                payload = json.dumps(value, separators=(',', ':')).encode()
+                return b'\0' + struct.pack('<I', len(payload)) + payload
+
+            logical = bytearray()
+            entries = []
             for index, record in enumerate(records):
                 payload = json.dumps(record, separators=(',', ':')).encode()
                 frame = struct.pack('<QIB', index * 2 + 1, len(payload), 0) + payload
-                encoded += struct.pack('<II', len(frame), zlib.crc32(frame)) + frame
+                frame = struct.pack('<II', len(frame), zlib.crc32(frame)) + frame
+                offset = start + len(logical) // payload_size * block_bytes + 5 + len(logical) % payload_size
+                entries.append({'offset': offset, 'frame_bytes': len(frame),
+                                'index': index, 'stored': record})
+                logical.extend(frame)
+            for offset in range(0, len(logical), payload_size):
+                put(0, logical[offset:offset + payload_size])
+            first_index = ordinal
+            index = packed(entries)
+            for offset in range(0, len(index), payload_size):
+                put(1, index[offset:offset + payload_size])
+            root = {'block': first_index, 'blocks': ordinal - first_index,
+                    'bytes': len(index), 'first': 0, 'count': len(entries), 'level': 0}
+            put(3, packed({'roots': [root], 'count': len(entries), 'sealed': True, 'block': ordinal}))
             path.write_bytes(encoded)
 
         request = {'revision': 3, 'sequence': 1, 'exchange_id': 1, 'kind': 'request-head',
@@ -241,7 +295,9 @@ def main():
         command('roots', 'cleanup')
         recovered = fixture / 'recovered.tmcap'
         command('capture', 'seal', '--input', str(interrupted), '--output', str(recovered))
-        assert 'SEALED=true' in command('capture', 'inspect', '--input', str(recovered))
+        recovered_summary = command('capture', 'inspect', '--input', str(recovered))
+        assert 'SEALED=true' in recovered_summary
+        assert int(re.search(r'RETAINED_BODY_BYTES=(\d+)', recovered_summary).group(1)) > 0
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         print(json.dumps({'ephemeralMemoryOnly': True, 'persistentReuse': True,
                           'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True,

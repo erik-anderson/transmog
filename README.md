@@ -135,7 +135,9 @@ to stop and save a compressed trace:
 ```
 
 Save captures as `.tmcap`. TMCap compresses individual chunks as they arrive
-and lets the desktop open body payloads on demand.
+and lets the desktop open body payloads on demand. See the
+[TMCap format specification](docs/tmcap-format.md) for the on-disk layout,
+encryption, indexing, and recovery rules.
 
 The CLI asks to install its public root without relaunching, configures the
 Windows proxy, and removes the root afterward. Its default ephemeral private

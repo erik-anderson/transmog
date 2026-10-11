@@ -291,9 +291,15 @@ mod tests {
             })
             .unwrap();
         let bytes = std::fs::read(recovery).unwrap();
-        assert!(transmog_capture::recover(bytes.as_slice(), CaptureLimits::default()).is_err());
+        assert!(
+            transmog_capture::recover(
+                std::io::Cursor::new(bytes.as_slice()),
+                CaptureLimits::default()
+            )
+            .is_err()
+        );
         let capture = transmog_capture::recover_with_password(
-            bytes.as_slice(),
+            std::io::Cursor::new(bytes.as_slice()),
             CaptureLimits::default(),
             Some(&password),
         )

@@ -16,6 +16,12 @@ transmog-core = { version = "=0.1.2", path = "../crates/proxy-core" }
 transmog-websocket = { version = "=0.1.2", path = "../crates/proxy-websocket" }
 tokio = { version = "1.53.1", features = ["rt", "time"] }
 
+transmog-capture = { version = "=0.1.2", path = "../crates/proxy-capture" }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+crc32fast = "1.5.2"
+zstd = { version = "=0.14.0", default-features = false }
+
 [workspace]
 
 [[bin]]
@@ -49,6 +55,20 @@ bench = false
 [[bin]]
 name = "websocket_frames"
 path = "fuzz_targets/websocket_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capture_reader"
+path = "fuzz_targets/capture_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capture_crypto"
+path = "fuzz_targets/capture_crypto.rs"
 test = false
 doc = false
 bench = false
