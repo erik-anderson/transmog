@@ -1,5 +1,27 @@
 # Build prerequisites
 
+## Build and launch the Windows desktop
+
+After installing the [Windows toolchain](#windows) and
+[desktop prerequisites](#windows-desktop-shell), run this from the repository
+root in PowerShell 7 or newer:
+
+```powershell
+./scripts/run-desktop.ps1
+```
+
+This is the recommended desktop development entry point. It checks and configures
+the LLVM/Ninja environment, installs npm dependencies from the lockfile, checks
+and builds the UI, builds the desktop plus its script host and preview worker
+with locked Cargo dependencies, and launches `target/debug/transmog.exe`.
+It stops on setup or build failure. Repeated runs reuse Cargo's build artifacts.
+Use `./scripts/run-desktop.ps1 -Configuration Release` for an optimized build.
+`CARGO_TARGET_DIR` is honored when locating the executable, and `TRANSMOG_PYTHON`
+can select an explicit Python interpreter. The first build needs network access
+for dependencies that are not already cached.
+
+The following sections describe prerequisites and individual build commands.
+
 Transmog compiles BoringSSL, quiche, and the bundled zstd C sources from
 source. A Rust-only installation is therefore insufficient even for
 `cargo check --workspace`.
@@ -133,6 +155,10 @@ build environment below, use the same Cargo build command and run
 `./target/release/transmog-cli --help`.
 
 ### Windows desktop shell
+
+Use `./scripts/run-desktop.ps1` for the complete build-and-launch flow described
+[above](#build-and-launch-the-windows-desktop). The commands below are useful
+when running individual build or verification steps.
 
 The product shell additionally requires the Microsoft Edge WebView2 Evergreen
 Runtime and Node.js 24 or newer with npm. Current Windows 11 installations
