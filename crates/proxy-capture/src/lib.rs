@@ -1448,7 +1448,7 @@ pub fn record_from_observer(
         },
         ObserverEventKind::Completed(_) => CaptureRecordKind::Completed,
         ObserverEventKind::Failed(failure) => CaptureRecordKind::Failed {
-            category: format!("{:?}", failure.kind),
+            category: failure.kind.category().into(),
             message: failure.message.clone(),
         },
         ObserverEventKind::HookInitializationSkipped(diagnostic) => {

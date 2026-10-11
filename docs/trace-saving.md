@@ -4,7 +4,10 @@ Use **Traffic → Save trace…** in the main window or a Capture viewer. It sav
 all retained entries across pages and search results; removed entries are excluded.
 Undo a removal before saving if those entries should be included. The file dialog
 confirms overwriting, and an existing destination is replaced only after a complete
-successful write. Failed reads or writes leave that destination intact.
+successful write. Failed reads or writes leave that destination intact. A progress
+bar reports writing and SAZ conversion by entry, with indeterminate progress while
+preparing or finalizing. Close the dialog to keep working; Traffic continues to
+show save progress, and **Save progress…** reopens the dialog.
 
 Select a request and choose **Certificates…** to inspect its original TLS
 connections, server and client authentication chains, public PEM/DER and recorded
@@ -19,10 +22,18 @@ The Save trace dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
 fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
 extended fidelity** to preserve original source associations and additional
 evidence. SAZ supports optional encryption and network context; ZIP member names
-remain visible. Exchanges missing a request or response head cannot be saved as
-SAZ; choose TMCap to preserve them. HAR 1.2 preserves HTTP exchanges,
-original headers, decoded response bodies and available timings. HAR has no
-password encryption or computer network-context option. Missing bodies are
+remain visible. SAZ includes every exchange. Missing request or response heads
+use clearly labeled compatibility placeholders: Fiddler can show the explanation
+in session comments and message headers; an uncaptured response uses a labeled 599
+status, or 502 for a recorded DNS, TCP or TLS setup failure, and, when
+there are no retained response bytes, explanatory text. These are export
+placeholders, not captured server responses. The save report counts affected
+entries and additional generated TLS connection summaries. Captured opaque CONNECT
+tunnels include their recorded destination, peer and byte totals without invented
+TLS details. TMCap preserves the original missing-head state without placeholders.
+HAR 1.2 preserves HTTP exchanges, original headers, decoded response bodies and
+available timings. HAR has no password encryption or computer network-context
+option. Missing bodies are
 disclosed; binary request bodies use a Transmog extension. See
 [JSON archive import](json-archives.md).
 

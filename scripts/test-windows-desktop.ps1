@@ -8,6 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$ViewerChecks,
+    [switch]$TraceSaveChecks,
     [switch]$KeyRecoveryChecks,
     [string]$NativeTracePath,
     [switch]$HostedRunnerDevToolsPolicy
@@ -24,6 +25,7 @@ if ($ExecutablePath) {
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($TraceSaveChecks -and (-not $ViewerChecks -or $NativeTracePath)) { throw 'TraceSaveChecks requires ViewerChecks and uses its isolated SAZ fixture.' }
 if ($KeyRecoveryChecks -and ($StartupOnly -or $ViewerChecks)) { throw 'KeyRecoveryChecks requires the main-window smoke checks.' }
 if ($NativeTracePath -and -not $ViewerChecks) { throw 'NativeTracePath requires ViewerChecks.' }
 if ($NativeTracePath) { $NativeTracePath = (Resolve-Path -LiteralPath $NativeTracePath).Path }
@@ -238,6 +240,7 @@ try {
             $viewerArguments += @('--process-id', "$($process.Id)", '--close-helper', (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1'))
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
             if ($NativeTracePath) { $viewerArguments += @('--native-source', $NativeTracePath) }
+            if ($TraceSaveChecks) { $viewerArguments += '--trace-save-only' }
             & node @viewerArguments
         } else { & npm @smokeArguments }
     } finally {
@@ -262,11 +265,12 @@ try {
 
     [pscustomobject]@{
         StartupVerified = $true
-        AccessibilityVerified = -not $ViewerChecks
+        AccessibilityVerified = -not $ViewerChecks -or $TraceSaveChecks
         HighContrastVerified = -not $ViewerChecks
         HighDpiVerified = -not $ViewerChecks
         LocalizationLengthVerified = -not $ViewerChecks
-        ViewerFlowVerified = [bool]$ViewerChecks
+        ViewerFlowVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks)
+        TraceSaveProgressVerified = [bool]$ViewerChecks
         KeyRecoveryVerified = [bool]$KeyRecoveryChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet

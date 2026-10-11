@@ -206,3 +206,10 @@ traffic-workspace { display:contents; }
   .selection-bar { grid-template-columns:auto minmax(0,1fr) auto auto; }
   .selection-actions { grid-column:1/-1; }
 }
+
+.trace-save-progress { display:block; width:100%; accent-color:var(--accent); }
+.trace-save-dialog[open] { display:flex; flex-direction:column; overflow:hidden; }
+.trace-save-dialog > h2, .trace-save-dialog > p { flex-shrink:0; }
+.trace-save-dialog form { display:flex; flex-direction:column; flex:1; min-height:0; }
+.trace-save-options { min-height:0; overflow:auto; }
+.trace-save-dialog form > p, .trace-save-dialog progress, .trace-save-dialog footer { flex-shrink:0; }

@@ -19,6 +19,7 @@ httparse.workspace = true
 http.workspace = true
 quick-xml.workspace = true
 time.workspace = true
+boring.workspace = true
 
 [lints]
 workspace = true

@@ -3606,6 +3606,11 @@ impl ClientPerformanceSource {
         let mut observation = TransportObservation {
             leg: "client".into(),
             connection_id: format!("client-{:032x}", self.context.connection_id.0),
+            tunnel_destination: self
+                .context
+                .tunnel
+                .as_ref()
+                .map(|tunnel| tunnel.authority.to_string()),
             outcome: TransportOutcome::Connected,
             peer: Some(self.context.client_addr.to_string()),
             local: Some(self.context.proxy_addr.to_string()),

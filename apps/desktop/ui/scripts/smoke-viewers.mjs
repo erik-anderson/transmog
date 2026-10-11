@@ -3,36 +3,11 @@ import {writeFile, readFile, glob} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {zstdCompressSync} from 'node:zlib';
-import {createHash} from 'node:crypto';
 import {smokeTrafficList} from './smoke-traffic-list.mjs';
 import {smokeCertificates} from './smoke-certificates.mjs';
+import {smokeTraceSave} from './smoke-trace-save.mjs';
 
-// Native probes use the current plain indexed container; encrypted I/O is covered
-// by the CLI and Rust tests. Keep fixtures independent of historical layouts.
-function nativeFixture(records, exchangeId) {
-  const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
-  const encode=(bytes,counter)=>{
-    const compressed=zstdCompressSync(bytes),useCompressed=compressed.length<bytes.length;
-    const prefix=Buffer.alloc(13);prefix.writeBigUInt64LE(BigInt(counter));prefix.writeUInt32LE(bytes.length,8);prefix[12]=Number(useCompressed);
-    const payload=Buffer.concat([prefix,useCompressed?compressed:bytes]);
-    const envelope=Buffer.alloc(8);envelope.writeUInt32LE(payload.length);envelope.writeUInt32LE(crc(payload),4);
-    return Buffer.concat([envelope,payload]);
-  };
-  const header=Buffer.from(JSON.stringify({version:1,compression:'zstd',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
-  const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
-  const frames=[Buffer.from('TMCAP001\0'),size,header];
-  for(const [index,original] of [...records,{kind:'seal',payload:{record_count:records.length}}].entries()) {
-    const record={revision:3,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
-    let body;
-    if(record.kind==='body-segment'&&Array.isArray(record.payload.bytes)) {
-      const bytes=Buffer.from(record.payload.bytes);body=encode(bytes,index*2+2);
-      record.body_index={frame_bytes:body.length,bytes:bytes.length,digest:Array.from(createHash('sha256').update(bytes).digest())};record.payload.bytes=null;
-    }
-    frames.push(encode(Buffer.from(JSON.stringify(record)),index*2+1));if(body)frames.push(body);
-  }
-  return Buffer.concat(frames);
-}
+import {nativeFixture} from './native-fixture.mjs';
 
 const argument=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const port=argument('--port'), source=argument('--source'), executable=argument('--executable'), screenshot=argument('--screenshot');
@@ -75,6 +50,10 @@ try{
   const viewer=await connect(pages[0]);
   await waitFor(()=>viewer.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Saved-file viewer did not finish automatic import');
   process.stdout.write('Viewer file import verified.\n');
+  const traceSave=await smokeTraceSave(viewer,screenshot);
+  if(process.argv.includes('--trace-save-only')) {
+    process.stdout.write(JSON.stringify({nativeTraceSave:traceSave})+'\n');
+  } else {
   const result=await viewer.evaluate(`(async()=>{
     const shell=${root}, workspace=${traffic};
     const controls=[...shell.shadowRoot.querySelectorAll('proxy-toggle,settings-workspace,breakpoint-workspace,automation-workspace')];
@@ -92,7 +71,7 @@ try{
   assert.equal(result.sourceIp,'192.0.2.25');assert.match(result.headers,/\r\n\r\n\r\nHTTP\/1\.1 200 Fixture/);assert.equal(result.body,'');assert.ok(result.traceId);
   assert.equal(result.url,'https://example.invalid/path');
   process.stdout.write('Viewer inspection and permissions verified.\n');
-  const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
+  const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};await workspace.changeTrafficSearchKind({currentTarget:{value:'contents'}});workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
   assert.equal(search.matches,1);assert.equal(search.selected,1);assert.doesNotMatch(search.status,/binary/i);
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMode='regex';workspace.searchInput.value='(';await workspace.runContentSearch();if(!workspace.contentSearchStatus.startsWith('Search failed:'))throw new Error('Invalid regex was not explained');await workspace.clearContentSearch();workspace.searchMode='text';})()`);
   await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
@@ -379,5 +358,6 @@ try{
   const reopened=await connect(reopenedTarget);
   await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===0`),'Reopened main window retained ephemeral traffic');
   assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
-  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource})+'\n');
+  process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource,traceSave})+'\n');
+  }
 }finally{for(const socket of sockets)socket.close();}

@@ -53,25 +53,9 @@ fn bytes(
     Some(bytes)
 }
 
-pub(crate) fn write(
-    application: &Application,
-    destination: PathBuf,
-    redact: bool,
-) -> Result<crate::TraceSaveResult, AppError> {
-    if !destination.is_absolute() {
-        return Err(error("Choose an absolute HAR destination"));
-    }
-    let store = application
-        .body_store()
-        .ok_or_else(|| error("Body retention is not configured"))?;
-    store
-        .flush()
-        .map_err(|_| error("Body metadata is unavailable"))?;
-    let mut sessions = application
-        .session_service()
-        .catalog()
-        .project_retained(Clone::clone);
-    sessions.sort_by_key(|session| session.metadata.started_at);
+fn certificates(
+    sessions: &[SessionSnapshot],
+) -> std::collections::BTreeMap<String, transmog_capture::CertificateDefinition> {
     let mut certificates = std::collections::BTreeMap::new();
     for certificate in sessions
         .iter()
@@ -88,6 +72,30 @@ pub(crate) fn write(
                 });
         }
     }
+    certificates
+}
+
+pub(crate) fn write(
+    application: &Application,
+    destination: PathBuf,
+    redact: bool,
+    progress: &crate::trace_save::Progress,
+) -> Result<crate::TraceSaveResult, AppError> {
+    if !destination.is_absolute() {
+        return Err(error("Choose an absolute HAR destination"));
+    }
+    let store = application
+        .body_store()
+        .ok_or_else(|| error("Body retention is not configured"))?;
+    store
+        .flush()
+        .map_err(|_| error("Body metadata is unavailable"))?;
+    let mut sessions = application
+        .session_service()
+        .catalog()
+        .project_retained(Clone::clone);
+    sessions.sort_by_key(|session| session.metadata.started_at);
+    let certificates = certificates(&sessions);
     let mut temporary = tempfile::NamedTempFile::new_in(
         destination
             .parent()
@@ -120,6 +128,7 @@ pub(crate) fn write(
         .map_err(|_| error("HAR output could not be written"))?;
     let runtime = tokio::runtime::Handle::current();
     let mut incomplete = 0;
+    crate::trace_save::notify(progress, "writing", 0, sessions.len());
     for (position, snapshot) in sessions.iter().enumerate() {
         let entry = entry(
             application,
@@ -135,7 +144,9 @@ pub(crate) fn write(
                 .map_err(|_| error("HAR output failed"))?;
         }
         serde_json::to_writer(&mut temporary, &entry).map_err(|_| error("HAR output failed"))?;
+        crate::trace_save::notify(progress, "writing", position + 1, sessions.len());
     }
+    crate::trace_save::notify(progress, "finalizing", 0, 0);
     temporary
         .write_all(b"]}}")
         .map_err(|_| error("HAR output failed"))?;
@@ -152,6 +163,8 @@ pub(crate) fn write(
         .persist(&destination)
         .map_err(|_| error("HAR could not be saved at this destination"))?;
     Ok(crate::TraceSaveResult {
+        placeholder_entries: 0,
+        connection_entries: 0,
         destination,
         entries: sessions.len(),
         bytes: size,

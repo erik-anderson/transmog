@@ -112,7 +112,7 @@ pub use sessions::{
     TrafficView,
 };
 use thiserror::Error;
-pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveResult};
+pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveProgress, TraceSaveResult};
 pub use traces::{
     TraceImportProgress, TraceImportRequest, TraceImportResult, TraceInspection, TraceMetadataView,
 };
@@ -1472,7 +1472,21 @@ impl Application {
         destination: PathBuf,
         options: TraceSaveOptions,
     ) -> Result<TraceSaveResult, AppError> {
-        trace_save::save(self.clone(), destination, options).await
+        self.save_traffic_trace_with_progress(destination, options, Arc::new(|_| {}))
+            .await
+    }
+
+    /// Saves retained Traffic with progress from the background writer.
+    ///
+    /// # Errors
+    /// Returns storage, metadata collection, or output failures.
+    pub async fn save_traffic_trace_with_progress(
+        &self,
+        destination: PathBuf,
+        options: TraceSaveOptions,
+        progress: Arc<dyn Fn(TraceSaveProgress) + Send + Sync>,
+    ) -> Result<TraceSaveResult, AppError> {
+        trace_save::save(self.clone(), destination, options, progress).await
     }
 
     /// Lists source metadata for every trace in this window's saved workspace.

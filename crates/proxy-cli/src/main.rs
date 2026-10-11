@@ -564,10 +564,17 @@ fn capture_export(arguments: &[String]) -> Result<(), Box<dyn Error>> {
                 let detail = exporter
                     .report()
                     .ok_or_else(|| io::Error::other("SAZ export report is unavailable"))?;
-                if detail.skipped_incomplete > 0 {
-                    return Err(invalid_input(format!(
-                        "SAZ cannot represent {} exchange(s) missing request or response headers. Keep the TMCap input to preserve those entries; no SAZ file was saved",
-                        detail.skipped_incomplete)).into());
+                if detail.placeholder_sessions > 0 {
+                    eprintln!(
+                        "PLACEHOLDER_SESSIONS={}. Uncaptured HTTP headers use labeled SAZ placeholders, not server responses",
+                        detail.placeholder_sessions
+                    );
+                }
+                if detail.connection_sessions > 0 {
+                    eprintln!(
+                        "CONNECTION_CONTEXT_SESSIONS={}. Additional CONNECT rows are Transmog summaries of recorded connection evidence",
+                        detail.connection_sessions
+                    );
                 }
                 if detail.incomplete_bodies > 0 {
                     eprintln!(
@@ -977,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn saz_missing_heads_is_rejected_without_publishing_either_mode() {
+    fn saz_missing_heads_exports_a_labeled_placeholder_in_both_modes() {
         use transmog_capture::{CaptureRecord, CaptureRecordKind};
         use transmog_core::observe::ExchangeBoundary;
         let directory = tempfile::tempdir().unwrap();
@@ -1008,12 +1015,24 @@ mod tests {
                 "--output".into(),
                 output.to_string_lossy().into_owned(),
             ];
-            let error = capture_export(&arguments).unwrap_err().to_string();
-            assert!(error.contains("1 exchange(s)"), "{error}");
-            assert!(error.contains("TMCap"));
-            assert!(!output.exists());
+            capture_export(&arguments).unwrap();
+            let mut archive = transmog_saz::SazArchive::open(
+                std::io::Cursor::new(std::fs::read(output).unwrap()),
+                transmog_saz::SazImportLimits::default(),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(index.sessions.len(), 1);
+            assert_eq!(
+                index.sessions[0].response.as_ref().unwrap().start_line,
+                "HTTP/1.1 599 Transmog response not captured"
+            );
+            assert!(
+                index.sessions[0].metadata.flags["ui-comments"]
+                    .contains("response headers were not captured")
+            );
         }
-        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
     }
 
     #[test]

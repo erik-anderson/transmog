@@ -84,6 +84,21 @@ pub enum TransportOutcome {
     TlsFailed,
 }
 
+impl TransportOutcome {
+    /// Stable serialized name for archive metadata.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PolicyRejected => "policy-rejected",
+            Self::Unavailable => "unavailable",
+            Self::Connected => "connected",
+            Self::DnsFailed => "dns-failed",
+            Self::TcpFailed => "tcp-failed",
+            Self::TlsFailed => "tls-failed",
+        }
+    }
+}
+
 /// Request-relative view of one physical connection setup phase.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -113,7 +128,7 @@ pub struct ConnectionSetupTime {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransportObservation {
-    /// CONNECT authority for an opaque tunnel whose contents and origin TLS are unobserved.
+    /// Recorded CONNECT authority. TLS facts are present only on observed TLS legs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tunnel_destination: Option<String>,
     /// Monotonic sampling point, allowing consumers to reject older snapshots.

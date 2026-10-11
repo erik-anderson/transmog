@@ -45,7 +45,7 @@ export async function smokeTrafficList(client,screenshot) {
   await key('PageUp','PageUp',33);await wait(`${t}.virtualList.indexes.get(${t}.trafficSelection.focused)<19998 && ${t}.selectedDetail?.id===${t}.trafficSelection.focused`);
   await key('End','End',35);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[2])}`);
   assert.ok(await client.evaluate(`${t}.sessions.length<150 && ${t}.rowCache.size<=1024`));
-  await client.evaluate(`(async()=>{const w=${t};w.selectSearchMatches=false;w.searchMetadata=true;w.searchRequestHeaders=false;w.searchResponseHeaders=false;w.searchBodies=false;w.searchInput.value='virtual';await w.runContentSearch();await w.showMatches();})()`);
+  await client.evaluate(`(async()=>{const w=${t};await w.changeTrafficSearchKind({currentTarget:{value:'contents'}});w.selectSearchMatches=false;w.searchMetadata=true;w.searchRequestHeaders=false;w.searchResponseHeaders=false;w.searchBodies=false;w.searchInput.value='virtual';await w.runContentSearch();await w.showMatches();})()`);
   await wait(`!${t}.matchBusy && ${t}.matchDialog.open`);
   const current=await client.evaluate(`${t}.matchEntryId`);
   await client.evaluate(`${t}.moveMatchEntry(-1)`);await wait(`!${t}.matchBusy && ${t}.matchEntryId!==${JSON.stringify(current)}`);

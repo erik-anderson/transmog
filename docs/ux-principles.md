@@ -206,9 +206,20 @@ run. It does not populate Traffic; Stop restores routing and seals that file.
 search results, excluding entries removed from Traffic. Save native traces as
 `.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
 Offer SAZ compatibility and extended-fidelity choices alongside TMCap and HAR in
-Save trace. Extended SAZ preserves original source associations. SAZ cannot
-represent exchanges missing a request or response head; explain the failure and
-offer TMCap instead of silently omitting those entries.
+Save trace. Extended SAZ preserves original source associations. SAZ includes
+exchanges missing a request or response head using clearly labeled
+compatibility placeholders, with an explanation in Fiddler session comments and
+message headers. Missing responses use a labeled 599 status, or 502 for a recorded
+DNS, TCP or TLS setup failure, and explanatory
+text only when no response bytes were retained. Preserve captured heads and body
+bytes, report placeholder counts, and restore missing-head state on Transmog
+reimport. Clearly label generated connection summaries, report their count
+separately, and distinguish interception TLS from opaque CONNECT context without
+inventing handshake details. Export one summary per upstream physical connection,
+including its recorded failure, and interleave summaries with requests by start
+time. Distinguish the last observed snapshot from an unrecorded socket close.
+Save progress stays visible while writing, converting and finalizing,
+including after closing its dialog; closing does not cancel the save.
 Preserve original source metadata and request associations when saving merged
 captures. Network configuration from the saving computer is
 an explicit, unchecked option and stays separate from imported source context;

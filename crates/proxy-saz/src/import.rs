@@ -150,6 +150,29 @@ pub struct ArchiveMetadata {
     pub timers: BTreeMap<String, String>,
     /// Newer `SessionMetrics` attributes and scalar element values.
     pub metrics: BTreeMap<String, String>,
+    /// Recorded CONNECT traffic totals, separate from diagnostic text lengths.
+    pub tunnel_info: BTreeMap<String, String>,
+}
+
+impl ArchiveMetadata {
+    /// Reads the recorded name and PID from the conventional process flag.
+    /// Missing or malformed values do not imply a process on the current host.
+    pub fn client_identity(&self) -> Option<transmog_core::ClientIdentity> {
+        let value = self
+            .flags
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("x-processinfo"))?
+            .1;
+        let (name, pid) = value.rsplit_once(':')?;
+        if name.len() > 4096 {
+            return None;
+        }
+        let pid = pid.parse::<u32>().ok().filter(|pid| *pid != 0)?;
+        Some(transmog_core::ClientIdentity::LocalProcess {
+            pid,
+            name: (!name.is_empty()).then(|| name.to_owned()),
+        })
+    }
 }
 
 /// One saved session with independently optional message evidence.
@@ -456,6 +479,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                     .iter()
                     .chain(metadata.timers.iter())
                     .chain(metadata.metrics.iter())
+                    .chain(metadata.tunnel_info.iter())
                     .map(|(key, value)| key.len() + value.len())
                     .sum::<usize>(),
             );
@@ -865,11 +889,12 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
                         .normalized_value(version)
                         .map_err(|_| SazError::InvalidArchive)?
                         .into_owned();
-                    if key.len() > 255 || value.len() > 16 * 1024 || attributes.len() > 256 {
+                    if key.len() > 255 || attributes.len() > 256 {
                         return Err(SazError::ImportLimitExceeded);
                     }
                     attributes.insert(key, value);
                 }
+                validate_metadata_attribute_sizes(&name, &attributes)?;
                 apply_metadata_attributes(&mut result, &name, attributes)?;
                 if !empty {
                     stack.push(name);
@@ -928,6 +953,26 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
     Ok(result)
 }
 
+fn validate_metadata_attribute_sizes(
+    name: &str,
+    attributes: &BTreeMap<String, String>,
+) -> Result<(), SazError> {
+    let failure_flag = name == "SessionFlag"
+        && attributes.get("N").is_some_and(|name| {
+            matches!(
+                name.as_str(),
+                "x-transmog-failure-category" | "x-transmog-failure-message"
+            )
+        });
+    if attributes
+        .iter()
+        .any(|(key, value)| value.len() > 16 * 1024 && !(failure_flag && key == "V"))
+    {
+        return Err(SazError::ImportLimitExceeded);
+    }
+    Ok(())
+}
+
 fn apply_metadata_attributes(
     result: &mut ArchiveMetadata,
     name: &str,
@@ -936,17 +981,19 @@ fn apply_metadata_attributes(
     match name {
         "Session" => {
             if let Some(value) = attributes.get("BitFlags") {
-                result.bit_flags = value
-                    .strip_prefix("0x")
-                    .map_or_else(
-                        || value.parse().ok(),
-                        |hex| u64::from_str_radix(hex, 16).ok(),
-                    )
-                    .ok_or(SazError::InvalidArchive)?;
+                result.bit_flags = u64::from_str_radix(
+                    value
+                        .strip_prefix("0x")
+                        .or_else(|| value.strip_prefix("0X"))
+                        .unwrap_or(value),
+                    16,
+                )
+                .map_err(|_| SazError::InvalidArchive)?;
                 result.scheme_recorded = true;
             }
         }
         "SessionTimers" => result.timers.extend(attributes),
+        "TunnelInfo" => result.tunnel_info.extend(attributes),
         "SessionFlag" => {
             let key = attributes.remove("N").ok_or(SazError::InvalidArchive)?;
             let value = attributes.remove("V").ok_or(SazError::InvalidArchive)?;
@@ -1242,7 +1289,7 @@ mod tests {
             let mut output = Vec::new();
             assert!(copy_chunked(&mut Cursor::new(body), &mut output, 1024, || false).is_err());
         }
-        let metadata = br#"<Session BitFlags="1048576"/>"#;
+        let metadata = br#"<Session BitFlags="100000"/>"#;
         let (mut archive, result) = index(zip(
             &[
                 (

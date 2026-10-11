@@ -9,6 +9,7 @@ import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
+import { checkTraceSave } from './check-trace-save.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import { checkCertificates } from './check-certificates.mjs';
@@ -74,6 +75,7 @@ await page.addInitScript((workspace) => {
     if(state.automation)state.automation.diagnostics=diagnostics;
   };
   const callbacks = new Map();
+  state.callbackCount=()=>callbacks.size;
   let callbackId = 0;
   window.__TAURI_INTERNALS__ = {
     transformCallback(callback) { const id = ++callbackId; callbacks.set(id, callback); return id; },
@@ -114,7 +116,12 @@ await page.addInitScript((workspace) => {
         case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;state.releasePagePreview?.();return;
-        case 'save_traffic_trace': state.savedTraceArgs=structuredClone(args);if(state.saveTraceError)throw new Error('Fixture trace write failed');return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap',entries:state.sessions.length,bytes:1234,incompleteBodies:0};
+        case 'save_traffic_trace': {
+          state.savedTraceArgs=structuredClone({options:args.options});state.saveTraceChannel=args.onProgress;
+          if(state.deferTraceSave){state.traceSavePending=true;await new Promise(resolve=>state.releaseTraceSave=resolve);state.traceSavePending=false;}
+          if(state.saveTraceError)throw new Error('Fixture trace write failed');
+          return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap',entries:state.sessions.length,bytes:1234,incompleteBodies:0,placeholderEntries:state.tracePlaceholders??0,connectionEntries:state.traceConnections??0};
+        }
         case 'trace_metadata_list': return structuredClone(state.traces??[]);
         case 'cancel_trace_import': state.importCanceled=true;return;
         case 'import_trace': {
@@ -1826,8 +1833,7 @@ try {
   const saveTrace=page.locator('.trace-save-dialog[open]');
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('saz-strict');
   assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),false);
-  await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.savingTrace);
+  await checkTraceSave(page,root,saveTrace);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs)).options.format,'saz-strict');
   await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('har');
@@ -1861,6 +1867,13 @@ try {
   assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true}});
   await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
+  const callbacksBeforeCancel=await page.evaluate(()=>globalThis.__workspaceFixture.callbackCount());
+  for(let attempt=0;attempt<3;attempt++) {
+    await page.locator('.trace-save-dialog[open]').getByRole('button',{name:'Save as…',exact:true}).click();
+    await page.locator('.trace-password-dialog[open]').getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.savingTrace);
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.callbackCount()),callbacksBeforeCancel,'Canceled password prompt leaked a progress channel');
+  }
   await page.locator('.trace-save-dialog[open]').getByRole('button',{name:'Save as…',exact:true}).click();
   await page.locator('.trace-password-dialog[open]').getByLabel('Password',{exact:true}).fill('test-password');
   await page.locator('.trace-password-dialog[open]').getByLabel('Confirm password',{exact:true}).fill('test-password');

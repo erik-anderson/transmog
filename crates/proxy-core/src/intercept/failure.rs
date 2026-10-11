@@ -52,6 +52,27 @@ pub enum ExchangeFailureKind {
     Shutdown,
 }
 
+impl ExchangeFailureKind {
+    /// Stable capture category, independent of operator-facing explanations.
+    #[must_use]
+    pub const fn category(&self) -> &'static str {
+        match self {
+            Self::HookInitialization => "HookInitialization",
+            Self::HookTimedOut => "HookTimedOut",
+            Self::HookPanicked => "HookPanicked",
+            Self::HookAborted(HookAbort::Policy(_)) => "HookAborted(Policy)",
+            Self::HookAborted(HookAbort::Rejected) => "HookAborted(Rejected)",
+            Self::Cancelled => "Cancelled",
+            Self::Body => "Body",
+            Self::RequestTranslation => "RequestTranslation",
+            Self::ResponseTranslation => "ResponseTranslation",
+            Self::Route => "Route",
+            Self::Upstream => "Upstream",
+            Self::Shutdown => "Shutdown",
+        }
+    }
+}
+
 /// Terminal failure delivered to interceptors and observers.
 #[derive(Clone, Debug)]
 pub struct ExchangeFailure {

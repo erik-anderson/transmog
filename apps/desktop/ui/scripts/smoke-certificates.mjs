@@ -21,9 +21,12 @@ export async function smokeCertificates(viewer, traffic, source, nativeFixture, 
   const context=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_certificates',{id:${JSON.stringify(id)}})`);
   assert.equal(context.certificates.length,2);assert.equal(context.connections[0].serverChain.length,2);
   assert.ok(context.certificates.some(certificate=>certificate.subject==='CN=localhost'&&certificate.derBase64));
-  const trigger=await viewer.evaluate(`(()=>{const button=Array.from(${traffic}.querySelectorAll('.selection-actions button')).find(button=>button.textContent==='Certificates…');button.scrollIntoView({block:'nearest'});const rect=button.getBoundingClientRect();return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()`);
+  const trigger=await viewer.evaluate(`(()=>{const button=Array.from(${traffic}.querySelectorAll('.selection-actions button')).find(button=>button.textContent==='Details…');button.scrollIntoView({block:'nearest'});const rect=button.getBoundingClientRect();return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()`);
   for(const type of ['mousePressed','mouseReleased'])await viewer.call('Input.dispatchMouseEvent',{type,...trigger,button:'left',clickCount:1});
-  const component=`${traffic}.certificateViewer`,dialog=`${component}.certificateDialog`;
+  const dialog=`${traffic}.timingDialog`,component=`${traffic}.certificateInspector`;
+  await wait(`${dialog}.open && !${traffic}.timingBusy`);
+  const certificateTab=await viewer.evaluate(`(()=>{const button=${dialog}.querySelector('#details-tab-certificates');const rect=button.getBoundingClientRect();return {x:rect.x+rect.width/2,y:rect.y+rect.height/2};})()`);
+  for(const type of ['mousePressed','mouseReleased'])await viewer.call('Input.dispatchMouseEvent',{type,...certificateTab,button:'left',clickCount:1});
   await wait(`${dialog}.open && !${component}.certificateBusy && ${component}.certificateServerChain.length===2`);
   assert.ok(await viewer.evaluate(`${dialog}.textContent.includes('Certificate issuer was not trusted')`));
   await viewer.evaluate(`(()=>{const button=Array.from(${dialog}.querySelectorAll('.certificate-chain button'))[1];button.click();})()`);
@@ -36,7 +39,7 @@ export async function smokeCertificates(viewer, traffic, source, nativeFixture, 
   if(screenshot)await writeFile(screenshot.replace('.png','-certificates-compact.png'),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
   for(const type of ['keyDown','keyUp'])await viewer.call('Input.dispatchKeyEvent',{type,key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
   await wait(`!${dialog}.open`);
-  assert.ok(await viewer.evaluate(`(()=>{const active=${traffic}.getRootNode().activeElement;return active?.textContent==='Certificates…';})()`));
+  assert.ok(await viewer.evaluate(`(()=>{const active=${traffic}.getRootNode().activeElement;return active===${traffic}.detailsButton;})()`));
   await viewer.call('Emulation.clearDeviceMetricsOverride');
   await viewer.evaluate(`(async()=>{await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(id)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
 }

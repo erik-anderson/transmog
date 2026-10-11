@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 import zlib
+import zipfile
 
 
 def main():
@@ -246,11 +247,12 @@ def main():
         source = fixture / 'missing-response.tmcap'
         write_native(source, [request])
         for mode in ('saz', 'saz-extended'):
-            output = fixture / (mode + '-rejected.saz')
-            error = rejected('capture', 'export', '--input', str(source), '--format', mode,
-                             '--output', str(output))
-            assert '1 exchange(s)' in error and 'TMCap' in error, error
-            assert not output.exists()
+            output = fixture / (mode + '-placeholder.saz')
+            command('capture', 'export', '--input', str(source), '--format', mode,
+                    '--output', str(output))
+            with zipfile.ZipFile(output) as archive:
+                assert archive.read('raw/1_s.txt').startswith(b'HTTP/1.1 599 Transmog response not captured')
+                assert b'ui-comments' in archive.read('raw/1_m.xml')
 
         request['payload']['headers'] = [{'name': list(b'x-fixture'), 'value': list(b'bad\r\nvalue')}]
         response = {'revision': 3, 'sequence': 2, 'exchange_id': 1, 'kind': 'response-head',
@@ -302,7 +304,7 @@ def main():
         print(json.dumps({'ephemeralMemoryOnly': True, 'persistentReuse': True,
                           'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True,
                           'circularMemory': True, 'circularDisk': True, 'circularSaveRecovery': True,
-                          'commandHelp': True, 'lossySazRejected': True,
+                          'commandHelp': True, 'sazPlaceholders': True,
                           'atomicExports': True, 'proofValidation': True, 'artifacts': str(fixture)}))
     finally:
         for process in processes:

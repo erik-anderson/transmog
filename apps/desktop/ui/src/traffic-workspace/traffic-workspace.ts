@@ -105,6 +105,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   private previewPageOperation='';
   @observable savingTrace=false;
   @observable saveTraceStatus='';
+  @observable saveTraceOpen=false;
+  @observable saveTraceCompleted=0;
+  @observable saveTraceTotal=0;
   saveTraceDialog!:HTMLDialogElement;
   saveTraceForm!:HTMLFormElement;
   @observable importingTrace=false;
@@ -1121,13 +1124,34 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   @observable saveTraceFormat='native';
   changeSaveTraceFormat(event:Event):void {this.saveTraceFormat=(event.target as HTMLSelectElement).value;}
-  showSaveTrace():void {if(this.savingTrace)return;this.closePopover(this.filesMenu,this.filesMenuButton);this.saveTraceStatus='';this.saveTraceDialog.showModal();}
+  showSaveTrace():void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace)this.saveTraceStatus='';this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
+  saveTraceClosed():void {this.saveTraceOpen=false;this.filesMenuButton.focus({preventScroll:true});}
   async saveTrafficTrace(event:Event):Promise<void> {
-    event.preventDefault();if(this.savingTrace)return;const data=new FormData(this.saveTraceForm);this.savingTrace=true;this.saveTraceStatus='Choose a destination, then the trace will be saved…';
-    try {const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number}|null>('save_traffic_trace',{options:{format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'}});if(!this.isConnected)return;if(result){this.saveTraceDialog.close();this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);}else this.saveTraceStatus='Save canceled.';}
-    catch(error:unknown){if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);this.savingTrace=false;await this.showError('Trace save failed',describeError(error)+'\n\nChoose a writable destination and try saving again.');}}
-    finally {this.savingTrace=false;}
+    event.preventDefault();if(this.savingTrace)return;
+    const data=new FormData(this.saveTraceForm);
+    this.savingTrace=true;this.saveTraceCompleted=0;this.saveTraceTotal=0;
+    this.saveTraceStatus='Choose a destination, then the trace will be saved…';
+    let onProgress:Channel<{phase:string;completed:number;total:number}>|undefined;
+    try {
+      const password=data.get('encrypt')==='on'?await this.promptTracePassword('Encrypt saved trace',true):null;
+      if(data.get('encrypt')==='on'&&password===null){this.saveTraceStatus='Save canceled.';return;}
+      onProgress=new Channel<{phase:string;completed:number;total:number}>();
+      onProgress.onmessage=progress=>{
+      if(!this.isConnected||!this.savingTrace)return;
+      this.saveTraceCompleted=progress.completed;this.saveTraceTotal=progress.total;
+      const phase=progress.phase==='writing'?'Writing trace':progress.phase==='converting'?'Creating SAZ archive':progress.phase==='finalizing'?'Finalizing trace':'Preparing trace';
+      this.saveTraceStatus=phase+(progress.total?` · ${progress.completed.toLocaleString()} of ${progress.total.toLocaleString()} entries…`:'…');
+      };
+      const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number;placeholderEntries:number;connectionEntries:number}|null>('save_traffic_trace',{options:{format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},onProgress});
+      if(!this.isConnected)return;
+      if(result){
+        this.saveTraceDialog.close();
+        this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.connectionEntries?' · '+result.connectionEntries.toLocaleString()+' generated connection '+(result.connectionEntries===1?'summary':'summaries'):'')+(result.placeholderEntries?' · '+result.placeholderEntries.toLocaleString()+' entries use labeled placeholders for uncaptured headers.':'')+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);
+      }else this.saveTraceStatus='Save canceled.';
+    }
+    catch(error:unknown){if(onProgress)onProgress.onmessage=()=>{};this.savingTrace=false;if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);await this.showError('Trace save failed',describeError(error));}}
+    finally {if(onProgress)onProgress.onmessage=()=>{};this.savingTrace=false;}
   }
   async exportLiveCapture():Promise<void> {
     try { const result = await invoke<{destination:string;records:number;bytes:number}>('export_live_capture'); this.showNotice('TMCap export complete',result.destination,null,null); }

@@ -3,7 +3,8 @@
 //! Bounded Session Archive Zip import and export adapters.
 //!
 //! Strict mode emits only the conventional OPC content-types member, an explicit
-//! `raw/` directory, and three `raw/<id>_{c,s,m}` files per complete HTTP exchange.
+//! `raw/` directory, and three `raw/<id>_{c,s,m}` files per HTTP exchange.
+//! Missing heads use labeled compatibility placeholders without altering evidence.
 //! The native format remains authoritative because SAZ cannot represent every
 //! proxy boundary or hook effect.
 
@@ -23,10 +24,11 @@ use zip::{
     write::{FileOptions, SimpleFileOptions},
 };
 
+mod connections;
 mod evidence;
 mod import;
 mod metadata;
-pub use evidence::SessionEvidence;
+pub use evidence::{FailureEvidence, SessionEvidence};
 pub use import::{
     ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
     SazIndex, SazIssue,
@@ -84,10 +86,12 @@ impl SazLimits {
 /// Detailed conversion result.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SazReport {
-    /// Complete sessions emitted.
+    /// Sessions emitted, including sessions with placeholder heads.
     pub sessions: usize,
-    /// Exchanges omitted because either head was absent.
-    pub skipped_incomplete: usize,
+    /// Sessions with an explicitly labeled placeholder for an uncaptured head.
+    pub placeholder_sessions: usize,
+    /// Generated CONNECT connection-context rows, independent of captured exchanges.
+    pub connection_sessions: usize,
     /// Emitted sessions whose retained body was incomplete.
     pub incomplete_bodies: usize,
     /// ZIP members emitted.
@@ -167,12 +171,47 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
     type Error = SazError;
 
     fn export(&mut self, capture: &RecoveredCapture) -> Result<ExportReport, Self::Error> {
+        self.export_with_progress(capture, |_, _| {})
+    }
+}
+
+impl<W: Write + Seek> SazExporter<W> {
+    /// Exports every exchange, reporting completed sessions while writing.
+    /// Missing heads use labeled compatibility placeholders, never captured evidence.
+    ///
+    /// # Errors
+    /// Returns the same storage, framing and limit errors as [`CaptureExporter::export`].
+    #[allow(clippy::too_many_lines)] // Keep the ZIP transaction and its finalization in one owned pipeline.
+    pub fn export_with_progress(
+        &mut self,
+        capture: &RecoveredCapture,
+        progress: impl Fn(usize, usize),
+    ) -> Result<ExportReport, SazError> {
         if self.report.is_some() {
             return Err(SazError::AlreadyExported);
         }
         let mut output = self.output.take().ok_or(SazError::AlreadyExported)?;
         let starting_position = output.stream_position()?;
-        let mut sessions = collect_sessions(capture, self.limits)?;
+        let sessions = collect_sessions(capture, self.limits)?;
+        let connections = connections::summaries(&sessions);
+        let total = sessions.len().saturating_add(connections.len());
+        if total > self.limits.max_sessions {
+            return Err(SazError::SessionLimitExceeded);
+        }
+        let mut ordered = sessions
+            .into_iter()
+            .map(|(id, session)| (Some(id), session))
+            .chain(connections.into_iter().map(|session| (None, session)))
+            .collect::<Vec<_>>();
+        ordered.sort_by_key(|(_, session)| {
+            let time = ordering_time(session);
+            (
+                time.is_none(),
+                time.unwrap_or_default(),
+                u8::from(time.is_some() && session.kind == SessionKind::Captured),
+            )
+        });
+        progress(0, total);
         let mut writer = ZipWriter::new(output);
         let options = self.file_options();
         write_member(
@@ -203,13 +242,9 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
             )?;
         }
         let mut manifest = Vec::new();
-        for (exchange_id, session) in &mut sessions {
-            if session.request.is_none() || session.response.is_none() {
-                report.skipped_incomplete = report.skipped_incomplete.saturating_add(1);
-                continue;
-            }
-            if report.sessions >= self.limits.max_sessions {
-                return Err(SazError::SessionLimitExceeded);
+        for (exchange_id, session) in &mut ordered {
+            if exchange_id.is_some() && (session.request.is_none() || session.response.is_none()) {
+                report.placeholder_sessions = report.placeholder_sessions.saturating_add(1);
             }
             let session_id = report.sessions.saturating_add(1);
             let incomplete = write_http_session(
@@ -219,26 +254,29 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
                 options,
                 self.limits.max_entries.saturating_sub(report.entries),
             )?;
-            report.sessions = report.sessions.saturating_add(1);
-            report.entries = report.entries.saturating_add(3);
-            if self.mode == SazMode::Extended {
-                report.entries += evidence::write_session(
-                    &mut writer,
-                    session,
-                    *exchange_id,
-                    session_id,
-                    options,
-                    self.limits.max_entries.saturating_sub(report.entries),
-                )?;
+            report.sessions += 1;
+            report.entries += 3;
+            if let Some(exchange_id) = exchange_id {
+                if self.mode == SazMode::Extended {
+                    report.entries += evidence::write_session(
+                        &mut writer,
+                        session,
+                        *exchange_id,
+                        session_id,
+                        options,
+                        self.limits.max_entries.saturating_sub(report.entries),
+                    )?;
+                }
+                report.incomplete_bodies += usize::from(incomplete);
+                manifest.push(ManifestSession {
+                    saz_id: session_id,
+                    native_exchange_id: exchange_id.to_string(),
+                    incomplete,
+                });
+            } else {
+                report.connection_sessions += 1;
             }
-            report.incomplete_bodies = report
-                .incomplete_bodies
-                .saturating_add(usize::from(incomplete));
-            manifest.push(ManifestSession {
-                saz_id: session_id,
-                native_exchange_id: exchange_id.to_string(),
-                incomplete,
-            });
+            progress(report.sessions, total);
         }
         if self.mode == SazMode::Extended {
             if report.entries >= self.limits.max_entries {
@@ -270,8 +308,10 @@ impl<W: Write + Seek> CaptureExporter for SazExporter<W> {
 
 #[derive(Default)]
 struct Session {
+    kind: SessionKind,
     evidence: SessionEvidence,
     started_unix_nanos: Option<u128>,
+    ordering_unix_nanos: Option<u128>,
     request: Option<CapturedRequest>,
     response: Option<CapturedResponse>,
     request_body: Vec<u8>,
@@ -284,6 +324,13 @@ struct Session {
     terminal: TerminalState,
     request_representation: Option<serde_json::Value>,
     response_representation: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SessionKind {
+    #[default]
+    Captured,
+    ConnectionContext,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -344,10 +391,12 @@ fn collect_sessions(
         match &record.kind {
             CaptureRecordKind::ExchangeStarted {
                 client_addr,
+                client_identity,
                 started_unix_nanos,
                 ..
             } => {
                 session.evidence.client_addr = Some(client_addr.clone());
+                session.evidence.client_identity = Some(client_identity.clone());
                 session.started_unix_nanos = Some(*started_unix_nanos);
             }
             CaptureRecordKind::Performance(performance) => {
@@ -447,7 +496,13 @@ fn collect_sessions(
             }
             CaptureRecordKind::Loss { .. } => session.loss = true,
             CaptureRecordKind::Completed => session.terminal = TerminalState::Completed,
-            CaptureRecordKind::Failed { .. } => session.terminal = TerminalState::Failed,
+            CaptureRecordKind::Failed { category, message } => {
+                session.terminal = TerminalState::Failed;
+                session.evidence.failure = Some(FailureEvidence {
+                    category: category.clone(),
+                    message: message.clone(),
+                });
+            }
             _ => {}
         }
     }
@@ -575,8 +630,47 @@ fn render_response(
     if reason.contains(['\r', '\n']) {
         return Err(SazError::UnsafeWireField);
     }
-    render_entity(&mut output, &response.headers, body, trailers)?;
+    let headers = cache_headers_first(&response.headers);
+    render_entity(&mut output, &headers, body, trailers)?;
     Ok(output)
+}
+
+fn cache_headers_first(headers: &[CapturedHeader]) -> std::borrow::Cow<'_, [CapturedHeader]> {
+    let positions = headers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, field)| {
+            (field.name.eq_ignore_ascii_case(b"cache-control")
+                || field.name.eq_ignore_ascii_case(b"expires"))
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let mut expiry_seen = false;
+    let needs_ordering = positions.iter().any(|&index| {
+        if headers[index].name.eq_ignore_ascii_case(b"expires") {
+            expiry_seen = true;
+            false
+        } else {
+            expiry_seen
+        }
+    });
+    if !needs_ordering {
+        return std::borrow::Cow::Borrowed(headers);
+    }
+    let ordered = positions
+        .iter()
+        .filter(|&&index| headers[index].name.eq_ignore_ascii_case(b"cache-control"))
+        .chain(
+            positions
+                .iter()
+                .filter(|&&index| headers[index].name.eq_ignore_ascii_case(b"expires")),
+        )
+        .map(|&index| headers[index].clone());
+    let mut result = headers.to_vec();
+    for (index, field) in positions.iter().copied().zip(ordered) {
+        result[index] = field;
+    }
+    std::borrow::Cow::Owned(result)
 }
 
 fn render_headers(output: &mut Vec<u8>, headers: &[CapturedHeader]) -> Result<(), SazError> {
@@ -693,8 +787,26 @@ fn write_http_session<W: Write + Seek>(
     if remaining < 3 {
         return Err(SazError::EntryLimitExceeded);
     }
-    let request = session.request.as_ref().ok_or(SazError::InvalidArchive)?;
-    let response = session.response.as_ref().ok_or(SazError::InvalidArchive)?;
+    let placeholder_request = CapturedRequest {
+        method: "GET".into(),
+        target: "http://transmog.invalid/uncaptured-request".into(),
+        headers: vec![
+            placeholder_header("Request headers were not captured"),
+            length_header(session.request_body.len()),
+        ],
+    };
+    let diagnostic = response_diagnostic(session);
+    let placeholder_response = CapturedResponse {
+        status: diagnostic.0,
+        headers: vec![
+            placeholder_header("Response headers were not captured"),
+            connections::header(
+                "X-Transmog-Generated",
+                "SAZ diagnostic; not a server response",
+            ),
+        ],
+    };
+    let request = session.request.as_ref().unwrap_or(&placeholder_request);
     let request_incomplete = session.request_body_incomplete
         || session.loss
         || !body_finished(
@@ -717,12 +829,48 @@ fn write_http_session<W: Write + Seek>(
         &session.evidence.request_trailers,
         &metadata::protocol(session, "client-request"),
     )?;
+    // Preserve retained bytes even when their head is missing. Only an empty,
+    // uncaptured response gets explanatory text for ordinary Fiddler inspectors.
+    let response_body = if session.response.is_none() && session.response_body.is_empty() {
+        diagnostic.2.as_bytes()
+    } else {
+        &session.response_body
+    };
+    let mut placeholder_response = placeholder_response;
+    placeholder_response
+        .headers
+        .push(length_header(response_body.len()));
+    if session.response_body.is_empty() {
+        placeholder_response.headers.push(CapturedHeader {
+            name: b"Content-Type".to_vec(),
+            value: Some(b"text/plain; charset=utf-8".to_vec()),
+            original_value_bytes: None,
+        });
+    }
+    let response = session.response.as_ref().unwrap_or(&placeholder_response);
+    let opaque_response = connections::opaque_response(session, response);
+    let response = opaque_response.as_ref().unwrap_or(response);
+    let reason = if session.response.is_none() {
+        diagnostic.1
+    } else if session.kind == SessionKind::ConnectionContext {
+        connections::reason(session)
+    } else if session
+        .request
+        .as_ref()
+        .is_some_and(|request| request.method == "CONNECT")
+        && response.status == 200
+        && metadata::reason(session).is_none_or(|reason| reason == "OK")
+    {
+        "Connection Established"
+    } else {
+        metadata::reason(session).unwrap_or_else(|| reason_phrase(response.status))
+    };
     let response_wire = render_response(
         response,
-        &session.response_body,
+        response_body,
         &session.evidence.response_trailers,
         &metadata::protocol(session, "client-response"),
-        metadata::reason(session).unwrap_or_else(|| reason_phrase(response.status)),
+        reason,
     )?;
     let metadata = metadata::render(session, id, request_incomplete, response_incomplete);
     write_member(writer, &format!("raw/{id}_c.txt"), &request_wire, options)?;
@@ -734,6 +882,114 @@ fn write_http_session<W: Write + Seek>(
         options,
     )?;
     Ok(request_incomplete || response_incomplete)
+}
+
+fn ordering_time(session: &Session) -> Option<u128> {
+    session
+        .started_unix_nanos
+        .or_else(|| {
+            session
+                .evidence
+                .performance
+                .points
+                .iter()
+                .find(|point| {
+                    point.milestone == transmog_core::performance::Milestone::RequestHeaders
+                })
+                .map(|point| u128::from(point.unix_millis) * 1_000_000)
+        })
+        .or(session.ordering_unix_nanos)
+}
+
+fn response_diagnostic(session: &Session) -> (u16, &'static str, String) {
+    use transmog_core::performance::TransportOutcome;
+    let outcome = session
+        .evidence
+        .performance
+        .transports
+        .iter()
+        .rev()
+        .find(|transport| transport.leg == "upstream")
+        .map(|transport| transport.outcome);
+    let (status, reason, explanation) = match outcome {
+        Some(TransportOutcome::DnsFailed) => (
+            502,
+            "Transmog - DNS Lookup Failed",
+            "DNS lookup failed while opening the upstream connection.",
+        ),
+        Some(TransportOutcome::TcpFailed) => (
+            502,
+            "Transmog - Connection Failed",
+            "The upstream TCP connection could not be opened.",
+        ),
+        Some(TransportOutcome::TlsFailed) => (
+            502,
+            "Transmog - TLS Handshake Failed",
+            "Upstream TLS negotiation or certificate verification failed.",
+        ),
+        _ if pending_at_save(session) => (
+            599,
+            "Transmog - Request still active at save",
+            "This exchange was still active when the trace was saved.",
+        ),
+        _ => (
+            599,
+            "Transmog response not captured",
+            "Response headers were not captured.",
+        ),
+    };
+    let target = session
+        .request
+        .as_ref()
+        .map_or("Unavailable", |request| request.target.as_str());
+    let mut body = format!("[Transmog] {explanation}\r\nTarget: {target}\r\n");
+    if let Some(failure) = &session.evidence.failure {
+        use std::fmt::Write as _;
+        let _ = write!(
+            body,
+            "Recorded failure ({}): {}\r\n",
+            failure.category, failure.message
+        );
+    }
+    body.push_str(
+        "\r\nThis is not a server response. This diagnostic was generated for SAZ export.\r\n",
+    );
+    (status, reason, body)
+}
+
+fn pending_at_save(session: &Session) -> bool {
+    let message = "This exchange was still active when the trace was saved.";
+    session
+        .evidence
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.category == "incomplete" || failure.message == message)
+        || session
+            .evidence
+            .provenance
+            .as_ref()
+            .and_then(|entry| entry["source"]["diagnostics"].as_array())
+            .is_some_and(|notes| {
+                notes.iter().any(|note| {
+                    note.as_str() == Some(&format!("Saved failure (incomplete): {message}"))
+                })
+            })
+}
+
+fn placeholder_header(message: &str) -> CapturedHeader {
+    CapturedHeader {
+        name: b"X-Transmog-Placeholder".to_vec(),
+        value: Some(message.as_bytes().to_vec()),
+        original_value_bytes: None,
+    }
+}
+
+fn length_header(bytes: usize) -> CapturedHeader {
+    CapturedHeader {
+        name: b"Content-Length".to_vec(),
+        value: Some(bytes.to_string().into_bytes()),
+        original_value_bytes: None,
+    }
 }
 
 fn write_trace_context<W: Write + Seek>(
@@ -1094,6 +1350,262 @@ mod tests {
         value
     }
 
+    #[test]
+    fn recorded_process_identity_survives_both_saz_profiles() {
+        use transmog_core::ClientIdentity;
+        for identity in [
+            ClientIdentity::LocalProcess {
+                pid: 42,
+                name: Some("browser & helper.exe".into()),
+            },
+            ClientIdentity::LocalProcess {
+                pid: 42,
+                name: None,
+            },
+            ClientIdentity::LocalUnknown,
+            ClientIdentity::Remote,
+        ] {
+            for mode in [SazMode::Strict, SazMode::Extended] {
+                let mut source = capture(true, true);
+                source.records.insert(
+                    0,
+                    CaptureRecord {
+                        sequence: 0,
+                        exchange_id: 42,
+                        kind: CaptureRecordKind::ExchangeStarted {
+                            client_addr: "127.0.0.1:1234".into(),
+                            client_identity: identity.clone(),
+                            listener_addr: "127.0.0.1:8888".into(),
+                            authority: "example.test".into(),
+                            started_unix_nanos: 1_800_000_000_000_000_000,
+                        },
+                    },
+                );
+                let (bytes, _) = export(mode, &source);
+                let mut archive =
+                    SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                let session = &index.sessions[0];
+                let expected = if let ClientIdentity::LocalProcess { pid, name } = &identity {
+                    assert_eq!(
+                        session.metadata.flags["x-processinfo"],
+                        format!("{}:{pid}", name.as_deref().unwrap_or_default())
+                    );
+                    Some(identity.clone())
+                } else {
+                    assert!(!session.metadata.flags.contains_key("x-processinfo"));
+                    None
+                };
+                assert_eq!(session.metadata.client_identity(), expected);
+                if mode == SazMode::Extended {
+                    assert_eq!(
+                        session.evidence.as_ref().unwrap().client_identity.as_ref(),
+                        Some(&identity)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cache_control_precedes_expires_without_changing_values_or_extended_headers() {
+        let mut source = capture(true, true);
+        if let CaptureRecordKind::ResponseHead { headers, .. } = &mut source.records[2].kind {
+            headers.extend([
+                connections::header("Expires", "Thu, 01 Jan 1970 00:00:00 GMT"),
+                connections::header("Cache-Control", "private, must-revalidate, max-age=0"),
+                connections::header(
+                    "Set-Cookie",
+                    "fixture=value; Expires=Sun, 11 Oct 2026 00:00:00 GMT",
+                ),
+                connections::header("Cache-Control", "no-transform"),
+            ]);
+        }
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let (bytes, _) = export(mode, &source);
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let raw = String::from_utf8(member(&mut archive, "raw/1_s.txt")).unwrap();
+            assert!(
+                raw.find("Cache-Control: private").unwrap() < raw.find("Expires: Thu").unwrap()
+            );
+            assert!(
+                raw.find("Cache-Control: no-transform").unwrap()
+                    < raw.find("Expires: Thu").unwrap()
+            );
+            assert!(raw.contains("Set-Cookie: fixture=value; Expires=Sun"));
+            if mode == SazMode::Extended {
+                let evidence: SessionEvidence =
+                    serde_json::from_slice(&member(&mut archive, "transmog/session-1.json"))
+                        .unwrap();
+                let fields = evidence.response_headers.unwrap();
+                assert_eq!(fields[1].name, b"Expires");
+                assert_eq!(fields[2].name, b"Cache-Control");
+            }
+        }
+    }
+
+    #[test]
+    fn generated_connections_use_http_tunnel_flags_and_no_fiddler_attribution() {
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let mut source = capture(true, true);
+            source.records.push(CaptureRecord {
+                sequence: 6,
+                exchange_id: 42,
+                kind: CaptureRecordKind::Performance(connections::tests::evidence()),
+            });
+            let (bytes, report) = export(mode, &source);
+            assert_eq!(report.sessions, 2);
+            assert_eq!(report.connection_sessions, 1);
+            let mut archive =
+                SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            let summary = &index.sessions[1];
+            assert_eq!(
+                summary.request.as_ref().unwrap().start_line,
+                "CONNECT example.test:443 HTTP/1.1"
+            );
+            assert_eq!(
+                summary.response.as_ref().unwrap().start_line,
+                "HTTP/1.1 200 Connection Established"
+            );
+            assert_eq!(summary.metadata.bit_flags, 0x2400);
+            assert_eq!(
+                summary.metadata.flags["x-transmog-connection-context"],
+                "true"
+            );
+            assert!(!summary.request.as_ref().unwrap().body.dropped);
+            assert!(!summary.response.as_ref().unwrap().body.dropped);
+            assert!(
+                summary
+                    .response
+                    .as_ref()
+                    .unwrap()
+                    .headers
+                    .values("Content-Type")
+                    .next()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Verify wire ordering, metadata, manifest association and headers together.
+    fn connection_attempts_are_separate_chronological_rows_with_recorded_outcomes() {
+        use transmog_core::performance::{
+            ConnectionTiming, Milestone, TimingPoint, TransportOutcome,
+        };
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let mut source = capture(true, true);
+            let mut performance = connections::tests::evidence();
+            performance.points.push(TimingPoint {
+                milestone: Milestone::RequestHeaders,
+                unix_millis: 1_800_000_000_000,
+                offset_micros: 0,
+            });
+            let mut first = performance.transports[1].clone();
+            first.setup_timings = vec![ConnectionTiming {
+                phase: "tcp".into(),
+                began_offset_micros: -3000,
+                ended_offset_micros: -2000,
+                request_wait_micros: 0,
+            }];
+            first.sampled_offset_micros = 500;
+            first.bytes_read = Some(11);
+            first.bytes_written = Some(22);
+            let mut failed = first.clone();
+            failed.connection_id = "failed-origin".into();
+            failed.outcome = TransportOutcome::DnsFailed;
+            failed.setup_timings[0].began_offset_micros = -1000;
+            failed.setup_timings[0].ended_offset_micros = -500;
+            performance.transports[1] = first;
+            performance.transports.push(failed);
+            source.records.push(CaptureRecord {
+                sequence: 6,
+                exchange_id: 42,
+                kind: CaptureRecordKind::Performance(performance),
+            });
+            let (bytes, report) = export(mode, &source);
+            assert_eq!((report.sessions, report.connection_sessions), (3, 2));
+            let mut archive =
+                SazArchive::open(Cursor::new(bytes.clone()), SazImportLimits::default()).unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            let first = &index.sessions[0];
+            let failed = &index.sessions[1];
+            let request = &index.sessions[2];
+            assert!(
+                first
+                    .request
+                    .as_ref()
+                    .unwrap()
+                    .start_line
+                    .starts_with("CONNECT ")
+            );
+            assert!(
+                request
+                    .request
+                    .as_ref()
+                    .unwrap()
+                    .start_line
+                    .starts_with("POST ")
+            );
+            assert_eq!(
+                first.response.as_ref().unwrap().start_line,
+                "HTTP/1.1 200 Connection Established"
+            );
+            assert_eq!(
+                failed.response.as_ref().unwrap().start_line,
+                "HTTP/1.1 502 Transmog - DNS Lookup Failed"
+            );
+            assert_eq!(failed.metadata.bit_flags, 0x400);
+            for entry in [first, failed] {
+                let response = entry.response.as_ref().unwrap();
+                assert!(response.headers.values("Content-Type").next().is_none());
+                assert!(response.headers.values("EndTime").next().is_none());
+                assert_eq!(
+                    response.headers.values("ClientToServerBytes").next(),
+                    Some(b"22".as_slice())
+                );
+                assert_eq!(
+                    response.headers.values("ServerToClientBytes").next(),
+                    Some(b"11".as_slice())
+                );
+                assert_eq!(
+                    response.headers.values("Transmog-Time-Zone").next(),
+                    Some(b"UTC".as_slice())
+                );
+            }
+            assert!(
+                first.metadata.timers["ClientBeginRequest"]
+                    < failed.metadata.timers["ClientBeginRequest"]
+            );
+            assert!(
+                failed.metadata.timers["ClientBeginRequest"]
+                    < request.metadata.timers["ClientBeginRequest"]
+            );
+            assert!(
+                failed
+                    .response
+                    .as_ref()
+                    .unwrap()
+                    .headers
+                    .values("Timestamp")
+                    .next()
+                    .is_some()
+            );
+            let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+            for id in 1..=2 {
+                let raw = String::from_utf8(member(&mut zip, &format!("raw/{id}_s.txt"))).unwrap();
+                assert_eq!(raw.matches("== Capturing proxy to origin ==").count(), 1);
+            }
+            if mode == SazMode::Extended {
+                let manifest: serde_json::Value =
+                    serde_json::from_slice(&member(&mut zip, "transmog/manifest.json")).unwrap();
+                assert_eq!(manifest["sessions"][0]["saz_id"], 3);
+                assert!(zip.by_name("transmog/session-3.json").is_ok());
+            }
+        }
+    }
+
     fn failed_capture(saved: bool) -> RecoveredCapture {
         let mut source = capture(true, true);
         let mut records = Vec::new();
@@ -1144,6 +1656,42 @@ mod tests {
         }
         source.records = records;
         source
+    }
+
+    #[test]
+    fn legacy_failure_categories_and_long_explanations_export_without_field_caps() {
+        use transmog_core::intercept::{ExchangeFailureKind, HookAbort};
+        let category = format!(
+            "{:?}",
+            ExchangeFailureKind::HookAborted(HookAbort::Policy("policy explanation ".repeat(100)))
+        );
+        let message = "拒否された <policy> explanation.\r\n\tNext line & details.\n".repeat(400);
+        assert!(category.len() > 512 && message.len() > 8192);
+        let mut source = capture(true, true);
+        source.records.last_mut().unwrap().kind = CaptureRecordKind::Failed {
+            category: category.clone(),
+            message: message.clone(),
+        };
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            let (bytes, report) = export(mode, &source);
+            assert_eq!(report.sessions, 1);
+            let mut archive =
+                SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(
+                index.sessions[0].metadata.flags["x-transmog-failure-category"],
+                category
+            );
+            assert_eq!(
+                index.sessions[0].metadata.flags["x-transmog-failure-message"],
+                message
+            );
+            if let Some(evidence) = &index.sessions[0].evidence {
+                let failure = evidence.failure.as_ref().unwrap();
+                assert_eq!(failure.category, category);
+                assert_eq!(failure.message, message);
+            }
+        }
     }
 
     #[test]
@@ -1544,6 +2092,104 @@ mod tests {
     }
 
     #[test]
+    fn opaque_connect_exports_limited_context_and_dns_failure_without_inventing_tls() {
+        use transmog_core::performance::{
+            PerformanceEvidence, TransportObservation, TransportOutcome,
+        };
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            for failed in [false, true] {
+                let mut source = capture(!failed, true);
+                source
+                    .records
+                    .retain(|record| !matches!(record.kind, CaptureRecordKind::BodySegment { .. }));
+                for record in &mut source.records {
+                    if let CaptureRecordKind::RequestHead { method, target, .. } = &mut record.kind
+                    {
+                        *method = "CONNECT".into();
+                        *target = "https://example.test:443/".into();
+                    }
+                }
+                source.records.push(CaptureRecord {
+                    sequence: 10,
+                    exchange_id: 42,
+                    kind: CaptureRecordKind::Performance(PerformanceEvidence {
+                        transports: vec![TransportObservation {
+                            leg: "upstream".into(),
+                            connection_id: "opaque".into(),
+                            tunnel_destination: Some("example.test:443".into()),
+                            peer: (!failed).then(|| "192.0.2.1:443".into()),
+                            outcome: if failed {
+                                TransportOutcome::DnsFailed
+                            } else {
+                                TransportOutcome::Connected
+                            },
+                            bytes_read: Some(123),
+                            bytes_written: Some(456),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                });
+                if failed {
+                    source.records.push(CaptureRecord {
+                        sequence: 11,
+                        exchange_id: 42,
+                        kind: CaptureRecordKind::Failed {
+                            category: "Upstream".into(),
+                            message: "Recorded name lookup failed".into(),
+                        },
+                    });
+                }
+                let (bytes, report) = export(mode, &source);
+                assert_eq!(report.sessions, 1);
+                assert_eq!(report.connection_sessions, 0);
+                let mut zip = zip::ZipArchive::new(Cursor::new(bytes.clone())).unwrap();
+                let response_wire = member(&mut zip, "raw/1_s.txt");
+                drop(zip);
+                let mut archive =
+                    SazArchive::open(Cursor::new(bytes), SazImportLimits::default()).unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                let session = &index.sessions[0];
+                assert_eq!(
+                    session.request.as_ref().unwrap().start_line,
+                    "CONNECT example.test:443 HTTP/1.1"
+                );
+                let response = session.response.as_ref().unwrap();
+                assert!(!String::from_utf8_lossy(&response.raw_head).contains("Fiddler"));
+                assert!(!String::from_utf8_lossy(&response.raw_head).contains("TLSv"));
+                if failed {
+                    assert_eq!(
+                        response.start_line,
+                        "HTTP/1.1 502 Transmog - DNS Lookup Failed"
+                    );
+                    assert_eq!(session.metadata.bit_flags & 0x1100, 0);
+                    assert_eq!(
+                        session.metadata.flags["x-transmog-failure-message"],
+                        "Recorded name lookup failed"
+                    );
+                    assert!(
+                        String::from_utf8_lossy(&response_wire)
+                            .contains("Recorded name lookup failed")
+                    );
+                } else {
+                    assert_eq!(response.start_line, "HTTP/1.1 200 Connection Established");
+                    assert_eq!(session.metadata.bit_flags & 0x1001, 0x1000);
+                    assert_eq!(session.metadata.tunnel_info["BytesIngress"], "123");
+                    assert_eq!(session.metadata.tunnel_info["BytesEgress"], "456");
+                    assert!(
+                        response
+                            .headers
+                            .values("Transmog-Tunnel")
+                            .next()
+                            .unwrap()
+                            .starts_with(b"Opaque CONNECT")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn all_profiles_include_explicit_raw_directory_even_without_sessions() {
         for mode in [SazMode::Strict, SazMode::Extended] {
             for include_response in [false, true] {
@@ -1566,7 +2212,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_bodies_are_disclosed_and_incomplete_sessions_are_skipped() {
+    fn incomplete_bodies_are_disclosed_and_missing_heads_use_placeholders() {
         let (bytes, report) = export(SazMode::Extended, &capture(true, false));
         assert_eq!(report.incomplete_bodies, 1);
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -1576,9 +2222,60 @@ mod tests {
             serde_json::from_slice(&member(&mut archive, "transmog/manifest.json")).unwrap();
         assert_eq!(manifest["sessions"][0]["native_exchange_id"], "42");
 
-        let (_, report) = export(SazMode::Strict, &capture(false, true));
-        assert_eq!(report.sessions, 0);
-        assert_eq!(report.skipped_incomplete, 1);
+        let (bytes, report) = export(SazMode::Strict, &capture(false, true));
+        assert_eq!(report.sessions, 1);
+        assert_eq!(report.placeholder_sessions, 1);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let response = String::from_utf8(member(&mut archive, "raw/1_s.txt")).unwrap();
+        assert!(response.starts_with("HTTP/1.1 599 Transmog response not captured\r\n"));
+        assert!(response.contains("This is not a server response."));
+        let metadata = String::from_utf8(member(&mut archive, "raw/1_m.xml")).unwrap();
+        assert!(metadata.contains("ui-comments"));
+        assert!(metadata.contains("x-transmog-missing-response-head"));
+    }
+
+    #[test]
+    fn missing_heads_preserve_neighboring_messages_and_retained_body_bytes() {
+        for mode in [SazMode::Strict, SazMode::Extended] {
+            for boundary in [
+                ExchangeBoundary::ClientRequest,
+                ExchangeBoundary::ClientResponse,
+            ] {
+                let mut capture = capture(true, true);
+                capture.records.retain(|record| !matches!(&record.kind,
+                    CaptureRecordKind::RequestHead { boundary: head, .. } | CaptureRecordKind::ResponseHead { boundary: head, .. } if *head == boundary));
+                let (bytes, report) = export(mode, &capture);
+                assert_eq!(report.sessions, 1);
+                assert_eq!(report.placeholder_sessions, 1);
+                let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+                let request = member(&mut archive, "raw/1_c.txt");
+                let response = member(&mut archive, "raw/1_s.txt");
+                assert!(request.ends_with(b"req"));
+                assert!(response.ends_with(b"res"));
+                let missing = if boundary == ExchangeBoundary::ClientRequest {
+                    &request
+                } else {
+                    &response
+                };
+                let present = if boundary == ExchangeBoundary::ClientRequest {
+                    &response
+                } else {
+                    &request
+                };
+                assert!(String::from_utf8_lossy(missing).contains("X-Transmog-Placeholder"));
+                assert!(!String::from_utf8_lossy(present).contains("X-Transmog-Placeholder"));
+                if mode == SazMode::Extended {
+                    let evidence: SessionEvidence =
+                        serde_json::from_slice(&member(&mut archive, "transmog/session-1.json"))
+                            .unwrap();
+                    if boundary == ExchangeBoundary::ClientRequest {
+                        assert!(evidence.request_headers.is_none());
+                    } else {
+                        assert!(evidence.response_headers.is_none());
+                    }
+                }
+            }
+        }
     }
 
     #[test]

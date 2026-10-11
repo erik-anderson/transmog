@@ -559,7 +559,16 @@ fn import_saz(
             return Err(invalid("Duplicate SAZ source metadata"));
         }
     }
+    let generated_outcomes = generated_connection_outcomes(&index.sessions);
     for (position, mut session) in index.sessions.into_iter().enumerate() {
+        if session
+            .metadata
+            .flags
+            .get("x-transmog-connection-context")
+            .is_some_and(|value| value == "true")
+        {
+            continue;
+        }
         let evidence = session.evidence.take();
         if let Some(evidence) = &evidence {
             head_bytes += serde_json::to_vec(evidence)
@@ -585,19 +594,54 @@ fn import_saz(
         if saved.as_ref().is_some_and(|saved| !saved.valid()) {
             return Err(invalid("SAZ entry association exceeds its limits"));
         }
+        let generated_connect_headers = session
+            .metadata
+            .flags
+            .get("x-transmog-connect-export-headers")
+            .map(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if !generated_connect_headers.is_empty()
+            && evidence.is_none()
+            && let Some(response) = &mut session.response
+        {
+            response.headers = HeaderBlock::from_fields(
+                response
+                    .headers
+                    .iter()
+                    .filter(|field| {
+                        !generated_connect_headers
+                            .iter()
+                            .any(|name| field.name().eq_ignore_ascii_case(name.as_bytes()))
+                    })
+                    .cloned()
+                    .collect(),
+            );
+        }
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
         let id = ExchangeId(u128::from(prefix) << 64 | (position as u128 + 1));
+        let missing_request = session
+            .metadata
+            .flags
+            .get("x-transmog-missing-request-head")
+            .is_some_and(|value| value == "true");
+        let missing_response = session
+            .metadata
+            .flags
+            .get("x-transmog-missing-response-head")
+            .is_some_and(|value| value == "true");
         let mut request = session
             .request
             .as_ref()
+            .filter(|_| !missing_request)
             .map(|request| request.request_head(&session.metadata))
             .transpose()
             .map_err(|_| invalid("Saved request target is unavailable"))?;
         let mut response = session
             .response
             .as_ref()
+            .filter(|_| !missing_response)
             .map(transmog_saz::ArchiveMessage::response_head)
             .transpose()
             .map_err(|_| invalid("Saved response head is unavailable"))?;
@@ -648,7 +692,18 @@ fn import_saz(
             .unwrap_or_else(|| {
                 client_ip.map_or_else(
                     || "127.0.0.1:0".parse().expect("constant peer"),
-                    |ip| SocketAddr::new(ip, 0),
+                    |ip| {
+                        SocketAddr::new(
+                            ip,
+                            session
+                                .metadata
+                                .flags
+                                .iter()
+                                .find(|(name, _)| name.eq_ignore_ascii_case("x-clientport"))
+                                .and_then(|(_, port)| port.parse::<u16>().ok())
+                                .unwrap_or(0),
+                        )
+                    },
                 )
             });
         let started = session
@@ -683,16 +738,22 @@ fn import_saz(
             id,
             target,
             client,
-            if match client.ip() {
-                IpAddr::V6(ip) => ip
-                    .to_ipv4_mapped()
-                    .map_or(ip.is_loopback(), |ip| ip.is_loopback()),
-                IpAddr::V4(ip) => ip.is_loopback(),
-            } {
-                ClientIdentity::default()
-            } else {
-                ClientIdentity::Remote
-            },
+            evidence
+                .as_ref()
+                .and_then(|evidence| evidence.client_identity.clone())
+                .or_else(|| session.metadata.client_identity())
+                .unwrap_or_else(|| {
+                    if match client.ip() {
+                        IpAddr::V6(ip) => ip
+                            .to_ipv4_mapped()
+                            .map_or(ip.is_loopback(), |ip| ip.is_loopback()),
+                        IpAddr::V4(ip) => ip.is_loopback(),
+                    } {
+                        ClientIdentity::default()
+                    } else {
+                        ClientIdentity::Remote
+                    }
+                }),
             version,
             started,
         );
@@ -708,20 +769,88 @@ fn import_saz(
                     .take(64)
                     .map(|(key, value)| (key.clone(), value.clone()))
                     .collect::<BTreeMap<_, _>>();
-                if !details.is_empty() {
+                let outcome = session
+                    .metadata
+                    .flags
+                    .get(if leg == "client" {
+                        "x-transmog-client-connection-outcome"
+                    } else {
+                        "x-transmog-server-connection-outcome"
+                    })
+                    .and_then(|value| {
+                        serde_json::from_value::<transmog_core::performance::TransportOutcome>(
+                            Value::String(value.clone()),
+                        )
+                        .ok()
+                    })
+                    .or_else(|| {
+                        (leg == "upstream")
+                            .then(|| {
+                                session
+                                    .metadata
+                                    .flags
+                                    .get("x-transmog-server-connection-id")
+                                    .and_then(|id| generated_outcomes.get(id).copied().flatten())
+                            })
+                            .flatten()
+                    });
+                if !details.is_empty() || outcome.is_some() {
                     let value = |suffix: &str| {
                         details
                             .iter()
                             .find(|(key, _)| key.eq_ignore_ascii_case(&format!("{prefix}{suffix}")))
                             .map(|(_, value)| value.clone())
                     };
+                    let server_name = value("sni");
                     snapshot.performance.transports.push(
                         transmog_core::performance::TransportObservation {
                             leg: leg.into(),
-                            connection_id: format!("saz-{}-{leg}", session.source_id),
+                            connection_id: session
+                                .metadata
+                                .flags
+                                .get(if leg == "client" {
+                                    "x-transmog-client-connection-id"
+                                } else {
+                                    "x-transmog-server-connection-id"
+                                })
+                                .filter(|id| id.len() <= 128)
+                                .cloned()
+                                .unwrap_or_else(|| format!("saz-{}-{leg}", session.source_id)),
+                            outcome: outcome.unwrap_or_default(),
+                            tunnel_destination: if leg == "client" {
+                                session
+                                    .metadata
+                                    .flags
+                                    .get("x-transmog-connect-destination")
+                                    .cloned()
+                            } else {
+                                request
+                                    .as_ref()
+                                    .filter(|request| request.method == "CONNECT")
+                                    .map(|request| request.target.authority.clone())
+                            },
+                            bytes_read: (leg == "upstream")
+                                .then(|| {
+                                    session
+                                        .metadata
+                                        .tunnel_info
+                                        .get("BytesIngress")
+                                        .and_then(|value| value.replace(',', "").parse().ok())
+                                })
+                                .flatten(),
+                            bytes_written: (leg == "upstream")
+                                .then(|| {
+                                    session
+                                        .metadata
+                                        .tunnel_info
+                                        .get("BytesEgress")
+                                        .and_then(|value| value.replace(',', "").parse().ok())
+                                })
+                                .flatten(),
                             tls_version: value("protocol"),
                             cipher: value("cipher"),
-                            tls: Some(transmog_core::TlsEvidence {
+                            tls: (!details.is_empty()).then(|| transmog_core::TlsEvidence {
+                                server_name,
                                 details,
                                 ..transmog_core::TlsEvidence::default()
                             }),
@@ -739,7 +868,26 @@ fn import_saz(
                 .map(String::as_str),
             Some("failed" | "active")
         ) {
-            snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
+            let failure = evidence
+                .as_ref()
+                .and_then(|evidence| evidence.failure.as_ref());
+            let category = failure
+                .map(|failure| failure.category.as_str())
+                .or_else(|| {
+                    session
+                        .metadata
+                        .flags
+                        .get("x-transmog-failure-category")
+                        .map(String::as_str)
+                });
+            let message = failure.map(|failure| failure.message.as_str()).or_else(|| {
+                session
+                    .metadata
+                    .flags
+                    .get("x-transmog-failure-message")
+                    .map(String::as_str)
+            });
+            snapshot.terminal = Some(saved_failure(snapshot.metadata.clone(), category, message));
         }
         let mut raw_blocks = Vec::new();
         for (message, boundary, response_head) in [
@@ -753,7 +901,24 @@ fn import_saz(
             let Some(message) = message else {
                 continue;
             };
-            let version = if boundary == ExchangeBoundary::ClientRequest {
+            let missing_head = if boundary == ExchangeBoundary::ClientRequest {
+                missing_request
+            } else {
+                missing_response
+            };
+            if missing_response
+                && boundary == ExchangeBoundary::ClientResponse
+                && session
+                    .metadata
+                    .flags
+                    .get("x-transmog-placeholder-response-body")
+                    .is_some_and(|value| value == "true")
+            {
+                continue;
+            }
+            let version = if missing_head {
+                None
+            } else if boundary == ExchangeBoundary::ClientRequest {
                 message.start_line.split_ascii_whitespace().last()
             } else {
                 message.start_line.split_ascii_whitespace().next()
@@ -787,6 +952,13 @@ fn import_saz(
                             boundary: crate::inspector::boundary(boundary),
                             version: version.into(),
                             reason: (boundary == ExchangeBoundary::ClientResponse).then(|| {
+                                if let Some(reason) = session
+                                    .metadata
+                                    .flags
+                                    .get("x-transmog-original-connect-response-reason")
+                                {
+                                    return reason.clone();
+                                }
                                 message
                                     .start_line
                                     .splitn(3, ' ')
@@ -802,7 +974,11 @@ fn import_saz(
             if head_bytes > MAX_HEAD_BYTES {
                 return Err(invalid("Saved trace headers exceed the viewer index limit"));
             }
-            if let Ok(raw) = std::str::from_utf8(&message.raw_head) {
+            if !missing_head
+                && (generated_connect_headers.is_empty()
+                    || boundary != ExchangeBoundary::ClientResponse)
+                && let Ok(raw) = std::str::from_utf8(&message.raw_head)
+            {
                 raw_blocks.push(raw.trim_end_matches(['\r', '\n']).to_owned());
             }
             let (observed, mut trailers, mut complete) = if message.body.chunked
@@ -851,10 +1027,14 @@ fn import_saz(
                 truncated: !complete,
                 trailers,
             });
+            let mut body_headers = message.headers;
+            if missing_head {
+                body_headers = HeaderBlock::default();
+            }
             result.bodies.push(ImportedBody {
                 id,
                 boundary,
-                headers: message.headers,
+                headers: body_headers,
                 response: response_head,
                 observed,
                 complete,
@@ -867,6 +1047,36 @@ fn import_saz(
         }
         if let Some(evidence) = &evidence {
             snapshot.performance.merge(&evidence.performance);
+        }
+        if request
+            .as_ref()
+            .is_some_and(|request| request.method == "CONNECT")
+            && session.metadata.bit_flags & 0x1000 != 0
+            && !snapshot
+                .performance
+                .transports
+                .iter()
+                .any(|transport| transport.tunnel_destination.is_some())
+        {
+            let number = |name| {
+                session
+                    .metadata
+                    .tunnel_info
+                    .get(name)
+                    .and_then(|value| value.replace(',', "").parse::<u64>().ok())
+            };
+            snapshot.performance.transports.push(
+                transmog_core::performance::TransportObservation {
+                    leg: "upstream".into(),
+                    connection_id: format!("saz-{}-tunnel", session.source_id),
+                    tunnel_destination: request
+                        .as_ref()
+                        .map(|request| request.target.authority.clone()),
+                    bytes_read: number("BytesIngress"),
+                    bytes_written: number("BytesEgress"),
+                    ..Default::default()
+                },
+            );
         }
         let mut timings = session.metadata.timers;
         timings.extend(session.metadata.metrics);
@@ -914,6 +1124,53 @@ fn import_saz(
     Ok(result)
 }
 
+fn generated_connection_outcomes(
+    sessions: &[transmog_saz::ArchiveSession],
+) -> BTreeMap<String, Option<transmog_core::performance::TransportOutcome>> {
+    use transmog_core::performance::TransportOutcome;
+    let mut outcomes = BTreeMap::new();
+    for session in sessions {
+        if session
+            .metadata
+            .flags
+            .get("x-transmog-connection-context")
+            .is_none_or(|value| value != "true")
+        {
+            continue;
+        }
+        let Some(id) = session
+            .metadata
+            .flags
+            .get("x-transmog-server-connection-id")
+            .filter(|id| !id.is_empty() && id.len() <= 128)
+        else {
+            continue;
+        };
+        let Some(response) = &session.response else {
+            continue;
+        };
+        let outcome = match response
+            .start_line
+            .splitn(3, ' ')
+            .skip(1)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            ["200", "Connection Established"] => TransportOutcome::Connected,
+            ["502", "Transmog - DNS Lookup Failed"] => TransportOutcome::DnsFailed,
+            ["502", "Transmog - Connection Failed"] => TransportOutcome::TcpFailed,
+            ["502", "Transmog - TLS Handshake Failed"] => TransportOutcome::TlsFailed,
+            ["502", "Transmog - Connection Rejected"] => TransportOutcome::PolicyRejected,
+            _ => continue,
+        };
+        let previous = outcomes.entry(id.clone()).or_insert(Some(outcome));
+        if *previous != Some(outcome) {
+            *previous = None;
+        }
+    }
+    outcomes
+}
+
 #[derive(Default)]
 struct NativeSession {
     provenance: Option<SavedEntry>,
@@ -927,6 +1184,7 @@ struct NativeSession {
     bodies: BTreeMap<String, NativeBody>,
     completed: bool,
     failed: bool,
+    failure: Option<(String, String)>,
     loss: u64,
     sequence: u64,
     diagnostics: Vec<String>,
@@ -1273,10 +1531,21 @@ fn apply_native_frame(
         CaptureRecordKind::Completed => row.completed = true,
         CaptureRecordKind::Failed { category, message } => {
             row.failed = true;
+            *budget = budget.saturating_add(category.len() + message.len());
             if row.diagnostics.len() < 64 {
-                row.diagnostics
-                    .push(format!("Saved failure ({category}): {message}"));
+                let mut diagnostic = format!("Saved failure ({category}): {message}");
+                if diagnostic.len() > 8192 {
+                    let suffix = "… (full explanation retained in failure metadata)";
+                    let mut end = 8192 - suffix.len();
+                    while !diagnostic.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    diagnostic.truncate(end);
+                    diagnostic.push_str(suffix);
+                }
+                row.diagnostics.push(diagnostic);
             }
+            row.failure = Some((category, message));
         }
         CaptureRecordKind::Trailers { boundary, headers } => {
             let trailers = native_headers(headers)?;
@@ -1418,7 +1687,11 @@ fn append_native(
         );
     }
     if !row.completed || row.failed {
-        snapshot.terminal = Some(import_failure(snapshot.metadata.clone()));
+        snapshot.terminal = Some(saved_failure(
+            snapshot.metadata.clone(),
+            row.failure.as_ref().map(|failure| failure.0.as_str()),
+            row.failure.as_ref().map(|failure| failure.1.as_str()),
+        ));
     }
     // A completed empty body often has no segment record. Preserve that
     // case, but do not manufacture a complete empty body when a declared
@@ -1714,13 +1987,37 @@ fn empty_snapshot(
     }
 }
 fn import_failure(metadata: Arc<ExchangeMetadata>) -> SessionTerminal {
+    saved_failure(metadata, None, None)
+}
+fn saved_failure(
+    metadata: Arc<ExchangeMetadata>,
+    category: Option<&str>,
+    message: Option<&str>,
+) -> SessionTerminal {
     SessionTerminal::Failed(ExchangeFailure {
         metadata,
         stage: ExchangeStage::Terminal,
-        kind: ExchangeFailureKind::Body,
+        kind: match category {
+            Some("HookInitialization") => ExchangeFailureKind::HookInitialization,
+            Some("HookTimedOut") => ExchangeFailureKind::HookTimedOut,
+            Some("HookPanicked") => ExchangeFailureKind::HookPanicked,
+            Some("HookAborted(Rejected)") => {
+                ExchangeFailureKind::HookAborted(transmog_core::intercept::HookAbort::Rejected)
+            }
+            Some("HookAborted(Policy)") => ExchangeFailureKind::HookAborted(
+                transmog_core::intercept::HookAbort::Policy(message.unwrap_or_default().into()),
+            ),
+            Some("Upstream") => ExchangeFailureKind::Upstream,
+            Some("Route") => ExchangeFailureKind::Route,
+            Some("Cancelled") => ExchangeFailureKind::Cancelled,
+            Some("Shutdown") => ExchangeFailureKind::Shutdown,
+            Some("RequestTranslation") => ExchangeFailureKind::RequestTranslation,
+            Some("ResponseTranslation") => ExchangeFailureKind::ResponseTranslation,
+            _ => ExchangeFailureKind::Body,
+        },
         request_committed: false,
         response_committed: false,
-        message: "Imported session is incomplete".into(),
+        message: message.unwrap_or("Imported session is incomplete").into(),
     })
 }
 fn unknown_target() -> Target {
@@ -1985,7 +2282,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saz_save_keeps_existing_destination_when_an_exchange_has_no_response_head() {
+    async fn saz_save_replaces_existing_destination_with_a_labeled_missing_response() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("incomplete.tmcap");
         native(&source, Some(vec![1, 2, 3]), 3);
@@ -2011,7 +2308,7 @@ mod tests {
             .unwrap();
         let destination = root.path().join("existing.saz");
         std::fs::write(&destination, b"keep existing destination").unwrap();
-        let error = workspace
+        let saved = workspace
             .save_traffic_trace(
                 destination.clone(),
                 crate::TraceSaveOptions {
@@ -2020,12 +2317,14 @@ mod tests {
                 },
             )
             .await
-            .unwrap_err();
-        assert!(error.message.contains("TMCap"));
-        assert_eq!(
-            std::fs::read(destination).unwrap(),
-            b"keep existing destination"
-        );
+            .unwrap();
+        assert_eq!(saved.entries, 1);
+        assert_eq!(saved.placeholder_entries, 1);
+        let mut archive = zip::ZipArchive::new(File::open(destination).unwrap()).unwrap();
+        let mut response = String::new();
+        std::io::Read::read_to_string(&mut archive.by_name("raw/1_s.txt").unwrap(), &mut response)
+            .unwrap();
+        assert!(response.starts_with("HTTP/1.1 599 Transmog response not captured"));
     }
 
     #[tokio::test]
@@ -2062,6 +2361,17 @@ mod tests {
                 .unwrap();
             assert_eq!(saved.entries, 1);
             assert_eq!(saved.incomplete_bodies, 0);
+            let mut archive = transmog_saz::SazArchive::with_password(
+                Cursor::new(std::fs::read(&path).unwrap()),
+                transmog_saz::SazImportLimits::default(),
+                password.clone(),
+            )
+            .unwrap();
+            let index = archive.index(|_, _| {}, || false).unwrap();
+            assert_eq!(
+                index.sessions[0].metadata.flags["x-processinfo"],
+                "browser.exe:42"
+            );
             let reopened = app(&root
                 .path()
                 .join(if encrypted { "encrypted" } else { "strict" }));
@@ -2087,6 +2397,8 @@ mod tests {
                 .sessions;
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0].status, Some(404));
+            assert_eq!(rows[0].caller.process_name.as_deref(), Some("browser.exe"));
+            assert_eq!(rows[0].caller.process_id, Some(42));
             assert_eq!(
                 reopened.composer_source(&rows[0].id).unwrap().body,
                 "616263"
@@ -2199,6 +2511,14 @@ mod tests {
                 .sessions;
             assert_eq!(rows[0].terminal, "failed");
             assert_eq!(rows[0].status, Some(200));
+            let snapshots = reopened
+                .session_service()
+                .catalog()
+                .project_retained(Clone::clone);
+            let Some(SessionTerminal::Failed(failure)) = &snapshots[0].terminal else {
+                panic!("Recorded failure was not restored")
+            };
+            assert_eq!(failure.message, "downstream response-body consumer closed");
             let detail = reopened.session_detail(&rows[0].id).unwrap();
             assert_eq!(detail.terminal_state, "failed");
             for (boundary, expected) in [("client-request", "abc"), ("client-response", "res")] {
@@ -2226,6 +2546,762 @@ mod tests {
                     .await
                     .unwrap();
                 assert_eq!(body.display, expected);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn saz_save_preserves_missing_heads_as_labeled_placeholders_and_reports_progress() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("missing.tmcap");
+        native(&source, Some(b"abc".to_vec()), 3);
+        let capture =
+            transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for id in [7, 8, 9] {
+            for mut record in capture.records.clone() {
+                if record.exchange_id == 0 {
+                    continue;
+                }
+                if id == 8 && matches!(record.kind, CaptureRecordKind::ResponseHead { .. }) {
+                    continue;
+                }
+                if id == 9 && matches!(record.kind, CaptureRecordKind::RequestHead { .. }) {
+                    continue;
+                }
+                record.exchange_id = id;
+                writer.append(&record).unwrap();
+            }
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        let workspace = app(&root.path().join("original"));
+        workspace
+            .import_trace(request(source, "original"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let output = root.path().join(format!("{format:?}.saz"));
+            std::fs::write(&output, b"previous destination").unwrap();
+            let progress = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let events = progress.clone();
+            let saved = workspace
+                .save_traffic_trace_with_progress(
+                    output.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..crate::TraceSaveOptions::default()
+                    },
+                    Arc::new(move |event| events.lock().unwrap().push(event)),
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, 3);
+            assert_eq!(saved.placeholder_entries, 2);
+            {
+                let events = progress.lock().unwrap();
+                for phase in ["writing", "converting"] {
+                    assert!(events.iter().any(|event| event.phase == phase
+                        && event.completed == 3
+                        && event.total == 3));
+                }
+                assert_eq!(events.last().unwrap().phase, "finalizing");
+            }
+            let reopened = app(&root.path().join(format!("{format:?}")));
+            let imported = reopened
+                .import_trace(request(output, "reopened"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            assert_eq!(imported.trace.sessions, 3);
+            let snapshots = reopened
+                .session_service()
+                .catalog()
+                .project_retained(Clone::clone);
+            assert_eq!(
+                snapshots
+                    .iter()
+                    .filter(|snapshot| snapshot.request_heads.is_empty())
+                    .count(),
+                1
+            );
+            assert_eq!(
+                snapshots
+                    .iter()
+                    .filter(|snapshot| snapshot.response_heads.is_empty())
+                    .count(),
+                1
+            );
+            assert!(
+                !snapshots
+                    .iter()
+                    .flat_map(|snapshot| &snapshot.response_heads)
+                    .any(|head| head.head.status == 599)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn earlier_strict_saz_restores_dns_outcomes_from_labeled_connection_rows() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("earlier.saz");
+        let mut zip = zip::ZipWriter::new(File::create(&source).unwrap());
+        for (name, bytes) in [
+            (
+                "raw/1_c.txt",
+                "GET https://example.invalid/ HTTP/1.1\r\nHost: example.invalid\r\n\r\n",
+            ),
+            (
+                "raw/1_s.txt",
+                "HTTP/1.1 502 Transmog - DNS Lookup Failed\r\nContent-Length: 0\r\n\r\n",
+            ),
+            (
+                "raw/1_m.xml",
+                "<Session SID=\"1\" BitFlags=\"1\"><SessionFlags><SessionFlag N=\"https-client-protocol\" V=\"TLSv1.3\"/><SessionFlag N=\"x-transmog-client-connection-id\" V=\"client\"/><SessionFlag N=\"x-transmog-connect-destination\" V=\"example.invalid:443\"/><SessionFlag N=\"x-transmog-server-connection-id\" V=\"origin\"/><SessionFlag N=\"x-transmog-missing-response-head\" V=\"true\"/></SessionFlags></Session>",
+            ),
+            (
+                "raw/2_c.txt",
+                "CONNECT example.invalid:443 HTTP/1.1\r\nHost: example.invalid:443\r\n\r\n",
+            ),
+            (
+                "raw/2_s.txt",
+                "HTTP/1.1 502 Transmog - DNS Lookup Failed\r\nContent-Length: 0\r\n\r\n",
+            ),
+            (
+                "raw/2_m.xml",
+                "<Session SID=\"2\" BitFlags=\"400\"><SessionFlags><SessionFlag N=\"x-transmog-connection-context\" V=\"true\"/><SessionFlag N=\"x-transmog-server-connection-id\" V=\"origin\"/></SessionFlags></Session>",
+            ),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "import"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let snapshots = workspace
+            .session_service()
+            .catalog()
+            .project_retained(Clone::clone);
+        assert_eq!(snapshots.len(), 1);
+        assert!(snapshots[0].response_heads.is_empty());
+        assert_eq!(
+            snapshots[0]
+                .performance
+                .transports
+                .iter()
+                .find(|transport| transport.leg == "upstream")
+                .unwrap()
+                .outcome,
+            transmog_core::performance::TransportOutcome::DnsFailed
+        );
+        let output = root.path().join("again.saz");
+        let saved = workspace
+            .save_traffic_trace(
+                output.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::SazStrict,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!((saved.entries, saved.connection_entries), (1, 1));
+        let mut archive = SazArchive::open(
+            Cursor::new(std::fs::read(output).unwrap()),
+            SazImportLimits::default(),
+        )
+        .unwrap();
+        let index = archive.index(|_, _| {}, || false).unwrap();
+        assert!(
+            index
+                .sessions
+                .iter()
+                .all(|session| session.response.as_ref().unwrap().start_line
+                    == "HTTP/1.1 502 Transmog - DNS Lookup Failed")
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Exercise each setup outcome through repeated archive saves.
+    async fn strict_and_extended_saz_preserve_recorded_connection_outcomes_on_resave() {
+        use transmog_core::performance::{
+            PerformanceEvidence, TransportObservation, TransportOutcome,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("outcomes.tmcap");
+        let outcomes = [
+            TransportOutcome::Connected,
+            TransportOutcome::DnsFailed,
+            TransportOutcome::TcpFailed,
+            TransportOutcome::TlsFailed,
+            TransportOutcome::PolicyRejected,
+        ];
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for (position, outcome) in outcomes.iter().copied().enumerate() {
+            let id = position as u128 + 1;
+            let mut records = vec![
+                CaptureRecordKind::RequestHead {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    method: "GET".into(),
+                    target: "https://example.invalid/".into(),
+                    headers: vec![],
+                },
+                CaptureRecordKind::Unknown {
+                    kind: "body-completed".into(),
+                    payload: serde_json::json!({"boundary":"client-request"}),
+                },
+                CaptureRecordKind::Performance(PerformanceEvidence {
+                    transports: vec![
+                        TransportObservation {
+                            leg: "client".into(),
+                            connection_id: format!("client-{id}"),
+                            outcome: TransportOutcome::Connected,
+                            tunnel_destination: Some("example.invalid:443".into()),
+                            tls_version: Some("TLSv1.3".into()),
+                            ..Default::default()
+                        },
+                        TransportObservation {
+                            leg: "upstream".into(),
+                            connection_id: format!("origin-{id}"),
+                            outcome,
+                            tls_version: (outcome == TransportOutcome::Connected)
+                                .then(|| "TLSv1.3".into()),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
+            ];
+            if outcome == TransportOutcome::Connected {
+                records.push(CaptureRecordKind::ResponseHead {
+                    boundary: ExchangeBoundary::ClientResponse,
+                    status: 200,
+                    headers: vec![],
+                });
+                records.push(CaptureRecordKind::Completed);
+            } else {
+                records.push(CaptureRecordKind::Failed {
+                    category: "Upstream".into(),
+                    message: format!("Recorded {outcome:?}"),
+                });
+            }
+            for (sequence, kind) in records.into_iter().enumerate() {
+                writer
+                    .append(&CaptureRecord {
+                        exchange_id: id,
+                        sequence: sequence as u64 + 1,
+                        kind,
+                    })
+                    .unwrap();
+            }
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let mut input = source.clone();
+            for generation in 0..3 {
+                let workspace = app(&root.path().join(format!("{format:?}-{generation}")));
+                workspace
+                    .import_trace(request(input, "import"), Arc::new(|_| {}))
+                    .await
+                    .unwrap();
+                let snapshots = workspace
+                    .session_service()
+                    .catalog()
+                    .project_retained(Clone::clone);
+                assert_eq!(snapshots.len(), outcomes.len());
+                let mut actual = snapshots
+                    .iter()
+                    .flat_map(|snapshot| &snapshot.performance.transports)
+                    .filter(|transport| transport.leg == "upstream")
+                    .map(|transport| transport.outcome.as_str())
+                    .collect::<Vec<_>>();
+                let mut expected = outcomes
+                    .iter()
+                    .map(|outcome| outcome.as_str())
+                    .collect::<Vec<_>>();
+                actual.sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(actual, expected);
+                input = root.path().join(format!("{format:?}-{generation}.saz"));
+                let saved = workspace
+                    .save_traffic_trace(
+                        input.clone(),
+                        crate::TraceSaveOptions {
+                            format,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!((saved.entries, saved.connection_entries), (5, 5));
+                let mut archive = SazArchive::open(
+                    Cursor::new(std::fs::read(&input).unwrap()),
+                    SazImportLimits::default(),
+                )
+                .unwrap();
+                let index = archive.index(|_, _| {}, || false).unwrap();
+                let mut reasons = index
+                    .sessions
+                    .iter()
+                    .filter(|session| {
+                        session
+                            .metadata
+                            .flags
+                            .get("x-transmog-connection-context")
+                            .is_some_and(|value| value == "true")
+                    })
+                    .map(|session| session.response.as_ref().unwrap().start_line.clone())
+                    .collect::<Vec<_>>();
+                reasons.sort_unstable();
+                assert_eq!(
+                    reasons,
+                    vec![
+                        "HTTP/1.1 200 Connection Established",
+                        "HTTP/1.1 502 Transmog - Connection Failed",
+                        "HTTP/1.1 502 Transmog - Connection Rejected",
+                        "HTTP/1.1 502 Transmog - DNS Lookup Failed",
+                        "HTTP/1.1 502 Transmog - TLS Handshake Failed"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn long_failure_explanations_survive_native_and_saz_saves() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("long-failure.tmcap");
+        native(&source, Some(b"abc".to_vec()), 3);
+        let recovered =
+            transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let explanation =
+            "拒否された <policy> explanation.\r\n\tNext line & details.\n".repeat(400);
+        let kind = ExchangeFailureKind::HookAborted(transmog_core::intercept::HookAbort::Policy(
+            explanation.clone(),
+        ));
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for mut record in recovered.records {
+            if record.exchange_id == 0 {
+                continue;
+            }
+            if matches!(record.kind, CaptureRecordKind::Completed) {
+                record.kind = CaptureRecordKind::Failed {
+                    category: kind.category().into(),
+                    message: explanation.clone(),
+                };
+            }
+            writer.append(&record).unwrap();
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        for format in [
+            crate::TraceSaveFormat::Native,
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let mut input = source.clone();
+            for generation in 0..2 {
+                let workspace = app(&root.path().join(format!("{format:?}-{generation}")));
+                workspace
+                    .import_trace(request(input, "import"), Arc::new(|_| {}))
+                    .await
+                    .unwrap();
+                let snapshots = workspace
+                    .session_service()
+                    .catalog()
+                    .project_retained(Clone::clone);
+                let Some(SessionTerminal::Failed(failure)) = &snapshots[0].terminal else {
+                    panic!("Failure was lost")
+                };
+                assert_eq!(failure.kind.category(), kind.category());
+                assert_eq!(failure.message, explanation);
+                let extension = if format == crate::TraceSaveFormat::Native {
+                    "tmcap"
+                } else {
+                    "saz"
+                };
+                input = root
+                    .path()
+                    .join(format!("{format:?}-{generation}.{extension}"));
+                workspace
+                    .save_traffic_trace(
+                        input.clone(),
+                        crate::TraceSaveOptions {
+                            format,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn generated_connection_summaries_do_not_become_traffic_or_multiply_after_reimport() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("connected.tmcap");
+        native(&source, Some(b"abc".to_vec()), 3);
+        let capture =
+            transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                .unwrap();
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        let mut sequence = 0;
+        for mut record in capture.records {
+            if record.exchange_id == 0 {
+                continue;
+            }
+            if matches!(record.kind, CaptureRecordKind::Completed) {
+                sequence += 1;
+                writer
+                    .append(&CaptureRecord {
+                        exchange_id: 7,
+                        sequence,
+                        kind: CaptureRecordKind::Performance(
+                            transmog_core::performance::PerformanceEvidence {
+                                transports: vec![
+                                    transmog_core::performance::TransportObservation {
+                                        leg: "client".into(),
+                                        connection_id: "physical-client".into(),
+                                        tunnel_destination: Some("example.invalid:443".into()),
+                                        tls_version: Some("TLSv1.3".into()),
+                                        tls: Some(transmog_core::TlsEvidence {
+                                            server_name: Some("example.invalid".into()),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    },
+                                ],
+                                ..Default::default()
+                            },
+                        ),
+                    })
+                    .unwrap();
+            }
+            sequence += 1;
+            record.sequence = sequence;
+            writer.append(&record).unwrap();
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        let workspace = app(&root.path().join("source"));
+        workspace
+            .import_trace(request(source, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let output = root.path().join(format!("{format:?}.saz"));
+            let saved = workspace
+                .save_traffic_trace(
+                    output.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, 1);
+            assert_eq!(saved.connection_entries, 1);
+            let reopened = app(&root.path().join(format!("{format:?}")));
+            let imported = reopened
+                .import_trace(request(output, "reopen"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            assert_eq!(imported.trace.sessions, 1);
+            let rows = reopened
+                .query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].method, "POST");
+            let saved = reopened
+                .save_traffic_trace(
+                    root.path().join(format!("again-{format:?}.saz")),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, 1);
+            assert_eq!(saved.connection_entries, 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn opaque_connect_context_survives_repeated_saves_without_losing_recorded_headers() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("opaque.saz");
+        let mut zip = zip::ZipWriter::new(File::create(&source).unwrap());
+        for (name, bytes) in [
+            (
+                "raw/1_c.txt",
+                "CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\nUser-Agent: captured\r\n\r\n",
+            ),
+            (
+                "raw/1_s.txt",
+                "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nTransmog-Peer: recorded-value\r\n\r\n",
+            ),
+            (
+                "raw/1_m.xml",
+                "<Session SID=\"1\" BitFlags=\"1000\"><TunnelInfo BytesEgress=\"456\" BytesIngress=\"123\"/></Session>",
+            ),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let mut input = source.clone();
+            for generation in 0..3 {
+                let workspace = app(&root.path().join(format!("{format:?}-{generation}")));
+                workspace
+                    .import_trace(request(input, "import"), Arc::new(|_| {}))
+                    .await
+                    .unwrap();
+                let snapshots = workspace
+                    .session_service()
+                    .catalog()
+                    .project_retained(Clone::clone);
+                let snapshot = &snapshots[0];
+                let head = &snapshot.response_heads[0].head;
+                assert_eq!(
+                    head.headers.values("Transmog-Peer").next(),
+                    Some(b"recorded-value".as_slice())
+                );
+                assert!(head.headers.values("Transmog-Tunnel").next().is_none());
+                assert!(
+                    snapshot
+                        .performance
+                        .transports
+                        .iter()
+                        .all(|transport| transport.tls.is_none())
+                );
+                assert_eq!(snapshot.performance.transports[0].bytes_read, Some(123));
+                input = root.path().join(format!("{format:?}-{generation}.saz"));
+                let saved = workspace
+                    .save_traffic_trace(
+                        input.clone(),
+                        crate::TraceSaveOptions {
+                            format,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!((saved.entries, saved.connection_entries), (1, 0));
+                let mut archive = transmog_saz::SazArchive::open(
+                    Cursor::new(std::fs::read(&input).unwrap()),
+                    SazImportLimits::default(),
+                )
+                .unwrap();
+                let indexed = archive.index(|_, _| {}, || false).unwrap();
+                let response = indexed.sessions[0].response.as_ref().unwrap();
+                assert_eq!(response.headers.values("Transmog-Tunnel").count(), 1);
+                assert_eq!(response.headers.values("Transmog-Peer").count(), 1);
+                assert_eq!(response.start_line, "HTTP/1.1 200 Connection Established");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires TRANSMOG_TEST_TRACE pointing to a local trace"]
+    async fn local_trace_saz_save_roundtrip() {
+        let processes = |application: &Application| {
+            let mut counts = BTreeMap::new();
+            for snapshot in application
+                .session_service()
+                .catalog()
+                .project_retained(Clone::clone)
+            {
+                if matches!(
+                    snapshot.metadata.client_identity,
+                    ClientIdentity::LocalProcess { .. }
+                ) {
+                    let identity =
+                        serde_json::to_string(&snapshot.metadata.client_identity).unwrap();
+                    *counts.entry(identity).or_insert(0_usize) += 1;
+                }
+            }
+            counts
+        };
+        let source = PathBuf::from(
+            std::env::var_os("TRANSMOG_TEST_TRACE").expect("Set TRANSMOG_TEST_TRACE"),
+        );
+        let root = tempfile::tempdir().unwrap();
+        let workspace = app(&root.path().join("source"));
+        let imported = workspace
+            .import_trace(request(source, "original"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let original_processes = processes(&workspace);
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let output = root.path().join(format!("{format:?}.saz"));
+            let saved = workspace
+                .save_traffic_trace(
+                    output.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..crate::TraceSaveOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, imported.trace.sessions);
+            eprintln!(
+                "{format:?}: {} entries, {} placeholders, {} bytes",
+                saved.entries, saved.placeholder_entries, saved.bytes
+            );
+            let reopened = app(&root.path().join(format!("{format:?}")));
+            let reimported = reopened
+                .import_trace(request(output, "reopened"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            assert_eq!(reimported.trace.sessions, imported.trace.sessions);
+            assert_eq!(processes(&reopened), original_processes);
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Exercise both missing boundaries through SAZ and native saves.
+    async fn complete_bodies_without_heads_survive_saz_reimport_and_another_save() {
+        let root = tempfile::tempdir().unwrap();
+        for missing in [
+            ExchangeBoundary::ClientRequest,
+            ExchangeBoundary::ClientResponse,
+        ] {
+            let source = root.path().join(format!("{missing:?}.tmcap"));
+            native(&source, Some(b"abc".to_vec()), 3);
+            let capture =
+                transmog_capture::recover(File::open(&source).unwrap(), CaptureLimits::default())
+                    .unwrap();
+            let mut writer =
+                CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default())
+                    .unwrap();
+            let mut sequence = 0;
+            for mut record in capture.records {
+                if record.exchange_id == 0
+                    || matches!(&record.kind,
+                    CaptureRecordKind::RequestHead { boundary, .. } | CaptureRecordKind::ResponseHead { boundary, .. } if *boundary == missing)
+                {
+                    continue;
+                }
+                if matches!(record.kind, CaptureRecordKind::Completed) {
+                    for kind in [
+                        CaptureRecordKind::BodySegment {
+                            boundary: ExchangeBoundary::ClientResponse,
+                            byte_count: 3,
+                            bytes: Some(b"res".to_vec()),
+                            truncated: false,
+                        },
+                        CaptureRecordKind::Unknown {
+                            kind: "body-completed".into(),
+                            payload: serde_json::json!({"boundary":"client-request"}),
+                        },
+                        CaptureRecordKind::Unknown {
+                            kind: "body-completed".into(),
+                            payload: serde_json::json!({"boundary":"client-response"}),
+                        },
+                    ] {
+                        sequence += 1;
+                        writer
+                            .append(&CaptureRecord {
+                                sequence,
+                                exchange_id: 7,
+                                kind,
+                            })
+                            .unwrap();
+                    }
+                }
+                sequence += 1;
+                record.sequence = sequence;
+                writer.append(&record).unwrap();
+            }
+            writer.seal().unwrap();
+            drop(writer);
+            let workspace = app(&root.path().join(format!("source-{missing:?}")));
+            workspace
+                .import_trace(request(source, "source"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            for format in [
+                crate::TraceSaveFormat::SazStrict,
+                crate::TraceSaveFormat::SazExtended,
+            ] {
+                let output = root.path().join(format!("{missing:?}-{format:?}.saz"));
+                workspace
+                    .save_traffic_trace(
+                        output.clone(),
+                        crate::TraceSaveOptions {
+                            format,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                let reopened = app(&root.path().join(format!("{missing:?}-{format:?}")));
+                reopened
+                    .import_trace(request(output, "reopen"), Arc::new(|_| {}))
+                    .await
+                    .unwrap();
+                let saved = root
+                    .path()
+                    .join(format!("again-{missing:?}-{format:?}.tmcap"));
+                reopened
+                    .save_traffic_trace(saved.clone(), crate::TraceSaveOptions::default())
+                    .await
+                    .unwrap();
+                let recovered =
+                    transmog_capture::recover(File::open(saved).unwrap(), CaptureLimits::default())
+                        .unwrap();
+                for (boundary, expected) in [
+                    (ExchangeBoundary::ClientRequest, b"abc".as_slice()),
+                    (ExchangeBoundary::ClientResponse, b"res".as_slice()),
+                ] {
+                    let bytes = recovered
+                        .records
+                        .iter()
+                        .filter_map(|record| match &record.kind {
+                            CaptureRecordKind::BodySegment {
+                                boundary: found,
+                                bytes: Some(bytes),
+                                ..
+                            } if *found == boundary => Some(bytes.as_slice()),
+                            _ => None,
+                        })
+                        .flatten()
+                        .copied()
+                        .collect::<Vec<_>>();
+                    assert_eq!(bytes, expected, "{missing:?}/{format:?}/{boundary:?}");
+                }
             }
         }
     }
@@ -2380,7 +3456,7 @@ mod tests {
             ),
             (
                 "raw/1_m.xml",
-                "<Session BitFlags='1'><SessionTimers ClientBeginRequest='2026-10-08T10:00:00Z' ClientDoneResponse='2026-10-08T10:00:00.250Z' DNSLookupTime='12'/><SessionFlags><SessionFlag N='x-clientIP' V='192.0.2.8'/></SessionFlags></Session>",
+                "<Session BitFlags='1'><SessionTimers ClientBeginRequest='2026-10-08T10:00:00Z' ClientDoneResponse='2026-10-08T10:00:00.250Z' DNSLookupTime='12'/><SessionFlags><SessionFlag N='x-clientIP' V='192.0.2.8'/><SessionFlag N='X-ProcessInfo' V='browser.exe:42'/></SessionFlags></Session>",
             ),
         ] {
             zip.start_file(

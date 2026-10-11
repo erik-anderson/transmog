@@ -288,7 +288,8 @@ Usage: transmog-cli capture export --input FILE [--format jsonl|saz|saz-extended
 Password files contain UTF-8 text, at most 4096 bytes; a trailing newline is ignored.
 Without input password files, encrypted input asks in a console. Protect password files yourself.
 JSONL has no encryption option. Passwords cannot be recovered and are never saved as preferences.
-SAZ rejects exchanges missing either HTTP head; keep TMCap to preserve them. Incomplete bodies
+SAZ includes every exchange, with labeled placeholders for uncaptured HTTP heads. Keep TMCap
+for original evidence without placeholders. Incomplete bodies
 are reported. SAZ conversion is limited to 256 MiB retained per direction and 1000000 exchanges.
 Existing destinations are never overwritten; failed conversions leave no destination file.
 Export reports and source completeness go to stderr; stdout JSONL contains only records.

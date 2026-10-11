@@ -18,6 +18,12 @@ pub struct SessionEvidence {
     pub provenance: Option<serde_json::Value>,
     /// Original source endpoint, including its port when known.
     pub client_addr: Option<String>,
+    /// Recorded caller identity, independent of the computer opening the archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_identity: Option<transmog_core::ClientIdentity>,
+    /// Recorded terminal failure, independent of synthetic SAZ responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<FailureEvidence>,
     /// Original request and response fields, including redacted presence/sizes.
     pub request_headers: Option<Vec<CapturedHeader>>,
     /// Original response fields before normalized SAZ framing.
@@ -28,6 +34,16 @@ pub struct SessionEvidence {
     /// Original response trailers.
     #[serde(default)]
     pub response_trailers: Vec<CapturedHeader>,
+}
+
+/// Captured failure category and operator-facing description.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FailureEvidence {
+    /// Native failure category.
+    pub category: String,
+    /// Recorded explanation without generated HTTP diagnostics.
+    pub message: String,
 }
 impl SessionEvidence {
     pub(crate) fn valid(&self) -> bool {
@@ -41,6 +57,12 @@ impl SessionEvidence {
                 .client_addr
                 .as_ref()
                 .is_none_or(|addr| addr.parse::<std::net::SocketAddr>().is_ok())
+            && match &self.client_identity {
+                Some(transmog_core::ClientIdentity::LocalProcess { name, .. }) => {
+                    name.as_ref().is_none_or(|name| name.len() <= 4096)
+                }
+                _ => true,
+            }
             && [&self.request_trailers, &self.response_trailers]
                 .into_iter()
                 .chain(self.request_headers.iter())

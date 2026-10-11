@@ -34,6 +34,9 @@ fn xml(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace(char::from(39), "&apos;")
+        .replace('\r', "&#13;")
+        .replace('\n', "&#10;")
+        .replace('\t', "&#9;")
 }
 fn timestamp(millis: u64) -> Option<String> {
     let nanos = i128::from(millis) * 1_000_000;
@@ -148,11 +151,64 @@ pub(crate) fn render(
         let _ = write!(attributes, " {name}=\"{}\"", xml(value));
     }
     let mut flags = BTreeMap::new();
+    if let Some(failure) = &session.evidence.failure {
+        flags.insert("x-transmog-failure-category", failure.category.clone());
+        flags.insert("x-transmog-failure-message", failure.message.clone());
+    }
+    if let Some(reason) = reason(session)
+        && session
+            .request
+            .as_ref()
+            .is_some_and(|request| request.method == "CONNECT")
+    {
+        flags.insert("x-transmog-original-connect-response-reason", reason.into());
+    }
+    if let Some(response) = session.response.as_ref()
+        && let Some(exported) = crate::connections::opaque_response(session, response)
+    {
+        let names = exported
+            .headers
+            .iter()
+            .skip(response.headers.len())
+            .map(|field| String::from_utf8_lossy(&field.name))
+            .collect::<Vec<_>>()
+            .join(",");
+        if !names.is_empty() {
+            flags.insert("x-transmog-connect-export-headers", names);
+        }
+    }
+    if session.kind == crate::SessionKind::ConnectionContext {
+        flags.insert("x-transmog-connection-context", "true".into());
+        flags.insert("ui-comments", "Transmog: generated connection summary; original CONNECT and ClientHello bytes were not captured.".into());
+        flags.insert("x-responsebodytransferlength", "0".into());
+    }
+    let mut missing = Vec::new();
+    if session.request.is_none() {
+        flags.insert("x-transmog-missing-request-head", "true".into());
+        missing.push("request");
+    }
+    if session.response.is_none() {
+        flags.insert("x-transmog-missing-response-head", "true".into());
+        if session.response_body.is_empty() {
+            flags.insert("x-transmog-placeholder-response-body", "true".into());
+        }
+        missing.push("response");
+    }
+    if !missing.is_empty() {
+        flags.insert(
+            "ui-comments",
+            format!(
+                "Transmog placeholder: {} headers were not captured.",
+                missing.join(" and ")
+            ),
+        );
+    }
     flags.insert(
         "x-transmog-terminal",
         match session.terminal {
             crate::TerminalState::Open => "active",
             crate::TerminalState::Completed => "completed",
+            crate::TerminalState::Failed if crate::pending_at_save(session) => "active",
             crate::TerminalState::Failed => "failed",
         }
         .into(),
@@ -166,6 +222,80 @@ pub(crate) fn render(
     {
         flags.insert("x-clientIP", addr.ip().to_string());
         flags.insert("x-clientport", addr.port().to_string());
+    }
+    if let Some(transmog_core::ClientIdentity::LocalProcess { pid, name }) =
+        &session.evidence.client_identity
+        && *pid != 0
+    {
+        flags.insert(
+            "x-processinfo",
+            format!("{}:{pid}", name.as_deref().unwrap_or_default()),
+        );
+    }
+    for (leg, names) in [
+        ("client", ["https-client-protocol", "https-client-cipher"]),
+        ("upstream", ["https-server-protocol", "https-server-cipher"]),
+    ] {
+        if let Some(transport) = session
+            .evidence
+            .performance
+            .transports
+            .iter()
+            .rev()
+            .find(|transport| transport.leg == leg)
+        {
+            flags.insert(
+                if leg == "client" {
+                    "x-transmog-client-connection-id"
+                } else {
+                    "x-transmog-server-connection-id"
+                },
+                transport.connection_id.clone(),
+            );
+            flags.insert(
+                if leg == "client" {
+                    "x-transmog-client-connection-outcome"
+                } else {
+                    "x-transmog-server-connection-outcome"
+                },
+                transport.outcome.as_str().into(),
+            );
+            for (name, value) in names
+                .into_iter()
+                .zip([&transport.tls_version, &transport.cipher])
+            {
+                if let Some(value) = value {
+                    flags.insert(name, value.clone());
+                }
+            }
+            if let Some(name) = transport
+                .tls
+                .as_ref()
+                .and_then(|tls| tls.server_name.as_ref())
+            {
+                flags.insert(
+                    if leg == "client" {
+                        "https-client-sni"
+                    } else {
+                        "https-server-sni"
+                    },
+                    name.clone(),
+                );
+            }
+            if leg == "client"
+                && let Some(destination) = &transport.tunnel_destination
+            {
+                flags.insert("x-transmog-connect-destination", destination.clone());
+            }
+            if leg == "upstream"
+                && let Some(peer) = transport
+                    .peer
+                    .as_ref()
+                    .and_then(|peer| peer.parse::<std::net::SocketAddr>().ok())
+            {
+                flags.insert("x-hostIP", peer.ip().to_string());
+            }
+        }
     }
     for (boundary, name) in [
         ("client-request", "x-transmog-original-request-protocol"),
@@ -196,12 +326,59 @@ pub(crate) fn render(
             xml(value)
         );
     }
-    let https = session
+    let connect = session
         .request
         .as_ref()
-        .is_some_and(|request| request.target.starts_with("https://"));
+        .is_some_and(|request| request.method == "CONNECT");
+    let https = !connect
+        && session
+            .request
+            .as_ref()
+            .is_some_and(|request| request.target.starts_with("https://"));
+    let bit_flags = u32::from(https)
+        | 0x400
+        | if (session.kind == crate::SessionKind::ConnectionContext
+            && session
+                .response
+                .as_ref()
+                .is_some_and(|response| response.status == 200))
+            || (connect
+                && session.kind == crate::SessionKind::Captured
+                && session
+                    .evidence
+                    .performance
+                    .transports
+                    .iter()
+                    .any(|transport| {
+                        transport.leg == "client"
+                            && (transport.tls_version.is_some() || transport.tls.is_some())
+                    }))
+        {
+            0x2000
+        } else if connect
+            && session
+                .response
+                .as_ref()
+                .is_some_and(|response| response.status == 200)
+            && crate::connections::opaque_transport(session).is_some()
+        {
+            0x1000
+        } else {
+            0
+        };
+    let mut tunnel_info = String::new();
+    if let Some(transport) = crate::connections::opaque_transport(session) {
+        for (name, count) in [
+            ("BytesEgress", transport.bytes_written),
+            ("BytesIngress", transport.bytes_read),
+        ] {
+            if let Some(count) = count {
+                let _ = write!(tunnel_info, " {name}=\"{count}\"");
+            }
+        }
+        tunnel_info = format!("<TunnelInfo{tunnel_info}/>");
+    }
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{id}\" BitFlags=\"{}\"><SessionTimers{attributes}/><SessionFlags>{rendered_flags}</SessionFlags></Session>",
-        u8::from(https)
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{id}\" BitFlags=\"{bit_flags:x}\"><SessionTimers{attributes}/>{tunnel_info}<SessionFlags>{rendered_flags}</SessionFlags></Session>"
     )
 }

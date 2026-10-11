@@ -53,6 +53,50 @@ partial body from being presented as complete. Progress and cancellation are
 available to the consuming application. Session flag meanings follow the
 [FiddlerCore enumeration](https://www.telerik.com/fiddler/fiddlercore/documentation/api/fiddler.sessionflags).
 
+Both export profiles write a recorded caller name and PID to the conventional
+`x-processinfo` flag as `name:pid`. A known PID without a recorded name uses
+`:pid`; unresolved and remote callers do not receive an invented process flag.
+Import recognizes the flag without regard to its name's casing. Extended SAZ
+also retains the original caller identity, including unresolved and remote states.
+
+Exports add labeled CONNECT connection summaries for individual upstream physical
+connections, deduplicated within each source trace. Recorded failed setup attempts
+use 502 diagnostics, while successful connections use 200. Each row describes one
+upstream connection and its associated client interception context. Their text separates
+client-side interception TLS from origin connections and includes recorded
+protocols, ciphers, ALPN, endpoints, physical byte totals and public certificate
+details when available. A destination inferred from a matching TLS server name
+and HTTPS authority is labeled as inferred. Raw CONNECT headers and ClientHello
+bytes are not reconstructed. Generated summaries use HTTP tunnel flags and
+Transmog attribution; importing them in Transmog restores the captured exchanges
+without adding summaries as traffic or counting their text as transferred bytes.
+Summaries and captured requests are interleaved by recorded start time. Summaries
+without a measured setup start are placed beside the first associated request.
+Generated CONNECT diagnostics omit Content-Type. StartTime and failure Timestamp
+use recorded setup phases with an explicit UTC label; Transmog-Last-Observed and
+directional byte counts describe the latest recorded snapshot. EndTime is omitted
+when no tunnel-end event was recorded, rather than using an HTTP exchange's end
+as a physical socket-close time.
+
+Captured opaque CONNECT exchanges retain their original request headers and body
+bytes. Successful responses use `200 Connection Established` and Transmog-labeled
+headers describing the tunnel, recorded peer and physical byte totals when known.
+No TLS details are inferred for opaque traffic. Conventional `TunnelInfo` byte
+counts and blind-tunnel flags make this context available to SAZ readers.
+Uncaptured responses for recorded DNS, TCP or TLS setup failures use labeled 502
+diagnostics; active-at-save requests use a labeled 599 diagnostic. Generated
+headers and diagnostic text are removed when restoring the captured exchange.
+Failure categories are stable labels, separate from their complete explanations.
+Explanations retain line breaks and Unicode; archive metadata and native record
+budgets bound their storage.
+Strict metadata retains physical connection outcomes, including failures without
+TLS details, so reimporting and resaving does not change known CONNECT results to
+an unavailable outcome.
+
+Raw SAZ response headers place Cache-Control fields before Expires fields without
+changing their values or cookie attributes. Extended evidence retains the original
+header order. Caching-column presentation also depends on the consuming viewer.
+
 The `raw/` directory must be a ZIP member of its own. The published
 [Fiddler DotNetZip importer sample](https://github.com/gocardless/gocardless-legacy-dotnet/blob/master/GoCardlessSdk.Tests/libs/FiddlerCoreAPI/SampleApp/SAZ-DOTNETZIP.cs)
 checks for that exact member before looking for requests, so an otherwise valid
@@ -94,11 +138,19 @@ exchange failure. Saved representations require matching retained-byte counts;
 recordings retain ordered body-completion markers. The independent
 `x-transmog-terminal` session flag preserves the exchange outcome in both SAZ
 profiles without marking a fully retained body as dropped.
-The library exporter counts exchanges without both request and response heads
-as skipped in its conversion report. CLI export and desktop **Save trace**
-reject that result instead of publishing an archive that omits those exchanges;
-use native TMCap to preserve them. Unsafe line breaks, invalid statuses,
-body-limit overflow, entry-limit overflow, and ZIP failures stop the
+Every exchange is exported, including exchanges missing request or response
+heads. Conventional `ui-comments` and `X-Transmog-Placeholder` headers explain
+uncaptured heads. A missing request uses a synthetic GET to
+`http://transmog.invalid/uncaptured-request`; a missing response uses
+`599 Transmog response not captured`. The response body explains that this is not
+a server response only when there were no retained response bytes. Existing
+captured messages and retained body prefixes stay unchanged. Namespaced
+`x-transmog-missing-request-head`, `x-transmog-missing-response-head` and
+`x-transmog-placeholder-response-body` flags let Transmog restore missing evidence
+on reimport. Extended evidence records the original optional headers, excluding
+placeholder headers. Save reports and CLI output count placeholder sessions.
+TMCap remains the complete original evidence format. Unsafe line breaks, invalid
+statuses, body-limit overflow, entry-limit overflow, and ZIP failures stop the
 conversion rather than producing ambiguous wire text.
 
 Metadata members are bounded to 4 MiB, with the existing aggregate index and ZIP

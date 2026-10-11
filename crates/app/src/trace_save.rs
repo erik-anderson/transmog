@@ -55,12 +55,39 @@ pub struct TraceSaveResult {
     pub bytes: u64,
     /// Number of unavailable or incomplete body boundaries.
     pub incomplete_bodies: usize,
+    /// Entries whose missing HTTP heads were labeled with SAZ placeholders.
+    pub placeholder_entries: usize,
+    /// Additional generated CONNECT rows describing recorded connection evidence.
+    pub connection_entries: usize,
+}
+
+/// Observable save work; zero total denotes an indeterminate phase.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceSaveProgress {
+    /// Preparing, writing, converting, or finalizing the saved trace.
+    pub phase: String,
+    /// Entries completed in this phase.
+    pub completed: usize,
+    /// Entries in this phase, or zero while the amount of work is unknown.
+    pub total: usize,
+}
+
+pub(crate) type Progress = dyn Fn(TraceSaveProgress) + Send + Sync;
+
+pub(crate) fn notify(progress: &Progress, phase: &str, completed: usize, total: usize) {
+    progress(TraceSaveProgress {
+        phase: phase.into(),
+        completed,
+        total,
+    });
 }
 
 pub(crate) async fn save(
     application: Application,
     destination: PathBuf,
     options: TraceSaveOptions,
+    progress: std::sync::Arc<Progress>,
 ) -> Result<TraceSaveResult, AppError> {
     let expected = match options.format {
         TraceSaveFormat::Native => "tmcap",
@@ -82,6 +109,7 @@ pub(crate) async fn save(
             "HAR has no encryption or network-configuration option; choose TMCap for those options",
         ));
     }
+    notify(progress.as_ref(), "preparing", 0, 0);
     let network = if options.include_network_context {
         Some(transmog_network::context::collect_for("trace-save").await)
     } else {
@@ -95,6 +123,7 @@ pub(crate) async fn save(
             options.redact_sensitive_headers,
             options.password,
             options.format,
+            progress.as_ref(),
         )
     })
     .await
@@ -107,6 +136,7 @@ fn write(
     redact: bool,
     password: Option<transmog_capture::CapturePassword>,
     format: TraceSaveFormat,
+    progress: &Progress,
 ) -> Result<TraceSaveResult, AppError> {
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
@@ -117,7 +147,7 @@ fn write(
                 "HAR has no encryption or network-configuration option; choose TMCap for those options",
             ));
         }
-        return crate::trace_har::write(application, destination, redact);
+        return crate::trace_har::write(application, destination, redact, progress);
     }
     let store = application
         .body_store
@@ -149,17 +179,20 @@ fn write(
     let incomplete = write_records(
         native.as_mut().unwrap_or_else(|| temporary.as_file_mut()),
         application,
-        store,
         &sessions,
         network,
         redact,
         &transmog_capture::CaptureEncoding {
             password: password.clone(),
         },
+        progress,
     )?;
-    if let Some(native) = native {
-        write_saz(native, temporary.as_file_mut(), format, password)?;
-    }
+    let (placeholder_entries, connection_entries) = if let Some(native) = native {
+        write_saz(native, temporary.as_file_mut(), format, password, progress)?
+    } else {
+        (0, 0)
+    };
+    notify(progress, "finalizing", 0, 0);
     if format != TraceSaveFormat::Native {
         temporary
             .as_file()
@@ -181,6 +214,8 @@ fn write(
         entries: sessions.len(),
         bytes,
         incomplete_bodies: incomplete,
+        placeholder_entries,
+        connection_entries,
     })
 }
 fn write_saz(
@@ -188,9 +223,10 @@ fn write_saz(
     output: &mut std::fs::File,
     format: TraceSaveFormat,
     password: Option<transmog_capture::CapturePassword>,
-) -> Result<(), AppError> {
+    progress: &Progress,
+) -> Result<(usize, usize), AppError> {
     use std::io::Seek as _;
-    use transmog_capture::CaptureExporter as _;
+    notify(progress, "converting", 0, 0);
     native
         .rewind()
         .map_err(|_| error("SAZ staging file could not be read"))?;
@@ -215,27 +251,29 @@ fn write_saz(
     if let Some(password) = password {
         exporter = exporter.encrypted(password).map_err(AppError::from)?;
     }
-    exporter.export(&capture).map_err(AppError::from)?;
-    if exporter
-        .report()
-        .is_some_and(|report| report.skipped_incomplete > 0)
-    {
-        return Err(error(
-            "SAZ cannot save entries without both request and response headers. Choose TMCap to preserve those entries.",
-        ));
-    }
-    Ok(())
+    exporter
+        .export_with_progress(&capture, |done, total| {
+            notify(progress, "converting", done, total);
+        })
+        .map_err(AppError::from)?;
+    Ok(exporter.report().map_or((0, 0), |report| {
+        (report.placeholder_sessions, report.connection_sessions)
+    }))
 }
 
 fn write_records(
     output: &mut std::fs::File,
     application: &Application,
-    store: &BodyStore,
     sessions: &[SessionSnapshot],
     network: Option<&transmog_network::context::NetworkContext>,
     redact: bool,
     encoding: &transmog_capture::CaptureEncoding,
+    progress: &Progress,
 ) -> Result<usize, AppError> {
+    let store = application
+        .body_store
+        .as_ref()
+        .ok_or_else(|| error("Body retention is not configured"))?;
     let mut writer = CaptureWriter::with_encoding(
         output,
         CaptureLimits {
@@ -293,8 +331,10 @@ fn write_records(
         )?;
     }
     let mut incomplete = 0;
-    for session in sessions {
+    notify(progress, "writing", 0, sessions.len());
+    for (position, session) in sessions.iter().enumerate() {
         incomplete += write_session(&mut writer, application, store, session, redact)?;
+        notify(progress, "writing", position + 1, sessions.len());
     }
     writer
         .seal()
@@ -476,7 +516,7 @@ fn write_session<W: Write>(
     emit(match &session.terminal {
         Some(SessionTerminal::Completed(_)) => CaptureRecordKind::Completed,
         Some(SessionTerminal::Failed(failure)) => CaptureRecordKind::Failed {
-            category: format!("{:?}", failure.kind),
+            category: failure.kind.category().into(),
             message: failure.message.clone(),
         },
         None => CaptureRecordKind::Failed {

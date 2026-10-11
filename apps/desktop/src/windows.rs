@@ -1370,6 +1370,7 @@ async fn inspect_body(
 #[tauri::command]
 async fn save_traffic_trace(
     options: TraceSaveOptions,
+    on_progress: Channel<transmog_app::TraceSaveProgress>,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Option<TraceSaveResult>, AppError> {
@@ -1389,8 +1390,28 @@ async fn save_traffic_trace(
     let Some(file) = picker.save_file().await else {
         return Ok(None);
     };
+    let last_progress = std::sync::Mutex::new(None);
+    let last_phase = std::sync::Mutex::new(String::new());
     let result = application
-        .save_traffic_trace(file.path().to_owned(), options)
+        .save_traffic_trace_with_progress(
+            file.path().to_owned(),
+            options,
+            Arc::new(move |progress| {
+                let mut phase = last_phase
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if *phase != progress.phase
+                    || progress_due(
+                        &last_progress,
+                        progress.completed as u64,
+                        progress.total as u64,
+                    )
+                {
+                    phase.clone_from(&progress.phase);
+                    let _ = on_progress.send(progress);
+                }
+            }),
+        )
         .await?;
     application.remember_artifact(result.destination.clone(), kind);
     Ok(Some(result))

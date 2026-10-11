@@ -7182,6 +7182,7 @@ dependencies = [
 name = "transmog-saz"
 version = "0.1.2"
 dependencies = [
+ "boring",
  "flate2",
  "http",
  "httparse",
