@@ -241,6 +241,9 @@ pub enum CatalogError {
     /// Saved evidence reached its independent finite entry bound or collided.
     #[error("imported session limit or identifier collision")]
     ImportLimit,
+    /// The caller canceled a saved batch before its atomic publication.
+    #[error("import canceled before publication")]
+    ImportCanceled,
     /// Configured simultaneous subscriber limit was reached.
     #[error("catalog subscriber limit reached")]
     SubscriberLimit,
@@ -499,6 +502,24 @@ impl SessionCatalog {
         sessions: Vec<SessionSnapshot>,
         prepare: impl FnOnce(),
     ) -> Result<(), CatalogError> {
+        self.try_import_sessions_with(sessions, || {
+            prepare();
+            Ok(())
+        })
+    }
+
+    /// Publishes a saved batch with a final fallible preparation step under the
+    /// catalog lock. The callback must check cancellation before changing any
+    /// external state and must not re-enter this catalog.
+    ///
+    /// # Errors
+    /// Returns a bound or collision error without calling `prepare`, or its
+    /// error without publishing any sessions or notifications.
+    pub fn try_import_sessions_with(
+        &self,
+        sessions: Vec<SessionSnapshot>,
+        prepare: impl FnOnce() -> Result<(), CatalogError>,
+    ) -> Result<(), CatalogError> {
         let mut state = self.lock_state();
         let mut ids = HashSet::new();
         if state.imported_count.saturating_add(sessions.len()) > 100_000
@@ -508,7 +529,7 @@ impl SessionCatalog {
         {
             return Err(CatalogError::ImportLimit);
         }
-        prepare();
+        prepare()?;
         for snapshot in sessions {
             state.next_admission = state.next_admission.saturating_add(1);
             let admission = state.next_admission;
@@ -1284,6 +1305,25 @@ mod tests {
             )),
             CatalogApply::Applied
         );
+    }
+
+    #[test]
+    fn canceled_preparation_publishes_no_sessions() {
+        let source = SessionCatalog::new(limits(1));
+        start(&source, 77, "saved.test");
+        fail(&source, 77, 2);
+        let saved = source.get(ExchangeId(77)).unwrap();
+        let catalog = SessionCatalog::new(limits(1));
+        assert_eq!(
+            catalog.try_import_sessions_with(vec![saved.clone()], || {
+                Err(CatalogError::ImportCanceled)
+            }),
+            Err(CatalogError::ImportCanceled)
+        );
+        assert!(catalog.get(ExchangeId(77)).is_none());
+        assert_eq!(catalog.lock_state().imported_count, 0);
+        catalog.import_sessions(vec![saved]).unwrap();
+        assert!(catalog.get(ExchangeId(77)).unwrap().imported);
     }
 
     #[test]

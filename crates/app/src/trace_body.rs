@@ -23,6 +23,10 @@ pub(crate) struct SourceReader {
     length: u64,
 }
 impl SourceReader {
+    pub(crate) const fn length(&self) -> u64 {
+        self.length
+    }
+
     pub(crate) fn new(file: File) -> io::Result<Self> {
         let length = file.metadata()?.len();
         Ok(Self {

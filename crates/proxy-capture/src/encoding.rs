@@ -68,6 +68,8 @@ struct Header {
 /// Keys remain in memory and Debug never reveals them.
 #[derive(Clone)]
 pub struct FrameCodec {
+    // Only the immutable connection definitions needed by this indexed frame.
+    pub(crate) connections: Arc<crate::connections::Definitions>,
     inner: Arc<CodecInner>,
     start: u64,
 }
@@ -103,6 +105,7 @@ impl FrameCodec {
     pub(crate) fn plain(&self) -> Self {
         Self {
             start: self.start,
+            connections: self.connections.clone(),
             inner: Arc::new(CodecInner {
                 header: self.inner.header.clone(),
                 key: None,
@@ -414,6 +417,7 @@ impl FrameCodec {
         };
         Ok(Self {
             start: 0,
+            connections: Arc::default(),
             inner: Arc::new(CodecInner {
                 header: encoded,
                 key,
@@ -618,6 +622,7 @@ mod tests {
         header.push(b' '); // Equivalent JSON is still different authenticated bytes.
         let changed = FrameCodec {
             start: codec.start,
+            connections: codec.connections.clone(),
             inner: Arc::new(CodecInner {
                 header,
                 key: codec.inner.key.clone(),

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::File,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
@@ -36,6 +36,10 @@ use crate::{
 
 #[path = "trace_json.rs"]
 mod json;
+
+#[cfg(test)]
+#[path = "trace_native_review_tests.rs"]
+mod native_review_tests;
 
 const fn no_file_limit() -> u64 {
     u64::MAX
@@ -171,6 +175,25 @@ struct State {
     operations: HashMap<String, Arc<AtomicBool>>,
 }
 
+// Dropping the awaiting task must cancel its blocking worker too. Keep the
+// operation registered until that worker actually exits, preserving the bound
+// on simultaneous imports even when callers repeatedly abort and retry.
+struct CancelImportOnDrop(Arc<AtomicBool>);
+impl Drop for CancelImportOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+struct ImportOperation {
+    registry: TraceRegistry,
+    id: String,
+}
+impl Drop for ImportOperation {
+    fn drop(&mut self) {
+        self.registry.lock().operations.remove(&self.id);
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct TraceRegistry {
     publication: Arc<Mutex<()>>,
@@ -259,13 +282,21 @@ impl TraceRegistry {
                 .operations
                 .insert(request.operation_id.clone(), canceled.clone());
         }
-        let registry = self.clone();
-        let operation_id = request.operation_id.clone();
+        let _cancel_on_drop = CancelImportOnDrop(canceled.clone());
+        let operation = ImportOperation {
+            registry: self.clone(),
+            id: request.operation_id.clone(),
+        };
         let result = tokio::task::spawn_blocking(move || {
-            registry.import_blocking(&request, &service, &store, &canceled, progress.as_ref())
+            operation.registry.import_blocking(
+                &request,
+                &service,
+                &store,
+                &canceled,
+                progress.as_ref(),
+            )
         })
         .await;
-        self.lock().operations.remove(&operation_id);
         result.map_err(|_| unavailable("Trace import worker failed"))?
     }
 
@@ -278,7 +309,7 @@ impl TraceRegistry {
         progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
     ) -> Result<TraceImportResult, AppError> {
         let (imported, trace, _) = Self::read(request, canceled, progress)?;
-        self.publish_import(imported, service, store, trace)
+        self.publish_import(imported, service, store, trace, canceled)
     }
 
     fn read(
@@ -290,15 +321,12 @@ impl TraceRegistry {
             .map_err(|_| unavailable("Trace path could not be resolved"))?;
         let file =
             File::open(&path).map_err(|_| invalid("The selected trace file is unreadable"))?;
-        let bytes = file
-            .metadata()
-            .map_err(|_| invalid("The selected trace file is unavailable"))?
-            .len();
+        let reader =
+            SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
+        let bytes = reader.length();
         if bytes > request.max_file_bytes {
             return Err(invalid("The trace exceeds the selected input byte limit"));
         }
-        let reader =
-            SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
         let mut random = [0_u8; 8];
         getrandom::fill(&mut random)
             .map_err(|_| unavailable("Trace namespace could not be generated"))?;
@@ -315,30 +343,31 @@ impl TraceRegistry {
                 total,
             });
         };
-        let mut imported = match crate::detect_trace_format(&path) {
-            Some(crate::TraceFormat::Saz) => import_saz(
-                reader,
-                prefix,
-                &trace_id,
-                request.max_file_bytes,
-                canceled,
-                &report,
-                request.password.clone(),
-            )?,
-            Some(crate::TraceFormat::Native) => import_native(
-                &reader,
-                prefix,
-                &trace_id,
-                bytes,
-                canceled,
-                &report,
-                request.password.as_ref(),
-            )?,
-            Some(format @ (crate::TraceFormat::Har | crate::TraceFormat::Netlog)) => {
-                json::import(reader, prefix, &trace_id, format, canceled, &report)?
-            }
-            None => return Err(invalid("Choose a TMCap, SAZ, HAR or Chromium NetLog file")),
-        };
+        let mut imported =
+            match crate::trace_format::detect_trace_format_from(&path, reader.clone()) {
+                Some(crate::TraceFormat::Saz) => import_saz(
+                    reader,
+                    prefix,
+                    &trace_id,
+                    request.max_file_bytes,
+                    canceled,
+                    &report,
+                    request.password.clone(),
+                )?,
+                Some(crate::TraceFormat::Native) => import_native(
+                    &reader,
+                    prefix,
+                    &trace_id,
+                    bytes,
+                    canceled,
+                    &report,
+                    request.password.as_ref(),
+                )?,
+                Some(format @ (crate::TraceFormat::Har | crate::TraceFormat::Netlog)) => {
+                    json::import(reader, prefix, &trace_id, format, canceled, &report)?
+                }
+                None => return Err(invalid("Choose a TMCap, SAZ, HAR or Chromium NetLog file")),
+            };
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
@@ -365,12 +394,16 @@ impl TraceRegistry {
         service: &ApplicationSessionService,
         store: &BodyStore,
         trace: TraceMetadataView,
+        canceled: &AtomicBool,
     ) -> Result<TraceImportResult, AppError> {
         let trace_id = trace.id.clone();
         let _publication = self
             .publication
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Trace import canceled"));
+        }
         let extra_metadata = std::iter::once(&trace)
             .chain(imported.sources.values())
             .try_fold(0usize, |total, source| {
@@ -407,7 +440,12 @@ impl TraceRegistry {
         // it, so canceling or a bad file never leaves half an import in Traffic.
         service
             .catalog()
-            .import_sessions_with(imported.sessions, || {
+            .try_import_sessions_with(imported.sessions, || {
+                // Recheck after acquiring the catalog lock. This is the commit
+                // point: once preparation starts, publish the whole batch.
+                if canceled.load(Ordering::Acquire) {
+                    return Err(transmog_session::CatalogError::ImportCanceled);
+                }
                 for body in imported.bodies {
                     store.register_saved(
                         body.id,
@@ -429,8 +467,14 @@ impl TraceRegistry {
                 state.metadata.extend(imported.sources);
                 state.metadata.insert(trace_id, trace.clone());
                 state.entries.extend(imported.entries);
+                Ok(())
             })
-            .map_err(|_| invalid("The viewer's imported-entry limit was reached"))?;
+            .map_err(|error| match error {
+                transmog_session::CatalogError::ImportCanceled => {
+                    unavailable("Trace import canceled")
+                }
+                _ => invalid("The viewer's imported-entry limit was reached"),
+            })?;
         Ok(TraceImportResult {
             trace,
             issues: imported.issues,
@@ -899,6 +943,7 @@ struct NativeBody {
     trailers: Option<HeaderBlock>,
 }
 
+#[allow(clippy::too_many_lines)]
 fn import_native(
     reader: &SourceReader,
     prefix: u64,
@@ -922,6 +967,7 @@ fn import_native(
     let mut context = Value::Null;
     let mut sources = BTreeMap::new();
     let mut budget = 0_usize;
+    let mut certificates = HashSet::new();
     while let Some(frame) = capture
         .read_next_indexed()
         .map_err(|_| invalid("The native capture contains a corrupt or oversized frame"))?
@@ -931,6 +977,12 @@ fn import_native(
         }
         if frame.record.exchange_id == 0 {
             if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind {
+                // CaptureReader bounds the transient dictionaries. Hydrated DER
+                // retained in session performance is charged separately below.
+                if matches!(kind.as_str(), "connection-context" | "public-certificate") {
+                    progress(capture.valid_bytes(), max_bytes);
+                    continue;
+                }
                 let bytes = serde_json::to_vec(&payload)
                     .map_err(|_| invalid("Invalid trace metadata"))?
                     .len();
@@ -958,9 +1010,21 @@ fn import_native(
             progress(capture.valid_bytes(), max_bytes);
             continue;
         }
-        let row = rows.entry(frame.record.exchange_id).or_default();
+        let row = match rows.entry(frame.record.exchange_id) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                // Even an empty exchange retains a row, snapshot and provenance.
+                charge_native_index(
+                    &mut budget,
+                    std::mem::size_of::<NativeSession>()
+                        + std::mem::size_of::<SessionSnapshot>()
+                        + std::mem::size_of::<TraceEntry>(),
+                )?;
+                entry.insert(NativeSession::default())
+            }
+        };
         row.sequence = row.sequence.max(frame.record.sequence);
-        apply_native_frame(row, frame, &mut budget)?;
+        apply_native_frame(row, frame, &mut budget, &mut certificates)?;
         if rows.len() > MAX_SESSIONS || budget > MAX_HEAD_BYTES {
             return Err(invalid(
                 "Native trace metadata exceeds the viewer index limit",
@@ -993,6 +1057,9 @@ fn import_native(
             .push("The source did not have a complete, consistent seal.".into());
     }
     for (position, (original, row)) in rows.into_iter().enumerate() {
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Trace import canceled"));
+        }
         let id = ExchangeId(u128::from(prefix) << 64 | (position as u128 + 1));
         append_native(&mut result, reader, trace_id, id, original, row)?;
     }
@@ -1004,6 +1071,7 @@ fn apply_native_frame(
     row: &mut NativeSession,
     frame: transmog_capture::CaptureFrame,
     budget: &mut usize,
+    certificates: &mut HashSet<String>,
 ) -> Result<(), AppError> {
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
@@ -1060,6 +1128,20 @@ fn apply_native_frame(
                     "Saved performance evidence exceeds its limits or has invalid fields",
                 ));
             }
+            // DER is intentionally excluded from serde and shared across rows.
+            // It survives the reader in certificate Arcs, so charge each digest
+            // once per import, in addition to the expanded per-row metadata.
+            for tls in evidence
+                .transports
+                .iter()
+                .filter_map(|transport| transport.tls.as_ref())
+            {
+                for certificate in tls.server_chain.iter().chain(&tls.client_chain) {
+                    if certificates.insert(certificate.sha256.clone()) {
+                        charge_native_index(budget, certificate.der.len())?;
+                    }
+                }
+            }
             row.performance.merge(&evidence);
             let bytes = serde_json::to_vec(&row.performance)
                 .map_err(|_| invalid("Invalid saved performance evidence"))?
@@ -1075,6 +1157,12 @@ fn apply_native_frame(
             started_unix_nanos,
             ..
         } => {
+            if let ClientIdentity::LocalProcess {
+                name: Some(name), ..
+            } = &client_identity
+            {
+                charge_native_index(budget, name.len())?;
+            }
             row.client = client_addr.parse().ok();
             row.caller = client_identity;
             row.started = u64::try_from(started_unix_nanos)
@@ -1087,13 +1175,28 @@ fn apply_native_frame(
             target,
             headers,
         } => {
-            *budget = budget.saturating_add(
-                headers
-                    .iter()
-                    .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
-                    .sum::<usize>(),
-            );
+            if !matches!(
+                boundary,
+                ExchangeBoundary::ClientRequest | ExchangeBoundary::UpstreamRequest
+            ) {
+                return Err(invalid("Saved request head has a response boundary"));
+            }
             let head = native_request(&method, &target, headers)?;
+            let target = &head.target;
+            let target_bytes = target.scheme.len()
+                + target.authority.len()
+                + target.host.len()
+                + target.path.len()
+                + target.query.as_ref().map_or(0, String::len);
+            // The catalog keeps the observed head, terminal head and original
+            // target; body descriptors also retain copies of the headers.
+            charge_native_index(
+                budget,
+                target_bytes
+                    .saturating_mul(3)
+                    .saturating_add(head.method.len().saturating_mul(2)),
+            )?;
+            charge_native_headers(budget, &head.headers)?;
             row.requests.retain(|request| request.boundary != boundary);
             row.requests.push(ObservedRequestHead { boundary, head });
         }
@@ -1102,15 +1205,20 @@ fn apply_native_frame(
             status,
             headers,
         } => {
-            *budget = budget.saturating_add(
-                headers
-                    .iter()
-                    .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
-                    .sum::<usize>(),
-            );
+            if !matches!(
+                boundary,
+                ExchangeBoundary::ClientResponse | ExchangeBoundary::UpstreamResponse
+            ) || !(100..=999).contains(&status)
+            {
+                return Err(invalid(
+                    "Saved response head has an invalid boundary or status",
+                ));
+            }
+            let headers = native_headers(headers)?;
+            charge_native_headers(budget, &headers)?;
             let head = ResponseHead {
                 status,
-                headers: native_headers(headers)?,
+                headers,
                 source_version: HttpLegVersion::Http1,
             };
             row.responses
@@ -1130,17 +1238,26 @@ fn apply_native_frame(
             if body.body_completed {
                 return Err(invalid("Body data appears after its completion marker"));
             }
-            body.observed = body.observed.saturating_add(byte_count as u64);
+            body.observed = body
+                .observed
+                .checked_add(byte_count as u64)
+                .ok_or_else(|| invalid("Saved body byte count overflows its limit"))?;
             let captured = frame
                 .body
                 .map_or_else(|| bytes.as_ref().map_or(0, Vec::len), |index| index.bytes);
-            body.incomplete |= truncated || captured != byte_count && byte_count > 0;
+            if captured > byte_count {
+                return Err(invalid("Saved body retains more bytes than were observed"));
+            }
+            body.incomplete |= truncated || captured != byte_count;
             if captured > 0 {
                 let digest = frame.body.map_or_else(
                     || Sha256::digest(bytes.as_ref().unwrap()).into(),
                     |index| index.digest,
                 );
-                body.retained += captured as u64;
+                body.retained = body
+                    .retained
+                    .checked_add(captured as u64)
+                    .ok_or_else(|| invalid("Saved body retained size overflows its limit"))?;
                 body.pieces.push(NativeBodyPiece {
                     body_offset: body.retained - captured as u64,
                     bytes: captured as u64,
@@ -1450,6 +1567,26 @@ fn append_native(
     };
     result.entries.insert(format!("{:032x}", id.0), entry);
     result.sessions.push(snapshot);
+    Ok(())
+}
+
+fn charge_native_index(budget: &mut usize, bytes: usize) -> Result<(), AppError> {
+    *budget = budget.saturating_add(bytes);
+    if *budget > MAX_HEAD_BYTES {
+        return Err(invalid(
+            "Native trace metadata exceeds the viewer index limit",
+        ));
+    }
+    Ok(())
+}
+
+fn charge_native_headers(budget: &mut usize, headers: &HeaderBlock) -> Result<(), AppError> {
+    for field in headers.iter() {
+        let bytes = std::mem::size_of::<HeaderField>()
+            .saturating_add(field.name().len())
+            .saturating_add(field.value().len());
+        charge_native_index(budget, bytes.saturating_mul(4))?;
+    }
     Ok(())
 }
 

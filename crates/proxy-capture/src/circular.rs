@@ -529,6 +529,30 @@ mod tests {
             }
         }
     }
+    fn assert_only_retained_context(records: &[CaptureRecord], expected_digest: &str) {
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(&record.kind,
+                CaptureRecordKind::Unknown {kind,..} if kind == "connection-context"))
+                .count(),
+            1
+        );
+        // Only the context of the retained final connection survives eviction.
+        let context = records
+            .iter()
+            .find_map(|record| match &record.kind {
+                CaptureRecordKind::Unknown { kind, payload } if kind == "connection-context" => {
+                    Some(payload)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            context["context"]["tls"]["serverChain"][0]["sha256"],
+            expected_digest
+        );
+    }
     #[test]
     fn circular_eviction_prunes_unused_certificates_and_reclaims_disk_frames() {
         let root = tempfile::tempdir().unwrap();
@@ -602,6 +626,7 @@ mod tests {
                 CaptureLimits::default(),
             )
             .unwrap();
+            assert_only_retained_context(&saved.records, &certificates[0].sha256);
             for record in saved.records {
                 if let CaptureRecordKind::Performance(evidence) = record.kind {
                     assert!(

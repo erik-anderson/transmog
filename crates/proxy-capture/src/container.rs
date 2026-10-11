@@ -91,6 +91,7 @@ pub struct CaptureWriter<W> {
     jobs: VecDeque<PendingRecord>,
     bodies: HashMap<(u128, String), BodyCompression>,
     certificates: BTreeSet<String>,
+    connections: crate::connections::WriterContexts,
     start: u64,
     block: u64,
     data: Vec<u8>,
@@ -147,6 +148,7 @@ impl<W: Write> CaptureWriter<W> {
             jobs: VecDeque::new(),
             bodies: HashMap::new(),
             certificates: BTreeSet::new(),
+            connections: crate::connections::WriterContexts::default(),
             start,
             block: 0,
             data: Vec::with_capacity(PAYLOAD),
@@ -205,31 +207,48 @@ impl<W: Write> CaptureWriter<W> {
         }
         result
     }
+    fn append_performance(
+        &mut self,
+        record: &CaptureRecord,
+        evidence: &transmog_core::performance::PerformanceEvidence,
+    ) -> Result<(), CaptureError> {
+        for certificate in evidence
+            .transports
+            .iter()
+            .filter_map(|transport| transport.tls.as_ref())
+            .flat_map(|tls| tls.server_chain.iter().chain(&tls.client_chain))
+        {
+            if !certificate.der.is_empty() && !self.certificates.contains(&certificate.sha256) {
+                let definition = CertificateDefinition {
+                    sha256: certificate.sha256.clone(),
+                    der: certificate.der.to_vec(),
+                };
+                definition.validate()?;
+                self.append_inner(&CaptureRecord {
+                    sequence: 0,
+                    exchange_id: 0,
+                    kind: CaptureRecordKind::Unknown {
+                        kind: "public-certificate".into(),
+                        payload: serde_json::to_value(&definition)?,
+                    },
+                })?;
+            }
+        }
+        let (definitions, snapshot) = crate::connections::split(record, evidence)?;
+        for definition in definitions {
+            self.append_inner(&definition)?;
+        }
+        self.append_one(&snapshot)
+    }
     fn append_inner(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
         super::validate_appended_record(record)?;
         if let CaptureRecordKind::Performance(evidence) = &record.kind {
-            for certificate in evidence
-                .transports
-                .iter()
-                .filter_map(|transport| transport.tls.as_ref())
-                .flat_map(|tls| tls.server_chain.iter().chain(&tls.client_chain))
-            {
-                if !certificate.der.is_empty() && !self.certificates.contains(&certificate.sha256) {
-                    let definition = CertificateDefinition {
-                        sha256: certificate.sha256.clone(),
-                        der: certificate.der.to_vec(),
-                    };
-                    definition.validate()?;
-                    self.append_inner(&CaptureRecord {
-                        sequence: 0,
-                        exchange_id: 0,
-                        kind: CaptureRecordKind::Unknown {
-                            kind: "public-certificate".into(),
-                            payload: serde_json::to_value(&definition)?,
-                        },
-                    })?;
-                }
-            }
+            return self.append_performance(record, evidence);
+        }
+        if matches!(&record.kind, CaptureRecordKind::Unknown { kind, .. } if kind == crate::connections::DEFINITION_KIND)
+            && !self.connections.insert(record)?
+        {
+            return Ok(());
         }
         if let CaptureRecordKind::Unknown { kind, payload } = &record.kind
             && kind == "public-certificate"
@@ -900,6 +919,7 @@ pub struct CaptureReader<R> {
     stack: Vec<Node>,
     entries: VecDeque<Entry>,
     certificates: HashMap<String, std::sync::Arc<[u8]>>,
+    connections: crate::connections::ReaderContexts,
     certificate_bytes: usize,
     data_end: u64,
     records: u64,
@@ -996,6 +1016,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             stack,
             entries: VecDeque::new(),
             certificates: HashMap::new(),
+            connections: crate::connections::ReaderContexts::default(),
             certificate_bytes: 0,
             data_end: start,
             records: 0,
@@ -1159,7 +1180,8 @@ impl<R: Read + Seek> CaptureReader<R> {
         if entry.frame_bytes > (self.limits.max_record_bytes as u64 + 64) * 2 {
             return Err(CaptureError::QuotaExceeded);
         }
-        let (mut record, body) = entry.stored.load_metadata()?;
+        let frame_codec = self.connections.prepare(&entry.stored, &self.codec)?;
+        let (mut record, body) = entry.stored.load_container_metadata(&frame_codec)?;
         if let Some(body) = body {
             body.validate(self.limits.max_record_bytes)?;
             if body.frame_bytes < 21 || body.frame_bytes > entry.frame_bytes.saturating_sub(21) {
@@ -1179,7 +1201,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             offset: entry.offset,
             index: entry.index,
             frame_bytes: entry.frame_bytes,
-            codec: self.codec.clone(),
+            codec: frame_codec,
             record,
             body: body.map(|body| CaptureBodyIndex {
                 bytes: body.bytes,
@@ -1199,7 +1221,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             &mut self.input,
             frame.frame_bytes,
             self.limits,
-            &self.codec,
+            &frame.codec,
             frame.index,
         )?;
         let body = match &mut record.kind {
@@ -1222,6 +1244,8 @@ impl<R: Read + Seek> CaptureReader<R> {
         Ok(Some(frame))
     }
     /// Cryptographic context for independent lazy body readers.
+    /// For performance records, use the returned frame's codec instead: it also
+    /// pins the immutable connection definitions referenced by that snapshot.
     pub fn codec(&self) -> FrameCodec {
         self.codec.clone()
     }
@@ -1267,6 +1291,7 @@ fn validate_nodes(nodes: &[Node], first: u64, count: u64, before: u64) -> Result
 
 /// Reads one indexed record from a source positioned at its indexed offset.
 /// The complete original source and a seekable cursor are required for block authentication.
+/// Pass the indexed frame's codec to resolve its shared connection references.
 /// # Errors
 /// Reports changed ciphertext, invalid references, or body corruption.
 pub fn read_indexed_frame_with_codec(
@@ -1322,3 +1347,7 @@ mod tests;
 #[cfg(test)]
 #[path = "review_tests.rs"]
 mod review_tests;
+
+#[cfg(test)]
+#[path = "connection_tests.rs"]
+mod connection_tests;

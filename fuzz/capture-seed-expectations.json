@@ -1,0 +1,318 @@
+{
+  "bad-expanded": {
+    "full": {
+      "error": "RecordTooLarge { actual: 4294967295, limit: 131072 }",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "records": [
+        "body-segment:4"
+      ],
+      "sealed": false
+    }
+  },
+  "bad-index-length": {
+    "full": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "bad-index-offset": {
+    "full": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "body": {
+    "full": {
+      "records": [
+        "body-segment:1600"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "body-segment:1600"
+      ],
+      "sealed": false
+    }
+  },
+  "certificate": {
+    "full": {
+      "records": [
+        "public-certificate"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "public-certificate"
+      ],
+      "sealed": false
+    }
+  },
+  "completed": {
+    "full": {
+      "records": [
+        "completed"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "completed"
+      ],
+      "sealed": false
+    }
+  },
+  "context-duplicate": {
+    "full": {
+      "records": [
+        "connection-context",
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "connection-context",
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    }
+  },
+  "context-forward-reference": {
+    "full": {
+      "error": "MalformedRecord: missing connection context",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "MalformedRecord: missing connection context",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "context-missing": {
+    "full": {
+      "error": "MalformedRecord: missing connection context",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "MalformedRecord: missing connection context",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "context-reference": {
+    "full": {
+      "records": [
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    }
+  },
+  "context-tls-reference": {
+    "full": {
+      "records": [
+        "public-certificate",
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "public-certificate",
+        "connection-context",
+        "performance"
+      ],
+      "sealed": false
+    }
+  },
+  "empty-checkpoint": {
+    "full": {
+      "records": [],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [],
+      "sealed": false
+    }
+  },
+  "encrypted-bootstrap": {
+    "full": {
+      "error": "PasswordRequired",
+      "stage": "open"
+    },
+    "indexed": {
+      "error": "PasswordRequired",
+      "stage": "open"
+    }
+  },
+  "excessive-kdf": {
+    "full": {
+      "error": "UnsupportedEncoding",
+      "stage": "open"
+    },
+    "indexed": {
+      "error": "UnsupportedEncoding",
+      "stage": "open"
+    }
+  },
+  "hostile-branch-level": {
+    "full": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "index-reference": {
+    "full": {
+      "error": "AuthenticationFailed",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "records": [
+        "completed"
+      ],
+      "sealed": false
+    }
+  },
+  "invalid-certificate": {
+    "full": {
+      "error": "MalformedRecord: definition is not an X.509 certificate",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "MalformedRecord: definition is not an X.509 certificate",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "missing-seal": {
+    "full": {
+      "error": "InvalidMagic",
+      "stage": "open"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "stage": "open"
+    }
+  },
+  "normal-checkpoint": {
+    "full": {
+      "records": [
+        "body-segment:4096",
+        "connection-context",
+        "performance",
+        "seal"
+      ],
+      "sealed": true
+    },
+    "indexed": {
+      "records": [
+        "body-segment:4096",
+        "connection-context",
+        "performance",
+        "seal"
+      ],
+      "sealed": true
+    }
+  },
+  "oversized-index": {
+    "full": {
+      "error": "RecordTooLarge { actual: 4294967295, limit: 16777216 }",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "RecordTooLarge { actual: 4294967295, limit: 16777216 }",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "plain-bootstrap": {
+    "full": {
+      "error": "TruncatedPreamble",
+      "stage": "open"
+    },
+    "indexed": {
+      "error": "TruncatedPreamble",
+      "stage": "open"
+    }
+  },
+  "raw-header": {
+    "full": {
+      "error": "InvalidMagic",
+      "stage": "open"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "stage": "open"
+    }
+  },
+  "template": {
+    "full": {
+      "records": [
+        "body-segment:4096",
+        "connection-context",
+        "performance",
+        "seal"
+      ],
+      "sealed": true
+    },
+    "indexed": {
+      "records": [
+        "body-segment:4096",
+        "connection-context",
+        "performance",
+        "seal"
+      ],
+      "sealed": true
+    }
+  },
+  "zstd-index": {
+    "full": {
+      "error": "Io",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "Io",
+      "records": [],
+      "stage": "index"
+    }
+  }
+}

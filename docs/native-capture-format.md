@@ -87,7 +87,7 @@ positioned at the indexed offset; a slice containing only the record is insuffic
 
 Index objects have a codec byte and u32 expanded length before their payload.
 Readers bound header/KDF parameters, index objects (16 MiB), individual metadata
-and body allocations, tree depth, node ranges, certificate dictionaries, and
+and body allocations, tree depth, node ranges, certificate and connection dictionaries, and
 caller-specified file/record limits. Unknown encodings are rejected. Defaults
 do not cap total file size or record count.
 
@@ -95,6 +95,11 @@ do not cap total file size or record count.
 
 Reusable zstd level-1 contexts encode independent chunks. A result is retained
 only if it saves at least 2% and 64 bytes; inputs smaller than 256 bytes stay raw.
+Request/response headers, shared connection definitions and other metadata use
+this same zstd policy. Data records compress metadata independently, while index
+pages compress batches of metadata together, exploiting repeated header names
+and values across records. Metadata never inherits a body's adaptive bypass.
+
 Each body representation has independent adaptive state, reset on a new head and
 released at completion or eviction. Once at least 64 KiB has been sampled, weak
 aggregate savings or two consecutive misses switch that body to direct raw
@@ -165,6 +170,16 @@ SHA-256; TLS evidence refers to them instead of repeating DER per exchange.
 Definitions precede references, are validated and shared by readers, and remain
 until their last circular-retention reference is evicted. No private key or TLS
 session secret belongs to the record schema.
+
+Stable transport and TLS facts use immutable `connection-context` definitions
+addressed by SHA-256 of normalized context JSON. Performance snapshots carry a
+context reference plus changing counters, measurements and request-relative
+timings. Changed facts create a new definition even when the physical connection
+ID stays the same. Both definitions and references are encrypted and indexed;
+metadata-only opening resolves them without touching bodies. Each definition
+still has one data copy and one index copy. Circular finalization emits only the
+contexts needed by retained exchanges. The Rust API expands references back into
+the existing performance model. See the [wire schema](tmcap-format.md#shared-connection-context).
 
 Performance records preserve measured timing, transport evidence and actual HTTP
 versions at all four request/response boundaries, including HTTP/1 minor versions.

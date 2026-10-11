@@ -124,3 +124,27 @@ driver supports Windows process affinity and Linux `sched_setaffinity`; run the
 executable directly on other platforms. Raw JSONL from the review accompanies
 the review deliverable. Repeat on actual lower-end hardware when available,
 using longer runs and realistic concurrent traffic before tuning worker counts.
+
+## Shared connection metadata
+
+Run the deterministic storage comparison with:
+
+```text
+python scripts/dev-env.py --run cargo test -p transmog-capture shared_connection_storage_comparison -- --nocapture
+```
+
+For 1,000 snapshots of one reused connection, with changing byte counters and a
+TLS context containing 32 offered cipher names, the compressed indexed file was
+443,576 bytes with shared context versus 919,172 bytes with inline transport
+metadata: 51.7% smaller. Both paths use the same container, zstd policy, index and
+seal. The control stores the former expanded payload under an opaque control
+kind so the writer does not normalize it; its kind name differs slightly.
+Certificates and bodies are excluded to isolate context storage. This is a
+synthetic metadata-heavy case, not a predicted saving for every workload: large
+bodies dominate file size, and connections used once offer little reuse.
+
+The comparison and regression fixtures also cover changing connection facts,
+request-relative measurements, encrypted and plain checkpoints/compaction,
+independent random frame reads, metadata-only opening, dictionary bounds,
+malformed references, data/index mismatch and circular eviction. Reader and
+crypto fuzzers include connection definitions and pinned reference contexts.

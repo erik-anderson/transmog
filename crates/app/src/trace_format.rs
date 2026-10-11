@@ -17,17 +17,22 @@ pub enum TraceFormat {
 /// Inspect only the first 4 KiB, then fall back to a recognized extension.
 /// JSON signatures require the first top-level key; no search through payloads.
 pub fn detect_trace_format(path: &Path) -> Option<TraceFormat> {
-    let mut start = [0; 4096];
-    let count = File::open(path).ok()?.read(&mut start).ok()?;
-    sniff(&start[..count]).or_else(|| {
-        match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+    detect_trace_format_from(path, File::open(path).ok()?)
+}
+
+/// Route an already pinned source, rather than reopening a replaceable path.
+pub(crate) fn detect_trace_format_from(path: &Path, reader: impl Read) -> Option<TraceFormat> {
+    let mut start = Vec::with_capacity(4096);
+    reader.take(4096).read_to_end(&mut start).ok()?;
+    sniff(&start).or_else(
+        || match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
             "tmcap" => Some(TraceFormat::Native),
             "saz" => Some(TraceFormat::Saz),
             "har" => Some(TraceFormat::Har),
             "netlog" | "json" | "jsonl" => Some(TraceFormat::Netlog),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 fn sniff(start: &[u8]) -> Option<TraceFormat> {
@@ -67,6 +72,25 @@ fn sniff(start: &[u8]) -> Option<TraceFormat> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pinned_source_wins_over_replaced_path_and_short_reads() {
+        struct ShortReads<'a>(&'a [u8]);
+        impl Read for ShortReads<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let len = buffer.len().min(1);
+                self.0.read(&mut buffer[..len])
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("source.har");
+        std::fs::write(&path, b"{\"log\":{}}").unwrap();
+        assert_eq!(detect_trace_format(&path), Some(TraceFormat::Har));
+        assert_eq!(
+            detect_trace_format_from(&path, ShortReads(b"TMCAP001\0")),
+            Some(TraceFormat::Native)
+        );
+    }
+
     #[test]
     fn signatures_are_fixed_and_zip_is_ambiguous() {
         assert_eq!(sniff(b"TMCAP001\0"), Some(TraceFormat::Native));

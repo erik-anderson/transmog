@@ -17,7 +17,8 @@ All fixed-width integers are unsigned and little-endian unless explicitly
 marked big-endian. Offsets are absolute byte offsets from the beginning of the
 file. Block and record ordinals begin at zero. `||` means byte concatenation.
 JSON is UTF-8; binary values in JSON are arrays of byte-valued integers, not
-base64. JSON object key order and whitespace are not canonical. Authenticate
+base64. JSON object key order and whitespace are generally not canonical (connection
+context identities below are the exception). Authenticate
 the exact stored header bytes; never reserialize them to construct AAD.
 
 Readers must preserve `u64` and `u128` JSON integers exactly. In particular,
@@ -203,6 +204,79 @@ digest must match, and DER must parse and reencode as exactly one X.509
 certificate without trailing bytes. Definitions are shared by digest. A
 `body-completed` extension marks completion of one body representation.
 
+## Shared connection context
+
+The `connection-context` kind is a global immutable definition. Its sequence and
+exchange ID are both zero, and it cannot have a `body_index`. Its payload is:
+
+```text
+{ "sha256": lowercase_hex_digest, "context": ConnectionContext }
+```
+
+`ConnectionContext` has these camelCase fields:
+
+| Fields | Meaning |
+| --- | --- |
+| `leg`, `connectionId` | Client/upstream leg and physical connection identity |
+| `outcome`, `tunnelDestination`, `peer`, `local` | Setup result, optional tunnel authority and endpoints |
+| `tlsVersion`, `tlsResumed`, `cipher`, `alpn` | Optional negotiated TLS/transport facts |
+| `tls` | Optional `TlsEvidence`: server name, certificate digest references, offered settings, trust snapshot, verification result, errors and imported details |
+
+TLS evidence contains public certificate digest references, never inline DER.
+Certificate definitions precede connection definitions; connection definitions
+precede performance records that reference them. Identical contexts are stored
+once. The connection ID is one part of the identity: if facts change for the same
+connection, the writer emits another immutable definition. Earlier snapshots keep
+their original meaning. Identical repeated definitions are accepted and do not
+consume additional dictionary budget; inconsistent digests are rejected.
+
+The digest is SHA-256 of compact UTF-8 JSON of the **typed, normalized context**:
+deserialize the context schema, serialize all its fields (including null optional
+fields and default empty TLS `details`), recursively sort object keys by UTF-8
+lexicographic order, preserve array order, and omit whitespace. Integers use exact
+decimal notation. Strings use JSON escapes for quote, backslash and control
+characters (`\b`, `\t`, `\n`, `\f`, `\r`, and lowercase `\u00xx` for the
+remaining controls); other Unicode characters and `/` are emitted directly.
+There are no floating-point fields. Certificate `der` is excluded from the
+schema and digest. The reference implementation is
+[`connections.rs`](../crates/proxy-capture/src/connections.rs). Unknown context,
+definition and transport-sample fields are rejected. This content digest is an
+identity/integrity check, not a substitute for the container's authentication.
+
+A `performance` payload still has `points`, `transports`, `protocols` and `work`.
+Each member of `transports` now has a `context` digest reference plus these
+per-snapshot fields:
+
+```text
+sampledOffsetMicros, shared, setupTimings,
+dnsMicros, tcpMicros, tlsMicros, bytesRead, bytesWritten,
+tcp, tcpSampledOffsetMicros, socketIo, quic
+```
+
+These retain the types and validation rules of `TransportObservation`. In
+particular, setup offsets and waits are request-relative, and byte counters or
+TCP/QUIC observations can change. They must not be deduplicated as stable facts.
+Readers reject missing/forward context references, more than 16 transports per
+snapshot, and evidence that fails the core performance/TLS shape limits. Both
+writer and reader bound the context dictionary with a 256 MiB accounting budget
+that charges serialized data and estimated object/key overhead per unique
+definition. This is independent of the certificate dictionary and record limits;
+it is not a hard bound on total process memory.
+
+Definitions are ordinary indexed metadata, so traffic-list opening resolves them
+from index pages without reading body blocks. The Rust reader returns expanded
+`PerformanceEvidence` to preserve the application API. A returned performance
+frame's `codec` pins only its referenced immutable contexts; use that frame's
+codec when rereading it independently. Body-frame codecs pin no connection
+dictionary. Full reads still check data/index agreement after resolving context.
+Definitions and references receive the same encryption as other metadata.
+
+As with all metadata, each definition has a data-record copy and an index copy;
+there is no copy for each request. Private circular scratch storage uses expanded
+snapshots; final TMCap output builds the dictionary from retained snapshots, so
+contexts belonging only to evicted exchanges are absent. The initial format
+version and record revision are unchanged.
+
 ## Index objects and footer
 
 A leaf, branch or footer payload is an object envelope:
@@ -326,6 +400,21 @@ total file size and count unlimited. Applications must also bound retained UI
 metadata and queues; a streaming file format does not bound whole-application
 memory. Malformed input must produce an error rather than a panic or unchecked
 allocation.
+
+The viewer charges retained request targets, caller names, header storage,
+session rows and performance metadata against its import index budget. Shared
+certificate DER is charged once per import as well: it can outlive the reader's
+temporary dictionaries. Body segments cannot retain more bytes than their
+observation count, and accumulated counts must not overflow. A decoded saved
+body may exceed its original wire size; its `body-representation` observation
+count describes the original transfer, independently of segment counts.
+Request and response heads must use their corresponding boundaries, and
+response status codes must be in the HTTP range 100–999. Failed or canceled
+imports publish no partial session/body/source state. Cancellation is checked
+again under the catalog lock immediately before committing the batch; after
+that commit point the batch is published atomically. Dropping the awaiting
+import task also cancels its worker, which retains its concurrency slot until
+it exits. Format detection and lazy body reads use the same pinned source file.
 
 Encryption hides record kinds, exchanges, headers, timestamps, individual body
 sizes, compression flags, counts, index contents and locators. It exposes format

@@ -2,9 +2,9 @@ use super::*;
 use std::io::Cursor;
 use transmog_core::observe::ExchangeBoundary;
 
-struct Counted {
-    cursor: Cursor<Vec<u8>>,
-    read: usize,
+pub(super) struct Counted {
+    pub(super) cursor: Cursor<Vec<u8>>,
+    pub(super) read: usize,
 }
 impl Read for Counted {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
@@ -18,7 +18,7 @@ impl Seek for Counted {
         self.cursor.seek(position)
     }
 }
-fn body(id: u128, bytes: Vec<u8>) -> CaptureRecord {
+pub(super) fn body(id: u128, bytes: Vec<u8>) -> CaptureRecord {
     CaptureRecord {
         sequence: 1,
         exchange_id: id,
@@ -30,7 +30,7 @@ fn body(id: u128, bytes: Vec<u8>) -> CaptureRecord {
         },
     }
 }
-fn binary() -> Vec<u8> {
+pub(super) fn binary() -> Vec<u8> {
     let mut seed = 0x0123_4567_89ab_cdef_u64;
     (0..BODY_CHUNK_BYTES)
         .map(|_| {
