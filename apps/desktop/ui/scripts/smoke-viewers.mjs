@@ -6,6 +6,7 @@ import {createServer} from 'node:http';
 import {smokeTrafficList} from './smoke-traffic-list.mjs';
 import {smokeCertificates} from './smoke-certificates.mjs';
 import {smokeTraceSave} from './smoke-trace-save.mjs';
+import {smokeConnectTunnels} from './smoke-connect-tunnels.mjs';
 
 import {nativeFixture} from './native-fixture.mjs';
 
@@ -71,6 +72,8 @@ try{
   assert.equal(result.sourceIp,'192.0.2.25');assert.match(result.headers,/\r\n\r\n\r\nHTTP\/1\.1 200 Fixture/);assert.equal(result.body,'');assert.ok(result.traceId);
   assert.equal(result.url,'https://example.invalid/path');
   process.stdout.write('Viewer inspection and permissions verified.\n');
+  await waitFor(()=>viewer.evaluate(`${traffic}.selectedDetail?.id===${traffic}.sessions[0]?.id`),'Selected native fixture detail did not finish loading');
+  await smokeConnectTunnels(viewer);
   const search=await viewer.evaluate(`(async()=>{const workspace=${traffic};await workspace.changeTrafficSearchKind({currentTarget:{value:'contents'}});workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`);
   assert.equal(search.matches,1);assert.equal(search.selected,1);assert.doesNotMatch(search.status,/binary/i);
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.searchMode='regex';workspace.searchInput.value='(';await workspace.runContentSearch();if(!workspace.contentSearchStatus.startsWith('Search failed:'))throw new Error('Invalid regex was not explained');await workspace.clearContentSearch();workspace.searchMode='text';})()`);

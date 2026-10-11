@@ -13,6 +13,7 @@ import { checkTraceSave } from './check-trace-save.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import { checkCertificates } from './check-certificates.mjs';
+import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
 import { checkUserAgentPresets } from './check-user-agent-presets.mjs';
 
@@ -1952,15 +1953,7 @@ try {
   await timing.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
   await checkCertificates(page,root);
-  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__opaqueOriginal=structuredClone(workspace.selectedDetail);const detail=structuredClone(workspace.selectedDetail);detail.performance={points:[],protocols:[],transports:[{leg:'upstream',connectionId:'opaque',outcome:'connected',tunnelDestination:'example.test:443',bytesRead:57,bytesWritten:31}]};globalThis.__workspaceFixture.performance=detail.performance;workspace.applyDetail(detail);});
-  await page.locator('traffic-workspace message-inspector[side="response"]').getByText(/Opaque CONNECT tunnel to example.test:443/).waitFor({state:'visible'});
-  await page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true}).click();
-  await timing.getByRole('tab',{name:'Connection',exact:true}).click();
-  await timing.getByText('Proxy ↔ upstream',{exact:true}).click();
-  await timing.getByText('CONNECT destination',{exact:true}).waitFor();
-  assert.equal(await timing.getByText('TLS version',{exact:true}).count(),0,'Opaque tunnel reported a TLS protocol');
-  await timing.getByRole('button',{name:'Close',exact:true}).click();
-  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__workspaceFixture.performance=globalThis.__opaqueOriginal.performance;workspace.applyDetail(globalThis.__opaqueOriginal);delete globalThis.__opaqueOriginal;});
+  await checkConnectTunnels(page,root);
   await page.evaluate(()=>{globalThis.__workspaceFixture.performance=undefined;});
   await page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true}).click();
   await timing.getByText(/no measured proxy timeline/).waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.timing-dialog[open]').count(),0);

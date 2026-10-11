@@ -22,6 +22,10 @@ viewers; established connections continue serving requests until they close.
 Saving preserves explicit manual routing and does not restart
 the proxy. Embedders can supply their own network-isolation key computation.
 
+Recorded CONNECT destinations also appear on decrypted connections. Traffic uses
+the request method, connection leg and TLS evidence to distinguish opaque tunnels
+from inspected messages, keeping decrypted bodies and TLS timings available.
+
 HTTPS decryption changes apply at the next proxy start. When disabled, CONNECT
 forwards opaque bytes without loading interception CA files or requiring CA trust.
 Traffic and TMCap retain the destination, connection outcome, endpoints and byte

@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
+import { opaqueConnectTransport } from '../connection-evidence.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
@@ -115,7 +116,7 @@ export class MessageInspector extends WebUIElement {
     this.bodyFacts = body ? this.retentionFacts(body) : '';
     this.bodySummary=body?formatBytes(body.retainedBytes)+' · '+body.availability:'';
     this.viewerLabel = this.viewer === 'auto' ? 'Auto' : this.viewer;
-    const tunnel=this.detail.performance?.transports.find(transport=>transport.tunnelDestination);
+    const tunnel=opaqueConnectTransport(this.detail);
     if(tunnel) {this.hexPreview=null;this.bodyText='Opaque CONNECT tunnel to '+tunnel.tunnelDestination+'. HTTPS decryption was disabled. Tunnel contents and the tunneled protocol were not inspected. Open Timings for connection outcomes, endpoints and byte counts.';this.viewerLabel='Opaque tunnel';return;}
     if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : 'No body metadata was captured for this message stage.'; this.viewerLabel = 'Metadata'; return; }
     if (this.side === 'response' && head?.status === 304 && !body?.retainedBytes) {
