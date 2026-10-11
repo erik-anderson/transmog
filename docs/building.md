@@ -18,6 +18,31 @@ command, use `python scripts/dev-env.py --run cargo check --workspace --locked`.
 Dot-sourcing `scripts/dev-env.ps1` remains convenient for interactive PowerShell;
 it obtains the same native environment from Python.
 
+## Development cache maintenance
+
+Configured Python Cargo commands and PowerShell environment setup check the
+development cache once per 24 hours. Cleanup retains the three newest complete
+variants for each Cargo target, removing older artifact sets with their matching
+fingerprints and excess incremental caches. Variants built within the last day
+are protected, and metadata-only checks do not displace retained rlib/PDB builds.
+Below 20 GiB free space, an extra check can trim excess recent
+variants while still retaining three. Active Cargo builds are skipped using
+Cargo's profile locks. Release outputs, native build-script output, unknown
+artifact layouts and target directories outside this repository are preserved.
+
+Preview or run cleanup manually:
+
+```text
+python scripts/trim-build-cache.py
+python scripts/trim-build-cache.py --apply
+```
+
+Use `--keep`, `--min-age-hours` and `--min-free-gib` to adjust manual retention.
+`TRANSMOG_BUILD_CACHE_TRIM=0` disables automatic checks. CI and explicitly
+redirected/custom Cargo layouts skip automatic cleanup. Deleting an older
+variant may require recompiling that configuration next time it is used; removing
+its fingerprint together with its artifacts lets Cargo rebuild coherently.
+
 ## Windows
 
 The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all

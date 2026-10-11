@@ -45,6 +45,10 @@ def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True, input=N
         argv = [executable("node", env), str(cli), *argv[1:]]
     else:
         argv[0] = tool
+    if Path(cwd).resolve() == ROOT and Path(tool).name.lower() in {"cargo", "cargo.exe"}:
+        from build_cache import automatic, is_build_command
+        if is_build_command(argv[1:]):
+            automatic(os.environ if env is None else env, arguments=argv[1:])
     return subprocess.run(argv, cwd=cwd, env=env, check=check, text=True,
                           encoding="utf-8", errors="replace", capture_output=capture, input=input)
 

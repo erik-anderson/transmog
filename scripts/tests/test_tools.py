@@ -38,7 +38,7 @@ class CommandTests(unittest.TestCase):
         for name in ("dev-env", "build-desktop", "build-dotnet-sample", "test", "test-live", "test-load", "test-interop",
                      "test-linux-docker", "fuzz-content-docker", "update-content-fuzz-corpus-docker", "generate-supply-chain-artifacts",
                      "set-release-version", "check-published-release-version", "sync-stable-update-release", "advance-release-version",
-                     "create-update-manifest", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing"):
+                     "create-update-manifest", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing", "trim-build-cache"):
             with self.subTest(name=name):
                 result = subprocess.run([sys.executable, SCRIPTS / (name + ".py"), "--help"], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)

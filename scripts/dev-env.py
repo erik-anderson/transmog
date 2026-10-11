@@ -16,6 +16,8 @@ def main():
         parser.error("--run requires a command")
     env = development_environment()
     if args.emit_env:
+        from build_cache import automatic
+        automatic(env)
         print(json.dumps({key: value for key, value in env.items() if os.environ.get(key) != value}))
     elif args.run:
         result = command(args.run, env=env, check=False)
