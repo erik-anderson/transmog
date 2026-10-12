@@ -23,8 +23,15 @@ mod websocket_h2_tests {
         events: tokio::sync::mpsc::UnboundedReceiver<ObserverEvent>,
     }
     impl Fixture {
-        #[allow(clippy::too_many_lines)]
         async fn start(route_policy: RoutePolicy, support: bool) -> Self {
+            Self::with_hooks(route_policy, support, Vec::new()).await
+        }
+        #[allow(clippy::too_many_lines)]
+        async fn with_hooks(
+            route_policy: RoutePolicy,
+            support: bool,
+            hooks: Vec<InterceptorRegistration>,
+        ) -> Self {
             let origin_ca = ProxyCa::generate("H2 WebSocket origin", 2).unwrap();
             let leaf = origin_ca
                 .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
@@ -86,7 +93,7 @@ mod websocket_h2_tests {
             };
             let (tx, events) = tokio::sync::mpsc::unbounded_channel();
             let components = ProxyComponents::new(
-                InterceptorChainFactory::new(Vec::new(), config.limits.hooks),
+                InterceptorChainFactory::new(hooks, config.limits.hooks),
                 Arc::new(
                     CachedMitmCertificateResolver::new(
                         ca,
@@ -521,6 +528,36 @@ mod websocket_h2_tests {
         assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamMessage(message) if message.kind == "event" && message.payload == "H2 event")));
         assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamState(state) if state.status == StreamStatus::Failed)));
         assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamState(state) if state.status == StreamStatus::Interrupted)));
+    }
+
+    #[tokio::test]
+    async fn websocket_h2_synthetic_http_responses_cannot_open_unowned_streams() {
+        let cases: [(Arc<dyn InterceptorFactory>, &str); 2] = [
+            (Arc::new(LocalResponseHandler), "synthetic"),
+            (Arc::new(StreamingLocalResponseHandler), "stream-asset"),
+        ];
+        for (factory, body) in cases {
+            let fixture = Fixture::with_hooks(
+                RoutePolicy::Http2Only,
+                true,
+                vec![InterceptorRegistration::new(
+                    "local",
+                    factory,
+                    InterceptorRequirement::Required,
+                )],
+            )
+            .await;
+            let mut client = fixture.client(true).await;
+            let response = client.request("/socket", true).await;
+            assert_eq!(response.status(), 502);
+            assert_eq!(
+                response.into_body().collect().await.unwrap().to_bytes(),
+                body
+            );
+            assert_eq!(fixture.connections.load(Ordering::Relaxed), 0);
+            assert_eq!(fixture.control.activity().websockets, 0);
+            fixture.finish().await;
+        }
     }
 
     #[tokio::test]

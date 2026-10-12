@@ -131,7 +131,7 @@ pub struct RelayReport {
 
 /// Relays upgraded streams without interpreting or rewriting any byte.
 ///
-/// This is the required fast path when no WebSocket hook is installed.
+/// This is the fast path when neither WebSocket hooks nor observers are installed.
 ///
 /// # Errors
 ///

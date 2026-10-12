@@ -555,16 +555,17 @@ impl HyperOriginClient {
         Ok(StreamingResponse { head, body })
     }
 
-    /// Sends an HTTP/1.1 upgrade request while retaining Hyper's upgraded
-    /// origin stream. Hop-by-hop `Connection` and `Upgrade` fields are
-    /// intentionally preserved; proxy-only authorization fields are removed.
+    /// Opens a WebSocket over H1 Upgrade or H2 extended CONNECT. The request
+    /// supplies the H1 handshake representation, including its client nonce;
+    /// the H2 adapter removes nonce and connection-specific fields. Auto mode
+    /// falls back to H1 only before sending an opening request.
     ///
     /// A rejected upgrade remains an ordinary bounded streaming response.
     ///
     /// # Errors
     ///
-    /// Returns [`HyperOriginError`] for invalid canonical data or a transport
-    /// failure before the response head is available.
+    /// Returns [`HyperOriginError`] for invalid data, unavailable H2 capability,
+    /// or a transport/deadline failure before the response head is available.
     #[allow(clippy::too_many_lines)]
     pub async fn execute_upgrade(
         &self,

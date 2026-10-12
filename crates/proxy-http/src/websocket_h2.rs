@@ -155,8 +155,19 @@ impl Pool {
             })
         });
         let (response, send) = peer.sender.send_request(outgoing, false)?;
+        if let Some(performance) = &client.performance {
+            performance.mark(Milestone::UpstreamRequestConsumed);
+        }
         drop(locked);
         let response = response.await?;
+        if let Some(performance) = &client.performance {
+            performance.mark(Milestone::ResponseHeaders);
+            performance.protocol(ProtocolObservation {
+                boundary: "upstream-response".into(),
+                version: "HTTP/2".into(),
+                reason: Some("WebSocket extended CONNECT".into()),
+            });
+        }
         let head = ResponseHead {
             status: response.status().as_u16(),
             headers: block_from_headers(response.headers())?,

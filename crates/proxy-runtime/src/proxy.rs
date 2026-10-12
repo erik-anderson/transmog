@@ -738,6 +738,8 @@ struct ProxyState {
 #[derive(Clone, Debug)]
 struct RuntimeExchangeObserver(Arc<ExchangeObserver>);
 
+struct RuntimeExtendedConnect;
+
 #[derive(Clone)]
 struct UpstreamGeneration {
     hyper: HyperOriginClient,
@@ -1312,6 +1314,9 @@ impl ProxyState {
             .extensions()
             .insert(RuntimeExchangeObserver(Arc::clone(&observer)));
         chain.context().extensions().insert(performance);
+        if extended_websocket {
+            chain.context().extensions().insert(RuntimeExtendedConnect);
+        }
         chain
             .context()
             .extensions()
@@ -2944,6 +2949,7 @@ impl ProxyState {
                 replacement_body: None,
                 local_response,
             }) => {
+                reject_unbacked_extended_connect(&chain, &mut head);
                 if body_semantics(&request.method, head.status) == BodySemantics::Forbidden {
                     drop(body);
                     return self
@@ -3027,6 +3033,7 @@ impl ProxyState {
         chain: Arc<ExchangeChain>,
         local_response: bool,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
+        reject_unbacked_extended_connect(&chain, &mut response.head);
         if body_semantics(&request.method, response.head.status) == BodySemantics::Forbidden {
             response.body.clear();
         } else {
@@ -4824,6 +4831,20 @@ fn websocket_success(status: u16, extended: bool) -> bool {
         (200..300).contains(&status)
     } else {
         status == 101
+    }
+}
+
+fn reject_unbacked_extended_connect(chain: &ExchangeChain, response: &mut ResponseHead) {
+    if chain
+        .context()
+        .extensions()
+        .get::<RuntimeExtendedConnect>()
+        .is_some()
+        && websocket_success(response.status, true)
+    {
+        // Only the relay path can establish a tunnel. Synthetic HTTP responses
+        // must not acknowledge an upgrade with no owner for its stream.
+        response.status = 502;
     }
 }
 

@@ -88,3 +88,7 @@ HTTP response pipeline. An H1 2xx decline becomes a downstream H2 502, since an 
 2xx CONNECT response would incorrectly establish a tunnel. Captured origin heads
 retain the original status. HTTP/3 WebSockets and application-owned
 `UpstreamService` byte-stream upgrades remain unsupported.
+
+Locally authored HTTP responses can reject an opening request. A synthetic 2xx
+response to extended CONNECT becomes 502 because no origin relay owns that
+tunnel; its authored body is preserved for inspection.
