@@ -99,7 +99,7 @@ explicit recording write files. See [trace saving](trace-saving.md) and the
 [CLI support guide](cli-support-capture.md); the CLI has separate preferences
 and root ownership under `%LOCALAPPDATA%\Transmog-cli`.
 
-Desktop update reminders use a separate bounded `update-preferences.<generation>.json`
+Desktop automatic-check preferences and update reminders use a separate bounded `update-preferences.<generation>.json`
 store under the same product-state root. Independent Settings saves cannot
 overwrite the reminder deadline. Three generations are retained; updates preserve
 them, and uninstall removes only their owned numeric filenames. Staged installer

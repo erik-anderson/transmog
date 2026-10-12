@@ -1,6 +1,7 @@
 ; Transmog update/uninstall safety hooks. These run the currently installed
 ; binary in non-UI maintenance mode before NSIS replaces or removes it.
 !include "${__FILEDIR__}\capture-associations.nsh"
+!include "${__FILEDIR__}\automatic-updates.nsh"
 
 !macro NSIS_HOOK_PREINSTALL
   ${If} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -41,6 +42,7 @@
 
 !macro NSIS_HOOK_POSTINSTALL
   !insertmacro TRANSMOG_ASSOC_INSTALL
+  !insertmacro TRANSMOG_UPDATES_INSTALL
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL

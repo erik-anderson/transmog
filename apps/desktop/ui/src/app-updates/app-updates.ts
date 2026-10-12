@@ -15,6 +15,7 @@ export interface UpdateStatus {
   suppressed: boolean;
   remindAfterUnixMs: number;
   lastCheckedUnixMs: number;
+  automaticChecksEnabled: boolean;
 }
 
 /** The native coordinator owns eligibility, signed bytes, and installation consent. */
@@ -25,6 +26,8 @@ export class AppUpdates extends WebUIElement {
   @observable updateProgressText = initialState.updateProgressText;
   @observable updateReminderText = initialState.updateReminderText;
   @observable updateError = initialState.updateError;
+  @observable updatePreferenceBusy=initialState.updatePreferenceBusy;
+  private preferenceGeneration=0;
   private generation = 0;
   private closeChannel: Channel<null> | undefined;
 
@@ -36,7 +39,7 @@ export class AppUpdates extends WebUIElement {
   }
 
   private apply(status: UpdateStatus): void {
-    this.updateState = {...status, message:status.message || 'Updates have not been checked yet.'};
+    this.updateState = {...status, automaticChecksEnabled:status.automaticChecksEnabled??true, message:status.message || 'Updates have not been checked yet.'};
     this.updateLastCheckedText = status.lastCheckedUnixMs ? 'Last successful check: '+new Date(status.lastCheckedUnixMs).toLocaleString() : '';
     this.$emit('update-state-change', status);
     this.updateProgressText = status.totalBytes
@@ -46,22 +49,33 @@ export class AppUpdates extends WebUIElement {
       ? `Automatic prompts paused until ${new Date(status.remindAfterUnixMs).toLocaleDateString()}.` : '';
   }
 
+  async setAutomaticChecks(event:Event):Promise<void> {
+    const input=event.currentTarget as HTMLInputElement;
+    if(this.updatePreferenceBusy)return;
+    this.preferenceGeneration++;this.updatePreferenceBusy=true;this.updateError='';
+    try {this.apply(await invoke<UpdateStatus>('set_automatic_update_checks',{enabled:input.checked}));}
+    catch(error:unknown){this.updateError=describeError(error);const status=await invoke<UpdateStatus>('update_status').catch(()=>null);if(status)this.apply(status);input.checked=this.updateState.automaticChecksEnabled;}
+    finally{this.updatePreferenceBusy=false;}
+  }
   async check(manual = true): Promise<void> {
     if (this.updateBusy) return;
     const generation = ++this.generation;
+    const preferenceGeneration=this.preferenceGeneration;
     this.updateBusy = true;
     this.updateError = '';
     try {
       const snapshot = await invoke<UpdateStatus>('update_status').catch(() => null);
       if (generation !== this.generation || !this.isConnected) return;
-      if (snapshot) this.apply({...snapshot, phase: 'checking', message: 'Checking for a stable release…'});
+      const currentSnapshot = snapshot && {...snapshot, automaticChecksEnabled:preferenceGeneration===this.preferenceGeneration ? snapshot.automaticChecksEnabled : this.updateState.automaticChecksEnabled};
+      if(currentSnapshot&&!manual&&currentSnapshot.automaticChecksEnabled===false){this.apply(currentSnapshot);return;}
+      if (currentSnapshot) this.apply({...currentSnapshot, phase: 'checking', message: 'Checking for a stable release…'});
       const status = await invoke<UpdateStatus>('check_updates', { manual });
       if (generation !== this.generation || !this.isConnected) return;
-      this.apply(status);
+      this.apply(preferenceGeneration===this.preferenceGeneration?status:{...status,automaticChecksEnabled:this.updateState.automaticChecksEnabled});
     } catch (error: unknown) {
       const status = await invoke<UpdateStatus>('update_status').catch(() => null);
       if (generation === this.generation && this.isConnected) {
-        if (status) this.apply(status);
+        if (status) this.apply(preferenceGeneration===this.preferenceGeneration?status:{...status,automaticChecksEnabled:this.updateState.automaticChecksEnabled});
         if (manual && describeError(error) !== status?.message) this.updateError = describeError(error);
       }
     } finally { if (generation === this.generation) this.updateBusy = false; }

@@ -780,12 +780,14 @@
     "scheduled": false,
     "suppressed": false,
     "remindAfterUnixMs": 0,
-    "lastCheckedUnixMs": 0
+    "lastCheckedUnixMs": 0,
+    "automaticChecksEnabled": true
   },
   "updateToolbarVisible": false,
   "updateToolbarLabel": "Update available",
   "updateLastCheckedText": "",
   "updateBusy": false,
+  "updatePreferenceBusy": false,
   "updateProgressText": "",
   "updateReminderText": "",
   "updateError": "",

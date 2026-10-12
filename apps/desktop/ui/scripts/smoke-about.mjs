@@ -17,11 +17,17 @@ export async function smokeAbout(call,evaluate,screenshotPath) {
       if(!settings.creditsDialog.matches(':modal')||settings.credits.length<100)throw new Error('Credits licenses are unavailable');
       if(settings.creditsSummary.includes('Generated from the locked')||settings.creditsSummary.includes('Distributions must retain'))throw new Error('Developer credits copy remains visible');
       settings.closeCredits();settings.$flushUpdates();
-      return {installedVersion:status.currentVersion,website:true,credits:true,quietToolbar:true};
+      globalThis.__aboutProbe.automatic=status.automaticChecksEnabled;
+      await window.__TAURI_INTERNALS__.invoke('set_automatic_update_checks',{enabled:false});
+      await settings.aboutUpdates.check(false);
+      if(settings.aboutUpdates.updateState.automaticChecksEnabled)throw new Error('Automatic checking did not turn off');
+      if((await window.__TAURI_INTERNALS__.invoke('update_status')).automaticChecksEnabled)throw new Error('Native update policy ignored opt-out');
+
+      return {installedVersion:status.currentVersion,website:true,credits:true,quietToolbar:true,automaticOptOut:true};
     })()`);
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-about.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     return result;
   } finally {
-    await evaluate(`(()=>{const probe=globalThis.__aboutProbe;if(!probe)return;const shell=document.querySelector('app-shell');shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__aboutProbe;})()`);
+    await evaluate(`(async()=>{const probe=globalThis.__aboutProbe;if(!probe)return;const shell=document.querySelector('app-shell');if(probe.automatic!==undefined)await window.__TAURI_INTERNALS__.invoke('set_automatic_update_checks',{enabled:probe.automatic});await shell.settings.aboutUpdates.check(false);shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__aboutProbe;})()`);
   }
 }

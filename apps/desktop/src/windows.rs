@@ -91,8 +91,8 @@ struct DesktopState {
 #[tauri::command]
 fn open_product_website() -> Result<(), String> {
     use std::os::windows::process::CommandExt as _;
-    let system = std::env::var_os("SystemRoot")
-        .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    let system =
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     std::process::Command::new(system.join("System32/rundll32.exe"))
         .args(["url.dll,FileProtocolHandler", "https://transmog.net"])
         .creation_flags(0x0800_0000)
@@ -106,6 +106,14 @@ fn update_status(
     updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
 ) -> crate::updates::UpdateStatus {
     updates.status()
+}
+
+#[tauri::command]
+fn set_automatic_update_checks(
+    enabled: bool,
+    updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
+) -> Result<crate::updates::UpdateStatus, String> {
+    updates.set_automatic_checks(enabled)
 }
 
 #[tauri::command]
@@ -2021,6 +2029,7 @@ pub fn run() {
                 update_status,
                 open_product_website,
                 check_updates,
+                set_automatic_update_checks,
                 download_update,
                 cancel_update,
                 remind_update,
@@ -2235,6 +2244,9 @@ fn exit_for_maintenance_if_requested() {
 }
 
 fn maintenance_exit_code() -> Option<i32> {
+    if let Some(code) = crate::update_policy::preference_maintenance_exit_code() {
+        return Some(code);
+    }
     if let Some(code) = crate::updates::artifact_verification_exit_code() {
         return Some(code);
     }

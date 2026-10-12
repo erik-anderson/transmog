@@ -31,6 +31,7 @@ pub(crate) struct UpdateStatus {
     pub(crate) suppressed: bool,
     pub(crate) remind_after_unix_ms: u64,
     pub(crate) last_checked_unix_ms: u64,
+    pub(crate) automatic_checks_enabled: bool,
 }
 
 struct Inner {
@@ -63,6 +64,7 @@ impl UpdateCoordinator {
                         .expect("product version")
                         .to_owned(),
                     remind_after_unix_ms: reminder.reminder.remind_after_unix_ms,
+                    automatic_checks_enabled: reminder.reminder.automatic_checks_enabled,
                     ..UpdateStatus::default()
                 },
                 candidate: None,
@@ -80,6 +82,13 @@ impl UpdateCoordinator {
         self.inner.lock().unwrap().status.clone()
     }
 
+    pub(crate) fn set_automatic_checks(&self, enabled: bool) -> Result<UpdateStatus, String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.reminder.set_automatic_checks(enabled)?;
+        inner.status.automatic_checks_enabled = enabled;
+        inner.status.remind_after_unix_ms = inner.reminder.reminder.remind_after_unix_ms;
+        Ok(inner.status.clone())
+    }
     pub(crate) fn watch_close(&self, channel: Channel<()>) {
         self.inner.lock().unwrap().close_channel = Some(channel);
     }
@@ -109,8 +118,17 @@ impl UpdateCoordinator {
             if inner.staged.is_some() {
                 return Ok(inner.status.clone());
             }
-            if !manual && (cfg!(debug_assertions) || inner.status.remind_after_unix_ms > now_ms()) {
+            if !manual
+                && !crate::update_policy::automatic_check_permitted(
+                    inner.reminder.reminder,
+                    cfg!(debug_assertions),
+                    now_ms(),
+                )
+            {
                 inner.status.suppressed = true;
+                if !inner.status.automatic_checks_enabled {
+                    "Automatic update checking is off.".clone_into(&mut inner.status.message);
+                }
                 return Ok(inner.status.clone());
             }
             inner.status.phase = "checking";
@@ -124,16 +142,23 @@ impl UpdateCoordinator {
                 .build().map_err(|_| "The update checker could not initialize.".to_owned())?;
             updater.check().await.map_err(|_| "The update check could not reach GitHub or read the release manifest. Try again later.".to_owned())
         }.await;
+        let mut inner = self.inner.lock().unwrap();
+        if !manual && !inner.reminder.reminder.automatic_checks_enabled {
+            inner.status.phase = "idle";
+            inner.status.suppressed = true;
+            "Automatic update checking is off.".clone_into(&mut inner.status.message);
+            return Ok(inner.status.clone());
+        }
         match result {
             Ok(Some(mut update)) => {
                 if !valid_download(&update.version, update.download_url.as_str()) {
-                    return Err(
-                        self.fail("The release contains an unexpected Windows installer URL.")
-                    );
+                    inner.status.phase = "error";
+                    "The release contains an unexpected Windows installer URL."
+                        .clone_into(&mut inner.status.message);
+                    return Err(inner.status.message.clone());
                 }
                 // Checking is bounded separately from an explicitly requested installer download.
                 update.timeout = Some(Duration::from_secs(15 * 60));
-                let mut inner = self.inner.lock().unwrap();
                 inner.status.last_checked_unix_ms = now_ms();
                 inner.status.phase = "available";
                 inner.status.version = Some(update.version.clone());
@@ -149,7 +174,6 @@ impl UpdateCoordinator {
                 Ok(inner.status.clone())
             }
             Ok(None) => {
-                let mut inner = self.inner.lock().unwrap();
                 inner.status.last_checked_unix_ms = now_ms();
                 inner.status.phase = "idle";
                 inner.status.version = None;
@@ -158,7 +182,11 @@ impl UpdateCoordinator {
                 inner.candidate = None;
                 Ok(inner.status.clone())
             }
-            Err(message) => Err(self.fail(&message)),
+            Err(message) => {
+                inner.status.phase = "error";
+                inner.status.message = message;
+                Err(inner.status.message.clone())
+            }
         }
     }
 
@@ -270,6 +298,7 @@ impl UpdateCoordinator {
             return Err("Cancel the scheduled update before setting a reminder.".to_owned());
         }
         inner.status.remind_after_unix_ms = inner.reminder.snooze(now_ms())?;
+        inner.status.automatic_checks_enabled = inner.reminder.reminder.automatic_checks_enabled;
         inner.status.suppressed = true;
         "Automatic update prompts are paused for 30 days.".clone_into(&mut inner.status.message);
         Ok(inner.status.clone())

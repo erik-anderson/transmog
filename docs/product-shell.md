@@ -149,3 +149,9 @@ See [safe previews](safe-previews.md) and [captured-page preview](captured-page-
 Current support boundaries are in [limitations](limitations.md), future work in
 [the roadmap](roadmap.md), and interaction conventions in
 [UX design principles](ux-principles.md).
+
+Automatic update checks are enabled by default. Settings → About saves this
+choice immediately, independently of ordinary settings and the thirty-day reminder.
+Turning it off prevents startup network checks; manual checks remain available.
+The installer offers the same choice and preserves it on updates and silent
+installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.

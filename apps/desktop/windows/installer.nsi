@@ -232,6 +232,7 @@ FunctionEnd
 !insertmacro MUI_PAGE_DIRECTORY
 
 !insertmacro TRANSMOG_ASSOC_PAGE
+!insertmacro TRANSMOG_UPDATES_PAGE
 
 ; 6. Start menu shortcut page
 Var AppStartMenuFolder
@@ -321,6 +322,7 @@ FunctionEnd
 
 Function .onInit
   !insertmacro TRANSMOG_ASSOC_INIT
+  !insertmacro TRANSMOG_UPDATES_INIT
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1

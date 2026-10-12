@@ -441,3 +441,9 @@ Server connection reuse is enabled by default. Turning it off gives subsequent
 requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
 capture viewers. Active requests and streams finish normally. Keep HTTPS
 decryption visible at the top of Preferences, above the advanced disclosure.
+
+Automatic update checks are enabled by default. Settings → About saves this
+choice immediately, independently of ordinary settings and the thirty-day reminder.
+Turning it off prevents startup network checks; manual checks remain available.
+The installer offers the same choice and preserves it on updates and silent
+installs unless the user explicitly changes it.

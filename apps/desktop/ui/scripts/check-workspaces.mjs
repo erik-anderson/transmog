@@ -88,6 +88,7 @@ await page.addInitScript((workspace) => {
       switch (command) {
         case 'open_product_website': return;
         case 'watch_update_close': state.updateCloseChannel = args.channel; return;
+        case 'set_automatic_update_checks': if(state.updatePreferenceError)throw new Error('Fixture preferences cannot be saved');state.update.automaticChecksEnabled=args.enabled;return structuredClone(state.update);
         case 'update_status': return structuredClone(state.update);
         case 'check_updates': {
           state.update ??= {phase:sessionStorage.getItem('startup-update-tested')?'idle':'available',currentVersion:'0.1.0',version:sessionStorage.getItem('startup-update-tested')?null:'0.2.0',notes:'Startup release',message:'Release check complete.',downloadedBytes:0,totalBytes:null,scheduled:false,suppressed:false,remindAfterUnixMs:0};
@@ -1675,6 +1676,23 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.updateNetworkError=true;await document.querySelector('app-shell').updates.check(true);globalThis.__workspaceFixture.updateNetworkError=false;});
   assert.match(await page.locator('#update-panel').textContent(),/GitHub unavailable/);
   assert.doesNotMatch(await page.locator('#update-panel').textContent(),/up to date/);
+  const automaticChecks=page.locator('app-updates').getByLabel('Automatically check for updates',{exact:true});
+  assert.equal(await automaticChecks.isChecked(),true);
+  await automaticChecks.uncheck();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updatePreferenceBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.update.automaticChecksEnabled),false);
+  const disabledChecks=await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates);
+  await page.evaluate(async()=>await document.querySelector('app-shell').updates.check(false));
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),disabledChecks,'Disabled startup checking contacted updater');
+  await page.locator('#update-panel').getByRole('button',{name:'Check for updates',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updateBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),disabledChecks+1,'Disabling automatic checks blocked manual checking');
+  assert.equal(await automaticChecks.isChecked(),false);
+  await page.evaluate(()=>globalThis.__workspaceFixture.updatePreferenceError=true);await automaticChecks.click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updatePreferenceBusy);
+  assert.equal(await automaticChecks.isChecked(),false,'Failed preference save claimed automatic checking was enabled');
+  await page.evaluate(()=>globalThis.__workspaceFixture.updatePreferenceError=false);await automaticChecks.check();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updatePreferenceBusy);
   // Updates preserve startup, snooze, cancellation, drafts, and safe shutdown semantics.
   await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,phase:'available',version:'0.2.0',notes:'A release note with <script>inert text</script>',message:'A new stable release is available.'};});
   const updatePanel=page.locator('#update-panel');

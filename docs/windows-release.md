@@ -482,3 +482,9 @@ Record OS build, WebView2 version, installer SHA-256, signer, test command
 outputs, and the pre/post proxy and certificate inventories in the release
 evidence. Certificate install/remove dialogs are intentionally manual; release
 automation must wait for the human action rather than bypass validation.
+
+Automatic update checks are enabled by default. Settings → About saves this
+choice immediately, independently of ordinary settings and the thirty-day reminder.
+Turning it off prevents startup network checks; manual checks remain available.
+The installer offers the same choice and preserves it on updates and silent
+installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.
