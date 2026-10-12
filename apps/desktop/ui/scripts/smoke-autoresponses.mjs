@@ -28,6 +28,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       await workspace.refreshAutomation();await workspace.editAutoResponse(rule,true);workspace.$flushUpdates();
       if(!workspace.autoResponseBody.disabled||!workspace.textContent.includes('Response body being served from file'))throw new Error('Native linked-file overlay is missing');
       if(workspace.autoResponsePreserveEncoding.disabled||!workspace.textContent.includes('Apply original compression type (gzip)')||!asset.linkedBody.applyOriginalCompression)throw new Error('Native linked-file compression choice is missing');
+      if(/x-gzip/i.test(workspace.autoResponsePreserveEncoding.closest('label').textContent))throw new Error('Native compression control exposed the gzip alias');
       workspace.autoResponseForm.elements.namedItem('status').value='201';
       if(!await workspace.saveAutoResponse(new Event('submit',{cancelable:true})))throw new Error('Native metadata-only Save failed: '+workspace.autoResponseError);
       const saved=await invoke('inspect_response_asset',{reference:workspace.rules.find(r=>r.id===rule.id).request.responseAsset});

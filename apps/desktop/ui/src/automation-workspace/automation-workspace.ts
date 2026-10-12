@@ -11,7 +11,7 @@ import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { ResponseBodyFileInfo, MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
-import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, editableCharacterEncoding, responseTextEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, formatContentCodings, supportedContentCodings, editableCharacterEncoding, responseTextEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 
@@ -877,11 +877,10 @@ export class AutomationWorkspace extends WorkspaceElement {
   private updateCompressionChoice():void {
     const source=this.autoResponseSourceState;
     const codings=source?.kind==='captured'?source.contentCodings:this.savedResponse?.contentCodings??[];
-    const labels:Record<string,string>={'gzip':'gzip','x-gzip':'gzip','br':'Brotli','deflate':'deflate','zstd':'zstd'};
-    this.compressionType=codings.map(coding=>labels[coding]??coding).join(', ');
+    this.compressionType=formatContentCodings(codings);
     this.encodingOptionsHidden=codings.length===0;
     const editable=source?.kind==='captured'?this.autoResponseEditBody.checked:!this.bodyReadOnly;
-    const unsupported=codings.some(coding=>!labels[coding]);
+    const unsupported=!supportedContentCodings(codings);
     this.compressionUnavailableText=unsupported?'Original compression is unsupported. Replacement bodies will be served without compression.':'';
     if(unsupported && (this.responseBodyPath || editable))this.autoResponsePreserveEncoding.checked=false;
     this.preserveEncodingDisabled=codings.length===0 || unsupported || (!this.responseBodyPath && !editable);

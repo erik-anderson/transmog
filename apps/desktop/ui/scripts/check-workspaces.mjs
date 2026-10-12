@@ -906,6 +906,20 @@ try {
   assert.match(await page.locator('.notice').textContent(),/Fixture file write failed/);
   await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
   await page.evaluate(()=>{globalThis.__workspaceFixture.saveError=false;});
+  const originalCodingDetail=await page.evaluate(()=>structuredClone(document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]').detail));
+  const codingFactsWasOpen=await responseInspector.locator('.body-facts').evaluate(details=>details.open);
+  if(!codingFactsWasOpen)await responseInspector.locator('.body-facts > summary').click();
+  for(const codings of [['x-gzip','br'],['X-GZIP','BR'],['gzip','x-gzip']]) {
+    await page.evaluate(codings=>{
+      const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]'),detail=structuredClone(inspector.detail);
+      const override=globalThis.__workspaceFixture.bodyOverride={contentCodings:codings,wireBodyBytes:17};
+      Object.assign(detail.storedBodies[0],override);inspector.detail=detail;
+    },codings);
+    await responseInspector.locator('.body-facts').getByText(`17 wire body bytes (${codings.join(', ')}, excludes framing/TLS)`,{exact:false}).waitFor();
+    assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]').bodyMetadata.contentCodings),codings,'Display normalization mutated captured metadata');
+  }
+  await page.evaluate(detail=>{delete globalThis.__workspaceFixture.bodyOverride;document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]').detail=detail;},originalCodingDetail);
+  if(!codingFactsWasOpen)await responseInspector.locator('.body-facts > summary').click();
   await page.evaluate(()=>{
     const inspector=document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
     const detail=structuredClone(inspector.detail);
@@ -1005,6 +1019,19 @@ try {
   await autoEditor.evaluate(form=>form.closest('.rule-properties-pane').scrollTop=0);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-response-compact.png')});
   await page.setViewportSize({width:1280,height:800});
+
+  for(const codings of [['x-gzip','br'],['X-GZIP','BR'],['gzip','x-gzip']]) {
+    await page.evaluate(async codings=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace'),detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'});detail.storedBodies[0].contentCodings=codings;await w.populateCapturedAutoResponse('second',detail);},codings);
+    const expected=codings[1].toLowerCase()==='br'?'gzip, Brotli':'gzip, gzip';
+    assert.match(await page.locator('.auto-response-source').textContent(),new RegExp(codings.join(', ')),'Captured response context changed the server\'s coding token');
+    await autoField('editBody').check();
+    await autoEditor.getByText(`Apply original compression type (${expected})`,{exact:false}).waitFor();
+    assert.doesNotMatch(await autoField('preserveEncoding').evaluate(input=>input.closest('label').textContent),/x-gzip/i,'Compression control exposed a separate alias label');
+    assert.equal(await autoField('preserveEncoding').isEnabled(),true,'Recognized compression aliases were classified as unsupported');
+    assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').autoResponseSourceState.contentCodings),codings,'Context label normalization changed the saved compression stack');
+    await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+    await page.waitForFunction(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !w.draftDirty&&!w.loadingSavedResponse&&w.autoResponseSourceState?.bodyEditable;});
+  }
 
   for(const [url,expected] of [['http://example.test:80/second','http://example.test/second'],['https://example.test:443/second','https://example.test/second'],['https://example.test:8443/second','https://example.test:8443/second']]) {
     await page.evaluate(async url=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'});detail.requests[0].target=url;await w.populateCapturedAutoResponse('second',detail);},url);
@@ -1156,7 +1183,7 @@ try {
 
 
   await checkResponseBodyEditor(page,root);
-  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['gzip','br'];s.assetTextEncoding=null;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
+  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['X-GZIP','BR'];s.assetTextEncoding=null;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
   await autoEditor.getByText('Apply original compression type (gzip, Brotli)',{exact:false}).waitFor();
   assert.equal(await autoField('preserveEncoding').isDisabled(),true);
   await page.evaluate(()=>globalThis.__workspaceFixture.bodyFile='C:/fixtures/binary.bin');
@@ -1169,6 +1196,12 @@ try {
   assert.equal(await autoField('preserveEncoding').isDisabled(),true);
   await autoEditor.getByText(/Original compression is unsupported/).waitFor();
 
+  await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['constructor'];const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
+  await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  await autoEditor.getByText('Apply original compression type (constructor)',{exact:false}).waitFor();
+  assert.equal(await autoField('preserveEncoding').isChecked(),false,'Unknown coding inherited a supported label from the object prototype');
+  assert.equal(await autoField('preserveEncoding').isDisabled(),true);
   await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
   await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;delete s.assetCodings;delete s.assetTextEncoding;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
   const originalFileDraft=await autoField('body').inputValue();

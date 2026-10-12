@@ -7,6 +7,15 @@ export function implicitDefaultPort(value:string):string {
     .replace(/^(https:\/\/(?:\[[^\]]+\]|[^\/:?#]+)):443(?=[/?#]|$)/i,'$1');
 }
 
+const contentCodingNames=new Map([['gzip','gzip'],['x-gzip','gzip'],['br','Brotli'],['deflate','deflate'],['zstd','zstd']]);
+/** Names for compression controls; captured coding tokens remain verbatim. */
+export function formatContentCodings(codings:readonly string[]):string {
+  return codings.map(coding=>contentCodingNames.get(coding.trim().toLowerCase())??coding).join(', ');
+}
+export function supportedContentCodings(codings:readonly string[]):boolean {
+  return codings.every(coding=>contentCodingNames.has(coding.trim().toLowerCase()));
+}
+
 export function lifecycleLabel(lifecycle: Lifecycle): string {
   switch (lifecycle) {
       case 'running': return 'Running';
