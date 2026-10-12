@@ -64,6 +64,7 @@ export interface TrafficView {id:string;ids:string[];page:SessionPage;}
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {
+  stream?:StreamSummary|null;
   composerOrigin?:ComposerOrigin|null;
   performance?: { work?:Array<{kind:string;label:string;beganOffsetMicros:number;endedOffsetMicros:number;busyNanos:number;calls:number}>; points:Array<{milestone:string;unixMillis:number;offsetMicros:number}>; protocols:Array<{boundary:string;version:string;reason:string|null}>; transports:Array<{leg:string;connectionId:string;shared:boolean;setupTimings?:Array<{phase:string;beganOffsetMicros:number;endedOffsetMicros:number;requestWaitMicros:number}>;outcome:string;tunnelDestination?:string|null;sampledOffsetMicros:number;peer:string|null;local:string|null;dnsMicros:number|null;tcpMicros:number|null;tlsMicros:number|null;tlsVersion:string|null;tls?:unknown;tlsResumed:boolean|null;cipher:string|null;alpn:string|null;bytesRead:number|null;bytesWritten:number|null;tcp?:{rttMicros:number|null;minRttMicros:number|null;congestionWindow:number|null;sendWindow:number|null;receiveWindow:number|null;unacknowledgedBytes:number|null;retransmittedBytes:number|null;retransmittedSegments:number|null;fastRetransmissions:number|null;duplicateAcks:number|null;timeoutEpisodes:number|null;mss:number|null;connectionAgeMillis:number|null}|null;tcpSampledOffsetMicros?:number|null;socketIo?:{writeWaitMicros:number;writeWaits:number;lastWriteOffsetMicros:number|null;lastFlushOffsetMicros:number|null}|null;quic?:{rttMicros:number|null;congestionWindow:number|null;packetsSent:number;packetsReceived:number;packetsLost:number;retransmittedBytes:number}|null}> };
   traceId?:string|null; originalId?:string|null;
@@ -321,3 +322,8 @@ export interface Notice { title: string; message: string; actionLabel: string | 
 
 export interface TracePasswordPrompt {title:string;confirm:boolean;message:string;resolve:(password:string|null)=>void;}
 export interface OperationError {title:string;message:string;resolve:()=>void;}
+
+export interface StreamMessage { atMillis:number; sender:string; kind:string; byteCount:number; payload:number[]; truncated:boolean; compressed:boolean; event:string|null; eventId:string|null; retry:number|null; raw:string|null; closeCode:number|null; }
+export interface StreamSummary { state:{protocol:'web-socket'|'sse';status:string;atMillis:number;reason:string|null}; imported:boolean; revision:number; observed:number; evicted:number; sequenceLoss:number; retained:number; clientBytes:number; serverBytes:number; openedAt:number|null; lastActivity:number|null; }
+export interface StreamRow { sequence:number; message:StreamMessage; }
+export interface StreamPage { total:number; offset:number; rows:StreamRow[]; summary:StreamSummary|null; }

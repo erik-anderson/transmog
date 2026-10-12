@@ -1,0 +1,22 @@
+<template>
+  <section class="stream-inspector" w-ref="{streamPanelScroller}" ?data-reading="{{streamReading}}" aria-label="Stream activity">
+    <p class="stream-status">{{streamStatus}}</p>
+    <p class="stream-notice" ?hidden="{{!streamNotice}}">{{streamNotice}}</p>
+    <form class="stream-tools" @submit="{search(e)}">
+      <select aria-label="Message sender" @change="{filter(e,'sender')}"><option value="">Both directions</option><option value="client">Client → Server</option><option value="server">Server → Client</option></select>
+      <label class="checkbox-label"><input type="checkbox" ?checked="{{streamControls}}" @change="{filter(e,'controls')}">Controls</label>
+      <input type="search" w-ref="{streamSearchInput}" placeholder="Search messages" aria-label="Search retained messages"><button class="secondary compact-button" type="submit">Search</button>
+      <button class="secondary compact-button" type="button" @click="{follow()}" ?disabled="{{streamFollow}}">Follow latest</button>
+    </form>
+    <p class="stream-notice stream-error" role="status" ?hidden="{{!streamError}}">{{streamError}}</p>
+    <div class="stream-list" w-ref="{streamScroller}" @scroll="{scrolled()}" role="listbox" aria-label="Stream messages">
+      <div class="stream-spacer" data-size="{{streamTop}}"></div>
+      <for each="row in streamRows"><button type="button" id="stream-item-{{row.sequence}}" key="{{row.sequence}}" class="stream-row" role="option" aria-selected="{{row.selected}}" tabindex="{{row.tabIndex}}" @click="{select(row)}" @keydown="{key(e,row)}" title="{{row.label}}"><span>{{row.time}}</span><span>{{row.message.sender}}</span><span>{{row.label}}</span><span>{{row.size}}</span></button></for>
+      <div class="stream-spacer" data-size="{{streamBottom}}"></div>
+      <p class="stream-empty" ?hidden="{{streamTotal}}">No matching messages yet. An open connection can be quiet.</p>
+    </div>
+    <div class="stream-payload-tools"><button type="button" class="stream-back secondary compact-button" @click="{showMessages()}">Messages</button><select aria-label="Message payload viewer" @change="{viewer(e)}" ?disabled="{{!streamPayload}}"><option value="text" ?selected="{{streamView == 'text'}}">Text</option><option value="json" ?selected="{{streamView == 'json'}}">JSON</option><option value="hex" ?selected="{{streamView == 'hex'}}">Hex</option><option value="raw" ?selected="{{streamView == 'raw'}}" ?disabled="{{!streamPayload || !streamPayload.raw}}">SSE fields (LF)</option></select><button type="button" class="secondary compact-button" @click="{copy()}" ?disabled="{{!streamPayload || streamView == 'hex'}}">Copy text</button><button type="button" class="secondary compact-button" @click="{save()}" ?disabled="{{!streamPayload || streamBusy}}">Save retained message…</button></div>
+    <p class="stream-facts" ?hidden="{{!streamFacts}}">{{streamFacts}}</p>
+    <div class="stream-payload" w-ref="{streamPayloadPane}" tabindex="0" aria-label="Selected message payload"><if condition="streamHex"><hex-viewer :preview="{{streamHex}}"></hex-viewer></if><if condition="!streamHex"><pre>{{streamText}}</pre></if></div>
+  </section>
+</template>

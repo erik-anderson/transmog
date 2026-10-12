@@ -1449,6 +1449,85 @@ async fn save_response_body(
 }
 
 #[tauri::command]
+async fn stream_page(
+    query: transmog_app::StreamQuery,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::StreamPage, AppError> {
+    let app = state.window_application(&window)?.clone();
+    tokio::task::spawn_blocking(move || app.stream_page(&query))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Stream query failed".into(),
+            retryable: true,
+        })?
+}
+#[tauri::command]
+async fn stream_message(
+    id: String,
+    sequence: u64,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::StreamMessage, AppError> {
+    let app = state.window_application(&window)?.clone();
+    tokio::task::spawn_blocking(move || app.stream_message(&id, sequence))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Stream read failed".into(),
+            retryable: true,
+        })?
+}
+#[tauri::command]
+async fn save_stream_message(
+    id: String,
+    sequence: u64,
+    raw: bool,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<bool, AppError> {
+    let app = state.window_application(&window)?.clone();
+    // Retain the exact selected bytes before the user opens a native dialog.
+    let message = tokio::task::spawn_blocking(move || app.stream_message(&id, sequence))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Stream read failed".into(),
+            retryable: true,
+        })??;
+    let bytes = if raw {
+        message
+            .raw
+            .map_or_else(|| message.payload.to_vec(), String::into_bytes)
+    } else {
+        message.payload.to_vec()
+    };
+    let extension = if message.kind == "binary" {
+        "bin"
+    } else {
+        "txt"
+    };
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Save retained message as")
+        .set_file_name(format!("message-{sequence}.{extension}"))
+        .save_file()
+        .await
+    else {
+        return Ok(false);
+    };
+    tokio::task::spawn_blocking(move || transmog_app::save_stream_content(file.path(), &bytes))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Message save failed".into(),
+            retryable: true,
+        })??;
+    Ok(true)
+}
+
+#[tauri::command]
 fn watch_sessions(
     on_event: Channel<SessionHint>,
     window: tauri::WebviewWindow,
@@ -1941,6 +2020,9 @@ pub fn run() {
                 traffic_view_rows,
                 release_traffic_view,
                 session_detail,
+                stream_page,
+                stream_message,
+                save_stream_message,
                 inspect_certificates,
                 inspect_headers,
                 copy_message_headers,

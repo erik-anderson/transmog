@@ -1,3 +1,4 @@
+import { checkStreams } from './check-streams.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -60,7 +61,7 @@ await page.addInitScript((workspace) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   if(new URL(location.href).searchParams.has('empty')){state.emptyExample=state.sessions[0];state.sessions=[];}
@@ -236,6 +237,17 @@ await page.addInitScript((workspace) => {
           if(state.deferCertificates)await new Promise(resolve=>state.releaseCertificates=resolve);
           return state.certificateInspection??{connections:[],certificates:[]};
         }
+        case 'stream_page': {
+          const query=args.query;let rows=(state.streamItems??[]).filter(row=>(!query.sender||row.message.sender===query.sender)&&(query.controls||['text','binary','event'].includes(row.message.kind))&&(!query.search||new TextDecoder().decode(new Uint8Array(row.message.payload)).includes(query.search)));
+          const total=rows.length;const offset=query.tail?Math.max(0,total-query.limit):Math.min(query.offset,Math.max(0,total-1));
+          return {total,offset,rows:rows.slice(offset,offset+query.limit).map(row=>({...row,message:{...row.message,payload:[],raw:null}})),summary:state.streams?.[query.sessionId]??null};
+        }
+        case 'stream_message': {
+          const message=structuredClone(state.streamItems.find(row=>row.sequence===args.sequence)?.message);
+          if(state.deferStream)await new Promise(resolve=>state.releaseStream=resolve);
+          if(!message)throw new Error('Message was evicted');return message;
+        }
+        case 'save_stream_message': state.savedStream=structuredClone(args);return true;
         case 'session_detail':
           if (state.slowDetail && args.id === 'first') await new Promise((resolve) => setTimeout(resolve, 100));
           if (state.evictedIds?.includes(args.id) || state.dismissedIds?.includes(args.id)) throw new Error('Session is unavailable or has been evicted');
@@ -422,6 +434,7 @@ try {
   const editorOutputs = Object.entries(metadata.outputs).filter(([, output]) => Object.keys(output.inputs).some((input) => input.includes('node_modules/monaco-editor'))).map(([file]) => '/' + file.replace(/^dist\//, ''));
   assert.equal(requests.some((path) => path === '/monaco.js' || path === '/monaco.css' || editorOutputs.includes(path)), false, 'Monaco loaded at startup');
   assert.equal(await page.evaluate(() => customElements.get('automation-workspace') !== undefined), false, 'Automation hydrated at startup');
+  if(process.env.TRANSMOG_STREAM_ONLY){await checkStreams(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Stream UI checks passed.\n');process.exit(0);}
   const startupRequests = requests.length;
   assert.equal(await page.locator('.traffic-table tr[data-session-id][draggable]').count(),0,'Traffic rows still advertise cross-tab dragging');
   await view('automation');
@@ -1994,6 +2007,7 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.clearBytes=1000000000;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
+  await checkStreams(page,root);
   await checkTrafficPresentation(page,root);
   await checkTrafficNavigation(page);
   await page.goto('https://workspace.test/?empty');

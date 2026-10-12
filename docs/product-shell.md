@@ -69,6 +69,11 @@ copying, timing reports, replay and reversible removal. See
 and request-copy behavior, and [request timings](request-timings.md) for how to
 interpret latency and shared transport measurements.
 
+WebSocket and SSE entries open a live **Messages / Events** inspector. Open streams
+remain Active while quiet, separately from HTTP handshake completion. See
+[stream inspection](stream-inspection.md) for message navigation, retention,
+Stop/Start behavior and capture support.
+
 **Files → Import traffic…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
 the traffic list always imports them there. The list's drop target highlights
 accepted files, names the formats, and opens a picker with a click or keyboard.

@@ -3,6 +3,7 @@ import process from 'node:process';
 import { smokeHexViewer } from './smoke-hex-viewer.mjs';
 import { smokeNetworkSettings } from './smoke-network-settings.mjs';
 import { smokeUserAgent } from './smoke-user-agent.mjs';
+import { smokeStreams } from './smoke-streams.mjs';
 
 const portArgument = process.argv.findIndex((value) => value === '--port');
 const port = portArgument >= 0 ? process.argv[portArgument + 1] : '9333';
@@ -679,6 +680,7 @@ try {
   }
   result.networkSettings=await smokeNetworkSettings(call,evaluate,screenshotPath);
   result.userAgent=await smokeUserAgent(call,evaluate,screenshotPath);
+  result.streams=await smokeStreams(call,evaluate,screenshotPath);
   const metrics = await call('Performance.getMetrics');
   const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
   assert(heap < 64 * 1024 * 1024, `bounded status soak exceeded 64 MiB JS heap: ${heap}`);

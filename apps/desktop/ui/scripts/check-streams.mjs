@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+export async function checkStreams(page,root) {
+  const saved=await page.evaluate(()=>({sessions:globalThis.__workspaceFixture.sessions,evictedIds:globalThis.__workspaceFixture.evictedIds,dismissedIds:globalThis.__workspaceFixture.dismissedIds}));
+  await page.setViewportSize({width:1440,height:900});
+  await page.evaluate(async()=>{
+    const shell=document.querySelector('app-shell'),workspace=shell.traffic,state=globalThis.__workspaceFixture;
+    const summary={state:{protocol:'web-socket',status:'open',atMillis:1000,reason:null},imported:false,revision:1200,observed:1200,evicted:5,sequenceLoss:0,retained:1200,clientBytes:600,serverBytes:20000,openedAt:1000,lastActivity:2200};
+    state.streams={socket:summary};state.streamItems=Array.from({length:1200},(_,i)=>({sequence:i+1,message:{atMillis:1000+i,sender:i%2?'server':'client',kind:i%10===0?'ping':'text',payload:[...new TextEncoder().encode(JSON.stringify({index:i,body:'<img src=x onerror=alert(1)>'}))],byteCount:40,truncated:false,compressed:i%2===0,event:null,eventId:null,retry:null,raw:null,closeCode:null}}));
+    state.sessions=[{id:'socket',caller:{kind:'local-process',processName:'Browser',processId:42},method:'GET',host:'example.test',path:'/socket',url:'https://example.test/socket',contentType:'',protocol:'HTTP/1.1',status:101,durationMs:3,requestBytes:0,responseBytes:0,terminal:'active',loss:false,capturing:false,autoResponse:null}];
+    state.evictedIds=[];state.dismissedIds=[];await workspace.revealSession('socket');
+  });
+  const inspector=page.locator('stream-inspector');await inspector.locator('.stream-row').last().waitFor();
+  assert.ok(await inspector.locator('.stream-row').count()<=100);
+  assert.match(await inspector.locator('.stream-status').textContent(),/WebSocket.*open.*1,200/);
+  assert.match(await inspector.locator('.stream-notice').first().textContent(),/5 older/);
+  await inspector.locator('.stream-row').last().click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload!==null);await inspector.locator('pre').filter({hasText:/"index":1199/}).waitFor();
+  assert.equal(await inspector.locator('.stream-payload img').count(),0);
+  await inspector.getByLabel('Message payload viewer').selectOption('json');
+  assert.match(await inspector.locator('pre').textContent(),/"index": 1199/);
+  assert.equal(await inspector.locator('[aria-selected="true"]').count(),1);
+  await inspector.getByRole('button',{name:'Copy text',exact:true}).click();
+  assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/"index": 1199/);
+  await inspector.getByRole('button',{name:'Save retained message…',exact:true}).click();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedStream.sequence),1200);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/stream-wide.png')});
+  await page.setViewportSize({width:800,height:600});await page.screenshot({path:resolve(root,'../../../target/ui-check/stream-compact.png')});
+  assert.ok((await inspector.getByRole('button',{name:'Save retained message…'}).boundingBox()).y<600);
+  assert.equal(await inspector.locator('.stream-tools').isVisible(),false);
+  await inspector.locator('.stream-payload pre').scrollIntoViewIfNeeded();
+  const payloadBox=await inspector.locator('.stream-payload').boundingBox();assert.ok(payloadBox.height>30&&payloadBox.y<600);
+  await inspector.getByRole('button',{name:'Messages',exact:true}).scrollIntoViewIfNeeded();
+  await inspector.getByRole('button',{name:'Messages',exact:true}).click();assert.equal(await inspector.locator('.stream-list').isVisible(),true);
+  await inspector.locator('.stream-row').last().click();await page.waitForFunction(()=>!!document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload);await inspector.getByLabel('Message payload viewer').selectOption('json');
+  // Updates preserve the selected message and text; scrolling away pauses following.
+  await page.evaluate(()=>{const workspace=document.querySelector('app-shell').traffic;workspace.applyDetail({...workspace.selectedDetail,stream:{...workspace.selectedDetail.stream,revision:1300,observed:1300}});});
+  assert.match(await inspector.locator('pre').textContent(),/"index": 1199/);
+  await page.setViewportSize({width:1440,height:1000});
+  await inspector.getByLabel('Message sender').selectOption('client');await page.waitForFunction(()=>[...document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamRows].every(row=>row.message.sender==='client'));
+  await inspector.locator('.stream-row').first().focus();await page.keyboard.press('Home');await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamSelected===1);
+  await page.keyboard.press('End');await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamSelected===1199);
+  // Late payload fetches cannot replace the newly selected message.
+  await page.evaluate(()=>globalThis.__workspaceFixture.deferStream=true);await inspector.locator('.stream-row').first().click();
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.releaseStream);
+  await page.evaluate(()=>globalThis.__workspaceFixture.deferStream=false);await inspector.locator('.stream-row').nth(1).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload!==null);
+  const selectedText=await inspector.locator('pre').textContent();await page.evaluate(()=>globalThis.__workspaceFixture.releaseStream());
+  assert.equal(await inspector.locator('pre').textContent(),selectedText);
+  await page.getByRole('button',{name:'HTTP handshake',exact:true}).click();assert.equal(await inspector.isVisible(),false);
+  await page.getByRole('button',{name:'Messages / Events',exact:true}).click();assert.equal(await inspector.isVisible(),true);
+  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/stream-contrast.png')});await page.emulateMedia({forcedColors:'none'});
+  await page.evaluate(async()=>{
+    const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;
+    s.sessions.push({...s.sessions[0],id:'events',path:'/events',status:200});
+    s.streams.events={...s.streams.socket,state:{protocol:'sse',status:'open',atMillis:1000,reason:null},observed:1,evicted:0};
+    s.streamItems=[{sequence:10,message:{...s.streamItems[1].message,kind:'event',event:'update',eventId:'next-id',retry:1500,payload:[...new TextEncoder().encode('first\nsecond')],raw:'id: next-id\nretry: 1500\nevent: update\ndata: first\ndata: second\n\n'}}];
+    await t.revealSession('events');
+  });
+  await inspector.getByLabel('Message sender').selectOption('');
+  await inspector.locator('.stream-row').filter({hasText:'update'}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload?.eventId==='next-id');
+  assert.match(await inspector.locator('.stream-facts').textContent(),/ID: next-id.*Retry: 1500 ms/);
+  await inspector.getByLabel('Message payload viewer').selectOption('raw');
+  assert.match(await inspector.locator('pre').textContent(),/data: first\ndata: second/);
+  await inspector.getByRole('button',{name:'Save retained message…',exact:true}).click();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedStream.raw),true);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/stream-sse.png')});
+  await page.evaluate(async(saved)=>{Object.assign(globalThis.__workspaceFixture,saved,{streams:{},streamItems:[]});const t=document.querySelector('app-shell').traffic;t.showStream(false);await t.refreshSessions(undefined,true);},saved);
+  await page.setViewportSize({width:1280,height:800});
+}

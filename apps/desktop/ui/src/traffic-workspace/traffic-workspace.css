@@ -213,3 +213,5 @@ traffic-workspace { display:contents; }
 .trace-save-dialog form { display:flex; flex-direction:column; flex:1; min-height:0; }
 .trace-save-options { min-height:0; overflow:auto; }
 .trace-save-dialog form > p, .trace-save-dialog progress, .trace-save-dialog footer { flex-shrink:0; }
+
+.stream-tabs {display:flex;flex:0 0 auto;gap:.3rem;padding:.25rem .5rem;border-bottom:1px solid var(--line);}.stream-tabs button {font-size:.75rem;}.stream-tabs button[data-selected] {border-bottom-color:var(--accent);font-weight:600;}

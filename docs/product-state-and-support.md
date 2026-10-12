@@ -49,6 +49,11 @@ cannot participate in proxy shutdown or host restoration.
 
 ## Retention and privacy
 
+WebSocket/SSE history follows the request/client and response/server content
+privacy choices. Its bounded message history is separate from the HTTP body buffer;
+see [stream inspection](stream-inspection.md) for limits, lazy saved content and
+the distinction between active streams and open-at-capture evidence.
+
 Closing the main window releases its live traffic, removed-entry Undo evidence and
 owned body-cache files. Saved traces and explicitly recorded files remain.
 Traffic → Clear all acts across the whole list and filters. At 100 MB or more, Undo expires

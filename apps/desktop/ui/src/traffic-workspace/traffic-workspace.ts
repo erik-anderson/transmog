@@ -175,6 +175,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   private trafficUndoTimer:number|undefined;
   @observable private trafficUndo:Array<{ids:string[];expiresAt?:number|undefined}>=[];
   @observable selectedDetail:SessionDetail | null = null;
+  @observable streamPanel=false;
+  showStream(value:boolean):void {this.streamPanel=value;}
   @observable selectedMethodText = '—';
   @observable selectedUrlText = 'Select a request';
   @observable selectedStatusText = 'No response';
@@ -840,10 +842,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async watchSessions():Promise<void> {
     if (this.watching) return; this.watching = true;
-    const onEvent = new Channel<SessionHint>(); onEvent.onmessage = (hint) => {
+    const onEvent = new Channel<SessionHint>(); onEvent.onmessage = (_hint) => {
       if (!this.isConnected) return;
-      if(this.refreshTimer===undefined)this.refreshTimer=window.setTimeout(()=>{this.refreshTimer=undefined;void this.refreshSessions();},200);
-      if (this.selectedSessionId && (hint.exchangeId === this.selectedSessionId || hint.lagged)) void this.refreshInspection();
+      if(this.refreshTimer===undefined)this.refreshTimer=window.setTimeout(()=>{this.refreshTimer=undefined;void this.refreshSessions();if(this.selectedSessionId)void this.refreshInspection();},200);
+
     }; this.sessionUpdates = onEvent;
     try { await invoke<void>('watch_sessions',{onEvent}); this.watchError = ''; await this.refreshSessions(undefined,true); this.renderSessionState(); }
     catch (error:unknown) { this.watching = false; this.watchError = 'Live refresh failed: '+describeError(error); this.renderSessionState(); }
@@ -996,6 +998,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector unavailable: '+describeError(error); }
   }
   private applyDetail(detail:SessionDetail):void {
+    if(detail.id!==this.selectedDetail?.id || (!this.selectedDetail?.stream&&detail.stream))this.streamPanel=!!detail.stream;
     this.selectedDetail = detail;
     this.previewPageAvailable=detail.storedBodies.some(body=>body.boundary==='client-response'&&body.availability==='complete'&&(body.mediaType==='text/html'||body.mediaType==='application/xhtml+xml')); const reusable = clientResponseSource(detail) !== null;
     const status = detail.responses.find((head) => head.boundary === 'client-response')?.status ?? null;
