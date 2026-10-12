@@ -26,11 +26,19 @@ mod websocket_h2_tests {
         async fn start(route_policy: RoutePolicy, support: bool) -> Self {
             Self::with_hooks(route_policy, support, Vec::new()).await
         }
-        #[allow(clippy::too_many_lines)]
         async fn with_hooks(
             route_policy: RoutePolicy,
             support: bool,
             hooks: Vec<InterceptorRegistration>,
+        ) -> Self {
+            Self::with_origin_limit(route_policy, support, hooks, 100).await
+        }
+        #[allow(clippy::too_many_lines)]
+        async fn with_origin_limit(
+            route_policy: RoutePolicy,
+            support: bool,
+            hooks: Vec<InterceptorRegistration>,
+            maximum: u32,
         ) -> Self {
             let origin_ca = ProxyCa::generate("H2 WebSocket origin", 2).unwrap();
             let leaf = origin_ca
@@ -54,6 +62,7 @@ mod websocket_h2_tests {
                         if socket.ssl().selected_alpn_protocol() == Some(b"h2") {
                             let mut builder =
                                 hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+                            builder.max_concurrent_streams(maximum);
                             if support {
                                 builder.enable_connect_protocol();
                             }
@@ -420,6 +429,24 @@ mod websocket_h2_tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn saturated_h2_origin_opens_another_connection_for_a_large_websocket() {
+        let fixture = Fixture::with_origin_limit(RoutePolicy::Http2Only, true, vec![], 1).await;
+        let mut client = fixture.client(true).await;
+        let mut first = client.open().await;
+        let mut second = client.open().await;
+        assert_eq!(fixture.connections.load(Ordering::Relaxed), 2);
+        echo(&mut first, 1, Bytes::from_static(b"first remains usable")).await;
+        echo(&mut second, 2, Bytes::from(vec![b'x'; 24 * 1024 * 1024])).await;
+        drop(first);
+        drop(second);
+        let events = fixture.finish().await;
+        for sender in ["client", "server"] {
+            assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamMessage(message)
+                if message.sender == sender && message.payload.len() == 24 * 1024 * 1024 && !message.truncated)));
+        }
     }
 
     #[tokio::test]

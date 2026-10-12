@@ -10,7 +10,10 @@ use hyper_util::{client::legacy::connect::Connection, rt::TokioIo};
 use std::{
     collections::HashMap,
     io,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
     task::ready,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -34,6 +37,14 @@ struct Peer {
     sender: h2::client::SendRequest<Bytes>,
     observation: Option<ConnectionObservation>,
     reusable: bool,
+    active: Arc<AtomicUsize>,
+}
+
+struct StreamSlot(Arc<AtomicUsize>);
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl Pool {
@@ -94,7 +105,12 @@ impl Pool {
         let mut locked = lease.lock().await;
         // Authorization of the selected certificate can be more restrictive
         // than the origin-wide decision made before the TLS handshake.
-        if locked.as_ref().is_some_and(|peer| !peer.reusable) {
+        if locked.as_ref().is_some_and(|peer| {
+            !peer.reusable
+                || peer.active.load(Ordering::Acquire) >= peer.sender.current_max_send_streams()
+        }) {
+            // A WebSocket can occupy a peer's stream slot indefinitely. Open an
+            // overflow connection rather than queueing its successor behind it.
             drop(locked);
             lease = Arc::new(tokio::sync::Mutex::new(None));
             locked = lease.lock().await;
@@ -155,6 +171,8 @@ impl Pool {
             })
         });
         let (response, send) = peer.sender.send_request(outgoing, false)?;
+        peer.active.fetch_add(1, Ordering::AcqRel);
+        let slot = StreamSlot(peer.active.clone());
         if let Some(performance) = &client.performance {
             performance.mark(Milestone::UpstreamRequestConsumed);
         }
@@ -181,6 +199,7 @@ impl Pool {
             recv_closed: false,
             _lease: lease,
             _observation: observation,
+            _slot: slot,
         };
         if (200..300).contains(&head.status) {
             return Ok(HyperUpgradeResponse::Switched {
@@ -309,6 +328,7 @@ async fn connect(
         sender,
         observation,
         reusable,
+        active: Arc::new(AtomicUsize::new(0)),
     })
 }
 
@@ -320,6 +340,7 @@ struct Tunnel {
     recv_closed: bool,
     _lease: Lease,
     _observation: Option<ResponseObservation>,
+    _slot: StreamSlot,
 }
 impl AsyncRead for Tunnel {
     fn poll_read(
