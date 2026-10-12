@@ -49,9 +49,14 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(remote.listener!=='0.0.0.0:'+port)throw new Error('Remote opt-in or desired port was not applied: '+settings.proxyText);
     if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.reuseServerConnections)throw new Error('Pooling choice was not saved');
     await settings.stopProxy();
+    const bodySelect=form.elements.namedItem('requestBodyLimit');bodySelect.value='custom';settings.updateRequestBodyLimit();settings.$flushUpdates();
+    form.elements.namedItem('customRequestBodyLimit').value='1.5';
+    await settings.saveSettings(new Event('submit',{cancelable:true}));await settings.loadSettings();
+    const bodyState=await window.__TAURI_INTERNALS__.invoke('product_state');
+    if(bodyState.privacy.requestBodyLimit!==1500000||bodySelect.value!=='custom'||form.elements.namedItem('customRequestBodyLimit').value!=='1.5')throw new Error('Custom body limit did not survive reload');
     if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Opaque proxy did not stop');
-    settings.$flushUpdates();disclosure.scrollIntoView({block:'start'});
-    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true};
+    settings.$flushUpdates();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
+    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true};
   })()`);
     if(screenshotPath) {
       await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));

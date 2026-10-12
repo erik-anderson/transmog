@@ -1542,6 +1542,23 @@ try {
   assert.equal(await preferences.getByLabel('Theme',{exact:true}).inputValue(),'system');
   await preferences.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
   assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'25000000');
+  await preferences.getByLabel('Request body limit',{exact:true}).selectOption('custom');
+  const customBody=preferences.getByLabel('Limit (MB)',{exact:true});
+  await customBody.fill('0.5');assert.equal(await customBody.evaluate(input=>input.checkValidity()),false);
+  await customBody.fill('1000001');assert.equal(await customBody.evaluate(input=>input.checkValidity()),false);
+  for(const [mb,bytes] of [['1',1000000],['1.5',1500000],['1000000',1000000000000],['25',25000000]]) {
+    await customBody.fill(mb);
+    await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
+    await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.privacy.requestBodyLimit),bytes);
+    await preferences.evaluate(element=>element.loadSettings());
+    await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+    assert.equal(await preferences.getByLabel('Request body limit',{exact:true}).inputValue(),'custom');
+    assert.equal(await customBody.inputValue(),mb);
+  }
+  await customBody.scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/custom-body-limit.png')});
+
   await preferences.getByLabel('Request body limit',{exact:true}).selectOption('unlimited');
   assert.equal(await preferences.getByLabel('Entries per page',{exact:true}).count(),0);
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();

@@ -127,6 +127,9 @@ pub struct PrivacySettings {
     pub retain_request_bodies: bool,
     /// Retained bytes per request; None is Unlimited within overall storage limits.
     pub request_body_limit: Option<u64>,
+    /// Preserve the authored Custom choice even when its finite value equals the preset.
+    #[serde(default)]
+    pub custom_request_body_limit: bool,
     /// Remove credential and cookie values from subsequently captured traffic.
     pub redact_sensitive_headers: bool,
     /// Retain response bodies in the product cache for inspection.
@@ -146,6 +149,7 @@ impl Default for PrivacySettings {
             max_live_entries: None,
             retain_request_bodies: true,
             request_body_limit: default_request_body_limit(),
+            custom_request_body_limit: false,
             redact_sensitive_headers: false,
             retain_response_bodies: true,
             retain_body_samples: true,
@@ -342,6 +346,15 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
             false,
         ));
     }
+    if state
+        .privacy
+        .request_body_limit
+        .is_some_and(|bytes| !(1_000_000..=1_000_000_000_000).contains(&bytes))
+    {
+        return Err(invalid(
+            "Request body limit must be from 1 MB to 1 TB, or Unlimited.",
+        ));
+    }
     if !state.preferences.client_certificate_policy.valid() {
         return Err(invalid(
             "Client certificate rules require an exact host, a valid port and a certificate selector for automatic selection",
@@ -359,7 +372,6 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
             .privacy
             .max_live_entries
             .is_some_and(|limit| limit == 0 || limit as u64 > 9_007_199_254_740_991)
-        || state.privacy.request_body_limit == Some(0)
         || !state.workspace.is_valid()
     {
         return Err(invalid("product state exceeds a configured bound"));
@@ -829,6 +841,29 @@ mod tests {
         let generation = generation_path(&path, 1);
         fs::write(&generation, serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(read_state(&generation).is_err());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn custom_body_limit_boundaries_and_choice_survive_reload() {
+        let path = prefix("custom-body-limit");
+        cleanup(&path);
+        let (store, _) = ProductStateManager::load(Some(path.clone()));
+        for bytes in [1_000_000, 1_500_000, 25_000_000, 1_000_000_000_000] {
+            let mut state = store.snapshot();
+            state.privacy.request_body_limit = Some(bytes);
+            state.privacy.custom_request_body_limit = true;
+            let saved = store.save(state).unwrap();
+            assert_eq!(
+                ProductStateManager::load(Some(path.clone())).0.snapshot(),
+                saved
+            );
+        }
+        for bytes in [0, 999_999, 1_000_000_000_001, u64::MAX] {
+            let mut state = store.snapshot();
+            state.privacy.request_body_limit = Some(bytes);
+            assert!(store.save(state).is_err());
+        }
         cleanup(&path);
     }
 

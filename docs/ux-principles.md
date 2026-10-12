@@ -340,7 +340,8 @@ not silently discard entries, body chunks or completion evidence. Keep queues
 bounded and report actual storage failures; configured retention budgets and
 explicit body limits still govern what data is kept.
 
-Request-body retention defaults to **25 MB** (25,000,000 bytes). **Unlimited**
+Request-body retention defaults to **25 MB** (25,000,000 bytes). **Custom limit** accepts decimal MB values from 1 MB through 1 TB
+(1,000,000 MB) and preserves the authored choice on reload. **Unlimited**
 removes the per-request cap while preserving the selected circular buffer budget.
 Saved trace files have no byte-size or record-count ceiling; storage errors remain
 actionable failures. Keep individual encoded chunks bounded.

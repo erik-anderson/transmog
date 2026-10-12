@@ -71,6 +71,7 @@
   "proxyReady": false,
   "decryptHttps": true,
   "customPortEnabled": false,
+  "requestBodyMode": "25000000",
   "noticeVisible": false,
   "noticeTitleText": "Action required",
   "noticeMessageText": "",

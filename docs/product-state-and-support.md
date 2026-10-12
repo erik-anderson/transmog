@@ -85,7 +85,8 @@ processing have separate resource bounds. Imported bodies use their pinned sourc
 files and are independent of live eviction.
 
 Request capture defaults to **25 MB** (25,000,000 bytes) per original/effective
-request boundary. **Unlimited** removes that per-request cap while keeping the
+request boundary. **Custom limit** accepts decimal MB values from 1 MB to 1 TB (1,000,000 MB).
+**Unlimited** removes that per-request cap while keeping the
 chosen circular buffer budget. Reaching a retention cap records an incomplete
 prefix and full observed byte counts; it does not stop forwarding. Recordings
 snapshot their policy when started. Saved traces have no fixed byte-size or
