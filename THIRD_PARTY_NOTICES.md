@@ -1,7 +1,6 @@
 # Third-party notices
 
-Generated from the locked Cargo graph and desktop npm production graph by `scripts/generate-supply-chain-artifacts.py`.
-Distributions must retain the license texts shipped by their dependencies and bundled native sources.
+Transmog includes the following third-party software.
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|

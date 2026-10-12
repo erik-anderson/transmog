@@ -45,5 +45,5 @@ export async function buildCredits(uiRoot, output) {
     entries.push({id:name+'@'+pkg.version,name,version:pkg.version,license:pkg.license??'',text:files.map(file=>file.text).join('\n\n')});
   }
   entries.sort((a,b)=>a.name.localeCompare(b.name)||a.version.localeCompare(b.version));
-  await writeFile(output,JSON.stringify({summary:await readFile(join(repository,'THIRD_PARTY_NOTICES.md'),'utf8'),entries}));
+  await writeFile(output,JSON.stringify({summary:'Transmog includes third-party libraries and bundled native code. Their license and copyright notices are available below.',entries}));
 }

@@ -2,10 +2,10 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 button { padding: .4rem .6rem; border: 1px solid var(--accent); border-radius: .3rem; color: var(--panel); background: var(--accent-strong); font: inherit; font-weight: 600; cursor: pointer; }
-button.secondary, .update-toggle { color: var(--text); background: var(--panel-subtle); border-color: var(--line-strong); }
+button.secondary { color: var(--text); background: var(--panel-subtle); border-color: var(--line-strong); }
 button:disabled { color: var(--muted); background: var(--panel-raised); cursor: default; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.update-panel { position: fixed; z-index: 19; top: 3.65rem; right: .8rem; width: min(32rem, calc(100vw - 1.6rem)); max-height: calc(100vh - 5rem); overflow: auto; padding: .85rem; border: 1px solid var(--line-strong); border-radius: .5rem; background: var(--panel); box-shadow: 0 .7rem 2rem color-mix(in srgb, #000 25%, transparent); }
+.update-panel { padding:.75rem 0; border-block:1px solid var(--line); }
 header { display: flex; justify-content: space-between; align-items: baseline; gap: .6rem; }
 h2 { margin: 0; font-size: .95rem; }
 p { margin: .6rem 0; line-height: 1.45; }

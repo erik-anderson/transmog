@@ -9,3 +9,6 @@ settings-workspace { display:contents; }
 @media (max-width:850px) { .preferences-form { grid-template-columns:minmax(0,1fr); } }
 .network-settings > label { font-weight:650; }
 .network-advanced label { margin:0; }
+.settings-content { padding:.3rem; }
+
+.about-panel { max-width:48rem; font-size:.875rem; }.about-panel > p { line-height:1.5; margin:.5rem 0; }.about-panel > button { margin-top:.75rem; }

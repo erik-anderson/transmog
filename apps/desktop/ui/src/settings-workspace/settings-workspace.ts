@@ -1,5 +1,6 @@
 import initialState from '../initial-state.json';
 import '../client-certificate-settings/client-certificate-settings.js';
+import type {AppUpdates} from '../app-updates/app-updates.js';
 import type {ClientCertificateSettings} from '../client-certificate-settings/client-certificate-settings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
@@ -9,6 +10,12 @@ import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
   clientCertificates!:ClientCertificateSettings;
+  aboutUpdates!:AppUpdates;
+  async openWebsite(event:Event):Promise<void> {
+    event.preventDefault();
+    try {await invoke('open_product_website');}
+    catch(error:unknown){await this.showError('Website could not be opened',describeError(error));}
+  }
   @observable credits:Array<{id:string;name:string;version:string;license:string;text:string}>=[];
   @observable creditsSummary='';
   @observable creditsStatus='';

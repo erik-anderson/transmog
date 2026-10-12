@@ -74,6 +74,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   root and old files before creating and asking Windows to trust a replacement.
 
 - Startup update checks must keep the workspace usable and avoid taking focus.
+  Keep version, manual checks, release details, the product website and Credits in
+  Settings → About. A toolbar update action appears only for an available or
+  pending update; background results never navigate away from the current task.
   Update consent specifies when installation happens. Resolve unsaved drafts and
   finish capture/proxy/host cleanup before installation can close the app. A
   thirty-day reminder pauses automatic prompts across subsequent releases.

@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
 import { smokeHexViewer } from './smoke-hex-viewer.mjs';
 import { smokeNetworkSettings } from './smoke-network-settings.mjs';
+import { smokeAbout } from './smoke-about.mjs';
 import { smokeUserAgent } from './smoke-user-agent.mjs';
 import { smokeStreams } from './smoke-streams.mjs';
 
@@ -679,6 +680,7 @@ try {
     process.stdout.write(`[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`);
   }
   result.networkSettings=await smokeNetworkSettings(call,evaluate,screenshotPath);
+  result.about=await smokeAbout(call,evaluate,screenshotPath);
   result.userAgent=await smokeUserAgent(call,evaluate,screenshotPath);
   result.streams=await smokeStreams(call,evaluate,screenshotPath);
   const metrics = await call('Performance.getMetrics');

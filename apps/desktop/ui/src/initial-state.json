@@ -779,11 +779,13 @@
     "totalBytes": null,
     "scheduled": false,
     "suppressed": false,
-    "remindAfterUnixMs": 0
+    "remindAfterUnixMs": 0,
+    "lastCheckedUnixMs": 0
   },
-  "updatePanelVisible": false,
+  "updateToolbarVisible": false,
+  "updateToolbarLabel": "Update available",
+  "updateLastCheckedText": "",
   "updateBusy": false,
-  "updateButtonLabel": "Updates",
   "updateProgressText": "",
   "updateReminderText": "",
   "updateError": "",

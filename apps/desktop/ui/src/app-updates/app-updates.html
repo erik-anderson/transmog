@@ -1,10 +1,10 @@
 <template shadowrootmode="open">
-  <button w-ref="{updateButton}" type="button" class="update-toggle" aria-expanded="{{updatePanelVisible}}" aria-controls="update-panel" @click="{togglePanel()}">{{updateButtonLabel}}</button>
-  <section id="update-panel" class="update-panel" aria-labelledby="update-heading" ?hidden="{{!updatePanelVisible}}">
-    <header><h2 id="update-heading">Software updates</h2><button type="button" class="secondary" aria-label="Dismiss update notification" @click="{dismiss()}">Dismiss</button></header>
-    <p>Installed version: {{updateState.currentVersion}}</p>
+  <section id="update-panel" class="update-panel" aria-labelledby="update-heading">
+    <h2 id="update-heading">Software updates</h2>
+    <p>Installed version: <if condition="updateState.currentVersion">{{updateState.currentVersion}}</if><if condition="!updateState.currentVersion">Loading…</if></p>
     <if condition="updateState.version"><p><strong>Stable release {{updateState.version}} is available.</strong></p></if>
     <p role="status" aria-live="polite">{{updateState.message}}</p>
+    <p class="help" ?hidden="{{!updateLastCheckedText}}">{{updateLastCheckedText}}</p>
     <p ?hidden="{{!updateReminderText}}">{{updateReminderText}}</p>
     <if condition="updateState.notes"><details><summary>Release notes</summary><pre>{{updateState.notes}}</pre></details></if>
     <if condition="updateState.phase == 'downloading'"><if condition="updateState.totalBytes"><progress aria-label="Installer download" value="{{updateState.downloadedBytes}}" max="{{updateState.totalBytes}}"></progress></if><if condition="!updateState.totalBytes"><progress aria-label="Installer download"></progress></if><p>{{updateProgressText}}</p></if>

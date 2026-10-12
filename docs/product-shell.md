@@ -10,9 +10,12 @@ for build commands.
 ## Software updates
 
 Startup checks run after the window is ready and keep the workspace usable. A
-new stable release appears in Updates without taking keyboard focus. The user
+new stable release exposes an update action in the toolbar without taking
+keyboard focus or navigating away from work. The user
 can update now, download an update for normal app exit, or pause automatic prompts
-for thirty days. Manual checking remains available in Updates and Support.
+for thirty days. Settings → About shows the installed version, update status, last successful
+check, release notes and manual Check for updates. About also contains the
+transmog.net website link and Credits with complete dependency license texts.
 Offline startup stays quiet; a manual check reports a useful failure.
 
 Downloads show progress and can be cancelled. Installation follows signature and

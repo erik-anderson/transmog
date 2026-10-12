@@ -28,8 +28,8 @@ def artifacts(metadata, npm, version):
     packages = sorted(metadata["packages"], key=package_key)
     third_party = [p for p in packages if p.get("source") is not None]
     lines = ["# Third-party notices", "",
-             "Generated from the locked Cargo graph and desktop npm production graph by `scripts/generate-supply-chain-artifacts.py`.",
-             "Distributions must retain the license texts shipped by their dependencies and bundled native sources.", "",
+             "Transmog includes the following third-party software.",
+             "",
              "| Package | Version | License expression | Source |", "|---|---:|---|---|"]
     lines += [f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {p.get('repository') or p['source']} |" for p in third_party]
     lines += ["", "## Desktop npm production packages", "",

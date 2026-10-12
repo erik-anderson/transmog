@@ -86,12 +86,14 @@ await page.addInitScript((workspace) => {
     async invoke(command, args) {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
+        case 'open_product_website': return;
         case 'watch_update_close': state.updateCloseChannel = args.channel; return;
         case 'update_status': return structuredClone(state.update);
         case 'check_updates': {
           state.update ??= {phase:sessionStorage.getItem('startup-update-tested')?'idle':'available',currentVersion:'0.1.0',version:sessionStorage.getItem('startup-update-tested')?null:'0.2.0',notes:'Startup release',message:'Release check complete.',downloadedBytes:0,totalBytes:null,scheduled:false,suppressed:false,remindAfterUnixMs:0};
           if(state.deferUpdateCheck){state.updateCheckPending=true;await new Promise(resolve=>state.releaseUpdateCheck=resolve);state.deferUpdateCheck=false;}
           if(state.updateNetworkError){state.update.phase='error';state.update.message='Fixture GitHub unavailable';throw new Error(state.update.message);}
+          state.update.lastCheckedUnixMs=Date.now();
           state.update.suppressed=!args.manual && state.update.remindAfterUnixMs>Date.now();
           return structuredClone(state.update);
         }
@@ -421,10 +423,10 @@ const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole
 try {
   await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('4 traffic entries.'));
-  await page.locator('#update-panel').getByRole('button',{name:'Update now',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Update available',exact:true}).waitFor();
+  assert.equal(await page.locator('#update-panel').isVisible(),false,'Startup opened About without user action');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),1,'Startup did not check exactly once');
   assert.equal(await page.evaluate(()=>document.activeElement===document.body),true,'The startup update prompt stole focus');
-  await page.locator('#update-panel').getByRole('button',{name:'Dismiss update notification',exact:true}).click();
   await page.evaluate(()=>sessionStorage.setItem('startup-update-tested','true'));
   assert.match(await page.locator('.session-status').textContent(),/Proxy stopped/,'Traffic banner claims live capture while the proxy is stopped');
   assert.match(await page.locator('.list-footer').textContent(),/Showing captured traffic/);
@@ -1589,10 +1591,18 @@ try {
   await preferences.getByRole('button',{name:'Create support bundle…',exact:true}).click();
   await preferences.getByText('Support bundle saved.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.supportInput.includeRecentPaths),false);
+  await page.locator('.settings-tabs').getByRole('button',{name:'About',exact:true}).click();
+  assert.match(await preferences.locator('#update-panel').textContent(),/Installed version: 0.1.0/);
+  const website=preferences.getByRole('link',{name:'transmog.net',exact:true});
+  assert.equal(await website.getAttribute('href'),'https://transmog.net');
+  assert.ok(await website.evaluate(link=>link.getBoundingClientRect().x-link.closest('.settings-content').getBoundingClientRect().x)>=4,'About link focus outline is clipped');
+  await website.click();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.open_product_website),1);
   await preferences.getByRole('button',{name:'Credits',exact:true}).click();
   const credits=page.locator('.credits-dialog[open]');
   await credits.locator('details').nth(1).waitFor();
   assert.ok(await credits.locator('details').count()>100,'Credits omitted the dependency inventory');
+  assert.doesNotMatch(await credits.textContent(),/Generated from the locked|Distributions must retain/);
   await credits.locator('details').first().locator('summary').click();
   assert.match(await credits.locator('details').first().textContent(),/license|copyright|permission/i);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/credits-wide.png')});
@@ -1659,10 +1669,17 @@ try {
   assert.equal(await resetCertificate.isDisabled(),true,'Reset remained available while the proxy was running');
   await page.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
   assert.equal(await resetCertificate.isDisabled(),false);
+  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');globalThis.__workspaceFixture.update={...globalThis.__workspaceFixture.update,phase:'idle',version:null,message:'You’re up to date with the stable release.'};shell.openAbout();await shell.updates.check(true);});
+  assert.equal(await page.locator('.update-toggle').isVisible(),false,'Toolbar Updates remains prominent with no update');
+  assert.match(await page.locator('#update-panel').textContent(),/up to date.*Last successful check/s);
+  await page.evaluate(async()=>{globalThis.__workspaceFixture.updateNetworkError=true;await document.querySelector('app-shell').updates.check(true);globalThis.__workspaceFixture.updateNetworkError=false;});
+  assert.match(await page.locator('#update-panel').textContent(),/GitHub unavailable/);
+  assert.doesNotMatch(await page.locator('#update-panel').textContent(),/up to date/);
   // Updates preserve startup, snooze, cancellation, drafts, and safe shutdown semantics.
   await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,phase:'available',version:'0.2.0',notes:'A release note with <script>inert text</script>',message:'A new stable release is available.'};});
   const updatePanel=page.locator('#update-panel');
-  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(true);});
+  await page.evaluate(()=>document.querySelector('app-shell').openAbout());
+  await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(true);});
   await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
   await updatePanel.getByText('Release notes',{exact:true}).click();
   assert.match(await updatePanel.locator('pre').textContent(),/<script>inert text<\/script>/);
@@ -1672,10 +1689,11 @@ try {
   const checksWhilePending=await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates);
   await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(true);});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),checksWhilePending,'Manual checking duplicated an in-flight startup check');
-  await updatePanel.getByRole('button',{name:'Dismiss update notification',exact:true}).click();
+  await view('traffic');
   await page.evaluate(()=>globalThis.__workspaceFixture.releaseUpdateCheck());
   await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updateBusy);
-  assert.equal(await updatePanel.isVisible(),false,'A late check reopened a dismissed update panel');
+  assert.equal(await updatePanel.isVisible(),false,'A late check navigated back to About');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'traffic');
   await page.locator('.update-toggle').click();
   await page.setViewportSize({width:620,height:640});
   for(const name of ['Update now','Update after this session ends','Remind me in 30 days']) {
@@ -1685,10 +1703,11 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/update-narrow.png')});
   await page.setViewportSize({width:1280,height:800});
   await updatePanel.getByRole('button',{name:'Remind me in 30 days',exact:true}).click();
-  await updatePanel.waitFor({state:'hidden'});
-  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(false);});
+  await page.waitForFunction(()=>!document.querySelector('app-shell').updateToolbarVisible);
+  await view('traffic');
+  await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(false);});
   assert.equal(await updatePanel.isVisible(),false,'A snoozed update reappeared at startup');
-  await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('app-updates').check(true);});
+  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');shell.openAbout();await shell.updates.check(true);});
   assert.match(await updatePanel.textContent(),/Automatic prompts paused until/);
   await updatePanel.getByRole('button',{name:'Update after this session ends',exact:true}).click();
   await updatePanel.getByRole('button',{name:'Install and reopen',exact:true}).waitFor();
@@ -1705,7 +1724,7 @@ try {
   await updatePanel.getByRole('button',{name:'Update after this session ends',exact:true}).click();
   await updatePanel.getByRole('button',{name:'Install and reopen',exact:true}).waitFor();
   await page.evaluate(()=>globalThis.__workspaceFixture.updateCloseChannel.onmessage(null));
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('app-updates').updateError.includes('restoration failed'));
+  await page.waitForFunction(()=>document.querySelector('app-shell').updates.updateError.includes('restoration failed'));
   assert.equal(await page.evaluate(()=>Boolean(globalThis.__workspaceFixture.updateInstallerStarted)),false);
   await updatePanel.getByRole('button',{name:'Cancel update',exact:true}).click();
   await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
@@ -1718,7 +1737,7 @@ try {
   await draftDialog.getByRole('button',{name:'Discard drafts and update',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__workspaceFixture.updateInstallerStarted);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.updateReopen),true);
-  await updatePanel.getByRole('button',{name:'Dismiss update notification',exact:true}).click();
+  await view('traffic');
   assert.deepEqual(await page.evaluate(()=>globalThis.__cspViolations),[]);
   assert.deepEqual(errors,[]);
 

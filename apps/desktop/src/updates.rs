@@ -30,6 +30,7 @@ pub(crate) struct UpdateStatus {
     pub(crate) scheduled: bool,
     pub(crate) suppressed: bool,
     pub(crate) remind_after_unix_ms: u64,
+    pub(crate) last_checked_unix_ms: u64,
 }
 
 struct Inner {
@@ -133,6 +134,7 @@ impl UpdateCoordinator {
                 // Checking is bounded separately from an explicitly requested installer download.
                 update.timeout = Some(Duration::from_secs(15 * 60));
                 let mut inner = self.inner.lock().unwrap();
+                inner.status.last_checked_unix_ms = now_ms();
                 inner.status.phase = "available";
                 inner.status.version = Some(update.version.clone());
                 inner.status.notes = update
@@ -148,6 +150,7 @@ impl UpdateCoordinator {
             }
             Ok(None) => {
                 let mut inner = self.inner.lock().unwrap();
+                inner.status.last_checked_unix_ms = now_ms();
                 inner.status.phase = "idle";
                 inner.status.version = None;
                 inner.status.notes.clear();

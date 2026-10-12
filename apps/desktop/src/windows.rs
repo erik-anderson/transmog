@@ -89,6 +89,19 @@ struct DesktopState {
 }
 
 #[tauri::command]
+fn open_product_website() -> Result<(), String> {
+    use std::os::windows::process::CommandExt as _;
+    let system = std::env::var_os("SystemRoot")
+        .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    std::process::Command::new(system.join("System32/rundll32.exe"))
+        .args(["url.dll,FileProtocolHandler", "https://transmog.net"])
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "Windows could not open the default browser.".to_owned())
+}
+
+#[tauri::command]
 fn update_status(
     updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
 ) -> crate::updates::UpdateStatus {
@@ -2006,6 +2019,7 @@ pub fn run() {
                 create_support_bundle,
                 prepare_update_handoff,
                 update_status,
+                open_product_website,
                 check_updates,
                 download_update,
                 cancel_update,

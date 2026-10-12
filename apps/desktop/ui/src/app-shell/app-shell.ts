@@ -10,7 +10,7 @@ import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
 import type { AutomationWorkspace } from '../automation-workspace/automation-workspace.js';
 import type { ComposerWorkspace } from '../composer-workspace/composer-workspace.js';
-import type { AppUpdates } from '../app-updates/app-updates.js';
+import type { AppUpdates, UpdateStatus } from '../app-updates/app-updates.js';
 import { describeError, lifecycleLabel } from '../utilities.js';
 
 const loaders = {
@@ -103,7 +103,15 @@ export class AppShell extends WebUIElement {
   settings!: SettingsWorkspace;
   automation!: AutomationWorkspace;
   composer!: ComposerWorkspace;
-  updates!: AppUpdates;
+  get updates():AppUpdates {return this.settings.aboutUpdates;}
+  @observable updateToolbarVisible=initialState.updateToolbarVisible;
+  @observable updateToolbarLabel=initialState.updateToolbarLabel;
+  onUpdateState(event:CustomEvent<UpdateStatus>):void {
+    const status=event.detail;
+    this.updateToolbarVisible=Boolean(status.version&&!status.suppressed||status.scheduled||['downloading','ready','installing'].includes(status.phase));
+    this.updateToolbarLabel=status.scheduled?'Update on exit':status.phase==='downloading'?'Downloading update…':status.phase==='ready'?'Update ready':status.phase==='installing'?'Installing update…':'Update available';
+  }
+  openAbout():void {this.settings.showSettingsSection('about');this.activateView('settings');}
   updateDraftDialog!: HTMLDialogElement;
   @observable updateDraftSummary = initialState.updateDraftSummary;
   private installPending = false;
@@ -118,13 +126,14 @@ export class AppShell extends WebUIElement {
         const proceed = await new Promise<boolean>(resolve => { this.resolveUpdateDrafts = resolve; this.updateDraftDialog.showModal(); });
         if (!proceed) return;
       }
+      this.settings.showSettingsSection('about');await this.activateView('settings');
       await this.updates.install(event.detail.reopen);
       await this.settings.refreshStatus();
     } finally { this.installPending = false; }
   }
   resolveUpdateDraftsChoice(proceed: boolean): void { this.updateDraftDialog.close(); this.resolveUpdateDrafts?.(proceed); this.resolveUpdateDrafts = undefined; }
   cancelUpdateDrafts(event: Event): void { event.preventDefault(); this.resolveUpdateDraftsChoice(false); }
-  checkUpdates(): void { void this.updates.check(true); }
+  checkUpdates(): void { this.openAbout();void this.updates.check(true); }
   private noticeAction: NoticeAction = null;
   private navigationGeneration = 0;
   private workspaceTouched = false;
