@@ -23,6 +23,21 @@ struct Entry {
     disk: Option<tempfile::NamedTempFile>,
     charged: u64,
     terminal: bool,
+    stream_active: bool,
+}
+impl Entry {
+    fn observe_lifecycle(&mut self, kind: &CaptureRecordKind) {
+        match kind {
+            CaptureRecordKind::Completed | CaptureRecordKind::Failed { .. } => self.terminal = true,
+            // SSE ends with the HTTP response; only WebSockets outlive that event.
+            CaptureRecordKind::StreamState(state)
+                if state.protocol == transmog_core::stream::StreamProtocol::WebSocket =>
+            {
+                self.stream_active = state.status.is_active();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Independently compressed circular trace storage. Memory mode creates no files.
@@ -151,21 +166,20 @@ impl CircularCapture {
             entry.charged = entry.charged.saturating_add(charge);
             self.retained = self.retained.saturating_add(charge);
         }
-        if matches!(
-            record.kind,
-            CaptureRecordKind::Completed | CaptureRecordKind::Failed { .. }
-        ) {
-            self.entries
-                .get_mut(&id)
-                .ok_or(CaptureError::InvalidMagic)?
-                .terminal = true;
-        }
+        self.entries
+            .get_mut(&id)
+            .ok_or(CaptureError::InvalidMagic)?
+            .observe_lifecycle(&record.kind);
         while self.maximum.is_some_and(|maximum| self.retained > maximum) {
             let candidate = self
                 .order
                 .iter()
                 .copied()
-                .find(|id| self.entries.get(id).is_some_and(|entry| entry.terminal))
+                .find(|id| {
+                    self.entries
+                        .get(id)
+                        .is_some_and(|entry| entry.terminal && !entry.stream_active)
+                })
                 .or_else(|| self.order.front().copied());
             let Some(candidate) = candidate else {
                 return Err(CaptureError::QuotaExceeded);
@@ -220,6 +234,7 @@ impl CircularCapture {
                         .transpose()?,
                     charged: 0,
                     terminal: false,
+                    stream_active: false,
                 },
             );
             if id != 0 {
@@ -385,9 +400,10 @@ fn compressed_body(
     let (metadata, remaining) = unframe(bytes)?;
     let stored: crate::StoredRecord =
         serde_json::from_slice(&codec.decode(metadata, index, limits.max_record_bytes)?)?;
-    let (_, descriptor) = stored.clone().load_metadata()?;
+    let (record, descriptor) = stored.clone().load_metadata()?;
     let descriptor = descriptor.ok_or(CaptureError::InvalidMagic)?;
-    descriptor.validate(limits.max_record_bytes)?;
+    let maximum = crate::container::content_limit(&record.kind, limits);
+    descriptor.validate(maximum)?;
     if descriptor.frame_bytes != remaining.len() as u64 {
         return Err(CaptureError::InvalidMagic);
     }
@@ -395,8 +411,7 @@ fn compressed_body(
     if !remaining.is_empty() {
         return Err(CaptureError::InvalidMagic);
     }
-    let body =
-        codec.decode_compressed(encoded, index, true, crate::compression::BODY_CHUNK_BYTES)?;
+    let body = codec.decode_compressed(encoded, index, true, maximum)?;
     if body.expanded != descriptor.bytes {
         return Err(CaptureError::AuthenticationFailed);
     }
@@ -405,6 +420,109 @@ fn compressed_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn circular_retention_prefers_finished_http_over_an_established_websocket() {
+        use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+        let mut ring = CircularCapture::new(
+            None,
+            None,
+            CaptureEncoding::default(),
+            CaptureLimits::default(),
+        )
+        .unwrap();
+        ring.append(&started(1)).unwrap();
+        ring.append(&CaptureRecord {
+            sequence: 2,
+            exchange_id: 1,
+            kind: CaptureRecordKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Open,
+                None,
+            )),
+        })
+        .unwrap();
+        ring.append(&terminal(1)).unwrap(); // The handshake ends, the stream stays active.
+        ring.append(&started(2)).unwrap();
+        ring.append(&CaptureRecord {
+            sequence: 2,
+            exchange_id: 2,
+            kind: CaptureRecordKind::StreamState(StreamState::now(
+                StreamProtocol::Sse,
+                StreamStatus::Open,
+                None,
+            )),
+        })
+        .unwrap();
+        ring.append(&terminal(2)).unwrap();
+        ring.maximum = Some(ring.retained_bytes());
+        ring.append(&CaptureRecord {
+            sequence: 4,
+            exchange_id: 1,
+            kind: CaptureRecordKind::StreamMessage(StreamMessage::new(
+                "server",
+                "text",
+                b"live".to_vec().into(),
+            )),
+        })
+        .unwrap();
+        assert!(ring.retains_exchange(1));
+        assert!(!ring.retains_exchange(2));
+    }
+    #[test]
+    fn large_streams_round_trip_through_memory_and_encrypted_disk_circular_storage() {
+        use transmog_core::stream::StreamMessage;
+        let root = tempfile::tempdir().unwrap();
+        for disk in [false, true] {
+            let encoding = CaptureEncoding {
+                password: disk.then(|| crate::CapturePassword::new("stream test".into())),
+            };
+            let mut ring = CircularCapture::new(
+                None,
+                disk.then(|| root.path().to_owned()),
+                encoding.clone(),
+                CaptureLimits::default(),
+            )
+            .unwrap();
+            ring.append(&started(1)).unwrap();
+            let payload = vec![b'x'; 24 * 1024 * 1024];
+            let id: std::sync::Arc<str> = "shared".repeat(1024).into();
+            for sequence in 2..=3 {
+                let mut message = StreamMessage::new("server", "event", payload.clone().into());
+                message.raw = Some("data: raw\n\n".into());
+                message.event_id = Some(id.clone());
+                ring.append(&CaptureRecord {
+                    sequence,
+                    exchange_id: 1,
+                    kind: CaptureRecordKind::StreamMessage(message),
+                })
+                .unwrap();
+            }
+            let mut output = Vec::new();
+            ring.write(&mut output).unwrap();
+            let mut reader = crate::CaptureReader::with_password(
+                std::io::Cursor::new(&output),
+                CaptureLimits::default(),
+                encoding.password.as_ref(),
+            )
+            .unwrap();
+            let mut shared = None;
+            let mut messages = 0;
+            while let Some(frame) = reader.read_next().unwrap() {
+                if let CaptureRecordKind::StreamMessage(message) = frame.record.kind {
+                    assert_eq!(&message.payload[..], &payload);
+                    assert_eq!(message.raw.as_deref(), Some("data: raw\n\n"));
+                    let value = message.event_id.unwrap();
+                    assert_eq!(value, id);
+                    if let Some(first) = &shared {
+                        assert!(std::sync::Arc::ptr_eq(first, &value));
+                    }
+                    shared = Some(value);
+                    messages += 1;
+                }
+            }
+            assert_eq!(messages, 2);
+        }
+    }
     fn started(id: u128) -> CaptureRecord {
         CaptureRecord {
             exchange_id: id,

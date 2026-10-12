@@ -10,6 +10,12 @@ stored once and referenced by later messages, avoiding repeated large fields
 on disk and in reopened histories. There is no
 compatibility reader for earlier experimental layouts.
 
+Circular recording also keeps stream payloads outside JSON metadata, including
+in its private memory or disk scratch storage. Export preserves the compressed
+content and shares persistent SSE IDs in the resulting TMCap file. When an
+explicit circular budget requires eviction, finished HTTP exchanges precede
+WebSockets whose handshake has completed but whose stream is still open.
+
 ## Privacy and physical layout
 
 ```

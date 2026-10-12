@@ -799,6 +799,35 @@ impl<W: Write> ScratchWriter<W> {
                 .codec
                 .encode_chunk(&chunk, self.records_written, false)?;
             self.write_encoded(&[&metadata, &body])?;
+        } else if let CaptureRecordKind::StreamMessage(message) = &record.kind {
+            let mut message = message.clone();
+            let content = stream_content(&mut message)?;
+            let chunk = self.compressor.metadata(&content)?;
+            let body = self
+                .codec
+                .encode_chunk(&chunk, self.records_written, true)?;
+            let mut stored = store(&CaptureRecord {
+                sequence: record.sequence,
+                exchange_id: record.exchange_id,
+                kind: CaptureRecordKind::StreamMessage(message),
+            })?;
+            stored.body_index = Some(StoredBodyIndex {
+                frame_bytes: FRAME_HEADER_BYTES as u64 + body.len() as u64,
+                bytes: content.len(),
+                digest: Sha256::digest(&content).into(),
+            });
+            let payload = serde_json::to_vec(&stored)?;
+            if payload.len() > self.limits.max_record_bytes {
+                return Err(CaptureError::RecordTooLarge {
+                    actual: payload.len(),
+                    limit: self.limits.max_record_bytes,
+                });
+            }
+            let chunk = self.compressor.metadata(&payload)?;
+            let metadata = self
+                .codec
+                .encode_chunk(&chunk, self.records_written, false)?;
+            self.write_encoded(&[&metadata, &body])?;
         } else {
             let stored = store(record)?;
             let payload = serde_json::to_vec(&stored)?;
@@ -1270,7 +1299,8 @@ impl<R: Read> ScratchReader<R> {
         };
         self.resolve_certificates(&mut record)?;
         if let Some(body) = body_index {
-            body.validate(self.limits.max_record_bytes)?;
+            let maximum = container::content_limit(&record.kind, self.limits);
+            body.validate(maximum)?;
             frame_bytes = frame_bytes
                 .checked_add(body.frame_bytes)
                 .ok_or(CaptureError::QuotaExceeded)?;
@@ -1284,13 +1314,7 @@ impl<R: Read> ScratchReader<R> {
                 result => result?,
             };
             if let Some(encoded) = encoded {
-                let bytes = body.decode(
-                    &self.codec,
-                    &encoded,
-                    index,
-                    self.limits.max_record_bytes,
-                    self.records,
-                )?;
+                let bytes = body.decode(&self.codec, &encoded, index, maximum, self.records)?;
                 restore_content(&mut record.kind, bytes)?;
             }
         }
@@ -1945,8 +1969,15 @@ pub enum CaptureError {
 fn stream_content(
     message: &mut transmog_core::stream::StreamMessage,
 ) -> Result<Vec<u8>, CaptureError> {
-    let mut bytes =
-        Vec::with_capacity(4 + message.payload.len() + message.raw.as_ref().map_or(0, String::len));
+    // Validate the format bound before allocating a second copy of the content.
+    let size = message
+        .payload
+        .len()
+        .checked_add(4)
+        .and_then(|len| len.checked_add(message.raw.as_ref().map_or(0, String::len)))
+        .filter(|len| u32::try_from(*len).is_ok())
+        .ok_or(CaptureError::QuotaExceeded)?;
+    let mut bytes = Vec::with_capacity(size);
     bytes.extend_from_slice(
         &u32::try_from(message.payload.len())
             .map_err(|_| CaptureError::QuotaExceeded)?

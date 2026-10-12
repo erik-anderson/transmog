@@ -457,7 +457,7 @@ impl<W: Write> CaptureWriter<W> {
     // then carry the independent zstd frame into the final container unchanged.
     pub(crate) fn append_compressed(
         &mut self,
-        stored: StoredRecord,
+        mut stored: StoredRecord,
         body: CompressedChunk,
     ) -> Result<(), CaptureError> {
         self.healthy()?;
@@ -466,6 +466,15 @@ impl<W: Write> CaptureWriter<W> {
                 return Err(CaptureError::RecordCountExceeded);
             }
             self.drain_jobs()?;
+            if stored.kind == "stream-message"
+                && let Some(value) = stored.payload["eventId"].as_str()
+            {
+                let (reference, define) = self.stream_ids.store(&value.into(), self.records);
+                stored.stream_id = Some(reference);
+                if !define {
+                    stored.payload["eventId"] = serde_json::Value::Null;
+                }
+            }
             self.jobs.push_back(PendingRecord {
                 stored,
                 index: self.records,
@@ -1276,7 +1285,7 @@ fn validate_entry(
 // Stream payloads are independent indexed objects, not JSON metadata records.
 // Their only implicit ceiling is the format's 32-bit object length. Metadata
 // parsing and ordinary HTTP body chunks retain their separate structural bounds.
-fn content_limit(kind: &CaptureRecordKind, limits: CaptureLimits) -> usize {
+pub(super) fn content_limit(kind: &CaptureRecordKind, limits: CaptureLimits) -> usize {
     if matches!(kind, CaptureRecordKind::StreamMessage(_)) {
         u32::MAX as usize
     } else {
