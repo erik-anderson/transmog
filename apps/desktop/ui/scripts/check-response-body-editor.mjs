@@ -21,6 +21,27 @@ export async function checkResponseBodyEditor(page,root) {
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await closed();
   releaseStyles();await page.unroute('**/monaco.css',delayStyles);
   assert.equal(await field('body').inputValue(),original,'Failed syntax loading changed the inline draft');
+
+  // Start saving the plain-text fallback before Monaco's stylesheet finishes loading.
+  // Hydration must inherit the pending save lock, including real keyboard input.
+  let releaseLateStyles,requestedLateStyles;
+  const lateRequested=new Promise(resolve=>requestedLateStyles=resolve),lateReleased=new Promise(resolve=>releaseLateStyles=resolve);
+  const delayLateStyles=async route=>{requestedLateStyles();await lateReleased;await route.fallback();};
+  await page.route('**/monaco.css',delayLateStyles);
+  await form.getByRole('button',{name:'Edit in dialog…',exact:true}).click();await lateRequested;
+  await dialog.locator('.body-dialog-content > label textarea').fill('saved before syntax hydration');
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.deferAssetEdit=true;s.assetEditPending=false;});
+  await dialog.getByRole('button',{name:'Save rule',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.assetEditPending);
+  releaseLateStyles();await dialog.locator('.monaco-editor').waitFor();await page.unroute('**/monaco.css',delayLateStyles);
+  await focus();await page.keyboard.press('Control+End');await page.keyboard.type(' input during save');
+  assert.equal(await value(),'saved before syntax hydration','Late syntax hydration allowed edits that the pending save would lose');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferAssetEdit=false;globalThis.__workspaceFixture.finishAssetEdit();});
+  await closed();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').draftDirty);
+  assert.equal(await field('body').inputValue(),'saved before syntax hydration');
+  await field('body').fill(original);await form.getByRole('button',{name:'Save rule',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').draftDirty);
+
   const html='<html><body><script>globalThis.autoBodyExecuted=true;</script><h1>Offline</h1></body></html>';
   await field('body').fill(html);await open();
   assert.equal(await dialog.getByLabel('Body language',{exact:true}).inputValue(),'html');
@@ -62,6 +83,7 @@ export async function checkResponseBodyEditor(page,root) {
   assert.equal(await page.evaluate(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('response-body-editor');return w.editor.getOption(w.monaco.editor.EditorOption.readOnly);}),true,'Pending save permits later body edits');
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferAssetEdit=false;globalThis.__workspaceFixture.finishAssetEdit();});
   await dialog.getByText(/Fixture asset write failed/).waitFor();assert.equal(await value(),'save failure draft');
+  await type('revised after failed save');assert.equal(await value(),'revised after failed save','Failed Save left the body editor locked');
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await closed();
   assert.equal(await field('body').inputValue(),'applied body','Cancel after a failed save lost the earlier draft');
   await page.evaluate(()=>globalThis.__workspaceFixture.assetError=false);

@@ -321,15 +321,14 @@ impl ResponseAssetStore {
                 return Ok(result);
             }
         };
-        let charset = asset
-            .media_type
-            .as_deref()
-            .and_then(|mime| {
-                mime.split(';')
-                    .skip(1)
-                    .find_map(|part| part.trim().strip_prefix("charset="))
+        let charset = asset.media_type.as_deref().and_then(|mime| {
+            mime.split(';').skip(1).find_map(|part| {
+                let (name, value) = part.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then(|| value.trim().trim_matches('"').trim())
             })
-            .map(|value| value.trim_matches('"'));
+        });
         let (_, display, warning, encoding) = crate::inspector::render_body(
             crate::BodyRepresentation::OriginalText,
             &bytes,
@@ -1653,10 +1652,12 @@ mod tests {
             .collect::<Vec<_>>();
         for (index, codings) in [
             vec!["gzip"],
+            vec!["x-gzip"],
             vec!["br"],
             vec!["zstd"],
             vec!["deflate"],
             vec!["gzip", "br"],
+            vec!["x-gzip", "br"],
         ]
         .into_iter()
         .enumerate()
@@ -1778,6 +1779,34 @@ mod tests {
         std::fs::write(&path, b"short").unwrap();
         let mut reader = ExactFileReader::new(File::open(&path).unwrap(), 8);
         assert!(reader.read_to_end(&mut Vec::new()).is_err());
+    }
+
+    #[tokio::test]
+    async fn saved_text_preview_honors_quoted_and_case_insensitive_charset_parameters() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        let text = "Hi 🌍";
+        for (index, media_type) in [
+            "text/plain; charset=utf-16le",
+            "text/plain; Charset = \"UTF-16LE\"",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let asset = store
+                .create_authored(AuthoredResponseAsset {
+                    id: format!("charset-{index}"),
+                    revision: 1,
+                    status: 200,
+                    headers: HeaderBlock::new(),
+                    body: text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+                    media_type: Some(media_type.into()),
+                })
+                .unwrap();
+            let inspection = store.inspect(&asset.asset_ref()).await.unwrap();
+            assert_eq!(inspection.display, text);
+            assert_eq!(inspection.text_encoding, Some("utf-16le"));
+        }
     }
 
     fn root() -> PathBuf {

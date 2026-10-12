@@ -99,6 +99,12 @@ export function editableCharacterEncoding(declared: string | null): string | nul
   }
 }
 
+/** Encoding for newly authored text when a linked body has no decoded preview. */
+export function responseTextEncoding(mediaType: string | null): string | null {
+  const charset=mediaType?.match(/(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|([^;\s]*))/i);
+  return editableCharacterEncoding(charset ? charset[1]??charset[2]??'' : null);
+}
+
 export function encodeEditedText(value: string, encoding: string | null): number[] {
   if (encoding === null) throw new Error('the captured character encoding cannot be reproduced safely');
   if (encoding === 'us-ascii') {

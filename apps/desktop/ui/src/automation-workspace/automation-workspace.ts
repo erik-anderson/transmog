@@ -11,7 +11,7 @@ import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { ResponseBodyFileInfo, MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
-import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, editableCharacterEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, editableCharacterEncoding, responseTextEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 
@@ -70,7 +70,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private usageTimer:number|undefined;
   private matcherTestRevision=0;
   private savedHeaderText='';
-  private protectedResponseHeaders:ResponseAsset['headers']=[];
+  private originalResponseHeaders:Array<{field:ResponseAsset['headers'][number];line:string|null}>=[];
   private capturedDraft:CapturedDraft|null=null;
   private capturedOrigin:{sessionId:string;detail:SessionDetail}|null=null;
   autoresponseStateChanged():void {if(this.autoresponseState && this.autoresponseState!==this.automationStatus)this.renderAutomation(this.autoresponseState);}
@@ -200,6 +200,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   markDraftDirty(event:Event):void {
     const target=event.target as HTMLElement;
     if(target.closest('[data-matcher-test],[data-placeholder-editor]') || (target instanceof HTMLInputElement && target.name==='enabled' && this.editingAutoResponseId))return;
+    if(target===this.autoResponseMediaType)this.updateLinkedTextStatus();
     this.draftDirty=true;
   }
   onMatcherChange():void {this.draftDirty=true;this.scheduleMatcherTest();}
@@ -437,17 +438,60 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   clearResponseBodyFile():void {
     this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
-    if(this.savedResponse?.asset.linkedBody){this.bodyReadOnly=false;this.editBodyDisabled=false;this.bodyStatusText='Enter a replacement text body, or choose another file. Text uses UTF-8.';}
+    if(this.savedResponse?.asset.linkedBody){
+      this.bodyReadOnly=false;this.editBodyDisabled=false;
+      this.updateLinkedTextStatus();
+    }
     this.updateCompressionChoice();
   }
+  private updateLinkedTextStatus():void {
+    if(!this.savedResponse?.asset.linkedBody || this.responseBodyPath)return;
+    const encoding=responseTextEncoding(this.autoResponseMediaType.value);
+    this.bodyStatusText=encoding?`Enter a replacement text body, or choose another file. Text uses ${encoding.toUpperCase()}.`:'To save text, set a supported charset in Content type (for example, UTF-8), or choose another file.';
+  }
   private editableHeaders(asset:Pick<ResponseAsset,'headers'>):string {
-    this.protectedResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
+    this.originalResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
     for(const field of asset.headers??[]) {
       const name=new TextDecoder().decode(new Uint8Array(field.name));
       if(['content-length','content-encoding','content-type'].includes(name.toLowerCase()))continue;
-      try {lines.push(name+': '+decoder.decode(new Uint8Array(field.value)));}catch{this.protectedResponseHeaders.push(field);}
+      let line:string|null=null;
+      try {line=name+': '+decoder.decode(new Uint8Array(field.value));lines.push(line);}catch{/* Non-text values stay in their original ordered slots. */}
+      this.originalResponseHeaders.push({field,line});
     }
     return lines.join('\n');
+  }
+  private mergeResponseHeaders(text:string,edited:Array<{name:string;value:string}>):ResponseAsset['headers'] {
+    if(text===this.savedHeaderText)return this.originalResponseHeaders.map(({field})=>field);
+    const result=encodeHeaders(edited),available=new Set(edited.map((_,index)=>index));
+    const byLine=new Map<string,number[]>(),byName=new Map<string,number[]>();
+    for(let index=edited.length-1;index>=0;index--){
+      const header=edited[index]!;
+      for(const [map,key] of [[byLine,header.name.toLowerCase()+': '+header.value],[byName,header.name.toLowerCase()]] as const){const queue=map.get(key)??[];queue.push(index);map.set(key,queue);}
+    }
+    const take=(queue:number[]|undefined):number|undefined=>{while(queue?.length){const index=queue.pop()!;if(available.delete(index))return index;}return undefined;};
+    // Match unchanged fields first (including duplicates), then edited values by name.
+    // A protected field stays before its next surviving text field; deleting an earlier
+    // text field therefore cannot swap repeated values across the protected field.
+    const matches=this.originalResponseHeaders.map(({line})=>{
+      if(line===null)return undefined;
+      const header=parseHeaderLines(line)[0]!;
+      return take(byLine.get(header.name.toLowerCase()+': '+header.value));
+    });
+    this.originalResponseHeaders.forEach(({field,line},index)=>{
+      if(line===null)return;
+      if(matches[index]!==undefined){
+        const match=matches[index]!;
+        result[match]={name:edited[match]!.name===line.slice(0,line.indexOf(':'))?field.name:result[match]!.name,value:field.value};
+      }
+      else matches[index]=take(byName.get(new TextDecoder().decode(new Uint8Array(field.name)).toLowerCase()));
+    });
+    const protectedSlots=new Map<number,ResponseAsset['headers']>();let next=result.length;
+    for(let index=this.originalResponseHeaders.length-1;index>=0;index--){
+      const {field,line}=this.originalResponseHeaders[index]!;
+      if(line!==null){if(matches[index]!==undefined)next=matches[index]!;}
+      else {const slot=protectedSlots.get(next)??[];slot.unshift(field);protectedSlots.set(next,slot);}
+    }
+    return result.flatMap((field,index)=>[...(protectedSlots.get(index)??[]),field]).concat(protectedSlots.get(result.length)??[]);
   }
   private prepareEditor(): void {
     this.automationSection='responses';
@@ -461,7 +505,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;this.editBodyDisabled=true;this.savedNonBodySnapshot='';
     this.compressionType='';
     this.compressionUnavailableText='';
-    this.savedHeaderText='';this.protectedResponseHeaders=[];
+    this.savedHeaderText='';this.originalResponseHeaders=[];
     this.capturedDraft=null;
     this.capturedOrigin=null;
     window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;
@@ -862,7 +906,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       const displayName = String(data.get('name') ?? '').trim();
       if (!displayName) throw new Error('Enter a rule name.');
       const editableResponseHeaders=this.parseEditorHeaders('responseHeaders',data).filter(header=>!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase()));
-      const responseHeaders=[...encodeHeaders(editableResponseHeaders),...this.protectedResponseHeaders];
+      const responseHeaders=this.mergeResponseHeaders(String(data.get('responseHeaders')??''),editableResponseHeaders);
       const editedBody = source.kind === 'captured' && replaceBody
         ? encodeEditedText(String(data.get('body') ?? ''), source.textEncoding) : null;
       const current = await invoke<AutomationStatus>('automation_status');
@@ -878,7 +922,9 @@ export class AutomationWorkspace extends WorkspaceElement {
         const bodyChanged=this.autoResponseBody.value!==saved.display || (this.bodyFileTouched && !this.responseBodyPath) || (!preserveEncoding && saved.contentCodings.length>0 && saved.textEncoding!==null);
         const compressionChanged=Boolean(saved.asset.linkedBody) && Boolean(saved.asset.linkedBody?.applyOriginalCompression)!==preserveEncoding;
         if(bodyChanged || this.bodyFileTouched || compressionChanged || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
-          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?encodeEditedText(this.autoResponseBody.value,saved.textEncoding??(saved.asset.linkedBody?'utf-8':null)):null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,preserveContentEncoding:preserveEncoding}});
+          const textEncoding=saved.asset.linkedBody?responseTextEncoding(optionalText(data.get('mediaType'))):saved.textEncoding;
+          if(bodyChanged && !this.responseBodyPath && saved.asset.linkedBody && textEncoding===null)throw new Error('Content type has an unsupported charset. Choose UTF-8 or serve the response body from a file.');
+          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?encodeEditedText(this.autoResponseBody.value,textEncoding):null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,preserveContentEncoding:preserveEncoding}});
           assetReference=`${asset.id}@${asset.revision}`;
         }
       } else {

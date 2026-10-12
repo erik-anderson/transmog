@@ -7,13 +7,16 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
   await mkdir(directory,{recursive:true});
   const path=resolve(directory,'linked-response.bin');
   const file=await open(path,'w');await file.truncate(25000001);await file.close();
+  const rawHeaders=['alpha \t',[255],'omega'].map(value=>({name:Array.from(Buffer.from('X-Repeat')),value:Array.isArray(value)?value:Array.from(Buffer.from(value))}));
+  const mediaType='text/plain; Charset = "UTF-16LE"';
   try {
     await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),invoke=window.__TAURI_INTERNALS__.invoke;
       const original=await invoke('automation_status');
       globalThis.__responseFileProbe={original,view:shell.activeView};
-      const source=await invoke('create_response_asset',{input:{id:'native-compressed-source',revision:1,status:200,headers:[{name:[99,111,110,116,101,110,116,45,101,110,99,111,100,105,110,103],value:[103,122,105,112]}],body:${JSON.stringify(Array.from(gzipSync(Buffer.from([0,255,1,254]))))},mediaType:'application/octet-stream'}});
-      const asset=await invoke('edit_response_asset',{input:{assetReference:source.id+'@1',status:200,headers:[],bodyPath:${JSON.stringify(path)},decodedBody:null,mediaType:'application/octet-stream',preserveContentEncoding:true}});
+      const sourceMediaType=${JSON.stringify(mediaType)};
+      const source=await invoke('create_response_asset',{input:{id:'native-compressed-source',revision:1,status:200,headers:${JSON.stringify([...rawHeaders,{name:Array.from(Buffer.from('content-encoding')),value:Array.from(Buffer.from('x-gzip'))}])},body:${JSON.stringify(Array.from(gzipSync(Buffer.from([0,255,1,254]))))},mediaType:sourceMediaType}});
+      const asset=await invoke('edit_response_asset',{input:{assetReference:source.id+'@1',status:200,headers:source.headers,bodyPath:${JSON.stringify(path)},decodedBody:null,mediaType:source.mediaType,preserveContentEncoding:true}});
       if(!asset.linkedBody||asset.linkedBody.path!==${JSON.stringify(path)})throw new Error('Native file import did not preserve its linked path');
       const matcher={method:'GET',url:{kind:'exact',value:'https://example.test/native-file'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null};
       const rule={id:'native-linked-rule',displayName:'Native linked file',enabled:true,revision:1,priority:-2000000,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
@@ -25,6 +28,11 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       await workspace.refreshAutomation();await workspace.editAutoResponse(rule,true);workspace.$flushUpdates();
       if(!workspace.autoResponseBody.disabled||!workspace.textContent.includes('Response body being served from file'))throw new Error('Native linked-file overlay is missing');
       if(workspace.autoResponsePreserveEncoding.disabled||!workspace.textContent.includes('Apply original compression type (gzip)')||!asset.linkedBody.applyOriginalCompression)throw new Error('Native linked-file compression choice is missing');
+      workspace.autoResponseForm.elements.namedItem('status').value='201';
+      if(!await workspace.saveAutoResponse(new Event('submit',{cancelable:true})))throw new Error('Native metadata-only Save failed: '+workspace.autoResponseError);
+      const saved=await invoke('inspect_response_asset',{reference:workspace.rules.find(r=>r.id===rule.id).request.responseAsset});
+      const repeated=saved.asset.headers.filter(field=>new TextDecoder().decode(new Uint8Array(field.name))==='X-Repeat');
+      if(JSON.stringify(repeated)!==${JSON.stringify(JSON.stringify(rawHeaders))})throw new Error('Native metadata-only Save changed raw repeated header bytes or order');
       workspace.autoResponseForm.closest('.rule-properties-pane').scrollTop=100000;
     })()`);
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-linked-file.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
@@ -53,10 +61,12 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       if(w.autoResponseBody.value!==applied)throw new Error('Native Cancel changed the draft');
       w.openBodyDialog();while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       w.bodyEditor.commit(true);const savedDeadline=Date.now()+15000;
-      while(w.bodyEditor.surface.open&&Date.now()<savedDeadline)await new Promise(resolve=>setTimeout(resolve,25));
-      if(w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)throw new Error('Native dialog Save rule failed: '+w.bodyEditor.bodyError);
+      while((w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)&&Date.now()<savedDeadline)await new Promise(resolve=>setTimeout(resolve,25));
+      if(w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)throw new Error('Native dialog Save rule failed: '+JSON.stringify({open:w.bodyEditor.surface.open,dirty:w.draftDirty,hasModel:Boolean(w.bodyEditor.model),canSave:w.bodyEditor.bodyCanSave,busy:w.bodyEditor.bodyBusy,error:w.bodyEditor.bodyError,ruleError:w.autoResponseError}));
+      const saved=await window.__TAURI_INTERNALS__.invoke('inspect_response_asset',{reference:w.rules.find(rule=>rule.id==='native-linked-rule').request.responseAsset});
+      if(saved.display!==applied||saved.textEncoding!=='utf-16le'||saved.asset.mediaType!==${JSON.stringify(mediaType)})throw new Error('Native clear-file text body disagrees with its declared charset');
     })()`);
-    return {linkedPath:true,disabledEditor:true,compressionChoice:true,missingFile:true,recovery:true,clearFile:true,syntaxEditor:true,formatUndo:true,applyCancel:true,dialogSave:true};
+    return {linkedPath:true,disabledEditor:true,compressionChoice:true,gzipAlias:true,rawHeaderOrder:true,linkedFileCharset:true,missingFile:true,recovery:true,clearFile:true,syntaxEditor:true,formatUndo:true,applyCancel:true,dialogSave:true};
   } finally {
     await evaluate(`(async()=>{
       const probe=globalThis.__responseFileProbe;if(!probe)return;

@@ -336,19 +336,21 @@ await page.addInitScript((workspace) => {
           if(matcher.method){const method=matcher.method===args.input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
           return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({method:item.method,url:item.url,passed:true}))??[]};
         }
-        case 'autoresponse_source_headers': return detail(args.id).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))}));
+        case 'autoresponse_source_headers': return structuredClone(state.rawResponseHeaders??detail(args.id).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})));
         case 'response_assets': return structuredClone(state.assets??[]);
         case 'inspect_response_asset': {
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
           if(!asset)throw new Error('Saved response missing');
-          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:state.assetTextEncoding===null?null:'utf-8',contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
+          const charset=asset.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
+          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:state.assetTextEncoding===null?null:charset,contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
         }
         case 'edit_response_asset': {
           if(state.deferAssetEdit){state.assetEditPending=true;await new Promise(resolve=>state.finishAssetEdit=resolve);}
           if(state.assetError)throw new Error('Fixture asset write failed');
           const source=state.assets.find(asset=>asset.id+'@'+asset.revision===args.input.assetReference);
           const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
-          const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder().decode(new Uint8Array(args.input.decodedBody)):source.display};
+          const charset=args.input.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
+          const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder(charset).decode(new Uint8Array(args.input.decodedBody)):source.display};
           if(args.input.bodyPath){asset.linkedBody=(state.bodyFileBytes??100)>25000000?{path:args.input.bodyPath,originalContentCodings:[]}:null;asset.display=asset.linkedBody?'':'file body';asset.bodyBytes=state.bodyFileBytes??100;}
           else if(args.input.decodedBody!==null){asset.linkedBody=null;}
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
@@ -381,7 +383,8 @@ await page.addInitScript((workspace) => {
           if (state.assetDelay) await new Promise(resolve=>setTimeout(resolve,state.assetDelay));
           if (state.assetError) throw new Error('Fixture asset write failed');
           const input=args.input;
-          const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??[],display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
+          const sourceHeaders=command==='create_response_asset_from_session'?state.rawResponseHeaders??detail(input.exchangeId).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})):[];
+          const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??sourceHeaders,display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
@@ -1007,11 +1010,21 @@ try {
     await page.evaluate(async url=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'});detail.requests[0].target=url;await w.populateCapturedAutoResponse('second',detail);},url);
     assert.equal(await autoField('url').inputValue(),expected,'Traffic-derived URL has the wrong port');
   }
-  await page.evaluate(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.populateCapturedAutoResponse('second',await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'}));});
-
-
+  const rawCapturedHeaders=['alpha \t',[255],'omega'].map(value=>({name:Array.from(Buffer.from('X-Repeat')),value:Array.isArray(value)?value:Array.from(Buffer.from(value))}));
+  await page.evaluate(async headers=>{globalThis.__workspaceFixture.rawResponseHeaders=headers;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.populateCapturedAutoResponse('second',await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'}));},rawCapturedHeaders);
+  await autoField('status').fill('201');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.headers),rawCapturedHeaders,'Metadata-only captured Save changed header bytes or repeated-field order');
+  await autoField('responseHeaders').fill('X-Repeat: alpha\nx-repeat: changed');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.headers.map(field=>field.value)),[rawCapturedHeaders[0].value,[255],Array.from(Buffer.from('changed'))],'Editing a repeated text value moved the protected value');
+  assert.equal(await page.evaluate(()=>new TextDecoder().decode(new Uint8Array(globalThis.__workspaceFixture.lastAssetEdit.headers[2].name))),'x-repeat','Merging headers lost an authored capitalization change');
+  await autoField('responseHeaders').fill('X-Repeat: changed');
+  await autoField('status').fill('200');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.headers.map(field=>field.value)),[[255],Array.from(Buffer.from('changed'))],'Deleting an earlier text header swapped a protected repeated value');
+  await page.evaluate(()=>delete globalThis.__workspaceFixture.rawResponseHeaders);
   const capturedRuleId=await page.locator('.auto-response-rule').getAttribute('data-rule-id');
   const capturedRule=page.locator('#rule-'+capturedRuleId);
   await autoField('enabled').uncheck();
@@ -1168,6 +1181,7 @@ try {
   assert.equal(await autoField('body').inputValue(),originalFileDraft,'Clearing a pending file lost the inline draft');
   assert.equal(await autoField('body').isEnabled(),true);
   await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFile='C:/fixtures/current-response.bin';globalThis.__workspaceFixture.bodyFileBytes=25000001;});
+  await autoField('mediaType').fill('text/plain; charset=utf-16le');
   await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
   await autoEditor.getByText(/Read directly for each request/).waitFor();
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
@@ -1178,6 +1192,17 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFileError=false;document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').refreshUsageSoon();});
   await autoEditor.getByText(/Response file is missing or unreadable/).waitFor({state:'hidden'});
   await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  await page.locator('#auto-response-body-help').getByText(/Text uses UTF-16LE/).waitFor();
+  await autoField('body').fill('Hi');
+  await autoField('mediaType').fill('text/plain; charset=windows-1252');
+  await page.locator('#auto-response-body-help').getByText(/set a supported charset/).waitFor();
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  await autoEditor.getByText(/Content type has an unsupported charset/).waitFor();
+  assert.equal(await autoField('body').inputValue(),'Hi','Unsupported text encoding discarded the draft');
+  await autoField('mediaType').fill('text/plain; charset=utf-16le');
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.deepEqual(await page.evaluate(()=>({body:globalThis.__workspaceFixture.lastAssetEdit.decodedBody,type:globalThis.__workspaceFixture.lastAssetEdit.mediaType})),{body:[72,0,105,0],type:'text/plain; charset=utf-16le'},'Clearing a linked file encoded text differently from its declared charset');
+  assert.equal(await autoField('body').inputValue(),'Hi');
   await autoField('body').fill(originalFileDraft);
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
   assert.equal(await autoField('body').isEnabled(),true);

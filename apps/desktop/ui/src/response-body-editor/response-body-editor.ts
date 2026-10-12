@@ -62,7 +62,7 @@ export class ResponseBodyEditor extends WebUIElement {
       const focusFallback=this.getRootNode() instanceof ShadowRoot?(this.getRootNode() as ShadowRoot).activeElement===this.fallbackInput:document.activeElement===this.fallbackInput;
       this.model=this.monaco.editor.createModel(this.fallbackInput.value,this.bodyLanguage,this.monaco.Uri.parse(`file:///transmog-responses/editor-${++modelSequence}/body.js`));
       this.bodyEditorReady=true;this.$flushUpdates();
-      this.editor=this.monaco.editor.create(this.editorHost,{model:this.model,automaticLayout:true,minimap:{enabled:false},accessibilitySupport:'on',ariaLabel:'Response body text',tabFocusMode:true,theme:this.editorTheme(),wordWrap:'on'});
+      this.editor=this.monaco.editor.create(this.editorHost,{model:this.model,readOnly:this.bodyBusy,domReadOnly:this.bodyBusy,automaticLayout:true,minimap:{enabled:false},accessibilitySupport:'on',ariaLabel:'Response body text',tabFocusMode:true,theme:this.editorTheme(),wordWrap:'on'});
       this.bodyEditorStatus='Language affects highlighting and formatting. Content type is set in Response.';
       if(focusFallback)this.editor.focus();
     }catch(error:unknown){
@@ -117,7 +117,7 @@ export class ResponseBodyEditor extends WebUIElement {
   private disposeEditor():void {this.editor?.dispose();this.editor=null;this.model?.dispose();this.model=null;this.bodyEditorReady=false;}
   private editorTheme():string {const dark=this.theme==='dark'||(this.theme==='system'&&this.systemTheme.matches);return this.highContrast.matches?(dark?'hc-black':'hc-light'):(dark?'vs-dark':'vs');}
   themeChanged():void {this.monaco?.editor.setTheme(this.editorTheme());}
-  bodyBusyChanged():void {this.editor?.updateOptions({readOnly:this.bodyBusy});}
+  bodyBusyChanged():void {this.editor?.updateOptions({readOnly:this.bodyBusy,domReadOnly:this.bodyBusy});}
   disconnectedCallback():void {this.generation++;this.disposeEditor();this.systemTheme.removeEventListener('change',this.themeListener);this.highContrast.removeEventListener('change',this.themeListener);super.disconnectedCallback();}
 }
 ResponseBodyEditor.define('response-body-editor');

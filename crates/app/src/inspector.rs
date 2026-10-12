@@ -947,6 +947,9 @@ pub(crate) async fn decode_content(
     codings: &[String],
     encoded: Vec<u8>,
 ) -> Result<Vec<u8>, AppError> {
+    if codings.is_empty() {
+        return Ok(encoded);
+    }
     let field = HeaderField::try_new("content-encoding", codings.join(", ")).map_err(|_| {
         AppError::new(
             ErrorCategory::InvalidInput,
@@ -1649,6 +1652,13 @@ mod tests {
                     .unwrap(),
                 b"encoded preview"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn identity_decoding_keeps_bytes_without_an_encoding_header() {
+        for bytes in [vec![], vec![0, 255, 72, 0, 105, 0]] {
+            assert_eq!(decode_content(&[], bytes.clone()).await.unwrap(), bytes);
         }
     }
 

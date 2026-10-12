@@ -31,7 +31,7 @@ impl ContentCoding {
         if value.eq_ignore_ascii_case("identity") {
             return Ok(None);
         }
-        if value.eq_ignore_ascii_case("gzip") {
+        if value.eq_ignore_ascii_case("gzip") || value.eq_ignore_ascii_case("x-gzip") {
             Ok(Some(Self::Gzip))
         } else if value.eq_ignore_ascii_case("deflate") {
             Ok(Some(Self::Deflate))
@@ -237,6 +237,20 @@ mod tests {
             stack.header_value().as_deref(),
             Some("gzip, br, deflate, zstd")
         );
+    }
+
+    #[test]
+    fn gzip_alias_uses_the_same_coding_and_canonical_header() {
+        let stack = ContentCodingStack::from_headers(
+            &headers(&["X-GZIP, br"]),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            stack.encode_order().collect::<Vec<_>>(),
+            [ContentCoding::Gzip, ContentCoding::Brotli]
+        );
+        assert_eq!(stack.header_value().as_deref(), Some("gzip, br"));
     }
 
     #[test]
