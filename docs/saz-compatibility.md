@@ -81,6 +81,11 @@ as a physical socket-close time.
 Captured opaque CONNECT exchanges retain their original request headers and body
 bytes. Successful responses use `200 Connection Established` and Transmog-labeled
 headers describing the tunnel, recorded peer and physical byte totals when known.
+Recorded setup and sampling times add UTC-labeled StartTime and last-observed
+headers; a recorded terminal forwarding event also supplies EndTime. Directional
+totals use ClientToServerBytes and ServerToClientBytes. Captured headers take
+precedence over generated fields, with case-insensitive collision checks, so
+original values and duplicate fields survive repeated exports and imports.
 No TLS details are inferred for opaque traffic. Conventional `TunnelInfo` byte
 counts and blind-tunnel flags make this context available to SAZ readers.
 Uncaptured responses for recorded DNS, TCP or TLS setup failures use labeled 502

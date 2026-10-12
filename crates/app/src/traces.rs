@@ -3127,6 +3127,11 @@ mod tests {
 
     #[tokio::test]
     async fn opaque_connect_context_survives_repeated_saves_without_losing_recorded_headers() {
+        let recorded_counts = [
+            ("Transmog-Tunnel-Bytes-Sent", "captured-legacy-count"),
+            ("ClientToServerBytes", "captured-sent"),
+            ("ServerToClientBytes", "captured-received"),
+        ];
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("opaque.saz");
         let mut zip = zip::ZipWriter::new(File::create(&source).unwrap());
@@ -3137,7 +3142,7 @@ mod tests {
             ),
             (
                 "raw/1_s.txt",
-                "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nTransmog-Peer: recorded-value\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nTransmog-Peer: recorded-value\r\nTransmog-Tunnel-Bytes-Sent: captured-legacy-count\r\nCLIENTTOSERVERBYTES: captured-sent\r\nServerToClientBytes: captured-received\r\n\r\n",
             ),
             (
                 "raw/1_m.xml",
@@ -3171,6 +3176,13 @@ mod tests {
                     Some(b"recorded-value".as_slice())
                 );
                 assert!(head.headers.values("Transmog-Tunnel").next().is_none());
+                for (name, value) in recorded_counts {
+                    assert_eq!(
+                        head.headers.values(name).next(),
+                        Some(value.as_bytes()),
+                        "{format:?}, generation {generation}: {name}"
+                    );
+                }
                 assert!(
                     snapshot
                         .performance
@@ -3200,6 +3212,17 @@ mod tests {
                 let response = indexed.sessions[0].response.as_ref().unwrap();
                 assert_eq!(response.headers.values("Transmog-Tunnel").count(), 1);
                 assert_eq!(response.headers.values("Transmog-Peer").count(), 1);
+                for (name, value) in recorded_counts {
+                    assert_eq!(
+                        response.headers.values(name).collect::<Vec<_>>(),
+                        vec![value.as_bytes()]
+                    );
+                    assert!(
+                        !indexed.sessions[0].metadata.flags["x-transmog-connect-export-headers"]
+                            .split(',')
+                            .any(|added| added.eq_ignore_ascii_case(name))
+                    );
+                }
                 assert_eq!(response.start_line, "HTTP/1.1 200 Connection Established");
             }
         }
