@@ -4,8 +4,10 @@ For byte layouts, cryptographic derivation, record and index schemas, and reader
 invariants, see the [TMCap format specification](tmcap-format.md).
 
 TMCap is an indexed, block-based capture container. `TMCAP001\0`, header version
-`1`, and record schema revision `4` identify the current format. Revision 4 adds
-stream lifecycle and independently indexed WebSocket/SSE content. There is no
+`1`, and record schema revision `5` identify the current format. Stream lifecycle
+and WebSocket/SSE content are independently indexed. Persistent SSE IDs are
+stored once and referenced by later messages, avoiding repeated large fields
+on disk and in reopened histories. There is no
 compatibility reader for earlier experimental layouts.
 
 ## Privacy and physical layout

@@ -35,7 +35,7 @@ export function nativeFixture(records, exchangeId) {
   };
   const chunks=[],entries=[];let logicalBytes=0;
   for(const [index,original] of [...expanded,{kind:'seal',payload:{record_count:expanded.length}}].entries()) {
-    const record={revision:4,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
+    const record={revision:5,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
     let body;
     if(record.kind==='body-segment'&&Array.isArray(record.payload.bytes)) {
       const bytes=Buffer.from(record.payload.bytes);body=encode(bytes,index*2+2);

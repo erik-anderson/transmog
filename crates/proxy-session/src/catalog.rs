@@ -957,38 +957,6 @@ fn trim_live_entries(state: &mut CatalogState) {
     }
 }
 
-// Message history has a separate shared ceiling; eviction never closes a stream.
-fn trim_stream_history(state: &mut CatalogState) {
-    const MAXIMUM: usize = 64 * 1024 * 1024;
-    let mut total = state
-        .by_id
-        .values()
-        .filter(|session| !session.imported)
-        .map(|session| session.stream_history.retained_bytes)
-        .sum::<usize>();
-    if total <= MAXIMUM {
-        return;
-    }
-    for id in state.order.values() {
-        let Some(session) = state.by_id.get_mut(id).filter(|session| !session.imported) else {
-            continue;
-        };
-        let history = &mut session.stream_history;
-        while total > MAXIMUM {
-            let Some(item) = history.items.pop_front() else {
-                break;
-            };
-            let bytes = item.message.retained_bytes();
-            history.retained_bytes = history.retained_bytes.saturating_sub(bytes);
-            history.evicted = history.evicted.saturating_add(1);
-            total = total.saturating_sub(bytes);
-        }
-        if total <= MAXIMUM {
-            break;
-        }
-    }
-}
-
 fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
     let candidate = state.order.iter().find_map(|(admission, exchange_id)| {
         state
@@ -1018,7 +986,6 @@ fn update_session(
     retain_stream_content(&mut event.kind, state.retain_stream_content);
     let session = state.by_id.get_mut(&event.exchange_id)?;
     session.last_sequence = event.sequence;
-    let stream_message = matches!(event.kind, ObserverEventKind::StreamMessage(_));
     apply_kind(session, event.kind, limits, &mut detail_dropped);
     let delta = CatalogDelta {
         exchange_id: event.exchange_id,
@@ -1030,9 +997,6 @@ fn update_session(
         .detail_records_dropped
         .saturating_add(detail_dropped);
     trim_live_entries(state);
-    if stream_message {
-        trim_stream_history(state);
-    }
     Some(delta)
 }
 
@@ -1619,13 +1583,11 @@ mod tests {
     }
 
     #[test]
-    fn stream_history_eviction_is_bounded_and_does_not_close_quiet_streams() {
-        use transmog_core::stream::{
-            MESSAGE_BYTES, StreamMessage, StreamProtocol, StreamState, StreamStatus,
-        };
+    fn large_stream_histories_remain_complete_and_active() {
+        use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
         let catalog = SessionCatalog::new(SessionLimits::default());
         catalog.set_stream_content_retention(true, true);
-        let payload = Bytes::from(vec![b'x'; MESSAGE_BYTES]);
+        let payload = Bytes::from(vec![b'x'; 512 * 1024]);
         for id in 1..=10 {
             start(&catalog, id, "stream.test");
             catalog.apply(event(
@@ -1637,7 +1599,7 @@ mod tests {
                     None,
                 )),
             ));
-            for sequence in 3..=37 {
+            for sequence in 3..=1102 {
                 catalog.apply(event(
                     id,
                     sequence,
@@ -1651,16 +1613,18 @@ mod tests {
         }
         let snapshots = catalog.project_retained(|s| (s.state(), s.stream_history.clone()));
         assert!(snapshots.iter().all(|(state, h)| *state == "active"
-            && h.observed == 35
-            && h.retained_bytes <= 8 * 1024 * 1024));
+            && h.observed == 1100
+            && h.items.len() == 1100
+            && h.items[0].message.payload == payload
+            && !h.items[0].message.truncated));
         assert!(
             snapshots
                 .iter()
                 .map(|(_, h)| h.retained_bytes)
                 .sum::<usize>()
-                <= 64 * 1024 * 1024
+                > 64 * 1024 * 1024
         );
-        assert!(snapshots.iter().map(|(_, h)| h.evicted).sum::<u64>() > 40);
+        assert!(snapshots.iter().all(|(_, h)| h.evicted == 0));
         assert!(
             snapshots
                 .iter()

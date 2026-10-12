@@ -3,9 +3,6 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Maximum retained payload for one inspected message; original length is preserved.
-pub const MESSAGE_BYTES: usize = 256 * 1024;
-
 /// A message, control frame, or SSE event observed without changing forwarded bytes.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,7 +15,7 @@ pub struct StreamMessage {
     pub kind: String,
     /// Original decoded payload length.
     pub byte_count: u64,
-    /// Bounded decoded bytes; never HTML.
+    /// Complete decoded bytes when content retention is enabled; never HTML.
     pub payload: bytes::Bytes,
     /// True when the payload is only a retained prefix.
     pub truncated: bool,
@@ -27,7 +24,7 @@ pub struct StreamMessage {
     /// SSE event name, when applicable.
     pub event: Option<String>,
     /// SSE last event ID, when applicable.
-    pub event_id: Option<String>,
+    pub event_id: Option<std::sync::Arc<str>>,
     /// SSE reconnection delay in milliseconds.
     pub retry: Option<u64>,
     /// Decoded SSE event block and field syntax, with LF line endings.
@@ -37,23 +34,16 @@ pub struct StreamMessage {
 }
 
 impl StreamMessage {
-    /// Creates a bounded message and preserves its original length.
+    /// Creates a message without silently truncating its content.
     pub fn new(sender: &str, kind: &str, payload: bytes::Bytes) -> Self {
         let byte_count = payload.len() as u64;
-        let truncated = payload.len() > MESSAGE_BYTES;
-        // Copy the prefix so it cannot pin an arbitrarily larger allocation.
-        let payload = if truncated {
-            bytes::Bytes::copy_from_slice(&payload[..MESSAGE_BYTES])
-        } else {
-            payload
-        };
         Self {
             at_millis: observed_millis(),
             sender: sender.into(),
             kind: kind.into(),
             byte_count,
             payload,
-            truncated,
+            truncated: false,
             compressed: false,
             event: None,
             event_id: None,
@@ -63,12 +53,14 @@ impl StreamMessage {
         }
     }
 
-    /// Memory charged to the bounded history, including metadata.
+    /// Memory occupied by one standalone message, including metadata.
     pub fn retained_bytes(&self) -> usize {
         self.payload.len()
             + self.raw.as_ref().map_or(0, String::len)
             + self.event.as_ref().map_or(0, String::len)
-            + self.event_id.as_ref().map_or(0, String::len)
+            + self.event_id.as_ref().map_or(0, |id| id.len())
+            + self.sender.len()
+            + self.kind.len()
             + 256
     }
 }
@@ -102,10 +94,10 @@ impl StreamItem {
     }
 }
 
-/// Bounded recent stream history and lifetime counters.
+/// Retained stream history and lifetime counters.
 #[derive(Clone, Debug, Default)]
 pub struct StreamHistory {
-    /// Retained recent items, in observed order.
+    /// Retained items, in observed order.
     pub items: std::collections::VecDeque<std::sync::Arc<StreamItem>>,
     /// Total observed items including evicted history.
     pub observed: u64,
@@ -121,10 +113,22 @@ pub struct StreamHistory {
     pub last_activity: Option<u64>,
     /// Bytes charged to retained items.
     pub retained_bytes: usize,
+    event_ids: std::collections::HashSet<usize>,
 }
 
 impl StreamHistory {
-    /// Retains a bounded recent history; eviction never changes lifetime state.
+    /// Accounts for message storage, charging a shared persistent ID once.
+    pub fn charge_message(&mut self, message: &StreamMessage) {
+        let mut bytes = message.retained_bytes();
+        if let Some(id) = &message.event_id
+            && !self.event_ids.insert(id.as_ptr() as usize)
+        {
+            bytes = bytes.saturating_sub(id.len());
+        }
+        self.retained_bytes = self.retained_bytes.saturating_add(bytes);
+    }
+
+    /// Retains every observed item until the owning session is removed.
     pub fn push(&mut self, sequence: u64, message: StreamMessage) {
         self.observed = self.observed.saturating_add(1);
         self.last_activity = Some(message.at_millis);
@@ -135,21 +139,12 @@ impl StreamHistory {
         } else {
             self.server_bytes = self.server_bytes.saturating_add(message.byte_count);
         }
-        self.retained_bytes = self.retained_bytes.saturating_add(message.retained_bytes());
+        self.charge_message(&message);
         self.items.push_back(std::sync::Arc::new(StreamItem {
             sequence,
             message,
             source: None,
         }));
-        while self.items.len() > 1024 || self.retained_bytes > 8 * 1024 * 1024 {
-            let Some(item) = self.items.pop_front() else {
-                break;
-            };
-            self.retained_bytes = self
-                .retained_bytes
-                .saturating_sub(item.message.retained_bytes());
-            self.evicted = self.evicted.saturating_add(1);
-        }
     }
 }
 

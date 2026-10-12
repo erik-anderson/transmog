@@ -8,6 +8,7 @@
 pub mod compression;
 mod connections;
 mod container;
+mod stream_ids;
 pub use container::{CaptureReader, CaptureWriter, read_indexed_frame_with_codec};
 mod circular;
 pub use circular::CircularCapture;
@@ -37,14 +38,15 @@ const FRAME_HEADER_BYTES: usize = 8;
 pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 
 /// Durable record schema revision, independent of the container header version.
-pub const CAPTURE_FORMAT_REVISION: u32 = 4;
+pub const CAPTURE_FORMAT_REVISION: u32 = 5;
 
 /// Writer/recovery limits; artifact size and record count default to no maximum.
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureLimits {
     /// Maximum complete artifact size including framing.
     pub max_file_bytes: u64,
-    /// Maximum serialized record payload.
+    /// Maximum JSON metadata record or ordinary HTTP body chunk. Independently
+    /// indexed stream content uses the format's 32-bit object length instead.
     pub max_record_bytes: usize,
     /// Maximum number of records accepted during recovery.
     pub max_records: usize,
@@ -351,11 +353,13 @@ struct StoredRecord {
     payload: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     body_index: Option<StoredBodyIndex>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stream_id: Option<u64>,
 }
 
 impl StoredRecord {
     fn load_container_metadata(
-        self,
+        mut self,
         codec: &FrameCodec,
     ) -> Result<(CaptureRecord, Option<StoredBodyIndex>), CaptureError> {
         if self.revision != CAPTURE_FORMAT_REVISION {
@@ -376,7 +380,14 @@ impl StoredRecord {
                 None,
             ));
         }
-        self.load_metadata()
+        let id = stream_ids::resolve(&mut self, codec)?;
+        let (mut record, body) = self.load_metadata()?;
+        if let CaptureRecordKind::StreamMessage(message) = &mut record.kind
+            && let Some(id) = id
+        {
+            message.event_id = Some(id);
+        }
+        Ok((record, body))
     }
     fn load_metadata(self) -> Result<(CaptureRecord, Option<StoredBodyIndex>), CaptureError> {
         let index = self.body_index;
@@ -1729,11 +1740,15 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
         kind: kind.to_owned(),
         payload,
         body_index: None,
+        stream_id: None,
     })
 }
 
 #[allow(clippy::too_many_lines)]
 fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
+    if record.stream_id.is_some() {
+        return Err(CaptureError::MalformedRecord("unresolved stream ID"));
+    }
     if record.revision != CAPTURE_FORMAT_REVISION {
         return Err(CaptureError::UnsupportedRevision(record.revision));
     }

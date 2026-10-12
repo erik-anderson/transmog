@@ -543,7 +543,7 @@ fn writer_rejects_metadata_that_cannot_fit_a_readable_index_object() {
 #[test]
 fn stream_payload_is_lazy_authenticated_and_round_trips() {
     use transmog_core::stream::StreamMessage;
-    let mut message = StreamMessage::new("server", "event", vec![b'x'; 256 * 1024].into());
+    let mut message = StreamMessage::new("server", "event", vec![b'x'; 24 * 1024 * 1024].into());
     message.raw = Some("data: x\n\n".into());
     message.event_id = Some("42".into());
     let record = CaptureRecord {
@@ -577,4 +577,139 @@ fn stream_payload_is_lazy_authenticated_and_round_trips() {
     assert_eq!(loaded, record);
     let mut reader = CaptureReader::new(Cursor::new(bytes), CaptureLimits::default()).unwrap();
     assert_eq!(reader.read_next().unwrap().unwrap().record, record);
+}
+
+#[test]
+fn persistent_sse_ids_grow_once_and_remain_shared_after_random_reads() {
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+    use transmog_core::stream::StreamMessage;
+    let mut id = String::new();
+    for byte in &binary()[..32 * 1024] {
+        write!(&mut id, "{byte:02x}").unwrap();
+    }
+    let id: Arc<str> = id.into();
+    let mut sizes = Vec::new();
+    for count in [128, 1024] {
+        let mut writer =
+            CaptureWriter::new(Cursor::new(Vec::new()), CaptureLimits::default()).unwrap();
+        for sequence in 1..=count {
+            let mut message = StreamMessage::new("server", "heartbeat", b":".to_vec().into());
+            message.event_id = Some(id.clone());
+            writer
+                .append(&CaptureRecord {
+                    sequence,
+                    exchange_id: 7,
+                    kind: CaptureRecordKind::StreamMessage(message),
+                })
+                .unwrap();
+        }
+        writer.seal().unwrap();
+        let bytes = writer.into_inner().unwrap().into_inner();
+        sizes.push(bytes.len());
+        let mut reader = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+        let mut shared = None;
+        let mut last = None;
+        for _ in 0..count {
+            let frame = reader.read_next_indexed().unwrap().unwrap();
+            let CaptureRecordKind::StreamMessage(message) = &frame.record.kind else {
+                panic!("message")
+            };
+            let value = message.event_id.as_ref().unwrap();
+            assert_eq!(value, &id);
+            if let Some(first) = &shared {
+                assert!(Arc::ptr_eq(first, value));
+            } else {
+                shared = Some(value.clone());
+            }
+            last = Some(frame);
+        }
+        // The frame keeps its one shared ID alive independently of the reader.
+        drop(reader);
+        let last = last.unwrap();
+        let mut source = Cursor::new(&bytes);
+        source.set_position(last.offset);
+        let record = super::super::read_indexed_frame_with_codec(
+            &mut source,
+            last.frame_bytes,
+            CaptureLimits::default(),
+            &last.codec,
+            last.index,
+        )
+        .unwrap();
+        let CaptureRecordKind::StreamMessage(message) = record.kind else {
+            panic!("message")
+        };
+        assert!(Arc::ptr_eq(
+            shared.as_ref().unwrap(),
+            message.event_id.as_ref().unwrap()
+        ));
+        assert_eq!(&message.payload[..], b":");
+    }
+    println!("64 KiB persistent SSE ID, 128/1024 messages: {sizes:?} file bytes");
+    assert!(sizes[1] < 1024 * 512 + id.len() * 2);
+    assert!(sizes[1] - sizes[0] < (1024 - 128) * 512);
+
+    // Reproduce the previous repeated-field layout with the same compressor.
+    let mut legacy = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
+    let mut message = StreamMessage::new("server", "heartbeat", Vec::new().into());
+    message.event_id = Some(id);
+    for sequence in 1..=1024 {
+        legacy
+            .append(&CaptureRecord {
+                sequence,
+                exchange_id: 7,
+                kind: CaptureRecordKind::Unknown {
+                    kind: "stream-message".into(),
+                    payload: serde_json::to_value(&message).unwrap(),
+                },
+            })
+            .unwrap();
+    }
+    legacy.seal().unwrap();
+    let before = legacy.into_inner().unwrap().len();
+    println!(
+        "1024 messages, previous repeated-ID layout: {before} bytes; shared-ID layout: {} bytes",
+        sizes[1]
+    );
+    assert!(sizes[1] * 10 < before);
+}
+
+#[test]
+fn shared_stream_ids_survive_encrypted_compaction_and_empty_resets() {
+    use transmog_core::stream::StreamMessage;
+    let options = CaptureEncoding {
+        password: Some(CapturePassword::new("stream sharing".into())),
+    };
+    let mut writer =
+        CaptureWriter::with_encoding(Cursor::new(Vec::new()), CaptureLimits::default(), &options)
+            .unwrap();
+    writer.enable_checkpoint_locators();
+    writer.checkpoint().unwrap();
+    let mut expected = Vec::new();
+    for (index, id) in [Some("first"), Some("first"), Some(""), None, Some("first")]
+        .into_iter()
+        .enumerate()
+    {
+        let mut message = StreamMessage::new("server", "event", b"payload".to_vec().into());
+        message.event_id = id.map(Into::into);
+        let record = CaptureRecord {
+            sequence: index as u64 + 1,
+            exchange_id: 7,
+            kind: CaptureRecordKind::StreamMessage(message),
+        };
+        writer.append(&record).unwrap();
+        expected.push(record);
+    }
+    writer.seal().unwrap();
+    let bytes = writer.compact_sealed_bytes().unwrap().unwrap();
+    let mut reader = CaptureReader::with_password(
+        Cursor::new(&bytes),
+        CaptureLimits::default(),
+        options.password.as_ref(),
+    )
+    .unwrap();
+    for record in expected {
+        assert_eq!(reader.read_next().unwrap().unwrap().record, record);
+    }
 }

@@ -1,11 +1,8 @@
-//! Incremental, bounded SSE observation over arbitrary transfer chunks.
+//! Incremental SSE observation over arbitrary transfer chunks.
 use crate::{ContentCodingStack, ContentDecoder, ContentLimits};
 use bytes::Bytes;
 use std::num::NonZeroUsize;
-use transmog_core::{
-    BodyFrame, HeaderBlock,
-    stream::{MESSAGE_BYTES, StreamMessage},
-};
+use transmog_core::{BodyFrame, HeaderBlock, stream::StreamMessage};
 
 pub use transmog_core::stream::is_event_stream;
 
@@ -15,7 +12,7 @@ pub struct SseDecoder {
     parser: EventParser,
 }
 impl SseDecoder {
-    /// Creates independent bounded decoding state for a response.
+    /// Creates independent decoding state for a response.
     ///
     /// # Errors
     /// Returns an explanation for unsupported content encodings.
@@ -45,7 +42,7 @@ impl SseDecoder {
     /// Decodes newly received bytes without waiting for the end of the response.
     ///
     /// # Errors
-    /// Returns a decoding or event-size error; callers should mark inspection unavailable.
+    /// Returns a content-decoding error; callers should mark inspection unavailable.
     pub async fn push(&mut self, frame: BodyFrame) -> Result<Vec<StreamMessage>, String> {
         let mut frames = vec![frame];
         for codec in &mut self.codecs {
@@ -55,7 +52,7 @@ impl SseDecoder {
             }
             frames = next;
         }
-        self.parse(frames)
+        Ok(self.parse(frames))
     }
 
     /// Validates coding trailers and exposes incomplete final event data explicitly.
@@ -72,19 +69,19 @@ impl SseDecoder {
             next.extend(codec.finish().await.map_err(|e| e.to_string())?);
             frames = next;
         }
-        let mut messages = self.parse(frames)?;
+        let mut messages = self.parse(frames);
         self.parser.finish(&mut messages);
         Ok(messages)
     }
 
-    fn parse(&mut self, frames: Vec<BodyFrame>) -> Result<Vec<StreamMessage>, String> {
+    fn parse(&mut self, frames: Vec<BodyFrame>) -> Vec<StreamMessage> {
         let mut messages = Vec::new();
         for frame in frames {
             if let BodyFrame::Data(bytes) = frame {
-                self.parser.push(&bytes, &mut messages)?;
+                self.parser.push(&bytes, &mut messages);
             }
         }
-        Ok(messages)
+        messages
     }
 }
 
@@ -95,7 +92,7 @@ struct EventParser {
     raw: Vec<u8>,
     data: String,
     event: String,
-    id: String,
+    id: std::sync::Arc<str>,
     retry: Option<u64>,
     fields: usize,
     has_data: bool,
@@ -104,18 +101,13 @@ struct EventParser {
     cr: bool,
 }
 impl EventParser {
-    fn push(&mut self, bytes: &[u8], output: &mut Vec<StreamMessage>) -> Result<(), String> {
+    fn push(&mut self, bytes: &[u8], output: &mut Vec<StreamMessage>) {
         for &byte in bytes {
             if self.cr {
                 self.cr = false;
                 if byte == b'\n' {
                     continue;
                 }
-            }
-            if self.raw.len() >= MESSAGE_BYTES {
-                return Err(
-                    "SSE event exceeds the 256 KiB inspection limit; forwarding continues".into(),
-                );
             }
             match byte {
                 b'\r' => {
@@ -133,7 +125,6 @@ impl EventParser {
                 }
             }
         }
-        Ok(())
     }
     fn end_line(&mut self, output: &mut Vec<StreamMessage>) {
         let bytes = std::mem::take(&mut self.line);
@@ -198,7 +189,7 @@ impl EventParser {
                 self.data.push('\n');
             }
             "event" => value.clone_into(&mut self.event),
-            "id" if !value.contains('\0') => value.clone_into(&mut self.id),
+            "id" if !value.contains('\0') => self.id = value.into(),
             "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
                 if let Ok(retry) = value.parse() {
                     self.retry = Some(retry);
@@ -221,18 +212,37 @@ impl EventParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn large_events_are_complete_and_persistent_ids_share_storage() {
+        let mut decoder = SseDecoder::new(&HeaderBlock::default()).unwrap();
+        let data = "x".repeat(1024 * 1024);
+        let initial = format!("id: {}\ndata: {data}\n\n", "i".repeat(64 * 1024));
+        let first = decoder
+            .push(BodyFrame::Data(Bytes::from(initial)))
+            .await
+            .unwrap();
+        assert_eq!(first[0].payload.len(), data.len());
+        assert!(!first[0].truncated);
+        let messages = decoder
+            .push(BodyFrame::Data(Bytes::from(b":\n\n".repeat(256))))
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), 256);
+        let id = first[0].event_id.as_ref().unwrap();
+        assert!(
+            messages
+                .iter()
+                .all(|message| std::sync::Arc::ptr_eq(id, message.event_id.as_ref().unwrap()))
+        );
+    }
     #[test]
     fn every_chunk_boundary_preserves_sse_fields_and_raw_text() {
         let wire = "\u{feff}id: 12\r\nevent: update\rdata: héllo\ndata: world\nretry: 4500\n\n: keepalive\n\ndata: tail";
         for split in 0..=wire.len() {
             let mut parser = EventParser::default();
             let mut messages = Vec::new();
-            parser
-                .push(&wire.as_bytes()[..split], &mut messages)
-                .unwrap();
-            parser
-                .push(&wire.as_bytes()[split..], &mut messages)
-                .unwrap();
+            parser.push(&wire.as_bytes()[..split], &mut messages);
+            parser.push(&wire.as_bytes()[split..], &mut messages);
             assert_eq!(messages.len(), 2);
             assert_eq!(messages[0].payload, "héllo\nworld");
             assert_eq!(messages[0].event.as_deref(), Some("update"));
@@ -278,7 +288,7 @@ mod tests {
     fn carriage_return_dispatches_without_waiting_for_another_chunk() {
         let mut parser = EventParser::default();
         let mut messages = Vec::new();
-        parser.push(b"data: live\r\r", &mut messages).unwrap();
+        parser.push(b"data: live\r\r", &mut messages);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].payload, "live");
     }
@@ -287,12 +297,10 @@ mod tests {
     fn id_reset_empty_data_and_invalid_retry_follow_event_stream_rules() {
         let mut parser = EventParser::default();
         let mut messages = Vec::new();
-        parser
-            .push(
-                b"id: first\n\ndata:\n\nid:\nretry: -3\ndata: next\n\n",
-                &mut messages,
-            )
-            .unwrap();
+        parser.push(
+            b"id: first\n\ndata:\n\nid:\nretry: -3\ndata: next\n\n",
+            &mut messages,
+        );
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].kind, "fields");
         assert_eq!(messages[0].event_id.as_deref(), Some("first"));

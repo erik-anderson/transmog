@@ -178,7 +178,9 @@ pub(super) fn read_object(
     let mut ordinal = relative / codec.block_bytes() as u64;
     let mut within = usize::try_from(relative % codec.block_bytes() as u64 - 5)
         .map_err(|_| CaptureError::QuotaExceeded)?;
-    let mut bytes = Vec::with_capacity(length);
+    // Grow only after blocks authenticate. A declared large object must not
+    // reserve gigabytes before even its first block has been read.
+    let mut bytes = Vec::with_capacity(length.min(codec.payload()));
     while bytes.len() < length {
         let (block_kind, data) = block(input, codec, ordinal)?;
         if block_kind != DATA || within >= data.len() {
@@ -205,15 +207,23 @@ pub(super) fn read_object(
     }
     let decoded = match (bytes[1], dictionary) {
         (0, None) => bytes[OBJECT_HEADER..].to_vec(),
-        (1, None) => zstd::bulk::decompress(&bytes[OBJECT_HEADER..], expanded)?,
-        (2, Some(dictionary)) => zstd::bulk::Decompressor::with_dictionary(dictionary)?
-            .decompress(&bytes[OBJECT_HEADER..], expanded)?,
+        (1, None) => decompress(&bytes[OBJECT_HEADER..], expanded, &[])?,
+        (2, Some(dictionary)) => decompress(&bytes[OBJECT_HEADER..], expanded, dictionary)?,
         _ => return Err(CaptureError::InvalidMagic),
     };
     if decoded.len() != expanded {
         return Err(CaptureError::InvalidMagic);
     }
     Ok(decoded)
+}
+
+fn decompress(bytes: &[u8], expanded: usize, dictionary: &[u8]) -> Result<Vec<u8>, CaptureError> {
+    let decoder = zstd::stream::read::Decoder::with_dictionary(bytes, dictionary)?;
+    let mut output = Vec::new();
+    // The size declaration bounds output, but is never an allocation request.
+    // Valid large messages can grow in proportion to actual decoded content.
+    decoder.take(expanded as u64 + 1).read_to_end(&mut output)?;
+    Ok(output)
 }
 
 pub(super) fn validate_body(
@@ -286,4 +296,21 @@ fn check_digest(bytes: &[u8], descriptor: StoredBodyIndex) -> Result<(), Capture
         return Err(CaptureError::AuthenticationFailed);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod allocation_tests {
+    use super::*;
+
+    #[test]
+    fn output_grows_from_content_instead_of_the_size_declaration() {
+        let encoded = zstd::bulk::compress(b"small", 1).unwrap();
+        let decoded = decompress(&encoded, u32::MAX as usize, &[]).unwrap();
+        assert_eq!(decoded, b"small");
+        assert!(decoded.capacity() < 1024 * 1024);
+        // Read at most one byte beyond the declaration, so the caller can reject
+        // its length mismatch without materializing the entire oversized value.
+        assert_eq!(decompress(&encoded, 1, &[]).unwrap().len(), 2);
+        assert!(decompress(&encoded[..encoded.len() - 1], 5, &[]).is_err());
+    }
 }

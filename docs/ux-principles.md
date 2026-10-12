@@ -254,6 +254,10 @@ Open WebSockets and SSE responses remain active even between messages. Keep thei
 HTTP result separate from stream lifetime, and include them in Active filters.
 Stop proxy preserves established streams; app exit interrupts them with bounded
 cleanup. Report open streams separately from ordinary requests and setup work.
+Preserve full stream history and complete messages for retained sessions. Large
+valid captures may use proportionate memory; do not silently truncate payloads or
+evict messages at fixed count or byte thresholds. Page the inspector and load
+saved content on demand. Honor explicit privacy and whole-session retention choices.
 Reject stale shutdown and status results after a new state transition.
 
 Honor explicit manual client routing: when system proxy configuration is disabled,

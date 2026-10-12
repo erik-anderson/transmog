@@ -20,7 +20,7 @@ lifecycle.
 
 `ProxyComponents` has no WebSocket hooks by default. Without observers the runtime
 uses `relay_transparent`, a byte-for-byte bidirectional copy. With observers it
-uses passive, bounded frame/message decoding while forwarding the original bytes.
+uses passive, incremental frame/message decoding while forwarding the original bytes.
 Decoder errors disable inspection with a visible diagnostic; forwarding continues.
 
 Installing a `WebSocketHookFactory` selects `relay_inspected`. Each session gets
@@ -51,7 +51,11 @@ The inspected path enforces:
 - frame, assembled-message, unread-buffer, read, write, callback, replacement,
   concurrency, idle, and close-handshake limits;
 - cryptographically generated fresh masks when forwarding toward an origin;
-- bounded `permessage-deflate` inflation and negotiated context takeover.
+- `permessage-deflate` inflation and negotiated context takeover.
+
+Default inspection preserves complete messages without a fixed payload cap.
+Explicit decoder limits remain available to library callers; protocol validity
+checks and bounded queues still apply.
 
 The inspected encoder currently supports the RFC default 15-bit DEFLATE
 window. If a peer explicitly selects a smaller window, inspected mode rejects

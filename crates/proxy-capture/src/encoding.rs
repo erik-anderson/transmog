@@ -71,6 +71,7 @@ pub struct FrameCodec {
     // Only the immutable connection definitions needed by this indexed frame.
     pub(crate) connections: Arc<crate::connections::Definitions>,
     pub(crate) record: Option<crate::container::RecordLocation>,
+    pub(crate) stream_id: Option<(u64, Arc<str>)>,
     inner: Arc<CodecInner>,
     start: u64,
 }
@@ -407,6 +408,7 @@ impl FrameCodec {
         Ok(Self {
             start: 0,
             connections: Arc::default(),
+            stream_id: None,
             record: None,
             inner: Arc::new(CodecInner {
                 header: encoded,
@@ -613,6 +615,7 @@ mod tests {
         let changed = FrameCodec {
             start: codec.start,
             connections: codec.connections.clone(),
+            stream_id: codec.stream_id.clone(),
             record: None,
             inner: Arc::new(CodecInner {
                 header,

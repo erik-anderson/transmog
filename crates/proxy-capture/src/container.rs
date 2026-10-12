@@ -102,6 +102,7 @@ pub struct CaptureWriter<W> {
     bodies: HashMap<(u128, String), BodyCompression>,
     certificates: BTreeSet<String>,
     connections: crate::connections::WriterContexts,
+    stream_ids: crate::stream_ids::WriterIds,
     start: u64,
     block: u64,
     data: Vec<u8>,
@@ -171,6 +172,7 @@ impl<W: Write> CaptureWriter<W> {
             bodies: HashMap::new(),
             certificates: BTreeSet::new(),
             connections: crate::connections::WriterContexts::default(),
+            stream_ids: crate::stream_ids::WriterIds::default(),
             start,
             block: 0,
             data: Vec::with_capacity(block_size - 5),
@@ -405,11 +407,18 @@ impl<W: Write> CaptureWriter<W> {
             });
         } else if let CaptureRecordKind::StreamMessage(message) = &record.kind {
             let mut metadata = message.clone();
+            let id = metadata.event_id.take().map(|value| {
+                let (reference, define) = self.stream_ids.store(&value, self.records);
+                if define {
+                    metadata.event_id = Some(value);
+                }
+                reference
+            });
             let bytes = super::stream_content(&mut metadata)?;
-            if bytes.len() > self.limits.max_record_bytes {
+            if bytes.len() > u32::MAX as usize {
                 return Err(CaptureError::RecordTooLarge {
                     actual: bytes.len(),
-                    limit: self.limits.max_record_bytes,
+                    limit: u32::MAX as usize,
                 });
             }
             body = Some(PendingBody::Ready(self.compressor.metadata(&bytes)?));
@@ -423,6 +432,7 @@ impl<W: Write> CaptureWriter<W> {
                 bytes: bytes.len(),
                 digest: Sha256::digest(&bytes).into(),
             });
+            stored.stream_id = id;
             raw = Some(bytes);
         } else {
             stored = store(record)?;
@@ -962,6 +972,7 @@ pub struct CaptureReader<R> {
     entries: VecDeque<metadata::RawEntry>,
     certificates: HashMap<String, std::sync::Arc<[u8]>>,
     connections: crate::connections::ReaderContexts,
+    stream_ids: crate::stream_ids::ReaderIds,
     certificate_bytes: usize,
     page: Option<Node>,
     current_body: Option<(BodyRef, StoredBodyIndex)>,
@@ -1066,6 +1077,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             entries: VecDeque::new(),
             certificates: HashMap::new(),
             connections: crate::connections::ReaderContexts::default(),
+            stream_ids: crate::stream_ids::ReaderIds::default(),
             certificate_bytes: 0,
             page: None,
             current_body: None,
@@ -1171,6 +1183,8 @@ impl<R: Read + Seek> CaptureReader<R> {
             _ => return Err(CaptureError::InvalidMagic),
         };
         let mut frame_codec = self.connections.prepare(&entry.stored, &self.codec)?;
+        self.stream_ids
+            .prepare(&entry.stored, entry.index, &mut frame_codec)?;
         frame_codec.record = Some(RecordLocation {
             page,
             index: entry.index,
@@ -1215,7 +1229,7 @@ impl<R: Read + Seek> CaptureReader<R> {
                 &reference,
                 descriptor,
                 before,
-                self.limits.max_record_bytes,
+                content_limit(&frame.record.kind, self.limits),
             )?;
             super::restore_content(&mut frame.record.kind, bytes)?;
         }
@@ -1248,10 +1262,25 @@ fn validate_entry(
 ) -> Result<(), CaptureError> {
     match (&entry.body, entry.stored.body_index) {
         (Some(body), Some(descriptor)) => {
-            packed::validate_body(body, descriptor, codec, before, limits.max_record_bytes)
+            let maximum = if entry.stored.kind == "stream-message" {
+                u32::MAX as usize
+            } else {
+                limits.max_record_bytes
+            };
+            packed::validate_body(body, descriptor, codec, before, maximum)
         }
         (None, None) => Ok(()),
         _ => Err(CaptureError::InvalidMagic),
+    }
+}
+// Stream payloads are independent indexed objects, not JSON metadata records.
+// Their only implicit ceiling is the format's 32-bit object length. Metadata
+// parsing and ordinary HTTP body chunks retain their separate structural bounds.
+fn content_limit(kind: &CaptureRecordKind, limits: CaptureLimits) -> usize {
+    if matches!(kind, CaptureRecordKind::StreamMessage(_)) {
+        u32::MAX as usize
+    } else {
+        limits.max_record_bytes
     }
 }
 fn validate_nodes(
@@ -1357,7 +1386,7 @@ pub fn read_indexed_frame_with_codec(
                     &reference,
                     descriptor,
                     page.offset,
-                    limits.max_record_bytes,
+                    content_limit(kind, limits),
                 )?,
             )?;
         }

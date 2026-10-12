@@ -19,6 +19,47 @@ fn record(kind: CaptureRecordKind) -> CaptureRecord {
     }
 }
 
+#[test]
+fn native_rejects_invalid_stream_tags_and_counts_stream_reason_storage() {
+    use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("stream-metadata.tmcap");
+    for sender in [true, false] {
+        let mut message = StreamMessage::new("server", "text", bytes::Bytes::new());
+        if sender {
+            message.sender = "x".repeat(64 * 1024);
+        } else {
+            message.kind = "x".repeat(64 * 1024);
+        }
+        write_records(
+            &path,
+            vec![
+                head("https://example.invalid/".into()),
+                record(CaptureRecordKind::StreamMessage(message)),
+            ],
+        );
+        assert!(read(&path).is_err());
+    }
+    let mut charges = Vec::new();
+    for size in [0, 64 * 1024] {
+        write_records(
+            &path,
+            vec![
+                head("https://example.invalid/".into()),
+                record(CaptureRecordKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Closed,
+                    Some("x".repeat(size)),
+                ))),
+            ],
+        );
+        let imported = read(&path).unwrap();
+        assert_eq!(imported.stream_index_bytes, size);
+        charges.push(imported.index_bytes);
+    }
+    assert_eq!(charges[1] - charges[0], 64 * 1024);
+}
+
 fn read(path: &Path) -> Result<ImportData, AppError> {
     TraceRegistry::read(&request(path), &AtomicBool::new(false), &|_| {}).map(|(data, _, _)| data)
 }
@@ -894,7 +935,7 @@ fn imported_stream_is_open_at_capture_and_reads_message_payload_lazily() {
         ))),
         record(CaptureRecordKind::StreamMessage(message.clone())),
     ];
-    // File recording must retain more history than the live 1024-item window.
+    // File recording and reopening must preserve history beyond the former 1024-item cap.
     records.extend((0..1199).map(|_| record(CaptureRecordKind::StreamMessage(message.clone()))));
     for (index, record) in records.iter_mut().enumerate() {
         record.sequence = index as u64 + 1;
@@ -935,4 +976,31 @@ fn imported_stream_diagnostics_do_not_inflate_transfer_counts() {
     assert_eq!(imported.observed, live.observed);
     assert_eq!(imported.client_bytes, live.client_bytes);
     assert_eq!(imported.server_bytes, live.server_bytes);
+}
+
+#[test]
+fn imported_persistent_sse_ids_share_storage_and_index_charge() {
+    use transmog_core::stream::StreamMessage;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("shared-sse-id.tmcap");
+    let mut message = StreamMessage::new("server", "heartbeat", b":".to_vec().into());
+    message.event_id = Some("x".repeat(64 * 1024).into());
+    let mut records = vec![head("https://example.invalid/events".into())];
+    records.extend((2..=1201).map(|sequence| CaptureRecord {
+        exchange_id: 1,
+        sequence,
+        kind: CaptureRecordKind::StreamMessage(message.clone()),
+    }));
+    write_records(&path, records);
+    let data = read(&path).unwrap();
+    let history = &data.sessions[0].stream_history;
+    assert_eq!(history.items.len(), 1200);
+    let first = history.items[0].message.event_id.as_ref().unwrap();
+    for item in &history.items {
+        assert!(Arc::ptr_eq(first, item.message.event_id.as_ref().unwrap()));
+    }
+    assert!(data.stream_index_bytes < 1200 * 1024 + first.len());
+    let loaded = history.items[1199].read().unwrap();
+    assert_eq!(loaded, message);
+    assert!(Arc::ptr_eq(first, loaded.event_id.as_ref().unwrap()));
 }

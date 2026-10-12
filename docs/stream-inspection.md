@@ -49,22 +49,26 @@ HTTP body and body-idle limits do not end an SSE response. Codec work, window an
 expansion bounds still apply. Inspection failure is reported as an unavailable
 item while forwarding continues; it never turns captured text into trusted markup.
 
-Live inspection retains at most 256 KiB per WebSocket payload, 1024 items or 8 MiB
-per stream, and 64 MiB across stream histories. Eviction removes old inspection
-history without closing connections or resetting lifetime counters. Oversized SSE
-blocks stop event decoding with a visible diagnostic. Truncation, eviction and
-missing observer records are reported separately from stream closure. These stream
-history ceilings are separate from the HTTP body buffer.
+Live inspection retains complete WebSocket payloads and SSE events while their
+session is retained. Message count and history size do not silently discard older
+activity. Memory can grow with the recorded session; the HTTP body buffer and
+configured whole-session retention remain separate. The message list is paged,
+and imported payloads load on demand. Explicit observer prefix policies and
+disabled body retention can still omit content; the inspector reports that loss.
+TMCap's current individual stream-content object uses a 32-bit byte length
+(payload plus optional raw SSE fields and a four-byte prefix); it does not limit
+the total size of a recorded session.
 
 Request body privacy settings control subsequently retained client messages;
 response body settings control server messages and SSE content. Disabling content
 retention keeps lifecycle and size metadata. Existing retained traffic is unchanged.
 
-TMCap revision 4 stores lifecycle, message metadata and independently indexed
+TMCap revision 5 stores lifecycle, message metadata and independently indexed
 message content. Imported content is authenticated and read lazily from pinned
 source files. Save trace saves the retained history and counters, including eviction
-and open-at-capture state. File recording writes observed items independently of
-live-history eviction; per-item inspection limits still apply. Headers only omits
+and open-at-capture state. Persistent SSE IDs are shared on disk and in memory,
+so heartbeats do not repeatedly store a large earlier ID. File recording writes observed items independently of
+whole-session retention. Headers only omits
 payloads and SSE field content. Earlier experimental TMCap revisions are rejected.
 
 HAR and SAZ export HTTP evidence but omit WebSocket messages and parsed SSE events.

@@ -4,7 +4,7 @@ TMCap stores HTTP traffic metadata and independently readable body chunks in an
 indexed file. This documents the initial format implemented by
 [`transmog-capture`](../crates/proxy-capture/src/lib.rs). There is no compatibility
 requirement for earlier experimental layouts. The magic remains `TMCAP001\0`,
-the container header version is `1`, and the record revision is `4`.
+the container header version is `1`, and the record revision is `5`.
 
 For design choices, compression heuristics, buffering and performance results,
 see [the native capture overview](native-capture-format.md) and
@@ -168,7 +168,7 @@ Metadata expands to a stored-record JSON object:
 
 ```json
 {
-  "revision": 4,
+  "revision": 5,
   "sequence": 42,
   "exchange_id": 123,
   "kind": "body-segment",
@@ -225,11 +225,23 @@ Message sequence is its stable per-exchange identity. Byte count describes the
 original decoded payload, independent of retained prefix length. Raw SSE fields
 are decoded text with normalized LF endings. Optional values are null.
 
+A stream message can also carry `stream_id` in its stored-record envelope. This
+is the container ordinal of the message that defines its persistent SSE ID, not
+an observer sequence. The defining message uses its own ordinal and supplies
+`eventId` as a string (including an empty string for an ID reset). Later messages
+reference that earlier ordinal and leave `eventId` null. References must resolve
+to an already validated definition; forward, missing, conflicting, and non-stream
+references are rejected. IDs are shared across exchanges by value when writing.
+The reader retains one immutable allocation per definition and pins only the
+required value in each lazy content source. A persistent ID therefore grows
+storage once, plus a small reference per later message, even across index pages.
+
 The indexed content blob consists of a little-endian u32 payload length, that
 many payload bytes, then optional UTF-8 SSE field text. `body_index` authenticates
 the whole blob. These independent blobs use raw or zstd encoding without HTTP
-body dictionaries or paired-boundary sharing; they use the record-size bound,
-not the 128 KiB HTTP-body chunk bound. Index-only reads do not inflate them.
+body dictionaries or paired-boundary sharing. Their total expanded length uses
+the packed object's u32 range, independently of the JSON record and HTTP chunk
+bounds. Index-only reads do not inflate them.
 
 Save trace also writes a `stream-summary` extension preserving `observed`,
 `evicted`, `clientBytes`, `serverBytes`, `openedAt` and `lastActivity`. Imported
@@ -430,7 +442,11 @@ compact replacement is written with fresh cryptographic parameters and published
 atomically; never rewrite published ciphertext in place under its old nonce.
 Approximately 5 KiB of overhead is a goal, not an encryption or validity rule.
 
-The default per-record serialized-size limit is 8 MiB. Leaf record envelopes
+The default JSON metadata record and ordinary HTTP chunk limit is 8 MiB.
+Stream content is independently indexed and can use the packed object format's
+32-bit length range; it is not subject to that metadata limit. Reading grows
+buffers from authenticated blocks and actual decompressed bytes, rather than
+preallocating from declared object sizes. Leaf record envelopes
 remain serialized until requested, and the record limit is checked before
 constructing their JSON payload trees. A punctuation-aware scan of validated raw
 JSON also bounds estimated allocation before constructing any values, covering
@@ -440,9 +456,11 @@ Punctuation inside strings does not count toward container allocation. Branch an
 during parsing. Random reads enforce the caller's file-size limit as well. Header, index, footer, depth,
 certificate-size (1 MiB), and certificate-dictionary (256 MiB) limits apply in
 addition to caller-selected file-size and record-count limits. Defaults leave
-total file size and count unlimited. Applications must also bound retained UI
+total file size and count unlimited. Applications must also manage retained UI
 metadata and queues; a streaming file format does not bound whole-application
-memory. Malformed input must produce an error rather than a panic or unchecked
+memory. Valid stream histories may use memory proportional to their contents;
+they have no fixed count or byte ceiling. Imported payloads remain lazy, and
+shared IDs are charged once per retained history. Malformed input must produce an error rather than a panic or unchecked
 allocation.
 
 The viewer charges retained request targets, caller names, header storage,

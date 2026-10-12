@@ -52,6 +52,7 @@ fn probe(input: &[u8], indexed: bool) -> Value {
                     CaptureRecordKind::Unknown { kind, .. } => kind,
                     CaptureRecordKind::Performance(_) => "performance".into(),
                     CaptureRecordKind::Completed => "completed".into(),
+                    CaptureRecordKind::StreamMessage(_) => "stream-message".into(),
                     CaptureRecordKind::Seal { .. } => "seal".into(),
                     CaptureRecordKind::BodySegment {
                         bytes, byte_count, ..

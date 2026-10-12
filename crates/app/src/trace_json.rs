@@ -89,6 +89,7 @@ pub(super) fn import(
 
 fn empty(format: &'static str, context: Value) -> ImportData {
     ImportData {
+        stream_index_bytes: 0,
         index_bytes: 0,
         sources: BTreeMap::new(),
         format,

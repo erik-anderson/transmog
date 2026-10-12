@@ -6,6 +6,24 @@ metadata and chunks smaller than 4 KiB stay on that thread. The live capture
 writer itself runs separately from asynchronous request handling. Eight pending
 records bound compression work and preserve output order.
 
+## Persistent SSE IDs
+
+Revision 5 stores a persistent SSE ID once and references its defining record
+from later messages. A regression fixture with one 64 KiB ID and 1,024 heartbeat
+messages occupies 82,772 bytes, compared with 17,302,773 bytes when the same
+compressor writes the ID inline in every message (about 209 times smaller).
+The ID uses deterministic pseudorandom hex text, so this measures sharing across
+metadata pages rather than an unusually compressible identifier. This is a
+storage-size comparison for that fixture, not a general compression ratio.
+
+Sequential indexing and later random payload reads also retain the same shared
+ID allocation. The test checks growth at 128 and 1,024 messages and does not
+truncate or evict recorded items. Reproduce it with:
+
+```text
+python scripts/dev-env.py --run cargo test --locked -p transmog-capture persistent_sse_ids_grow_once -- --nocapture
+```
+
 ## Packed layout and runtime sharing update
 
 The current layout stores metadata once, packs index/body objects into common

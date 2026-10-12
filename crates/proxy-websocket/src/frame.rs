@@ -19,7 +19,7 @@ impl Direction {
     }
 }
 
-/// Finite parser and assembled-message bounds.
+/// Optional parser and assembled-message bounds; defaults allow complete messages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameLimits {
     /// Largest accepted wire payload in one frame.
@@ -33,9 +33,9 @@ pub struct FrameLimits {
 impl Default for FrameLimits {
     fn default() -> Self {
         Self {
-            max_frame_payload_bytes: 4 * 1024 * 1024,
-            max_message_payload_bytes: 16 * 1024 * 1024,
-            max_buffered_bytes: 4 * 1024 * 1024 + 14,
+            max_frame_payload_bytes: usize::MAX,
+            max_message_payload_bytes: usize::MAX,
+            max_buffered_bytes: usize::MAX,
         }
     }
 }
@@ -153,7 +153,7 @@ pub struct FrameDecoder {
 }
 
 impl FrameDecoder {
-    /// Creates a bounded directional decoder.
+    /// Creates a directional decoder with the supplied limits.
     ///
     /// # Errors
     ///

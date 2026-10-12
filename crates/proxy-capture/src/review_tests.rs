@@ -134,7 +134,7 @@ fn oversized_later_payload_does_not_prevent_random_access_to_bounded_record() {
     writer.small = None;
     let oversized = format!("{}null{}", "[".repeat(256), "]".repeat(256));
     let page = format!(
-        r#"[{{"index":0,"stored":{{"revision":4,"sequence":0,"exchange_id":1,"kind":"completed","payload":null}}}},{{"index":1,"stored":{oversized}}}]"#
+        r#"[{{"index":0,"stored":{{"revision":5,"sequence":0,"exchange_id":1,"kind":"completed","payload":null}}}},{{"index":1,"stored":{oversized}}}]"#
     );
     let leaf = writer.object(LEAF, page.as_bytes(), 0, 2, 0).unwrap();
     writer.levels = vec![vec![leaf]];

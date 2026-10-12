@@ -166,9 +166,10 @@ pub(crate) struct TraceEntry {
 #[derive(Default)]
 struct State {
     index_bytes: usize,
+    stream_index_bytes: usize,
     // Keep each import's full charge until its last entry is released. An
     // even split would undercount a large surviving entry after partial Clear.
-    index_batches: Vec<(std::collections::HashSet<String>, usize)>,
+    index_batches: Vec<(std::collections::HashSet<String>, usize, usize)>,
     metadata_bytes: usize,
     metadata: BTreeMap<String, TraceMetadataView>,
     entries: HashMap<String, TraceEntry>,
@@ -219,13 +220,14 @@ impl TraceRegistry {
             .map(|entry| entry.trace_id.clone())
             .collect::<std::collections::HashSet<_>>();
         state.metadata.retain(|id, _| sources.contains(id));
-        for (entries, _) in &mut state.index_batches {
+        for (entries, _, _) in &mut state.index_batches {
             entries.retain(|id| !removed.contains(id));
         }
         state
             .index_batches
-            .retain(|(entries, _)| !entries.is_empty());
-        state.index_bytes = state.index_batches.iter().map(|(_, bytes)| bytes).sum();
+            .retain(|(entries, _, _)| !entries.is_empty());
+        state.index_bytes = state.index_batches.iter().map(|(_, bytes, _)| bytes).sum();
+        state.stream_index_bytes = state.index_batches.iter().map(|(_, _, bytes)| bytes).sum();
         state.metadata_bytes = state
             .metadata
             .values()
@@ -411,7 +413,15 @@ impl TraceRegistry {
             .map_err(|_| invalid("Invalid trace source metadata"))?;
         {
             let state = self.lock();
-            if state.index_bytes.saturating_add(imported.index_bytes) > MAX_HEAD_BYTES * 2
+            if state
+                .index_bytes
+                .saturating_sub(state.stream_index_bytes)
+                .saturating_add(
+                    imported
+                        .index_bytes
+                        .saturating_sub(imported.stream_index_bytes),
+                )
+                > MAX_HEAD_BYTES * 2
                 || state.metadata_bytes.saturating_add(extra_metadata) > MAX_HEAD_BYTES
                 || state
                     .metadata
@@ -458,9 +468,13 @@ impl TraceRegistry {
                 }
                 let mut state = self.lock();
                 state.index_bytes = state.index_bytes.saturating_add(imported.index_bytes);
+                state.stream_index_bytes = state
+                    .stream_index_bytes
+                    .saturating_add(imported.stream_index_bytes);
                 state.index_batches.push((
                     imported.entries.keys().cloned().collect(),
                     imported.index_bytes,
+                    imported.stream_index_bytes,
                 ));
                 state.metadata_bytes = state.metadata_bytes.saturating_add(extra_metadata);
                 state.metadata.extend(imported.sources);
@@ -492,6 +506,9 @@ struct ImportedBody {
 }
 struct ImportData {
     index_bytes: usize,
+    // Stream history scales with recorded activity; it is measured but is not
+    // subject to the HTTP metadata quota. Payload content remains lazy.
+    stream_index_bytes: usize,
     sources: BTreeMap<String, TraceMetadataView>,
     format: &'static str,
     sessions: Vec<SessionSnapshot>,
@@ -529,6 +546,7 @@ fn import_saz(
         .map_err(AppError::from)?;
     let mut result = ImportData {
         format: "saz",
+        stream_index_bytes: 0,
         sources: BTreeMap::new(),
         index_bytes: 0,
         sessions: Vec::new(),
@@ -1296,6 +1314,10 @@ fn import_native(
     }
     let mut result = ImportData {
         format: "native",
+        stream_index_bytes: rows
+            .values()
+            .map(|row| row.stream_history.retained_bytes)
+            .sum(),
         sources: BTreeMap::new(),
         index_bytes: 0,
         sessions: Vec::new(),
@@ -1306,7 +1328,7 @@ fn import_native(
         issues: Vec::new(),
     };
     result.sources = sources;
-    result.index_bytes = budget;
+    result.index_bytes = budget.saturating_add(result.stream_index_bytes);
     if capture.truncated_tail() {
         result.notes.push(
             "Recovered the valid prefix of an interrupted file. The original file is unchanged."
@@ -1356,11 +1378,40 @@ fn apply_native_frame(
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
         CaptureRecordKind::StreamState(state) => {
+            let old = row
+                .stream
+                .as_ref()
+                .and_then(|state| state.reason.as_ref())
+                .map_or(0, String::len);
+            row.stream_history.retained_bytes = row
+                .stream_history
+                .retained_bytes
+                .saturating_sub(old)
+                .saturating_add(state.reason.as_ref().map_or(0, String::len));
             row.stream_history.opened_at.get_or_insert(state.at_millis);
             row.stream = Some(state);
         }
         CaptureRecordKind::StreamMessage(message) => {
-            charge_native_index(budget, message.retained_bytes() + 512)?;
+            if !matches!(message.sender.as_str(), "client" | "server")
+                || !matches!(
+                    message.kind.as_str(),
+                    "text"
+                        | "binary"
+                        | "ping"
+                        | "pong"
+                        | "close"
+                        | "event"
+                        | "heartbeat"
+                        | "fields"
+                        | "unavailable"
+                        | "incomplete"
+                )
+            {
+                return Err(invalid("Invalid saved stream message metadata"));
+            }
+            row.stream_history.charge_message(&message);
+            row.stream_history.retained_bytes =
+                row.stream_history.retained_bytes.saturating_add(512);
             let source = frame.body.map(|_| {
                 Arc::new(crate::trace_body::NativeStreamSource {
                     reader: reader.clone(),
