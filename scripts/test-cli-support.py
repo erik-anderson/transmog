@@ -17,7 +17,6 @@ import subprocess
 import threading
 import time
 import uuid
-import zlib
 import zipfile
 
 
@@ -55,12 +54,18 @@ def main():
     threading.Thread(target=origin.serve_forever, daemon=True).start()
 
     def command(*options):
-        return subprocess.run([str(executable), *options], env=environment,
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True).stdout
+        result = subprocess.run([str(executable), *options], env=environment,
+                                stdin=subprocess.DEVNULL, capture_output=True,
+                                encoding='utf-8', errors='replace')
+        assert result.returncode == 0, (
+            f'CLI command failed ({result.returncode}): {options!r}\n'
+            f'{result.stdout}\n{result.stderr}')
+        return result.stdout
 
     def rejected(*options):
         result = subprocess.run([str(executable), *options], env=environment,
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                                stdin=subprocess.DEVNULL, capture_output=True,
+                                encoding='utf-8', errors='replace')
         assert result.returncode != 0, result.stdout
         return result.stderr
 
@@ -196,7 +201,6 @@ def main():
         assert geometry['cipher'] == 'none' and geometry['layout'] == 'indexed-blocks'
         block_size = geometry['block_size']
         payload_size = block_size - 5
-        block_bytes = block_size + 16
 
         def write_native(path, records):
             # Independent raw-codec encoder keeps this rejection fixture valid
@@ -220,24 +224,16 @@ def main():
                 payload = json.dumps(value, separators=(',', ':')).encode()
                 return b'\0' + struct.pack('<I', len(payload)) + payload
 
-            logical = bytearray()
-            entries = []
-            for index, record in enumerate(records):
-                payload = json.dumps(record, separators=(',', ':')).encode()
-                frame = struct.pack('<QIB', index * 2 + 1, len(payload), 0) + payload
-                frame = struct.pack('<II', len(frame), zlib.crc32(frame)) + frame
-                offset = start + len(logical) // payload_size * block_bytes + 5 + len(logical) % payload_size
-                entries.append({'offset': offset, 'frame_bytes': len(frame),
-                                'index': index, 'stored': record})
-                logical.extend(frame)
-            for offset in range(0, len(logical), payload_size):
-                put(0, logical[offset:offset + payload_size])
-            first_index = ordinal
-            index = packed(entries)
-            for offset in range(0, len(index), payload_size):
-                put(1, index[offset:offset + payload_size])
-            root = {'block': first_index, 'blocks': ordinal - first_index,
-                    'bytes': len(index), 'first': 0, 'count': len(entries), 'level': 0}
+            # Metadata entries live in a packed leaf object inside DATA blocks.
+            # Its reference is a byte offset/length, not the obsolete block span.
+            entries = [{'index': index, 'stored': record}
+                       for index, record in enumerate(records)]
+            payload = json.dumps(entries, separators=(',', ':')).encode()
+            leaf = b'\x01\x00' + struct.pack('<II', len(payload), len(payload)) + payload
+            for offset in range(0, len(leaf), payload_size):
+                put(0, leaf[offset:offset + payload_size])
+            root = {'offset': start + 5, 'bytes': len(leaf),
+                    'first': 0, 'count': len(entries), 'level': 0}
             put(3, packed({'roots': [root], 'count': len(entries), 'sealed': True, 'block': ordinal}))
             path.write_bytes(encoded)
 
@@ -246,6 +242,7 @@ def main():
                                'target': 'http://example.invalid/', 'headers': []}}
         source = fixture / 'missing-response.tmcap'
         write_native(source, [request])
+        command('capture', 'validate', '--input', str(source))
         for mode in ('saz', 'saz-extended'):
             output = fixture / (mode + '-placeholder.saz')
             command('capture', 'export', '--input', str(source), '--format', mode,
@@ -258,6 +255,7 @@ def main():
         response = {'revision': 1, 'sequence': 2, 'exchange_id': 1, 'kind': 'response-head',
                     'payload': {'boundary': 'client-response', 'status': 200, 'headers': []}}
         write_native(source, [request, response])
+        command('capture', 'validate', '--input', str(source))
         output = fixture / 'failed-export.saz'
         for _ in range(2):
             error = rejected('capture', 'export', '--input', str(source), '--format', 'saz',

@@ -83,6 +83,12 @@ this avoids redundant test/package passes without removing the quality checks.
 The CLI is signed and published separately, with version, checksum, signature
 and provenance checks. The installer qualification gate confirms it is excluded
 from the app install directory.
+Its lifecycle smoke test also runs on the optimized CLI before signing, and
+the resulting report travels with the build payload. This catches fixture and
+command regressions before signing approval; installer qualification repeats
+the same checks against the final signed CLI. Synthetic export fixtures must
+pass native capture validation before checking SAZ placeholders and rejection
+of unsafe HTTP fields.
 
 The hosted WebView and client-certificate desktop checks isolate product data
 and temporarily set loopback DevTools arguments through machine policy. WebView2

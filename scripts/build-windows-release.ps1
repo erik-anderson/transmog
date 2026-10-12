@@ -41,6 +41,12 @@ try {
             ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }
         if (@($buildResult).Count -ne 1) { throw 'The release build did not produce one build result.' }
     } finally { Write-Host '::endgroup::' }
+    Write-Host '::group::Release CLI lifecycle qualification before signing'
+    try {
+        $cliGate = Invoke-TransmogPython 'test-cli-support.py' @('--executable', (Join-Path $buildResult.BuildDirectory 'transmog-cli.exe'), '--artifacts', (Join-Path $repositoryRoot 'artifacts/cli-build-validation'))
+        ($cliGate -join "`n") | ConvertFrom-Json | ConvertTo-Json -Depth 4 |
+            Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence/cli-gate.json') -Encoding utf8NoBOM
+    } finally { Write-Host '::endgroup::' }
     . (Join-Path $PSScriptRoot 'windows-release-symbols.ps1')
     New-WindowsReleaseSymbolArchive -BuildDirectory $buildResult.BuildDirectory -Version $buildResult.Version -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -OutputPath (Join-Path $payloadRoot "evidence/Transmog_$($buildResult.Version)_windows-x64-symbols.zip")
     Write-Host '::group::Release WebView validation and 3-minute soak'
