@@ -106,6 +106,7 @@ struct ActiveCapture {
     policy: CapturePolicy,
     retention: CaptureBodyRetention,
     last_sequences: HashMap<u128, u64>,
+    open_websockets: std::collections::HashSet<u128>,
 }
 
 struct CaptureInner {
@@ -406,6 +407,7 @@ fn start_capture(
         policy: request.policy,
         retention: CaptureBodyRetention::default(),
         last_sequences: HashMap::new(),
+        open_websockets: std::collections::HashSet::new(),
     });
     Ok(())
 }
@@ -509,11 +511,25 @@ fn append_event(
         capture.retention.apply(&mut record, &capture.policy);
         capture.writer.append(&record)?;
     }
-    if matches!(
-        event.kind,
-        transmog_core::observe::ObserverEventKind::Completed(_)
-            | transmog_core::observe::ObserverEventKind::Failed(_)
-    ) {
+    if let transmog_core::observe::ObserverEventKind::StreamState(state) = &event.kind
+        && state.protocol == transmog_core::stream::StreamProtocol::WebSocket
+    {
+        if state.status.is_active() {
+            capture.open_websockets.insert(exchange_id);
+        } else {
+            capture.open_websockets.remove(&exchange_id);
+        }
+    }
+    let stream_terminal = matches!(&event.kind,
+        transmog_core::observe::ObserverEventKind::StreamState(state) if !state.status.is_active());
+    if stream_terminal
+        || (!capture.open_websockets.contains(&exchange_id)
+            && matches!(
+                event.kind,
+                transmog_core::observe::ObserverEventKind::Completed(_)
+                    | transmog_core::observe::ObserverEventKind::Failed(_)
+            ))
+    {
         capture.last_sequences.remove(&exchange_id);
     } else {
         capture.last_sequences.insert(exchange_id, event.sequence);
@@ -569,6 +585,73 @@ mod tests {
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(1);
 
+    #[test]
+    fn websocket_recording_keeps_sequence_through_handshake_and_releases_on_close() {
+        use transmog_core::{
+            HeaderBlock, RequestHead, ResponseHead,
+            intercept::CompletedExchange,
+            stream::{StreamProtocol, StreamState, StreamStatus},
+        };
+        let path = temp_path();
+        let mut capture = ActiveCapture {
+            path: path.clone(),
+            writer: CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default())
+                .unwrap(),
+            policy: CapturePolicy::default(),
+            retention: CaptureBodyRetention::default(),
+            last_sequences: HashMap::new(),
+            open_websockets: std::collections::HashSet::new(),
+        };
+        let mut event = start_event(1);
+        let ObserverEventKind::ExchangeStarted { metadata } = event.kind.clone() else {
+            unreachable!()
+        };
+        append_event(&mut capture, &event).unwrap();
+        event.sequence = 2;
+        event.kind = ObserverEventKind::StreamState(StreamState::now(
+            StreamProtocol::WebSocket,
+            StreamStatus::Connecting,
+            None,
+        ));
+        append_event(&mut capture, &event).unwrap();
+        event.sequence = 3;
+        event.kind = ObserverEventKind::Completed(CompletedExchange {
+            request_head: RequestHead {
+                method: "GET".into(),
+                target: metadata.original_target.as_target().clone(),
+                headers: HeaderBlock::default(),
+                source_version: HttpLegVersion::Http1,
+            },
+            response_head: ResponseHead {
+                status: 101,
+                headers: HeaderBlock::default(),
+                source_version: HttpLegVersion::Http1,
+            },
+            metadata,
+        });
+        append_event(&mut capture, &event).unwrap();
+        for (sequence, status) in [(4, StreamStatus::Open), (5, StreamStatus::Closed)] {
+            event.sequence = sequence;
+            event.kind = ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                status,
+                None,
+            ));
+            append_event(&mut capture, &event).unwrap();
+        }
+        let pending = capture.last_sequences.len();
+        capture.writer.seal().unwrap();
+        let saved = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        let loss = saved
+            .records
+            .iter()
+            .filter(|record| matches!(record.kind, CaptureRecordKind::Loss { .. }))
+            .collect::<Vec<_>>();
+        assert!(loss.is_empty());
+        assert_eq!(pending, 0);
+        std::fs::remove_file(path).unwrap();
+    }
+
     fn temp_path() -> PathBuf {
         std::env::temp_dir().join(format!(
             "transmog-session-{}-{}.tmcap",
@@ -616,6 +699,7 @@ mod tests {
             policy: CapturePolicy::default(),
             retention: CaptureBodyRetention::default(),
             last_sequences: HashMap::new(),
+            open_websockets: std::collections::HashSet::new(),
         };
         for id in 1..=100 {
             let mut event = start_event(1);

@@ -581,6 +581,11 @@ impl ObserverDispatcher {
                 BodyObservation::Prefix(limit) => limit.get(),
                 BodyObservation::Full => usize::MAX,
             };
+            // SSE fields originate in the response body, even when stored as metadata.
+            if limit == 0 {
+                message.event = None;
+                message.event_id = None;
+            }
             if message.payload.len() > limit {
                 message.payload = Bytes::copy_from_slice(&message.payload[..limit]);
                 message.truncated = true;
@@ -912,6 +917,37 @@ mod tests {
     }
 
     struct WaitingObserver;
+
+    #[tokio::test]
+    async fn metadata_only_omits_sse_body_fields() {
+        let received = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![(
+            Arc::new(RecordingObserver {
+                events: received.clone(),
+            }),
+            ObserverConfig::default(),
+        )]);
+        let observer = hub.start_exchange(metadata());
+        let mut message = crate::stream::StreamMessage::new(
+            "server",
+            "event",
+            Bytes::from_static(b"private-data"),
+        );
+        message.event = Some("private-event".into());
+        message.event_id = Some("private-id".into());
+        message.raw = Some("id: private-id\nevent: private-event\ndata: private-data\n\n".into());
+        observer
+            .emit(ObserverEventKind::StreamMessage(message))
+            .await;
+        hub.shutdown().await;
+        let events = received.lock().unwrap();
+        let ObserverEventKind::StreamMessage(message) = &events[0].kind else {
+            panic!("stream message")
+        };
+        assert!(message.payload.is_empty() && message.raw.is_none());
+        assert!(message.event.is_none() && message.event_id.is_none());
+        assert_eq!(message.byte_count, 12);
+    }
 
     impl Observer for WaitingObserver {
         fn on_event(&self, _event: ObserverEvent) -> BoxObserverFuture<'_> {
