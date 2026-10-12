@@ -106,7 +106,9 @@ struct ActiveCapture {
     policy: CapturePolicy,
     retention: CaptureBodyRetention,
     last_sequences: HashMap<u128, u64>,
-    open_websockets: std::collections::HashSet<u128>,
+    // Value records whether the HTTP handshake has completed. Its terminal
+    // event and the stream terminal event can arrive in either order.
+    open_websockets: HashMap<u128, bool>,
 }
 
 struct CaptureInner {
@@ -407,7 +409,7 @@ fn start_capture(
         policy: request.policy,
         retention: CaptureBodyRetention::default(),
         last_sequences: HashMap::new(),
-        open_websockets: std::collections::HashSet::new(),
+        open_websockets: HashMap::new(),
     });
     Ok(())
 }
@@ -511,24 +513,28 @@ fn append_event(
         capture.retention.apply(&mut record, &capture.policy);
         capture.writer.append(&record)?;
     }
+    let mut websocket_finished = false;
     if let transmog_core::observe::ObserverEventKind::StreamState(state) = &event.kind
         && state.protocol == transmog_core::stream::StreamProtocol::WebSocket
     {
         if state.status.is_active() {
-            capture.open_websockets.insert(exchange_id);
+            capture.open_websockets.entry(exchange_id).or_insert(false);
         } else {
-            capture.open_websockets.remove(&exchange_id);
+            websocket_finished = capture
+                .open_websockets
+                .remove(&exchange_id)
+                .unwrap_or(false);
         }
     }
-    let stream_terminal = matches!(&event.kind,
-        transmog_core::observe::ObserverEventKind::StreamState(state) if !state.status.is_active());
-    if stream_terminal
-        || (!capture.open_websockets.contains(&exchange_id)
-            && matches!(
-                event.kind,
-                transmog_core::observe::ObserverEventKind::Completed(_)
-                    | transmog_core::observe::ObserverEventKind::Failed(_)
-            ))
+    let http_finished = matches!(
+        event.kind,
+        transmog_core::observe::ObserverEventKind::Completed(_)
+            | transmog_core::observe::ObserverEventKind::Failed(_)
+    );
+    if http_finished && let Some(done) = capture.open_websockets.get_mut(&exchange_id) {
+        *done = true;
+    }
+    if websocket_finished || (http_finished && !capture.open_websockets.contains_key(&exchange_id))
     {
         capture.last_sequences.remove(&exchange_id);
     } else {
@@ -600,7 +606,7 @@ mod tests {
             policy: CapturePolicy::default(),
             retention: CaptureBodyRetention::default(),
             last_sequences: HashMap::new(),
-            open_websockets: std::collections::HashSet::new(),
+            open_websockets: HashMap::new(),
         };
         let mut event = start_event(1);
         let ObserverEventKind::ExchangeStarted { metadata } = event.kind.clone() else {
@@ -699,7 +705,7 @@ mod tests {
             policy: CapturePolicy::default(),
             retention: CaptureBodyRetention::default(),
             last_sequences: HashMap::new(),
-            open_websockets: std::collections::HashSet::new(),
+            open_websockets: HashMap::new(),
         };
         for id in 1..=100 {
             let mut event = start_event(1);
@@ -709,6 +715,20 @@ mod tests {
             };
             append_event(&mut capture, &event).unwrap();
             event.sequence = 2;
+            if id % 3 != 0 {
+                use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+                let protocol = if id % 3 == 1 {
+                    StreamProtocol::Sse
+                } else {
+                    StreamProtocol::WebSocket
+                };
+                for status in [StreamStatus::Open, StreamStatus::Failed] {
+                    event.kind =
+                        ObserverEventKind::StreamState(StreamState::now(protocol, status, None));
+                    append_event(&mut capture, &event).unwrap();
+                    event.sequence += 1;
+                }
+            }
             event.kind = ObserverEventKind::Failed(transmog_core::intercept::ExchangeFailure {
                 metadata,
                 stage: transmog_core::intercept::ExchangeStage::Upstream,
@@ -720,7 +740,16 @@ mod tests {
             append_event(&mut capture, &event).unwrap();
         }
         let pending = capture.last_sequences.len();
+        assert!(capture.open_websockets.is_empty());
+        capture.writer.seal().unwrap();
         drop(capture);
+        let saved = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(
+            !saved
+                .records
+                .iter()
+                .any(|record| matches!(record.kind, CaptureRecordKind::Loss { .. }))
+        );
         std::fs::remove_file(path).unwrap();
         assert_eq!(
             pending, 0,
