@@ -70,6 +70,7 @@ function Invoke-EnvironmentIsolatedFixture([string]$Script) {
     Write-Host "$Script preserved the caller's environment, including absent variables."
 }
 Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
+Invoke-EnvironmentIsolatedFixture 'test-hosted-client-certificate-policy.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
 & (Join-Path $PSScriptRoot 'test-signing-retry.ps1')
 & (Get-TransmogPython) -m unittest discover -s (Join-Path $PSScriptRoot 'tests') -v

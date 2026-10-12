@@ -28,7 +28,7 @@ try {
         # real TLS signatures, public paths, deletion and inventory invalidation.
         & cargo test --locked -p transmog-tls --test windows_client_certificates -- --ignored
         & cargo test --locked -p transmog-runtime -p transmog-app --test client_authentication -- --ignored
-        & (Join-Path $PSScriptRoot 'test-windows-client-certificate-ui.ps1')
+        & (Join-Path $PSScriptRoot 'test-windows-client-certificate-ui.ps1') -HostedRunnerDevToolsPolicy
         & (Join-Path $PSScriptRoot 'test-saz-interop.ps1')
         & cargo deny check
         & cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check

@@ -84,11 +84,11 @@ The CLI is signed and published separately, with version, checksum, signature
 and provenance checks. The installer qualification gate confirms it is excluded
 from the app install directory.
 
-The hosted WebView check isolates product data and temporarily sets loopback
-DevTools arguments for the desktop executable through machine policy. WebView2
+The hosted WebView and client-certificate desktop checks isolate product data
+and temporarily set loopback DevTools arguments through machine policy. WebView2
 150+ ignores environment overrides in elevated hosts; standard hosted Windows
-jobs run elevated. The wrapper restores the prior per-app policy afterward and
-refuses that mode outside disposable GitHub-hosted runners. The prerequisite
+jobs run elevated. The wrappers restore the prior per-app policy afterward and
+refuse that mode outside disposable GitHub-hosted runners. The prerequisite
 setup verifies an Evergreen runtime is present, installing Microsoft's signed
 bootstrapper only on those runners when required. Runtime payloads remain absent
 from the Transmog installer. Failure artifacts contain startup logs/reports only,

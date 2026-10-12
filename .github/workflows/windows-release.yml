@@ -87,6 +87,8 @@ jobs:
             artifacts/windows-desktop-validation/**/stdout.txt
             artifacts/windows-desktop-validation/**/stderr.txt
             artifacts/windows-desktop-validation/**/startup.json
+            artifacts/client-certificate-desktop/**/stdout.txt
+            artifacts/client-certificate-desktop/**/stderr.txt
           if-no-files-found: warn
           retention-days: 7
 
