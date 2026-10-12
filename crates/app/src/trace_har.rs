@@ -300,6 +300,6 @@ fn entry(
         .filter(|n| *n >= 0.0)
         .sum::<f64>();
     Ok(
-        json!({"startedDateTime":date(snapshot.metadata.started_at),"time":duration,"request":req,"response":{"status":response.map_or(0,|r|r.head.status),"statusText":snapshot.performance.protocols.iter().find(|p|p.boundary=="client-response").and_then(|p|p.reason.as_deref()).unwrap_or(""),"httpVersion":protocol("client-response"),"cookies":[],"headers":headers(resp_headers,redact),"content":content,"redirectURL":header(resp_headers,"location"),"headersSize":-1,"bodySize":size(ExchangeBoundary::ClientResponse).map_or(-1_i128,i128::from)},"cache":{},"timings":timings,"_transmogPerformance":snapshot.performance}),
+        json!({"startedDateTime":date(snapshot.metadata.started_at),"time":duration,"request":req,"response":{"status":response.map_or(0,|r|r.head.status),"statusText":snapshot.performance.protocols.iter().find(|p|p.boundary=="client-response").and_then(|p|p.reason.as_deref()).unwrap_or(""),"httpVersion":protocol("client-response"),"cookies":[],"headers":headers(resp_headers,redact),"content":content,"redirectURL":header(resp_headers,"location"),"headersSize":-1,"bodySize":size(ExchangeBoundary::ClientResponse).map_or(-1_i128,i128::from)},"cache":{},"timings":timings,"_transmogPerformance":snapshot.performance,"comment":snapshot.stream.as_ref().map(|_| "WebSocket messages and parsed SSE events are omitted. Save TMCap to retain stream activity.")}),
     )
 }

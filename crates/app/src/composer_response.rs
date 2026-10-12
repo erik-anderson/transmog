@@ -159,7 +159,7 @@ impl ComposerResponse {
             terminal_at: Some(SystemTime::now()),
             websocket: None,
             stream: None,
-            stream_history: Default::default(),
+            stream_history: transmog_core::stream::StreamHistory::default(),
         };
         let retained = Arc::new(Self {
             snapshot,

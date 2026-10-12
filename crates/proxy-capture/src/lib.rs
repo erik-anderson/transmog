@@ -37,7 +37,7 @@ const FRAME_HEADER_BYTES: usize = 8;
 pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 
 /// Durable record schema revision, independent of the container header version.
-pub const CAPTURE_FORMAT_REVISION: u32 = 3;
+pub const CAPTURE_FORMAT_REVISION: u32 = 4;
 
 /// Writer/recovery limits; artifact size and record count default to no maximum.
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +192,10 @@ pub struct CapturedHeader {
 /// Durable record payload. New readers preserve unknown kinds.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CaptureRecordKind {
+    /// Application stream lifetime, independent of HTTP completion.
+    StreamState(transmog_core::stream::StreamState),
+    /// Message metadata with separately compressed, lazily readable content.
+    StreamMessage(transmog_core::stream::StreamMessage),
     /// Bounded measured milestone, protocol and transport evidence.
     Performance(transmog_core::performance::PerformanceEvidence),
     /// Exchange lifecycle started.
@@ -382,6 +386,8 @@ impl StoredRecord {
                 return Err(CaptureError::InvalidMagic);
             }
             CaptureRecordKind::BodySegment { bytes: None, .. } => {}
+            CaptureRecordKind::StreamMessage(ref message)
+                if message.payload.is_empty() && message.raw.is_none() => {}
             _ if index.is_some() => return Err(CaptureError::InvalidMagic),
             _ => {}
         }
@@ -1273,9 +1279,7 @@ impl<R: Read> ScratchReader<R> {
                     self.limits.max_record_bytes,
                     self.records,
                 )?;
-                if let CaptureRecordKind::BodySegment { bytes: target, .. } = &mut record.kind {
-                    *target = Some(bytes);
-                }
+                restore_content(&mut record.kind, bytes)?;
             }
         }
         self.sealed = matches!(&record.kind, CaptureRecordKind::Seal { record_count } if *record_count == self.records as u64);
@@ -1370,6 +1374,7 @@ pub(crate) fn read_scratch_frame_with_codec(
 }
 
 /// Converts one already-redacted core observer event into the durable schema.
+#[allow(clippy::too_many_lines)]
 pub fn record_from_observer(
     event: &ObserverEvent,
     policy: &CapturePolicy,
@@ -1382,19 +1387,15 @@ pub fn record_from_observer(
         ObserverEventKind::StreamMessage(message) => {
             let mut message = message.clone();
             if !policy.retain_body_samples {
-                message.payload = Default::default();
+                message.truncated |= !message.payload.is_empty() || message.raw.is_some();
+                message.payload.clear();
                 message.raw = None;
-                message.truncated |= message.byte_count > 0;
+                message.event = None;
+                message.event_id = None;
             }
-            CaptureRecordKind::Unknown {
-                kind: "stream-message".into(),
-                payload: serde_json::to_value(message).ok()?,
-            }
+            CaptureRecordKind::StreamMessage(message)
         }
-        ObserverEventKind::StreamState(state) => CaptureRecordKind::Unknown {
-            kind: "stream-state".into(),
-            payload: serde_json::to_value(state).ok()?,
-        },
+        ObserverEventKind::StreamState(state) => CaptureRecordKind::StreamState(state.clone()),
         ObserverEventKind::Performance(evidence) => {
             CaptureRecordKind::Performance(evidence.clone())
         }
@@ -1583,6 +1584,10 @@ fn decode<T: for<'de> Deserialize<'de>>(value: Value) -> Result<T, CaptureError>
 #[allow(clippy::too_many_lines)]
 fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
     let (kind, payload) = match &record.kind {
+        CaptureRecordKind::StreamState(state) => ("stream-state", serde_json::to_value(state)?),
+        CaptureRecordKind::StreamMessage(message) => {
+            ("stream-message", serde_json::to_value(message)?)
+        }
         CaptureRecordKind::Performance(evidence) => {
             ("performance", serde_json::to_value(evidence)?)
         }
@@ -1733,6 +1738,8 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
         return Err(CaptureError::UnsupportedRevision(record.revision));
     }
     let kind = match record.kind.as_str() {
+        "stream-state" => CaptureRecordKind::StreamState(decode(record.payload)?),
+        "stream-message" => CaptureRecordKind::StreamMessage(decode(record.payload)?),
         "performance" => CaptureRecordKind::Performance(decode(record.payload)?),
         "exchange-started" => {
             let value: StartedPayload = decode(record.payload)?;
@@ -1915,6 +1922,56 @@ pub enum CaptureError {
     /// Record JSON failed.
     #[error("capture serialization failed: {0}")]
     Json(#[from] serde_json::Error),
+}
+
+// Stream content shares TMCap's authenticated, separately compressed blob storage.
+// A four-byte prefix separates decoded payload from the optional original SSE block.
+fn stream_content(
+    message: &mut transmog_core::stream::StreamMessage,
+) -> Result<Vec<u8>, CaptureError> {
+    let mut bytes =
+        Vec::with_capacity(4 + message.payload.len() + message.raw.as_ref().map_or(0, String::len));
+    bytes.extend_from_slice(
+        &u32::try_from(message.payload.len())
+            .map_err(|_| CaptureError::QuotaExceeded)?
+            .to_le_bytes(),
+    );
+    bytes.extend_from_slice(&message.payload);
+    if let Some(raw) = message.raw.take() {
+        bytes.extend_from_slice(raw.as_bytes());
+    }
+    message.payload.clear();
+    Ok(bytes)
+}
+fn restore_content(kind: &mut CaptureRecordKind, bytes: Vec<u8>) -> Result<(), CaptureError> {
+    match kind {
+        CaptureRecordKind::BodySegment { bytes: target, .. } => *target = Some(bytes),
+        CaptureRecordKind::StreamMessage(message) => {
+            let length = u32::from_le_bytes(
+                bytes
+                    .get(..4)
+                    .ok_or(CaptureError::InvalidMagic)?
+                    .try_into()
+                    .map_err(|_| CaptureError::InvalidMagic)?,
+            ) as usize;
+            let end = 4_usize
+                .checked_add(length)
+                .ok_or(CaptureError::InvalidMagic)?;
+            message.payload = bytes
+                .get(4..end)
+                .ok_or(CaptureError::InvalidMagic)?
+                .to_vec()
+                .into();
+            if bytes.len() > end {
+                message.raw = Some(
+                    String::from_utf8(bytes[end..].to_vec())
+                        .map_err(|_| CaptureError::InvalidMagic)?,
+                );
+            }
+        }
+        _ => return Err(CaptureError::InvalidMagic),
+    }
+    Ok(())
 }
 
 #[cfg(test)]

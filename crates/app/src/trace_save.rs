@@ -431,6 +431,23 @@ fn write_session<W: Write>(
         })?;
     }
     emit(CaptureRecordKind::Performance(session.performance.clone()))?;
+    if let Some(stream) = &session.stream {
+        emit(CaptureRecordKind::StreamState(stream.clone()))?;
+        for item in &session.stream_history.items {
+            emit(CaptureRecordKind::StreamMessage(
+                item.read().map_err(|message| error(&message))?,
+            ))?;
+        }
+        let history = &session.stream_history;
+        emit(CaptureRecordKind::Unknown {
+            kind: "stream-summary".into(),
+            payload: serde_json::json!({
+                "observed": history.observed, "evicted": history.evicted, "clientBytes": history.client_bytes,
+                "serverBytes": history.server_bytes, "openedAt": history.opened_at, "lastActivity": history.last_activity,
+            }),
+        })?;
+    }
+
     let mut incomplete = 0;
     for boundary in [
         ExchangeBoundary::ClientRequest,

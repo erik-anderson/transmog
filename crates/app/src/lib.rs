@@ -31,6 +31,10 @@ mod response_filename;
 mod scripts;
 mod search;
 mod sessions;
+mod streams;
+pub use streams::save_stream_content;
+pub use streams::{StreamPage, StreamQuery, StreamRow, StreamSummary};
+pub use transmog_core::stream::StreamMessage;
 mod trace_body;
 mod trace_format;
 mod trace_har;
@@ -377,6 +381,10 @@ impl Application {
             "Transmog application initialized",
         );
         service.set_redact_sensitive_headers(initial_state.privacy.redact_sensitive_headers);
+        service.catalog().set_stream_content_retention(
+            initial_state.privacy.retain_request_bodies,
+            initial_state.privacy.retain_response_bodies,
+        );
         if entry_preferences {
             service.catalog().set_live_entry_limit(
                 initial_state
@@ -525,6 +533,10 @@ impl Application {
                 .set_outbound_protocols(state.preferences.allowed_outbound_protocols);
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
+            self.service.catalog().set_stream_content_retention(
+                state.privacy.retain_request_bodies,
+                state.privacy.retain_response_bodies,
+            );
             if let Some(control) = self.service.proxy_control() {
                 control.set_outbound_protocols(state.preferences.allowed_outbound_protocols);
                 control.set_outbound_isolation(state.preferences.isolate_outbound_connections);

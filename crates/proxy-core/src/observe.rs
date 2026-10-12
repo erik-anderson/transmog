@@ -724,6 +724,11 @@ impl ObserverHub {
         }
     }
 
+    /// Whether passive decoding can be skipped because no observers are registered.
+    pub fn is_empty(&self) -> bool {
+        self.dispatchers.is_empty()
+    }
+
     /// Current counters in registration order.
     pub fn stats(&self) -> Vec<ObserverStats> {
         self.dispatchers

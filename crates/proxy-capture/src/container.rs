@@ -403,6 +403,27 @@ impl<W: Write> CaptureWriter<W> {
                 bytes: bytes.len(),
                 digest: Sha256::digest(bytes).into(),
             });
+        } else if let CaptureRecordKind::StreamMessage(message) = &record.kind {
+            let mut metadata = message.clone();
+            let bytes = super::stream_content(&mut metadata)?;
+            if bytes.len() > self.limits.max_record_bytes {
+                return Err(CaptureError::RecordTooLarge {
+                    actual: bytes.len(),
+                    limit: self.limits.max_record_bytes,
+                });
+            }
+            body = Some(PendingBody::Ready(self.compressor.metadata(&bytes)?));
+            stored = store(&CaptureRecord {
+                sequence: record.sequence,
+                exchange_id: record.exchange_id,
+                kind: CaptureRecordKind::StreamMessage(metadata),
+            })?;
+            stored.body_index = Some(StoredBodyIndex {
+                frame_bytes: 0,
+                bytes: bytes.len(),
+                digest: Sha256::digest(&bytes).into(),
+            });
+            raw = Some(bytes);
         } else {
             stored = store(record)?;
         }
@@ -517,23 +538,28 @@ impl<W: Write> CaptureWriter<W> {
     ) -> Result<BodyRef, CaptureError> {
         let reference;
         let descriptor = stored.body_index.ok_or(CaptureError::InvalidMagic)?;
-        let boundary = stored.payload["boundary"]
-            .as_str()
-            .ok_or(CaptureError::InvalidMagic)?;
-        let position = self
-            .positions
-            .entry((stored.exchange_id, boundary.to_owned()))
-            .or_default();
-        let pair = match boundary {
-            "client-request" => Some(((stored.exchange_id, true, *position), false)),
-            "upstream-request" => Some(((stored.exchange_id, true, *position), true)),
-            "upstream-response" => Some(((stored.exchange_id, false, *position), true)),
-            "client-response" => Some(((stored.exchange_id, false, *position), false)),
-            _ => return Err(CaptureError::InvalidMagic),
+        let pair = if stored.kind == "stream-message" {
+            None
+        } else {
+            let boundary = stored.payload["boundary"]
+                .as_str()
+                .ok_or(CaptureError::InvalidMagic)?;
+            let position = self
+                .positions
+                .entry((stored.exchange_id, boundary.to_owned()))
+                .or_default();
+            let pair = match boundary {
+                "client-request" => ((stored.exchange_id, true, *position), false),
+                "upstream-request" => ((stored.exchange_id, true, *position), true),
+                "upstream-response" => ((stored.exchange_id, false, *position), true),
+                "client-response" => ((stored.exchange_id, false, *position), false),
+                _ => return Err(CaptureError::InvalidMagic),
+            };
+            *position = position
+                .checked_add(descriptor.bytes as u64)
+                .ok_or(CaptureError::QuotaExceeded)?;
+            Some(pair)
         };
-        *position = position
-            .checked_add(descriptor.bytes as u64)
-            .ok_or(CaptureError::QuotaExceeded)?;
         if let Some((descriptor, shared)) = self.sharing.shared(&descriptor, pair) {
             stored.body_index = Some(descriptor);
             reference = shared;
@@ -1191,11 +1217,7 @@ impl<R: Read + Seek> CaptureReader<R> {
                 before,
                 self.limits.max_record_bytes,
             )?;
-            let CaptureRecordKind::BodySegment { bytes: target, .. } = &mut frame.record.kind
-            else {
-                return Err(CaptureError::InvalidMagic);
-            };
-            *target = Some(bytes);
+            super::restore_content(&mut frame.record.kind, bytes)?;
         }
         Ok(Some(frame))
     }
@@ -1323,18 +1345,21 @@ pub fn read_indexed_frame_with_codec(
     let reference = entry.body.clone();
     let (mut record, descriptor) = entry.stored.load_container_metadata(codec)?;
     match (reference, descriptor, &mut record.kind) {
-        (Some(reference), Some(descriptor), CaptureRecordKind::BodySegment { bytes, .. }) => {
+        (Some(reference), Some(descriptor), kind) => {
             if reference.offset != location.offset || descriptor.frame_bytes != frame_bytes {
                 return Err(CaptureError::AuthenticationFailed);
             }
-            *bytes = Some(packed::read_body(
-                &mut input,
-                codec,
-                &reference,
-                descriptor,
-                page.offset,
-                limits.max_record_bytes,
-            )?);
+            super::restore_content(
+                kind,
+                packed::read_body(
+                    &mut input,
+                    codec,
+                    &reference,
+                    descriptor,
+                    page.offset,
+                    limits.max_record_bytes,
+                )?,
+            )?;
         }
         (None, None, _)
             if location.offset == page.offset && frame_bytes == u64::from(page.bytes) => {}

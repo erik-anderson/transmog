@@ -297,6 +297,8 @@ pub(crate) fn copy_message_headers_from_snapshot(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Live or recorded WebSocket/SSE lifetime and counters.
+    pub stream: Option<crate::StreamSummary>,
     /// Original captured request that supplied a manually sent Composer draft.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub composer_origin: Option<crate::ComposerOrigin>,
@@ -618,6 +620,7 @@ pub(crate) fn detail_from_snapshot(
         route_attempts,
         terminal,
         terminal_state: snapshot.state(),
+        stream: crate::StreamSummary::from_snapshot(snapshot),
         websocket: snapshot.websocket.as_ref().map(bounded_debug),
         sequence_loss: snapshot.sequence_loss,
     })

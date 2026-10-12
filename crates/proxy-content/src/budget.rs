@@ -18,6 +18,7 @@ pub struct ContentLimits {
 impl ContentLimits {
     /// Removes lifetime byte/work ceilings for streaming responses, preserving
     /// decoder windows, expansion ratio, and per-operation work limits.
+    #[must_use]
     pub fn for_event_stream(mut self) -> Self {
         self.max_encoded_bytes = NonZeroUsize::MAX;
         self.max_decoded_bytes = NonZeroUsize::MAX;

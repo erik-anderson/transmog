@@ -14,6 +14,7 @@ pub struct ContentPolicy {
 
 impl ContentPolicy {
     /// Keeps streaming work bounded per operation rather than by total lifetime.
+    #[must_use]
     pub fn for_event_stream(mut self) -> Self {
         self.limits = self.limits.for_event_stream();
         self

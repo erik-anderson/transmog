@@ -120,7 +120,7 @@ fn dictionary_file(data: &[u8]) -> Option<Vec<u8>> {
     let dependent = packed(0, 2, changed.len() as u32, &encoded);
     let stored = |bytes: &[u8], length: usize, boundary: &str| {
         let digest: [u8; 32] = Sha256::digest(bytes).into();
-        json!({"revision":3,"sequence":1,"exchange_id":1,"kind":"body-segment",
+        json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":1,"exchange_id":1,"kind":"body-segment",
             "payload":{"boundary":boundary,"byte_count":bytes.len(),"bytes":null,"truncated":false},
             "body_index":{"frame_bytes":length,"bytes":bytes.len(),"digest":digest}})
     };
@@ -266,7 +266,7 @@ fn tree_template() -> &'static [u8] {
             let leaf = page(
                 1,
                 &serde_json::to_vec(&json!([{"index":index,"stored":{
-                    "revision":3,"sequence":index,"exchange_id":1,"kind":"completed","payload":null
+                    "revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":index,"exchange_id":1,"kind":"completed","payload":null
                 }}]))
                 .unwrap(),
             );
@@ -433,7 +433,7 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             };
             let encoded = packed(data[6], data[7], expanded, &encoded);
             let digest: [u8; 32] = Sha256::digest(body).into();
-            let stored = json!({"revision":3,"sequence":1,"exchange_id":1,"kind":"body-segment",
+            let stored = json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":1,"exchange_id":1,"kind":"body-segment",
                 "payload":{"boundary":"client-response","byte_count":body.len(),"bytes":null,"truncated":false},
                 "body_index":{"frame_bytes":encoded.len(),"bytes":body.len(),"digest":digest}});
             record_file(stored, &encoded)
@@ -441,7 +441,7 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
         8 => {
             let digest = format!("{:x}", Sha256::digest(data));
             record_file(
-                json!({"revision":3,"sequence":0,"exchange_id":0,"kind":"public-certificate",
+                json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":0,"exchange_id":0,"kind":"public-certificate",
                 "payload":{"sha256":digest,"der":data}}),
                 &[],
             )

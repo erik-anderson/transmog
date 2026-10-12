@@ -507,3 +507,41 @@ mod tests {
         assert!(second.seek(SeekFrom::Current(-100)).is_err());
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct NativeStreamSource {
+    pub reader: SourceReader,
+    pub offset: u64,
+    pub frame_bytes: u64,
+    pub codec: transmog_capture::FrameCodec,
+    pub index: u64,
+    pub exchange_id: u128,
+    pub sequence: u64,
+}
+impl transmog_core::stream::StreamContentSource for NativeStreamSource {
+    fn read(&self) -> Result<transmog_core::stream::StreamMessage, String> {
+        let mut reader = self.reader.clone();
+        reader
+            .seek(SeekFrom::Start(self.offset))
+            .map_err(|e| e.to_string())?;
+        let record = read_indexed_frame_with_codec(
+            &mut reader,
+            self.frame_bytes,
+            CaptureLimits {
+                max_file_bytes: u64::MAX,
+                max_record_bytes: 8 * 1024 * 1024,
+                max_records: usize::MAX,
+            },
+            &self.codec,
+            self.index,
+        )
+        .map_err(|e| e.to_string())?;
+        if record.exchange_id != self.exchange_id || record.sequence != self.sequence {
+            return Err("Saved stream message identity changed".into());
+        }
+        match record.kind {
+            CaptureRecordKind::StreamMessage(message) => Ok(message),
+            _ => Err("Saved stream message is unavailable".into()),
+        }
+    }
+}

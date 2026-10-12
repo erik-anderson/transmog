@@ -360,6 +360,7 @@ impl MutableSession {
 
 #[derive(Debug, Default)]
 struct CatalogState {
+    retain_stream_content: [bool; 2],
     max_live_entries: Option<NonZeroUsize>,
     imported_count: usize,
     dismissed: HashSet<ExchangeId>,
@@ -386,6 +387,11 @@ pub struct SessionCatalog {
 }
 
 impl SessionCatalog {
+    /// Applies body privacy choices to subsequently retained client/server messages.
+    /// Connection state and item counts remain available without content.
+    pub fn set_stream_content_retention(&self, client: bool, server: bool) {
+        self.lock_state().retain_stream_content = [client, server];
+    }
     /// Creates an empty catalog with explicit finite limits.
     pub fn new(limits: SessionLimits) -> Self {
         let (deltas, _) = broadcast::channel(limits.subscriber_capacity.get());
@@ -463,7 +469,7 @@ impl SessionCatalog {
                     terminal_at: None,
                     websocket: None,
                     stream: None,
-                    stream_history: Default::default(),
+                    stream_history: transmog_core::stream::StreamHistory::default(),
                 },
             );
         }
@@ -499,25 +505,9 @@ impl SessionCatalog {
             }
         }
 
-        let mut detail_dropped = 0_u64;
-        let limits = self.inner.limits;
-        let Some(session) = state.by_id.get_mut(&exchange_id) else {
-            state.counters.unknown_exchange_events =
-                state.counters.unknown_exchange_events.saturating_add(1);
+        let Some(delta) = update_session(&mut state, event, self.inner.limits) else {
             return CatalogApply::UnknownExchange;
         };
-        session.last_sequence = event.sequence;
-        apply_kind(session, event.kind, limits, &mut detail_dropped);
-        let delta = CatalogDelta {
-            exchange_id,
-            sequence: session.last_sequence,
-            terminal: !session.is_active(),
-        };
-        state.counters.detail_records_dropped = state
-            .counters
-            .detail_records_dropped
-            .saturating_add(detail_dropped);
-        trim_live_entries(&mut state);
         drop(state);
         let _ = self.inner.deltas.send(delta);
         CatalogApply::Applied
@@ -967,6 +957,38 @@ fn trim_live_entries(state: &mut CatalogState) {
     }
 }
 
+// Message history has a separate shared ceiling; eviction never closes a stream.
+fn trim_stream_history(state: &mut CatalogState) {
+    const MAXIMUM: usize = 64 * 1024 * 1024;
+    let mut total = state
+        .by_id
+        .values()
+        .filter(|session| !session.imported)
+        .map(|session| session.stream_history.retained_bytes)
+        .sum::<usize>();
+    if total <= MAXIMUM {
+        return;
+    }
+    for id in state.order.values() {
+        let Some(session) = state.by_id.get_mut(id).filter(|session| !session.imported) else {
+            continue;
+        };
+        let history = &mut session.stream_history;
+        while total > MAXIMUM {
+            let Some(item) = history.items.pop_front() else {
+                break;
+            };
+            let bytes = item.message.retained_bytes();
+            history.retained_bytes = history.retained_bytes.saturating_sub(bytes);
+            history.evicted = history.evicted.saturating_add(1);
+            total = total.saturating_sub(bytes);
+        }
+        if total <= MAXIMUM {
+            break;
+        }
+    }
+}
+
 fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
     let candidate = state.order.iter().find_map(|(admission, exchange_id)| {
         state
@@ -987,6 +1009,45 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
     true
 }
 
+fn update_session(
+    state: &mut CatalogState,
+    mut event: ObserverEvent,
+    limits: SessionLimits,
+) -> Option<CatalogDelta> {
+    let mut detail_dropped = 0_u64;
+    retain_stream_content(&mut event.kind, state.retain_stream_content);
+    let session = state.by_id.get_mut(&event.exchange_id)?;
+    session.last_sequence = event.sequence;
+    let stream_message = matches!(event.kind, ObserverEventKind::StreamMessage(_));
+    apply_kind(session, event.kind, limits, &mut detail_dropped);
+    let delta = CatalogDelta {
+        exchange_id: event.exchange_id,
+        sequence: session.last_sequence,
+        terminal: !session.is_active(),
+    };
+    state.counters.detail_records_dropped = state
+        .counters
+        .detail_records_dropped
+        .saturating_add(detail_dropped);
+    trim_live_entries(state);
+    if stream_message {
+        trim_stream_history(state);
+    }
+    Some(delta)
+}
+
+fn retain_stream_content(kind: &mut ObserverEventKind, retention: [bool; 2]) {
+    if let ObserverEventKind::StreamMessage(message) = kind
+        && !retention[usize::from(message.sender != "client")]
+    {
+        message.truncated |= !message.payload.is_empty() || message.raw.is_some();
+        message.payload.clear();
+        message.raw = None;
+        message.event = None;
+        message.event_id = None;
+    }
+}
+
 fn apply_kind(
     session: &mut MutableSession,
     kind: ObserverEventKind,
@@ -995,7 +1056,7 @@ fn apply_kind(
 ) {
     match kind {
         ObserverEventKind::StreamMessage(message) => {
-            session.stream_history.push(session.last_sequence, message)
+            session.stream_history.push(session.last_sequence, message);
         }
         ObserverEventKind::StreamState(stream) => {
             session
@@ -1052,31 +1113,29 @@ fn apply_kind(
         ObserverEventKind::Completed(completed) => {
             session.terminal = Some(SessionTerminal::Completed(completed));
             session.terminal_at = Some(SystemTime::now());
-            if let Some(stream) = &mut session.stream {
-                if stream.protocol == transmog_core::stream::StreamProtocol::Sse {
-                    stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_)))
-                    {
-                        transmog_core::stream::StreamStatus::Failed
-                    } else {
-                        transmog_core::stream::StreamStatus::Closed
-                    };
-                    stream.at_millis = transmog_core::stream::observed_millis();
-                }
+            if let Some(stream) = &mut session.stream
+                && stream.protocol == transmog_core::stream::StreamProtocol::Sse
+            {
+                stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_))) {
+                    transmog_core::stream::StreamStatus::Failed
+                } else {
+                    transmog_core::stream::StreamStatus::Closed
+                };
+                stream.at_millis = transmog_core::stream::observed_millis();
             }
         }
         ObserverEventKind::Failed(failure) => {
             session.terminal = Some(SessionTerminal::Failed(failure));
             session.terminal_at = Some(SystemTime::now());
-            if let Some(stream) = &mut session.stream {
-                if stream.protocol == transmog_core::stream::StreamProtocol::Sse {
-                    stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_)))
-                    {
-                        transmog_core::stream::StreamStatus::Failed
-                    } else {
-                        transmog_core::stream::StreamStatus::Closed
-                    };
-                    stream.at_millis = transmog_core::stream::observed_millis();
-                }
+            if let Some(stream) = &mut session.stream
+                && stream.protocol == transmog_core::stream::StreamProtocol::Sse
+            {
+                stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_))) {
+                    transmog_core::stream::StreamStatus::Failed
+                } else {
+                    transmog_core::stream::StreamStatus::Closed
+                };
+                stream.at_millis = transmog_core::stream::observed_millis();
             }
         }
     }
@@ -1522,6 +1581,90 @@ mod tests {
         assert!(
             catalog.get(ExchangeId(1)).is_none(),
             "closed socket should now be evictable"
+        );
+    }
+
+    #[test]
+    fn stream_privacy_preserves_lifetime_counts_without_retaining_content() {
+        use transmog_core::stream::StreamMessage;
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        start(&catalog, 1, "stream.test");
+        let mut message = StreamMessage::new("server", "event", Bytes::from_static(b"private"));
+        message.raw = Some("data: private\n\n".into());
+        message.event_id = Some("private-id".into());
+        catalog.apply(event(1, 2, ObserverEventKind::StreamMessage(message)));
+        let snapshot = catalog.get(ExchangeId(1)).unwrap();
+        let retained = &snapshot.stream_history.items[0].message;
+        assert!(
+            retained.payload.is_empty() && retained.raw.is_none() && retained.event_id.is_none()
+        );
+        assert!(retained.truncated);
+        assert_eq!(snapshot.stream_history.server_bytes, 7);
+        catalog.set_stream_content_retention(true, false);
+        catalog.apply(event(
+            1,
+            3,
+            ObserverEventKind::StreamMessage(StreamMessage::new(
+                "client",
+                "text",
+                Bytes::from_static(b"retained"),
+            )),
+        ));
+        assert_eq!(
+            catalog.get(ExchangeId(1)).unwrap().stream_history.items[1]
+                .message
+                .payload,
+            b"retained"[..]
+        );
+    }
+
+    #[test]
+    fn stream_history_eviction_is_bounded_and_does_not_close_quiet_streams() {
+        use transmog_core::stream::{
+            MESSAGE_BYTES, StreamMessage, StreamProtocol, StreamState, StreamStatus,
+        };
+        let catalog = SessionCatalog::new(SessionLimits::default());
+        catalog.set_stream_content_retention(true, true);
+        let payload = Bytes::from(vec![b'x'; MESSAGE_BYTES]);
+        for id in 1..=10 {
+            start(&catalog, id, "stream.test");
+            catalog.apply(event(
+                id,
+                2,
+                ObserverEventKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Open,
+                    None,
+                )),
+            ));
+            for sequence in 3..=37 {
+                catalog.apply(event(
+                    id,
+                    sequence,
+                    ObserverEventKind::StreamMessage(StreamMessage::new(
+                        "server",
+                        "binary",
+                        payload.clone(),
+                    )),
+                ));
+            }
+        }
+        let snapshots = catalog.project_retained(|s| (s.state(), s.stream_history.clone()));
+        assert!(snapshots.iter().all(|(state, h)| *state == "active"
+            && h.observed == 35
+            && h.retained_bytes <= 8 * 1024 * 1024));
+        assert!(
+            snapshots
+                .iter()
+                .map(|(_, h)| h.retained_bytes)
+                .sum::<usize>()
+                <= 64 * 1024 * 1024
+        );
+        assert!(snapshots.iter().map(|(_, h)| h.evicted).sum::<u64>() > 40);
+        assert!(
+            snapshots
+                .iter()
+                .all(|(_, h)| h.observed == h.items.len() as u64 + h.evicted)
         );
     }
 

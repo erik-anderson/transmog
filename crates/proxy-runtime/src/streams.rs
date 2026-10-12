@@ -45,7 +45,7 @@ impl RelayObserver for WebSocketObserver {
                         .emit(ObserverEventKind::StreamState(StreamState::now(
                             StreamProtocol::WebSocket,
                             StreamStatus::Closing,
-                            Some(close.reason.clone()),
+                            close.code.map(|code| format!("Close code {code}")),
                         )))
                         .await;
                     let mut message =

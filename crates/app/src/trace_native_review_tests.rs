@@ -228,7 +228,16 @@ fn native_metadata_growth_enforces_budget_before_retention() {
     let frame = capture.read_next_indexed().unwrap().unwrap();
     let mut row = NativeSession::default();
     let mut budget = MAX_HEAD_BYTES - 1024;
-    assert!(apply_native_frame(&mut row, frame, &mut budget, &mut HashSet::new()).is_err());
+    assert!(
+        apply_native_frame(
+            &mut row,
+            frame,
+            &SourceReader::new(File::open(&path).unwrap()).unwrap(),
+            &mut budget,
+            &mut HashSet::new()
+        )
+        .is_err()
+    );
     assert!(row.requests.is_empty());
 }
 
@@ -840,11 +849,20 @@ fn native_representation_allocations_are_charged_before_retention() {
         })],
     );
     let mut capture =
-        CaptureReader::new(File::open(path).unwrap(), CaptureLimits::default()).unwrap();
+        CaptureReader::new(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
     let frame = capture.read_next_indexed().unwrap().unwrap();
     let mut row = NativeSession::default();
     let mut budget = MAX_HEAD_BYTES - 10_000;
-    assert!(apply_native_frame(&mut row, frame, &mut budget, &mut HashSet::new()).is_err());
+    assert!(
+        apply_native_frame(
+            &mut row,
+            frame,
+            &SourceReader::new(File::open(&path).unwrap()).unwrap(),
+            &mut budget,
+            &mut HashSet::new()
+        )
+        .is_err()
+    );
     assert!(row.bodies.is_empty());
 }
 
@@ -858,4 +876,37 @@ fn metadata_budget_includes_sparse_object_node_allocations() {
             .collect::<Vec<_>>()
     );
     assert!(json_heap_bytes(&value) >= 1000 * 1024);
+}
+
+#[test]
+fn imported_stream_is_open_at_capture_and_reads_message_payload_lazily() {
+    use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("stream.tmcap");
+    let message = StreamMessage::new("server", "text", b"live payload".to_vec().into());
+    let mut records = vec![
+        head("https://example.invalid/socket".into()),
+        record(CaptureRecordKind::Completed),
+        record(CaptureRecordKind::StreamState(StreamState::now(
+            StreamProtocol::WebSocket,
+            StreamStatus::Open,
+            None,
+        ))),
+        record(CaptureRecordKind::StreamMessage(message.clone())),
+    ];
+    // File recording must retain more history than the live 1024-item window.
+    records.extend((0..1199).map(|_| record(CaptureRecordKind::StreamMessage(message.clone()))));
+    for (index, record) in records.iter_mut().enumerate() {
+        record.sequence = index as u64 + 1;
+    }
+    write_records(&path, records);
+    let data = read(&path).unwrap();
+    let mut snapshot = data.sessions[0].clone();
+    snapshot.imported = true;
+    assert_eq!(snapshot.state(), "open-at-capture");
+    assert_eq!(snapshot.stream_history.items.len(), 1200);
+    let item = &snapshot.stream_history.items[0];
+    assert!(item.message.payload.is_empty());
+    assert!(item.source.is_some());
+    assert_eq!(item.read().unwrap(), message);
 }

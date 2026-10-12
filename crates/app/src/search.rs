@@ -166,6 +166,22 @@ async fn entry_matches(
             ));
         }
     }
+    for item in &snapshot.stream_history.items {
+        if matches.len() > MAX_ENTRY_MATCHES {
+            break;
+        }
+        if !stream_searchable(item, request) {
+            continue;
+        }
+        if let Ok(message) = item.read() {
+            matches.extend(engine.locations(
+                &String::from_utf8_lossy(&message.payload),
+                "stream",
+                &format!("{} message {}", message.sender, item.sequence),
+                MAX_ENTRY_MATCHES + 1 - matches.len(),
+            ));
+        }
+    }
     let more_matches = matches.len() > MAX_ENTRY_MATCHES;
     matches.truncate(MAX_ENTRY_MATCHES);
     Ok(TrafficSearchEntry {
@@ -498,6 +514,25 @@ async fn scan(
                 }
             }
         }
+        if !found {
+            for item in &snapshot.stream_history.items {
+                if canceled.load(Ordering::Acquire) {
+                    return Err(unavailable("Traffic search canceled"));
+                }
+                if !stream_searchable(item, request) {
+                    continue;
+                }
+                if let Ok(message) = item.read() {
+                    if matcher.matches(&String::from_utf8_lossy(&message.payload)) {
+                        found = true;
+                        break;
+                    }
+                } else {
+                    result.unavailable_bodies += 1;
+                    break;
+                }
+            }
+        }
         if found {
             result.ids.push(format!("{:032x}", id.0));
         }
@@ -607,6 +642,18 @@ fn invalid(message: &str) -> AppError {
 }
 fn unavailable(message: &str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, true)
+}
+
+fn stream_searchable(
+    item: &transmog_core::stream::StreamItem,
+    request: &TrafficSearchRequest,
+) -> bool {
+    matches!(item.message.kind.as_str(), "text" | "event")
+        && if item.message.sender == "client" {
+            request.request_bodies
+        } else {
+            request.response_bodies
+        }
 }
 
 #[cfg(test)]
@@ -757,6 +804,53 @@ mod tests {
         }
         app
     }
+    #[tokio::test]
+    async fn stream_search_respects_direction_and_reports_retained_message_locations() {
+        use transmog_core::{
+            observe::{ObserverEvent, ObserverEventKind},
+            stream::StreamMessage,
+        };
+        let app = url_fixture("http", "stream.test", "stream.test:80", 80);
+        for (sequence, sender, kind) in [
+            (2, "client", "text"),
+            (3, "server", "text"),
+            (4, "server", "binary"),
+        ] {
+            app.session_service().catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(1),
+                sequence,
+                kind: ObserverEventKind::StreamMessage(StreamMessage::new(
+                    sender,
+                    kind,
+                    bytes::Bytes::from(format!("{sender} retained needle")),
+                )),
+            });
+        }
+        let input = request("retained needle");
+        let result = app
+            .search_traffic(input.clone(), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(result.ids.len(), 1);
+        let entry = app
+            .traffic_search_entry(&result.id, &result.ids[0])
+            .await
+            .unwrap();
+        assert_eq!(entry.matches.len(), 1);
+        assert_eq!(entry.matches[0].boundary, "stream");
+        assert_eq!(entry.matches[0].field, "server message 3");
+        let mut upload = input;
+        upload.response_bodies = false;
+        upload.request_bodies = true;
+        let result = app.search_traffic(upload, Arc::new(|_| {})).await.unwrap();
+        let entry = app
+            .traffic_search_entry(&result.id, &result.ids[0])
+            .await
+            .unwrap();
+        assert_eq!(entry.matches.len(), 1);
+        assert_eq!(entry.matches[0].field, "client message 2");
+    }
+
     #[tokio::test]
     async fn url_search_matches_across_default_port_and_path() {
         for (scheme, host, authority, port) in [

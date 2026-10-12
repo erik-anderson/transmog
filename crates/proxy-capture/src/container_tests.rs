@@ -539,3 +539,42 @@ fn writer_rejects_metadata_that_cannot_fit_a_readable_index_object() {
     ));
     assert!(writer.seal().is_err());
 }
+
+#[test]
+fn stream_payload_is_lazy_authenticated_and_round_trips() {
+    use transmog_core::stream::StreamMessage;
+    let mut message = StreamMessage::new("server", "event", vec![b'x'; 256 * 1024].into());
+    message.raw = Some("data: x\n\n".into());
+    message.event_id = Some("42".into());
+    let record = CaptureRecord {
+        exchange_id: 7,
+        sequence: 9,
+        kind: CaptureRecordKind::StreamMessage(message.clone()),
+    };
+    let mut writer = CaptureWriter::new(Cursor::new(Vec::new()), CaptureLimits::default()).unwrap();
+    writer.append(&record).unwrap();
+    writer.seal().unwrap();
+    let bytes = writer.into_inner().unwrap().into_inner();
+    let mut reader =
+        CaptureReader::new(Cursor::new(bytes.clone()), CaptureLimits::default()).unwrap();
+    let frame = reader.read_next_indexed().unwrap().unwrap();
+    let CaptureRecordKind::StreamMessage(metadata) = frame.record.kind else {
+        panic!("message")
+    };
+    assert!(metadata.payload.is_empty());
+    assert!(metadata.raw.is_none());
+    assert!(frame.body.is_some());
+    let mut source = Cursor::new(bytes.clone());
+    source.set_position(frame.offset);
+    let loaded = super::super::read_indexed_frame_with_codec(
+        &mut source,
+        frame.frame_bytes,
+        CaptureLimits::default(),
+        &frame.codec,
+        frame.index,
+    )
+    .unwrap();
+    assert_eq!(loaded, record);
+    let mut reader = CaptureReader::new(Cursor::new(bytes), CaptureLimits::default()).unwrap();
+    assert_eq!(reader.read_next().unwrap().unwrap().record, record);
+}

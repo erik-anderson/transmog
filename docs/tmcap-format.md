@@ -4,7 +4,7 @@ TMCap stores HTTP traffic metadata and independently readable body chunks in an
 indexed file. This documents the initial format implemented by
 [`transmog-capture`](../crates/proxy-capture/src/lib.rs). There is no compatibility
 requirement for earlier experimental layouts. The magic remains `TMCAP001\0`,
-the container header version is `1`, and the record revision is `3`.
+the container header version is `1`, and the record revision is `4`.
 
 For design choices, compression heuristics, buffering and performance results,
 see [the native capture overview](native-capture-format.md) and
@@ -168,7 +168,7 @@ Metadata expands to a stored-record JSON object:
 
 ```json
 {
-  "revision": 3,
+  "revision": 4,
   "sequence": 42,
   "exchange_id": 123,
   "kind": "body-segment",
@@ -190,13 +190,15 @@ This example describes a raw body containing UTF-8 `hello`; its body frame is
 10 descriptor bytes plus five payload bytes. `body_index` is absent for
 records without retained body bytes. Its digest is SHA-256 of the uncompressed
 retained bytes; `frame_bytes` includes the entire body frame. A body index is
-valid only on a `body-segment`, whose metadata `bytes` must be null. Empty retained
+valid on a `body-segment`, whose metadata `bytes` must be null, or a
+`stream-message`, whose indexed metadata has empty `payload` and null `raw`. Empty retained
 bodies and absent retained bodies are distinct. `byte_count` is observed traffic;
 `body_index.bytes` is retained data. Splitting must preserve both totals.
 
 Known kinds include `exchange-started`, `request-head`, `response-head`,
 `body-segment`, `trailers`, `performance`, `hook-effect`, `route-selected`,
-`route-attempt`, `loss`, `completed`, `failed`, `hook-initialization-skipped` and
+`route-attempt`, `loss`, `completed`, `failed`, `stream-state`, `stream-message`,
+`hook-initialization-skipped` and
 `seal`. Boundary names are `client-request`, `upstream-request`,
 `upstream-response`, and `client-response`. Headers preserve ordering and
 duplicates. See `StoredRecord`, the payload types, `store`, and `load` in
@@ -209,6 +211,29 @@ uses exchange ID zero, and precedes references in TLS performance evidence. Its
 digest must match, and DER must parse and reencode as exactly one X.509
 certificate without trailing bytes. Definitions are shared by digest. A
 `body-completed` extension marks completion of one body representation.
+
+## Application stream records
+
+`stream-state` contains `protocol` (`web-socket` or `sse`), `status`
+(`connecting`, `open`, `closing`, `closed`, `failed` or `interrupted`), `atMillis`
+and optional `reason`. It may follow HTTP `completed`: a 101 handshake does not
+complete the upgraded stream.
+
+`stream-message` contains `atMillis`, `sender`, `kind`, `byteCount`, `payload`,
+`truncated`, `compressed`, `event`, `eventId`, `retry`, `raw` and `closeCode`.
+Message sequence is its stable per-exchange identity. Byte count describes the
+original decoded payload, independent of retained prefix length. Raw SSE fields
+are decoded text with normalized LF endings. Optional values are null.
+
+The indexed content blob consists of a little-endian u32 payload length, that
+many payload bytes, then optional UTF-8 SSE field text. `body_index` authenticates
+the whole blob. These independent blobs use raw or zstd encoding without HTTP
+body dictionaries or paired-boundary sharing; they use the record-size bound,
+not the 128 KiB HTTP-body chunk bound. Index-only reads do not inflate them.
+
+Save trace also writes a `stream-summary` extension preserving `observed`,
+`evicted`, `clientBytes`, `serverBytes`, `openedAt` and `lastActivity`. Imported
+active stream state means open at capture, never an active local connection.
 
 ## Shared connection context
 

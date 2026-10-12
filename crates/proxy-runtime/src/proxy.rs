@@ -1930,7 +1930,9 @@ impl ProxyState {
             PerMessageDeflateCodec::new(compression, WebSocketDirection::ServerToClient)?;
         }
         observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
-        let stream_observer = runtime_observer(&chain);
+        let stream_observer = (!self.observers.is_empty())
+            .then(|| runtime_observer(&chain))
+            .flatten();
         if let Some(observer) = &stream_observer {
             observer
                 .emit(ObserverEventKind::StreamState(StreamState::now(
@@ -2031,16 +2033,22 @@ impl ProxyState {
                         }),
                     )
                     .await
-                } else {
+                } else if let Some(observer) = stream_observer.clone() {
                     transmog_websocket::relay_observed(
                         TokioIo::new(downstream),
                         TokioIo::new(upstream),
                         negotiated,
                         relay_limits,
                         cancellation,
-                        Arc::new(crate::streams::WebSocketObserver(
-                            stream_observer.clone().expect("runtime observer"),
-                        )),
+                        Arc::new(crate::streams::WebSocketObserver(observer)),
+                    )
+                    .await
+                } else {
+                    transmog_websocket::relay_transparent(
+                        TokioIo::new(downstream),
+                        TokioIo::new(upstream),
+                        relay_limits,
+                        cancellation,
                     )
                     .await
                 };
@@ -3992,50 +4000,49 @@ async fn observe_body(
     let Some(observer) = runtime_observer(chain) else {
         return;
     };
-    if boundary == ExchangeBoundary::ClientResponse {
-        if let Some(observation) = chain
+    if boundary == ExchangeBoundary::ClientResponse
+        && let Some(observation) = chain
             .context()
             .extensions()
             .get::<crate::streams::SseObservation>()
-        {
-            let mut decoder = observation.0.lock().await;
-            if let Some(active) = decoder.as_mut() {
-                let result = async {
-                    let mut messages = Vec::new();
-                    for frame in frames {
-                        messages.extend(active.push(frame.clone()).await?);
-                    }
-                    if complete {
-                        messages.extend(active.finish().await?);
-                    }
-                    Ok::<_, String>(messages)
+    {
+        let mut decoder = observation.0.lock().await;
+        if let Some(active) = decoder.as_mut() {
+            let result = async {
+                let mut messages = Vec::new();
+                for frame in frames {
+                    messages.extend(active.push(frame.clone()).await?);
                 }
-                .await;
-                match result {
-                    Ok(messages) => {
-                        for message in messages {
-                            observer
-                                .emit(ObserverEventKind::StreamMessage(message))
-                                .await;
-                        }
-                    }
-                    Err(error) => {
-                        *decoder = None;
+                if complete {
+                    messages.extend(active.finish().await?);
+                }
+                Ok::<_, String>(messages)
+            }
+            .await;
+            match result {
+                Ok(messages) => {
+                    for message in messages {
                         observer
-                            .emit(ObserverEventKind::StreamMessage(
-                                transmog_core::stream::StreamMessage::new(
-                                    "server",
-                                    "unavailable",
-                                    Bytes::from(error),
-                                ),
-                            ))
+                            .emit(ObserverEventKind::StreamMessage(message))
                             .await;
                     }
                 }
+                Err(error) => {
+                    *decoder = None;
+                    observer
+                        .emit(ObserverEventKind::StreamMessage(
+                            transmog_core::stream::StreamMessage::new(
+                                "server",
+                                "unavailable",
+                                Bytes::from(error),
+                            ),
+                        ))
+                        .await;
+                }
             }
-            if complete {
-                *decoder = None;
-            }
+        }
+        if complete {
+            *decoder = None;
         }
     }
     if boundary == ExchangeBoundary::UpstreamResponse
@@ -4402,7 +4409,7 @@ async fn stream_response_through_hooks(
     .await;
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn stream_local_response_through_hooks(
     mut body: BodyStream,
     sender: BodyStreamSender,
@@ -6802,6 +6809,124 @@ mod tests {
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();
+        origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn sse_messages_are_observed_live_across_idle_periods_and_drain_resume() {
+        struct Events(tokio::sync::mpsc::UnboundedSender<transmog_core::stream::StreamMessage>);
+        impl transmog_core::observe::Observer for Events {
+            fn on_event(
+                &self,
+                event: transmog_core::observe::ObserverEvent,
+            ) -> transmog_core::observe::BoxObserverFuture<'_> {
+                if let ObserverEventKind::StreamMessage(message) = event.kind {
+                    let _ = self.0.send(message);
+                }
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_addr = origin.local_addr().unwrap();
+        let (continue_tx, continue_rx) = oneshot::channel();
+        let origin_task = tokio::spawn(async move {
+            let (mut stream, _) = origin.accept().await.unwrap();
+            let _ = read_http_head(&mut stream).await;
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nTransfer-Encoding: chunked\r\n\r\nD\r\ndata: first\n\n\r\n").await.unwrap();
+            let _ = continue_rx.await;
+            stream
+                .write_all(b"E\r\ndata: second\n\n\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let config = ProxyConfig {
+            route_policy: RoutePolicy::Http1Only,
+            limits: RuntimeLimits {
+                max_response_body_bytes: 4,
+                body_idle_timeout: Duration::from_millis(40),
+                shutdown_timeout: Duration::from_secs(1),
+                ..RuntimeLimits::default()
+            },
+            ..ProxyConfig::default()
+        };
+        let certificates = Arc::new(
+            CachedMitmCertificateResolver::new(
+                ProxyCa::generate("SSE test", 2).unwrap(),
+                config.limits.leaf_cache_capacity,
+                config.limits.leaf_validity_days,
+            )
+            .unwrap(),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let components = ProxyComponents::new(
+            InterceptorChainFactory::new(Vec::new(), config.limits.hooks),
+            certificates,
+        )
+        .with_observer(
+            Arc::new(Events(tx)),
+            ObserverConfig {
+                interest: transmog_core::observe::ObservationInterest {
+                    response_body: transmog_core::observe::BodyObservation::Full,
+                    ..Default::default()
+                },
+                ..ObserverConfig::default()
+            },
+        );
+        let proxy = ProxyServer::bind_with_components(
+            config,
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 181).unwrap()),
+            components,
+        )
+        .await
+        .unwrap();
+        let address = proxy.local_addr().unwrap();
+        let control = proxy.control();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                format!("GET http://{origin_addr}/events HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8(read_http_head(&mut client).await)
+                .unwrap()
+                .starts_with("HTTP/1.1 200")
+        );
+        let first = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.payload, "first");
+        let generation = control.begin_drain();
+        assert!(
+            timeout(
+                Duration::from_millis(150),
+                control.wait_for_drain(generation)
+            )
+            .await
+            .is_err(),
+            "quiet SSE stopped being active"
+        );
+        assert!(control.resume_drain(generation));
+        continue_tx.send(()).unwrap();
+        let second = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.payload, "second");
+        shutdown_tx.send(()).unwrap();
+        timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         origin_task.await.unwrap();
     }
 

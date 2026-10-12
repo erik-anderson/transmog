@@ -11,7 +11,7 @@ pub struct ProxyActivity {
     pub requests: usize,
     /// Active TLS negotiations and upgraded relays.
     pub transports: usize,
-    /// Open WebSockets included in transports.
+    /// Open WebSocket connections included in transports.
     pub websockets: usize,
     /// Connected clients, including idle keep-alive clients.
     pub clients: usize,

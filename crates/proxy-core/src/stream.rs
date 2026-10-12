@@ -30,7 +30,7 @@ pub struct StreamMessage {
     pub event_id: Option<String>,
     /// SSE reconnection delay in milliseconds.
     pub retry: Option<u64>,
-    /// Exact decoded SSE event block, including field syntax.
+    /// Decoded SSE event block and field syntax, with LF line endings.
     pub raw: Option<String>,
     /// WebSocket close code, when supplied by the peer.
     pub close_code: Option<u16>,
@@ -42,7 +42,11 @@ impl StreamMessage {
         let byte_count = payload.len() as u64;
         let truncated = payload.len() > MESSAGE_BYTES;
         // Copy the prefix so it cannot pin an arbitrarily larger allocation.
-        let payload = bytes::Bytes::copy_from_slice(&payload[..payload.len().min(MESSAGE_BYTES)]);
+        let payload = if truncated {
+            bytes::Bytes::copy_from_slice(&payload[..MESSAGE_BYTES])
+        } else {
+            payload
+        };
         Self {
             at_millis: observed_millis(),
             sender: sender.into(),
@@ -70,21 +74,39 @@ impl StreamMessage {
 }
 
 /// Stable observed item identity, unaffected by filtering or retention eviction.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct StreamItem {
     /// Per-exchange observer sequence.
     pub sequence: u64,
     /// Observed message content.
     pub message: StreamMessage,
+    /// Optional pinned capture source; payload bytes are read only on demand.
+    pub source: Option<std::sync::Arc<dyn StreamContentSource>>,
+}
+
+/// Immutable, lazy payload source owned by an imported stream item.
+pub trait StreamContentSource: std::fmt::Debug + Send + Sync {
+    /// Reads and authenticates one message's content.
+    /// # Errors
+    /// Returns an explanation when the source is corrupt or unavailable.
+    fn read(&self) -> Result<StreamMessage, String>;
+}
+impl StreamItem {
+    /// Reads retained content without changing this item's identity or metadata.
+    /// # Errors
+    /// Returns an explanation when an imported payload cannot be read.
+    pub fn read(&self) -> Result<StreamMessage, String> {
+        self.source
+            .as_ref()
+            .map_or_else(|| Ok(self.message.clone()), |source| source.read())
+    }
 }
 
 /// Bounded recent stream history and lifetime counters.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default)]
 pub struct StreamHistory {
     /// Retained recent items, in observed order.
-    pub items: std::collections::VecDeque<StreamItem>,
+    pub items: std::collections::VecDeque<std::sync::Arc<StreamItem>>,
     /// Total observed items including evicted history.
     pub observed: u64,
     /// Items evicted by retention.
@@ -106,13 +128,19 @@ impl StreamHistory {
     pub fn push(&mut self, sequence: u64, message: StreamMessage) {
         self.observed = self.observed.saturating_add(1);
         self.last_activity = Some(message.at_millis);
-        if message.sender == "client" {
+        if message.kind == "unavailable" || message.kind == "incomplete" {
+            // Diagnostic text is not application payload.
+        } else if message.sender == "client" {
             self.client_bytes = self.client_bytes.saturating_add(message.byte_count);
         } else {
             self.server_bytes = self.server_bytes.saturating_add(message.byte_count);
         }
         self.retained_bytes = self.retained_bytes.saturating_add(message.retained_bytes());
-        self.items.push_back(StreamItem { sequence, message });
+        self.items.push_back(std::sync::Arc::new(StreamItem {
+            sequence,
+            message,
+            source: None,
+        }));
         while self.items.len() > 1024 || self.retained_bytes > 8 * 1024 * 1024 {
             let Some(item) = self.items.pop_front() else {
                 break;

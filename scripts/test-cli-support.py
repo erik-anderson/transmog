@@ -201,7 +201,7 @@ def main():
         def write_native(path, records):
             # Independent raw-codec encoder keeps this rejection fixture valid
             # without relying on the production writer to accept unsafe heads.
-            records = [*records, {'revision': 3, 'sequence': 0, 'exchange_id': 0,
+            records = [*records, {'revision': 4, 'sequence': 0, 'exchange_id': 0,
                                   'kind': 'seal', 'payload': {'record_count': len(records)}}]
             encoded = bytearray(header + struct.pack('<I', block_size) + bytes(512))
             start = len(encoded)
@@ -241,7 +241,7 @@ def main():
             put(3, packed({'roots': [root], 'count': len(entries), 'sealed': True, 'block': ordinal}))
             path.write_bytes(encoded)
 
-        request = {'revision': 3, 'sequence': 1, 'exchange_id': 1, 'kind': 'request-head',
+        request = {'revision': 4, 'sequence': 1, 'exchange_id': 1, 'kind': 'request-head',
                    'payload': {'boundary': 'client-request', 'method': 'GET',
                                'target': 'http://example.invalid/', 'headers': []}}
         source = fixture / 'missing-response.tmcap'
@@ -255,7 +255,7 @@ def main():
                 assert b'ui-comments' in archive.read('raw/1_m.xml')
 
         request['payload']['headers'] = [{'name': list(b'x-fixture'), 'value': list(b'bad\r\nvalue')}]
-        response = {'revision': 3, 'sequence': 2, 'exchange_id': 1, 'kind': 'response-head',
+        response = {'revision': 4, 'sequence': 2, 'exchange_id': 1, 'kind': 'response-head',
                     'payload': {'boundary': 'client-response', 'status': 200, 'headers': []}}
         write_native(source, [request, response])
         output = fixture / 'failed-export.saz'

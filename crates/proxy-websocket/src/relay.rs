@@ -226,10 +226,10 @@ where
         () = cancellation.cancelled() => return Err(RelayError::Cancelled),
     };
     if !client.1 || !server.1 {
-        return Err(RelayError::UncleanEof(if !client.1 {
-            Direction::ClientToServer
-        } else {
+        return Err(RelayError::UncleanEof(if client.1 {
             Direction::ServerToClient
+        } else {
+            Direction::ClientToServer
         }));
     }
     Ok(RelayReport {
@@ -280,10 +280,10 @@ where
             .checked_add(u64::try_from(read).map_err(|_| RelayError::AccountingOverflow)?)
             .ok_or(RelayError::AccountingOverflow)?;
         write_all_bounded(&mut writer, &buffer[..read], limits, &cancellation).await?;
-        if let Some(observation) = &mut observation {
-            if observation.push(&buffer[..read]).await {
-                return Ok((copied, true));
-            }
+        if let Some(observation) = &mut observation
+            && observation.push(&buffer[..read]).await
+        {
+            return Ok((copied, true));
         }
     }
 }
@@ -418,7 +418,7 @@ struct PumpReport {
     controls: u64,
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 async fn pump_direction<Reader, Writer>(
     mut reader: Reader,
     mut writer: Writer,

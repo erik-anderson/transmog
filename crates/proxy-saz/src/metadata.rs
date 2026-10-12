@@ -203,6 +203,16 @@ pub(crate) fn render(
             ),
         );
     }
+    if session.stream {
+        let note = "WebSocket messages and parsed SSE events are omitted from this SAZ export. Save TMCap to retain stream activity.";
+        flags
+            .entry("ui-comments")
+            .and_modify(|value| {
+                value.push(' ');
+                value.push_str(note);
+            })
+            .or_insert_with(|| note.into());
+    }
     flags.insert(
         "x-transmog-terminal",
         match session.terminal {

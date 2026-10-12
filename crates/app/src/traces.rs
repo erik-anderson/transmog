@@ -1172,6 +1172,8 @@ fn generated_connection_outcomes(
 
 #[derive(Default)]
 struct NativeSession {
+    stream: Option<transmog_core::stream::StreamState>,
+    stream_history: transmog_core::stream::StreamHistory,
     provenance: Option<SavedEntry>,
     performance_bytes: usize,
     performance: transmog_core::performance::PerformanceEvidence,
@@ -1284,7 +1286,7 @@ fn import_native(
             }
         };
         row.sequence = row.sequence.max(frame.record.sequence);
-        apply_native_frame(row, frame, &mut budget, &mut certificates)?;
+        apply_native_frame(row, frame, reader, &mut budget, &mut certificates)?;
         if rows.len() > MAX_SESSIONS || budget > MAX_HEAD_BYTES {
             return Err(invalid(
                 "Native trace metadata exceeds the viewer index limit",
@@ -1347,11 +1349,58 @@ fn validate_native_scope(record: &transmog_capture::CaptureRecord) -> Result<(),
 fn apply_native_frame(
     row: &mut NativeSession,
     frame: transmog_capture::CaptureFrame,
+    reader: &SourceReader,
     budget: &mut usize,
     certificates: &mut HashSet<String>,
 ) -> Result<(), AppError> {
     let old_diagnostics = row.diagnostics.len();
     match frame.record.kind {
+        CaptureRecordKind::StreamState(state) => {
+            row.stream_history.opened_at.get_or_insert(state.at_millis);
+            row.stream = Some(state);
+        }
+        CaptureRecordKind::StreamMessage(message) => {
+            charge_native_index(budget, message.retained_bytes() + 512)?;
+            let source = frame.body.map(|_| {
+                Arc::new(crate::trace_body::NativeStreamSource {
+                    reader: reader.clone(),
+                    offset: frame.offset,
+                    frame_bytes: frame.frame_bytes,
+                    codec: frame.codec,
+                    index: frame.index,
+                    exchange_id: frame.record.exchange_id,
+                    sequence: frame.record.sequence,
+                }) as Arc<dyn transmog_core::stream::StreamContentSource>
+            });
+            let history = &mut row.stream_history;
+            history.observed = history.observed.saturating_add(1);
+            history.last_activity = Some(message.at_millis);
+            if message.sender == "client" {
+                history.client_bytes = history.client_bytes.saturating_add(message.byte_count);
+            } else {
+                history.server_bytes = history.server_bytes.saturating_add(message.byte_count);
+            }
+            history
+                .items
+                .push_back(Arc::new(transmog_core::stream::StreamItem {
+                    sequence: frame.record.sequence,
+                    message,
+                    source,
+                }));
+        }
+        CaptureRecordKind::Unknown { kind, payload } if kind == "stream-summary" => {
+            let history = &mut row.stream_history;
+            history.observed = payload["observed"].as_u64().unwrap_or(history.observed);
+            history.evicted = payload["evicted"].as_u64().unwrap_or(history.evicted);
+            history.client_bytes = payload["clientBytes"]
+                .as_u64()
+                .unwrap_or(history.client_bytes);
+            history.server_bytes = payload["serverBytes"]
+                .as_u64()
+                .unwrap_or(history.server_bytes);
+            history.opened_at = payload["openedAt"].as_u64().or(history.opened_at);
+            history.last_activity = payload["lastActivity"].as_u64().or(history.last_activity);
+        }
         CaptureRecordKind::Unknown { kind, payload } if kind == "body-representation" => {
             let boundary = parse_boundary(payload["boundary"].as_str().unwrap_or_default())?;
             let bytes = serde_json::to_vec(&payload)
@@ -1691,6 +1740,19 @@ fn append_native(
         row.started.unwrap_or(SystemTime::UNIX_EPOCH),
     );
     let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), None);
+    snapshot.stream = row.stream;
+    snapshot.stream_history = row.stream_history;
+    if let Some(stream) = &mut snapshot.stream
+        && stream.protocol == transmog_core::stream::StreamProtocol::Sse
+        && stream.status.is_active()
+        && (row.completed || row.failed)
+    {
+        stream.status = if row.failed {
+            transmog_core::stream::StreamStatus::Failed
+        } else {
+            transmog_core::stream::StreamStatus::Closed
+        };
+    }
     snapshot.request_heads = row.requests;
     snapshot.response_heads = row.responses;
     snapshot.sequence_loss = row.loss;
@@ -2061,7 +2123,7 @@ fn empty_snapshot(
         terminal_at: ended,
         websocket: None,
         stream: None,
-        stream_history: Default::default(),
+        stream_history: transmog_core::stream::StreamHistory::default(),
     }
 }
 fn import_failure(metadata: Arc<ExchangeMetadata>) -> SessionTerminal {

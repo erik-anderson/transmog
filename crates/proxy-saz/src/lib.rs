@@ -307,7 +307,9 @@ impl<W: Write + Seek> SazExporter<W> {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)] // Independent stream, body completeness and loss evidence.
 struct Session {
+    stream: bool,
     kind: SessionKind,
     evidence: SessionEvidence,
     started_unix_nanos: Option<u128>,
@@ -389,6 +391,9 @@ fn collect_sessions(
         }
         let session = sessions.entry(record.exchange_id).or_default();
         match &record.kind {
+            CaptureRecordKind::StreamState(_) | CaptureRecordKind::StreamMessage(_) => {
+                session.stream = true;
+            }
             CaptureRecordKind::ExchangeStarted {
                 client_addr,
                 client_identity,

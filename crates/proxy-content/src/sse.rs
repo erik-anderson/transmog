@@ -24,10 +24,10 @@ impl SseDecoder {
             NonZeroUsize::MAX,
             NonZeroUsize::MAX,
             NonZeroUsize::MAX,
-            NonZeroUsize::new(8 * 1024 * 1024).unwrap(),
-            NonZeroUsize::new(100).unwrap(),
+            const { NonZeroUsize::new(8 * 1024 * 1024).unwrap() },
+            const { NonZeroUsize::new(100).unwrap() },
             1024 * 1024,
-            NonZeroUsize::new(4).unwrap(),
+            const { NonZeroUsize::new(4).unwrap() },
         );
         let limits = limits.for_event_stream();
         let stack = ContentCodingStack::from_headers(headers, limits.max_coding_layers())
@@ -89,6 +89,7 @@ impl SseDecoder {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)] // Independent SSE data/comment, BOM and CR parser flags.
 struct EventParser {
     line: Vec<u8>,
     raw: Vec<u8>,
@@ -96,9 +97,9 @@ struct EventParser {
     event: String,
     id: String,
     retry: Option<u64>,
+    fields: usize,
     has_data: bool,
     comment: bool,
-    first_line: bool,
     started: bool,
     cr: bool,
 }
@@ -108,22 +109,28 @@ impl EventParser {
             if self.cr {
                 self.cr = false;
                 if byte == b'\n' {
-                    self.raw.push(byte);
-                    self.end_line(output);
                     continue;
                 }
-                self.end_line(output);
             }
             if self.raw.len() >= MESSAGE_BYTES {
                 return Err(
                     "SSE event exceeds the 256 KiB inspection limit; forwarding continues".into(),
                 );
             }
-            self.raw.push(byte);
             match byte {
-                b'\r' => self.cr = true,
-                b'\n' => self.end_line(output),
-                _ => self.line.push(byte),
+                b'\r' => {
+                    self.raw.push(b'\n');
+                    self.cr = true;
+                    self.end_line(output);
+                }
+                b'\n' => {
+                    self.raw.push(byte);
+                    self.end_line(output);
+                }
+                _ => {
+                    self.raw.push(byte);
+                    self.line.push(byte);
+                }
             }
         }
         Ok(())
@@ -133,21 +140,23 @@ impl EventParser {
         let mut line = String::from_utf8_lossy(&bytes);
         if !self.started {
             self.started = true;
-            self.first_line = true;
-        }
-        if self.first_line {
             line = line
                 .strip_prefix('\u{feff}')
                 .unwrap_or(&line)
                 .to_owned()
                 .into();
-            self.first_line = false;
         }
         if line.is_empty() {
-            if self.has_data || self.comment {
+            if self.has_data || self.comment || self.fields > 0 {
                 let mut message = StreamMessage::new(
                     "server",
-                    if self.has_data { "event" } else { "heartbeat" },
+                    if self.has_data {
+                        "event"
+                    } else if self.comment {
+                        "heartbeat"
+                    } else {
+                        "fields"
+                    },
                     Bytes::from(
                         self.data
                             .strip_suffix('\n')
@@ -172,6 +181,7 @@ impl EventParser {
             self.event.clear();
             self.has_data = false;
             self.comment = false;
+            self.fields = 0;
             return;
         }
         if line.starts_with(':') {
@@ -179,6 +189,7 @@ impl EventParser {
             return;
         }
         let (name, value) = line.split_once(':').unwrap_or((&line, ""));
+        self.fields += 1;
         let value = value.strip_prefix(' ').unwrap_or(value);
         match name {
             "data" => {
@@ -186,8 +197,8 @@ impl EventParser {
                 self.data.push_str(value);
                 self.data.push('\n');
             }
-            "event" => self.event = value.to_owned(),
-            "id" if !value.contains('\0') => self.id = value.to_owned(),
+            "event" => value.clone_into(&mut self.event),
+            "id" if !value.contains('\0') => value.clone_into(&mut self.id),
             "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
                 if let Ok(retry) = value.parse() {
                     self.retry = Some(retry);
@@ -197,10 +208,6 @@ impl EventParser {
         }
     }
     fn finish(&mut self, output: &mut Vec<StreamMessage>) {
-        if self.cr {
-            self.cr = false;
-            self.end_line(output);
-        }
         if !self.raw.is_empty() {
             output.push(StreamMessage::new(
                 "server",
@@ -236,6 +243,46 @@ mod tests {
             assert_eq!(messages[2].kind, "incomplete");
         }
     }
+    #[tokio::test]
+    async fn gzip_event_stream_decodes_across_single_byte_boundaries() {
+        let mut encoder =
+            crate::ContentEncoder::new(crate::ContentCoding::Gzip, ContentLimits::default())
+                .unwrap();
+        let mut wire = encoder
+            .on_frame(BodyFrame::Data(Bytes::from_static(b"data: compressed\r\r")))
+            .await
+            .unwrap();
+        wire.extend(encoder.finish().await.unwrap());
+        let headers = HeaderBlock::from_fields(vec![
+            transmog_core::HeaderField::try_new("Content-Encoding", "gzip").unwrap(),
+        ]);
+        let mut decoder = SseDecoder::new(&headers).unwrap();
+        let mut messages = Vec::new();
+        for frame in wire {
+            if let BodyFrame::Data(bytes) = frame {
+                for byte in bytes {
+                    messages.extend(
+                        decoder
+                            .push(BodyFrame::Data(Bytes::from(vec![byte])))
+                            .await
+                            .unwrap(),
+                    );
+                }
+            }
+        }
+        assert_eq!(messages.len(), 1, "events must arrive before finish");
+        assert_eq!(messages[0].payload, "compressed");
+        assert!(decoder.finish().await.unwrap().is_empty());
+    }
+    #[test]
+    fn carriage_return_dispatches_without_waiting_for_another_chunk() {
+        let mut parser = EventParser::default();
+        let mut messages = Vec::new();
+        parser.push(b"data: live\r\r", &mut messages).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].payload, "live");
+    }
+
     #[test]
     fn id_reset_empty_data_and_invalid_retry_follow_event_stream_rules() {
         let mut parser = EventParser::default();
@@ -246,10 +293,11 @@ mod tests {
                 &mut messages,
             )
             .unwrap();
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].kind, "fields");
         assert_eq!(messages[0].event_id.as_deref(), Some("first"));
-        assert!(messages[0].payload.is_empty());
-        assert_eq!(messages[1].event_id.as_deref(), Some(""));
-        assert_eq!(messages[1].retry, None);
+        assert!(messages[1].payload.is_empty());
+        assert_eq!(messages[2].event_id.as_deref(), Some(""));
+        assert_eq!(messages[2].retry, None);
     }
 }
