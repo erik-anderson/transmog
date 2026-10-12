@@ -950,10 +950,27 @@ fn matches_search(row: &SessionSummary, search: &str) -> bool {
     ]
     .iter()
     .any(|value| value.to_lowercase().contains(search))
+        || url_without_default_port(&row.url).is_some_and(|url| url.to_lowercase().contains(search))
         || row
             .caller
             .process_id
             .is_some_and(|pid| pid.to_string().contains(search))
+}
+
+/// Search alias for targets retaining an explicit HTTP(S) default port.
+/// Keep the captured URL intact and preserve non-default ports and IPv6 brackets.
+pub(crate) fn url_without_default_port(url: &str) -> Option<String> {
+    let (scheme, target) = url.split_once("://")?;
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        ":443"
+    } else if scheme.eq_ignore_ascii_case("http") {
+        ":80"
+    } else {
+        return None;
+    };
+    let boundary = target.find(['/', '?', '#']).unwrap_or(target.len());
+    let authority = target[..boundary].strip_suffix(default_port)?;
+    Some(format!("{scheme}://{authority}{}", &target[boundary..]))
 }
 
 fn sort_rows(rows: &mut [SessionSummary], sort: &SessionSort) {

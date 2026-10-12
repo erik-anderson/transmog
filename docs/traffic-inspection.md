@@ -61,6 +61,11 @@ the blocks. An unrecorded protocol is labeled unavailable rather than guessed.
 
 ## Search and select
 
+The live **Filter** matches complete URLs, including text spanning the domain
+and path, as well as process metadata. Both Filter and metadata searches in
+**Search contents** also match URLs without an explicitly captured default port
+(`:443` for HTTPS or `:80` for HTTP). Non-default ports remain part of the URL.
+
 In **Search contents** mode, **Search** or Enter searches retained evidence;
 typing alone does not repeatedly read bodies. **Search options** chooses metadata, request headers, response
 headers and decoded text request/response bodies, literal text or regex, case

@@ -16,8 +16,8 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 
 fn metadata_text(snapshot: &SessionSnapshot) -> String {
     let target = snapshot.metadata.original_target.as_target();
-    format!(
-        "{}://{}{}{}\n{:?}\n{}\n{}",
+    let mut url = format!(
+        "{}://{}{}{}",
         target.scheme,
         target.authority,
         target.path,
@@ -25,6 +25,13 @@ fn metadata_text(snapshot: &SessionSnapshot) -> String {
             .query
             .as_ref()
             .map_or_else(String::new, |query| format!("?{query}")),
+    );
+    if let Some(alias) = crate::sessions::url_without_default_port(&url) {
+        url.push('\n');
+        url.push_str(&alias);
+    }
+    format!(
+        "{url}\n{:?}\n{}\n{}",
         snapshot.metadata.client_identity,
         snapshot
             .request_heads
@@ -701,6 +708,119 @@ mod tests {
         assert!(Matcher::new(&input).unwrap().matches("CAFÉ"));
         input.pattern = "(".into();
         assert!(Matcher::new(&input).is_err());
+    }
+    fn url_fixture(scheme: &str, host: &str, authority: &str, port: u16) -> Application {
+        use transmog_core::{
+            ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
+            intercept::ExchangeMetadata,
+            observe::{ObserverEvent, ObserverEventKind},
+        };
+        let app = Application::new(AppConfig::default()).unwrap();
+        let mut session = SessionMetadata {
+            session_id: SessionId(1),
+            downstream_connection_id: ConnectionId(1),
+            stream_id: StreamId(1),
+            client_addr: "127.0.0.1:1".parse().unwrap(),
+            client_identity: transmog_core::ClientIdentity::default(),
+            proxy_addr: "127.0.0.1:2".parse().unwrap(),
+            ingress_version: HttpLegVersion::Http1,
+            egress_version: None,
+        };
+        for (id, path, authority, port) in [
+            (1, "/other", authority.to_owned(), port),
+            (2, "/assembler", authority.to_owned(), port),
+            (3, "/assembler", authority.to_owned(), port),
+            (
+                4,
+                "/assembler",
+                format!("{}:8443", authority.rsplit_once(':').unwrap().0),
+                8443,
+            ),
+        ] {
+            session.session_id = SessionId(id);
+            session.stream_id = StreamId(id);
+            let target = Target {
+                scheme: scheme.into(),
+                host: host.into(),
+                authority,
+                port,
+                path: path.into(),
+                query: Some("section=news".into()),
+            };
+            app.session_service().catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(id),
+                sequence: 1,
+                kind: ObserverEventKind::ExchangeStarted {
+                    metadata: Arc::new(ExchangeMetadata::from_session(&session, target)),
+                },
+            });
+        }
+        app
+    }
+    #[tokio::test]
+    async fn url_search_matches_across_default_port_and_path() {
+        for (scheme, host, authority, port) in [
+            (
+                "https",
+                "www.washingtonpost.com",
+                "www.washingtonpost.com:443",
+                443,
+            ),
+            ("http", "example.test", "example.test:80", 80),
+            ("https", "::1", "[::1]:443", 443),
+        ] {
+            let app = url_fixture(scheme, host, authority, port);
+            let domain = authority.rsplit_once(':').unwrap().0;
+            let url = format!("{scheme}://{domain}/assembler");
+            let expected = vec![format!("{:032x}", 2), format!("{:032x}", 3)];
+            for pattern in [
+                url.to_uppercase(),
+                format!("{domain}/assembler"),
+                format!("{url}?section=news"),
+                format!("{scheme}://{authority}/assembler"),
+            ] {
+                let query = SessionQueryInput {
+                    search: Some(pattern.clone()),
+                    limit: Some(1),
+                    ..Default::default()
+                };
+                let page = app.query_sessions(query.clone()).unwrap();
+                assert_eq!(page.total_matched, 2, "live filter: {pattern}");
+                assert_eq!(page.sessions[0].id, expected[0]);
+                assert_eq!(app.matching_traffic_ids(&query).unwrap(), expected);
+                for mode in [TrafficSearchMode::Text, TrafficSearchMode::Regex] {
+                    let mut input = request(&pattern);
+                    input.mode = mode;
+                    if matches!(mode, TrafficSearchMode::Regex) {
+                        input.pattern = regex::escape(&pattern);
+                    }
+                    input.metadata = true;
+                    input.response_bodies = false;
+                    let result = app.search_traffic(input, Arc::new(|_| {})).await.unwrap();
+                    assert_eq!(result.ids, expected, "content search: {pattern}");
+                    let entry = app
+                        .traffic_search_entry(&result.id, &expected[0])
+                        .await
+                        .unwrap();
+                    assert!(
+                        entry
+                            .matches
+                            .iter()
+                            .any(|location| location.matched.eq_ignore_ascii_case(&pattern))
+                    );
+                }
+            }
+            for pattern in [host, "/assembler", "/assembler?section=news"] {
+                let query = SessionQueryInput {
+                    search: Some(pattern.into()),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    app.query_sessions(query).unwrap().total_matched,
+                    if pattern == host { 4 } else { 3 }
+                );
+            }
+        }
     }
     #[tokio::test]
     async fn decoded_unicode_results_page_over_all_matches_and_skip_binary_quietly() {
