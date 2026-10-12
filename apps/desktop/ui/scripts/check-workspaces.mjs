@@ -964,6 +964,9 @@ try {
   assert.equal(await page.getByRole('button',{name:'Use selected response',exact:true}).isVisible(),true);
   assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false);
   assert.equal(await autoField('body').getAttribute('rows'),'12');
+  assert.equal(await autoField('responseHeaders').getAttribute('rows'),'10');
+  assert.equal(await autoField('status').evaluate(el=>el.closest('details').querySelector('summary').textContent),'Response');
+  assert.equal(await page.locator('.auto-response-source').getByText('Original response context',{exact:true}).isVisible(),true);
   assert.equal(await autoField('body').evaluate(body=>getComputedStyle(body).resize),'vertical');
   assert.match(await autoField('body').evaluate(body=>getComputedStyle(body).fontFamily),/Mono|Consolas/);
   assert.equal(await autoField('name').evaluate(input=>input.getRootNode().activeElement===input),true,'Rule editor did not receive focus');
@@ -978,6 +981,21 @@ try {
   assert.equal(await autoField('body').inputValue(),capturedPreview);
   assert.equal(await autoEditor.locator('h3').textContent(),'New rule from captured response');
   assert.equal(await sourceLink.isVisible(),true,'Revert lost captured source');
+  await autoField('status').fill('199');
+  await autoEditor.locator('.response-group > summary').click();
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
+  assert.equal(await autoEditor.locator('.response-group').getAttribute('open'),'','Invalid hidden status did not reopen Response');
+  assert.equal(await autoField('status').evaluate(el=>el.getRootNode().activeElement===el),true);
+  await autoField('status').fill('200');
+  await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+  await page.setViewportSize({width:1440,height:900});
+  await autoField('responseHeaders').scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-response-wide.png')});
+  await page.setViewportSize({width:800,height:600});
+  await autoEditor.evaluate(form=>form.closest('.rule-properties-pane').scrollTop=0);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-response-compact.png')});
+  await page.setViewportSize({width:1280,height:800});
+
   for(const [url,expected] of [['http://example.test:80/second','http://example.test/second'],['https://example.test:443/second','https://example.test/second'],['https://example.test:8443/second','https://example.test:8443/second']]) {
     await page.evaluate(async url=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'});detail.requests[0].target=url;await w.populateCapturedAutoResponse('second',detail);},url);
     assert.equal(await autoField('url').inputValue(),expected,'Traffic-derived URL has the wrong port');

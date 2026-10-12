@@ -44,6 +44,9 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable existingResponse=false;
   @observable ruleUsageText='';
   @observable requestHeadersOpen=false;
+  @observable responseOpen=true;
+  responseToggled(event:Event):void {this.responseOpen=(event.currentTarget as HTMLDetailsElement).open;}
+  openResponseForError():void {this.responseOpen=true;this.$flushUpdates();}
   @observable customMethodHidden=true;
   @observable advancedMatcherText='';
   autoResponseCustomMethod!:HTMLInputElement;
@@ -369,6 +372,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;
     this.autoResponseEnabled.checked=true;
     for (const field of ['requestHeaders','responseHeaders']) (this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement).setCustomValidity('');
+    this.responseOpen=true;
     this.sourceSessionId = ''; this.sourceLabel = ''; this.sourceAvailable = false; this.sourceAvailabilityText = '';
     this.bodyStatusText = ''; this.bodyHidden = false; this.encodingOptionsHidden = true;
     this.autoResponseError = ''; this.requestHeadersError = ''; this.responseHeadersError = '';
@@ -423,6 +427,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       if (field === 'requestHeaders') this.requestHeadersError = message;
       else this.responseHeadersError = message;
       const input = this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement;
+      if(field==='responseHeaders')this.responseOpen=true;else this.requestHeadersOpen=true;
+      this.$flushUpdates();
       input.setCustomValidity(message); input.focus();
       throw error;
     }
@@ -869,7 +875,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       if (revision !== this.editorRevision || !this.isConnected) return;
       const asset=inspection.asset;this.savedResponse=inspection;this.existingResponse=true;
       this.assetsIndex.set(`${asset.id}@${asset.revision}`,asset);this.renderAutoResponseRules(this.automationStatus??{generation:0,rules:[],autoresponsesEnabled:true,diagnostics:[],candidateCount:0,historyCount:0});
-      this.sourceText = `${asset.status} · ${formatBytes(asset.bodyBytes)} · ${asset.mediaType ?? 'Unknown content type'} · Saved response`;
+      this.sourceText = asset.provenance.kind==='session' ? 'Saved response created from Traffic. Original details are available through the source link while retained.' : `${asset.status} · ${formatBytes(asset.bodyBytes)} · ${asset.mediaType ?? 'Unknown content type'} · Saved response`;
       this.autoResponseStatus.value = String(asset.status);
       this.autoResponseMediaType.value = asset.mediaType ?? '';
       this.responseReadOnly=false;this.responseHeadersHidden=false;this.bodyHidden=false;

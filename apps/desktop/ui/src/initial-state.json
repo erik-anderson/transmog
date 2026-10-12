@@ -187,6 +187,7 @@
   "existingResponse": false,
   "ruleUsageText": "",
   "requestHeadersOpen": false,
+  "responseOpen": true,
   "editorHidden": true,
   "editorTitle": "New auto-response",
   "sourceText": "Create a response from scratch.",

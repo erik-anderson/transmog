@@ -55,6 +55,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   use deliberate abbreviation or ellipsis when the complete value is readily
   available. A tooltip alone should not be necessary to discover an action's
   name, purpose, or state.
+- Group editable response metadata under Response, with ten visible header lines.
+  Original response context uses neutral styling; keep rule usage separate from
+  source provenance.
 - Let long-form editing use the available space. Response-body authoring starts
   at twelve lines. Preserve resize and expand affordances, with actions still
   reachable and drafts intact after restoring the editor.

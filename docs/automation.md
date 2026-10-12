@@ -134,7 +134,9 @@ identity edits and replacement files remove it. Pasted framing and encoding
 fields cannot override these choices in the editor. Response edits create an
 immutable asset revision; earlier revisions and captured evidence remain
 intact. The response body editor
-starts at twelve lines. A friendly source link opens the original request when
+starts at twelve lines. The open Response section groups status, content type,
+ten-line editable headers and neutral original-response context; rule usage is
+shown with the rule properties. A friendly source link opens the original request when
 it is still retained; otherwise the label remains plain text. Match counts and
 last-match times describe only retained Traffic.
 
