@@ -53,6 +53,7 @@ pub struct CircularCapture {
     order: VecDeque<u128>,
     retained: u64,
     evicted: u64,
+    failed: bool,
 }
 impl CircularCapture {
     /// Creates a circular capture; directory None keeps all retained frames in memory.
@@ -92,6 +93,7 @@ impl CircularCapture {
             order: VecDeque::new(),
             retained: 0,
             evicted: 0,
+            failed: false,
         })
     }
     /// Retains a record, evicting old terminal exchanges before active ones when necessary.
@@ -99,7 +101,20 @@ impl CircularCapture {
     ///
     /// # Errors
     /// Returns a record bound, metadata quota, compression or disk error.
+    /// After a failure, subsequent appends are rejected; retained frames can still be saved.
     pub fn append(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
+        if self.failed {
+            return Err(CaptureError::AlreadySealed);
+        }
+        let result = self.append_inner(record);
+        if result.is_err() {
+            // Encoding and disk storage may have advanced by only part of an
+            // append. Never retry against that partially committed state.
+            self.failed = true;
+        }
+        result
+    }
+    fn append_inner(&mut self, record: &CaptureRecord) -> Result<(), CaptureError> {
         let id = record.exchange_id;
         if !self.entries.contains_key(&id)
             && id != 0
@@ -420,6 +435,53 @@ fn compressed_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_append_stops_recording_but_preserves_the_retained_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        for directory in [None, Some(root.path().to_owned())] {
+            let limits = CaptureLimits {
+                max_record_bytes: 1024,
+                ..CaptureLimits::default()
+            };
+            let mut ring =
+                CircularCapture::new(None, directory, CaptureEncoding::default(), limits).unwrap();
+            ring.append(&started(1)).unwrap();
+            let mut message = transmog_core::stream::StreamMessage::new(
+                "server",
+                "event",
+                b"content".to_vec().into(),
+            );
+            message.event = Some("x".repeat(2048));
+            assert!(matches!(
+                ring.append(&CaptureRecord {
+                    sequence: 2,
+                    exchange_id: 1,
+                    kind: CaptureRecordKind::StreamMessage(message),
+                }),
+                Err(CaptureError::RecordTooLarge { .. })
+            ));
+            let retained = ring.retained_bytes();
+            assert!(matches!(
+                ring.append(&terminal(1)),
+                Err(CaptureError::AlreadySealed)
+            ));
+            assert_eq!(ring.retained_bytes(), retained);
+            let mut bytes = Vec::new();
+            ring.write(&mut bytes).unwrap();
+            let saved = crate::recover(std::io::Cursor::new(&bytes), limits).unwrap();
+            assert!(saved.sealed);
+            let records: Vec<_> = saved
+                .records
+                .iter()
+                .filter(|record| record.exchange_id == 1)
+                .collect();
+            assert_eq!(records.len(), 1);
+            assert!(matches!(
+                records[0].kind,
+                CaptureRecordKind::ExchangeStarted { .. }
+            ));
+        }
+    }
     #[test]
     fn circular_retention_prefers_finished_http_over_an_established_websocket() {
         use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};

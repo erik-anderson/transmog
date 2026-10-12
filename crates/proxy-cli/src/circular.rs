@@ -168,6 +168,9 @@ impl Observer for CircularObserver {
                 let mut state = worker
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if state.failure.is_some() {
+                    return Ok::<(), transmog_capture::CaptureError>(());
+                }
                 let id = event.exchange_id.0;
                 if !state.ring.retains_exchange(id)
                     && !matches!(
@@ -309,8 +312,8 @@ mod tests {
             CaptureRecordKind::Unknown { payload, .. } if payload["fixture"] == "saved evidence")));
     }
 
-    #[test]
-    fn observer_failure_still_allows_saving_the_available_prefix() {
+    #[tokio::test]
+    async fn observer_failure_stops_new_events_but_allows_saving_the_available_prefix() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("prefix.tmcap");
         let output = crate::output::PendingOutput::new(&path).unwrap();
@@ -325,13 +328,53 @@ mod tests {
         observer
             .metadata(serde_json::json!({"fixture": true}))
             .unwrap();
-        observer.state.lock().unwrap().failure = Some("fixture worker failure".into());
+        {
+            let mut state = observer.state.lock().unwrap();
+            state
+                .ring
+                .append(&transmog_capture::CaptureRecord {
+                    exchange_id: 1,
+                    sequence: 1,
+                    kind: CaptureRecordKind::ExchangeStarted {
+                        client_addr: "127.0.0.1:1".into(),
+                        client_identity: transmog_core::ClientIdentity::LocalUnknown,
+                        listener_addr: "127.0.0.1:2".into(),
+                        authority: "example.test".into(),
+                        started_unix_nanos: 1,
+                    },
+                })
+                .unwrap();
+            state.failure = Some("fixture worker failure".into());
+        }
+        observer
+            .on_event(ObserverEvent {
+                exchange_id: transmog_core::intercept::ExchangeId(1),
+                sequence: 2,
+                kind: transmog_core::observe::ObserverEventKind::StreamMessage(
+                    transmog_core::stream::StreamMessage::new(
+                        "server",
+                        "text",
+                        b"later".to_vec().into(),
+                    ),
+                ),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            observer.state.lock().unwrap().failure.as_deref(),
+            Some("fixture worker failure")
+        );
         assert!(observer.check().is_err());
         observer.save(output).unwrap();
-        assert!(
+        let saved =
             transmog_capture::recover(std::fs::File::open(path).unwrap(), CaptureLimits::default())
-                .unwrap()
-                .sealed
+                .unwrap();
+        assert!(saved.sealed);
+        assert!(
+            !saved
+                .records
+                .iter()
+                .any(|record| matches!(record.kind, CaptureRecordKind::StreamMessage(_)))
         );
     }
 }
