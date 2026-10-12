@@ -27,13 +27,169 @@ use transmog_automation::{
     RuleMatcher,
 };
 use transmog_control_model::{DecisionAction, HeaderField as ControlHeaderField};
-use transmog_core::{HeaderBlock, HeaderField};
+use transmog_core::{BodyFrame, HeaderBlock, HeaderField};
 use transmog_script::{ScriptCapabilities, ScriptHandler, ScriptLimits, ScriptPrefilter};
 
 const LARGE_ASSET_BYTES: usize = 1024 * 1024 + 1;
 const BODY_STORE_BYTES: u64 = 3 * 1024 * 1024;
 
 static CURL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/test-interop.ps1 with Docker and packaged helpers"]
+#[allow(clippy::too_many_lines)]
+async fn linked_response_streams_compression_and_recovers_after_a_missing_file() {
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let path = workspace.root.join("linked-response.txt");
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(25_000_001)
+        .unwrap();
+    let application = Application::new(workspace.config(&environment)).unwrap();
+    let mut encoder = transmog_content::ContentEncoder::new(
+        transmog_content::ContentCoding::Gzip,
+        transmog_content::ContentLimits::default(),
+    )
+    .unwrap();
+    let mut frames = encoder
+        .on_frame(BodyFrame::Data(b"original".to_vec().into()))
+        .await
+        .unwrap();
+    frames.extend(encoder.finish().await.unwrap());
+    let compressed_body = frames
+        .into_iter()
+        .filter_map(|frame| match frame {
+            BodyFrame::Data(bytes) => Some(bytes.to_vec()),
+            BodyFrame::Trailers(_) => None,
+        })
+        .flatten()
+        .collect();
+    let source = application
+        .create_response_asset(AuthoredResponseAsset {
+            id: "linked-source".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::from_fields(vec![
+                HeaderField::try_new("content-encoding", "gzip").unwrap(),
+            ]),
+            body: compressed_body,
+            media_type: Some("text/plain; charset=utf-8".into()),
+        })
+        .unwrap();
+    let linked = application
+        .edit_response_asset(transmog_app::ResponseAssetEdit {
+            asset_reference: source.asset_ref(),
+            status: 200,
+            headers: HeaderBlock::new(),
+            media_type: source.media_type,
+            decoded_body: None,
+            body_path: Some(path.clone()),
+            preserve_content_encoding: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(linked.linked_body.as_ref().unwrap().path, path);
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            rules: vec![autoresponse_rule(
+                "linked-rule",
+                "/auto/linked/",
+                &linked.asset_ref(),
+            )],
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    std::fs::write(&path, "First external edit").unwrap();
+    let listener = start(&application, &environment).await;
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/linked/one"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_header(&response, "content-encoding", "gzip");
+    assert_header(&response, "transfer-encoding", "chunked");
+    assert!(
+        !response
+            .headers
+            .to_ascii_lowercase()
+            .contains("content-length:")
+    );
+    let detail = wait_for_session(&application, "/auto/linked/one", "completed").await;
+    assert_eq!(
+        application
+            .inspect_body(inspection(&detail.id, "client-response"))
+            .await
+            .unwrap()
+            .display,
+        "First external edit"
+    );
+    assert!(detail.route_attempts.is_empty());
+    application.shutdown().await.unwrap();
+    drop(application);
+    std::fs::remove_file(&path).unwrap();
+    let restarted = Application::new(workspace.config(&environment)).unwrap();
+    assert_eq!(restarted.automation_status().rules.len(), 1);
+    let listener = start(&restarted, &environment).await;
+    let missing = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/linked/missing"),
+        &[],
+    )
+    .await;
+    assert_ne!(missing.status, 200);
+    let detail = wait_for_session(&restarted, "/auto/linked/missing", "failed").await;
+    assert!(detail.route_attempts.is_empty());
+    assert!(
+        detail
+            .responses
+            .iter()
+            .all(|head| head.boundary != "upstream-response")
+    );
+    assert!(
+        restarted
+            .response_body_file_info(&path, Some(&linked.asset_ref()))
+            .is_err()
+    );
+    std::fs::write(&path, "Second external edit with a different size").unwrap();
+    let recovered = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/linked/two"),
+        &[],
+    )
+    .await;
+    assert_success(&recovered);
+    assert_header(&recovered, "content-encoding", "gzip");
+    let detail = wait_for_session(&restarted, "/auto/linked/two", "completed").await;
+    assert_eq!(
+        restarted
+            .inspect_body(inspection(&detail.id, "client-response"))
+            .await
+            .unwrap()
+            .display,
+        "Second external edit with a different size"
+    );
+    assert!(
+        restarted
+            .response_body_file_info(&path, Some(&linked.asset_ref()))
+            .unwrap()
+            .error
+            .is_none()
+    );
+    restarted.shutdown().await.unwrap();
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through scripts/test-interop.ps1 with Docker and packaged helpers"]
@@ -684,8 +840,11 @@ impl TestWorkspace {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("transmog-phase9-{}-{nonce}", std::process::id()));
+        let sequence = WORKSPACE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "transmog-phase9-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         std::fs::create_dir(&root).unwrap();
         Self {
             capture: root.join("workflow.tmcap"),

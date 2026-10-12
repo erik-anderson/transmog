@@ -29,7 +29,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   @attr theme = 'system';
   @observable automationSection='responses';
   @observable batchActionId='';
-  showAutomationSection(section:string):void {this.automationSection=section;}
+  showAutomationSection(section:string):void {this.finishRuleDrag();this.automationSection=section;}
   async backToRules():Promise<void> {if(!this.batchReviewHidden){this.cancelBatch();return;}if(!await this.canLeaveEditor())return;const focused=this.ruleSelection.focused;this.editorRevision++;this.editorHidden=true;this.autoResponseSourceState=null;this.editingAutoResponseId=null;this.draftDirty=false;this.$flushUpdates();if(focused)this.focusRule(focused);else this.newResponseButton.focus();}
   openBatchMenu(id:string,event:MouseEvent):void {this.batchActionId=id;this.positionRuleMenu(event);}
   includeBatchRow(id:string,event:Event):void {const included=(event.currentTarget as HTMLInputElement).checked;this.batchRows=this.batchRows.map(row=>row.id===id?{...row,included}:row);this.renderBatchReview();}
@@ -82,6 +82,13 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable ruleFilter='all';
   @observable ruleSelectionCount=0;
   @observable ruleSelectionText='Select a rule to edit its properties.';
+  @observable ruleDropId='';
+  @observable ruleDropAfter=false;
+  @observable ruleDragging=false;
+  @observable ruleDragText='';
+  @observable ruleDragLabel='';
+  @observable ruleDragX='0px';
+  @observable ruleDragY='0px';
   @observable ruleDiagnosticText='';
   @observable ruleSupersededBy='';
   @observable draftDirty=false;
@@ -153,17 +160,27 @@ export class AutomationWorkspace extends WorkspaceElement {
   private autoResponseSourceState: AutoResponseSource | null = null;
   private editingAutoResponseId: string | null = null;
   private draggedRuleId: string | null = null;
+  private draggedRuleIds:string[]=[];
+  private dragGeneration:number|null=null;
+  private dragOriginalSelection:ListSelection|null=null;
+  private dragPointer:{x:number;y:number}|null=null;
+  private dragScrollTimer:number|undefined;
+  private rulePointer:{id:string;event:PointerEvent;x:number;y:number}|null=null;
+  private ignoreRuleClick=false;
+  private cancelRuleDrag=()=>this.finishRuleDrag();
   private editorRevision = 0;
   private editorOpener: HTMLElement | null = null;
   private sourceQuery: Promise<void> | null = null;
 
-  protected hydratedCallback(): void { void this.refreshAutomation(); }
+  protected hydratedCallback(): void { window.addEventListener('blur',this.cancelRuleDrag);void this.refreshAutomation(); }
   disconnectedCallback():void {
+    this.finishRuleDrag();
+    window.removeEventListener('blur',this.cancelRuleDrag);
     window.clearTimeout(this.matcherTimer);window.clearTimeout(this.usageTimer);this.matcherTestRevision++;this.editorRevision++;
     this.resolveLeave?.(false);this.resolveLeave=null;this.leaveEditorPromise=null;
     super.disconnectedCallback();
   }
-  viewChanged(): void { if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();} }
+  viewChanged(): void { if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();}else this.finishRuleDrag(); }
   refreshUsageSoon():void {
     if(this.usageTimer!==undefined)return;
     this.usageTimer=window.setTimeout(()=>{this.usageTimer=undefined;if(this.view==='automation')void invoke<AutomationStatus>('automation_status').then(status=>{if(this.isConnected){this.renderAutomation(status);void this.refreshResponseFile();}}).catch(()=>undefined);},500);
@@ -260,10 +277,11 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(!this.visibleRules.some(rule=>rule.tabIndex==='0') && this.visibleRules[0])this.visibleRules=this.visibleRules.map((rule,index)=>({...rule,tabIndex:index===0?'0':'-1'}));
     this.allRulesSelected=this.visibleRules.length>0 && this.visibleRules.every(rule=>this.ruleSelection.ids.has(rule.id));
   }
-  searchRules(event:Event):void {this.ruleSearch=(event.target as HTMLInputElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
-  filterRules(event:Event):void {this.ruleFilter=(event.target as HTMLSelectElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
+  searchRules(event:Event):void {this.finishRuleDrag();this.ruleSearch=(event.target as HTMLInputElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
+  filterRules(event:Event):void {this.finishRuleDrag();this.ruleFilter=(event.target as HTMLSelectElement).value;this.ruleSelection.clear();this.renderRuleSelection();}
   async selectRule(rule:AutomationRule,event?:MouseEvent,checkbox=false):Promise<void> {
     if(this.savingAutoResponse || this.changingAutoResponse)return;
+    this.finishRuleDrag();
     const next=this.ruleSelection.clone();next.choose(rule.id,this.ruleOrder(),checkbox?{ctrlKey:true,shiftKey:event?.shiftKey??false}:event??{});
     if((next.ids.size!==1 || !next.ids.has(this.editingAutoResponseId??'')) && !await this.canLeaveEditor())return;
     this.ruleSelection=next;this.batchReviewHidden=true;this.renderRuleSelection();
@@ -273,6 +291,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   selectRuleCheckbox(rule:AutomationRule,event:MouseEvent):void {event.stopPropagation();void this.selectRule(rule,event,true);}
   async ruleKeyboard(rule:AutomationRule,event:KeyboardEvent):Promise<void> {
+    if(this.rulePointer){event.preventDefault();if(event.key==='Escape')this.cancelRulePointer();return;}
     if(isTextEditing(event))return;
     if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();if(!this.editorHidden)this.autoResponseForm.requestSubmit();return;}
     if(event.key==='Delete'){event.preventDefault();await this.mutateSelectedRules('remove');return;}
@@ -285,6 +304,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     else {this.editorRevision++;this.editorHidden=true;this.editingAutoResponseId=null;}
   }
   listKeyboard(event:KeyboardEvent):void {
+    if(event.key==='Escape'&&this.draggedRuleId){event.preventDefault();this.cancelRulePointer();return;}
     if(event.defaultPrevented || isTextEditing(event))return;
     if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z'){event.preventDefault();void this.undoRemoveAutoResponse();}
     else if(event.key==='Delete'){event.preventDefault();void this.mutateSelectedRules('remove');}
@@ -531,31 +551,88 @@ export class AutomationWorkspace extends WorkspaceElement {
     const usage=status.usage?.find(item=>item.ruleId===this.editingAutoResponseId);
     this.ruleUsageText=usage?`${usage.matches} retained match${usage.matches===1?'':'es'} · Last matched ${new Date(usage.lastMatchedAt).toLocaleString()}`:'No matches in retained Traffic.';
   }
-  dragRule(id: string,event: DragEvent): void {
-    if (this.savingAutoResponse || this.changingAutoResponse) { event.preventDefault(); return; }
-    if(!this.ruleSelection.ids.has(id)){if(this.draftDirty){event.preventDefault();return;}this.ruleSelection.replace(id);this.renderRuleSelection();}
-    this.draggedRuleId = id;
-    event.dataTransfer?.setData('application/x-transmog-autoresponse-rule',id);
-    event.dataTransfer?.setData('application/x-transmog-autoresponse-rules',JSON.stringify([...this.ruleSelection.ids]));
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-  }
-  allowRuleDrop(id: string,event: DragEvent): void { if (!this.savingAutoResponse && !this.changingAutoResponse && this.draggedRuleId !== null && this.draggedRuleId !== id) event.preventDefault(); }
-  finishRuleDrag(): void { this.draggedRuleId = null; }
-  async dropRule(id: string,event: DragEvent): Promise<void> {
+  ruleClick(rule:AutomationRule,event:MouseEvent):void {if(!this.ignoreRuleClick)void this.selectRule(rule,event);}
+  beginRulePointer(id:string,event:PointerEvent):void {
+    if(event.button!==0||!event.isPrimary||this.savingAutoResponse||this.changingAutoResponse)return;
+    const target=event.target as HTMLElement;
+    if(target.closest('input,button,a,select,textarea')||(event.pointerType==='touch'&&!target.closest('.rule-drag-grip')))return;
     event.preventDefault();
+    this.finishRuleDrag();this.rulePointer={id,event,x:event.clientX,y:event.clientY};
+    this.autoResponseList.setPointerCapture(event.pointerId);(event.currentTarget as HTMLElement).focus({preventScroll:true});
+  }
+  moveRulePointer(event:PointerEvent):void {
+    const pointer=this.rulePointer;if(!pointer||pointer.event.pointerId!==event.pointerId)return;
+    if(!this.draggedRuleId){
+      if(Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y)<6)return;
+      if(!this.startRuleDrag(pointer.id))return;
+    }
+    event.preventDefault();this.dragPointer={x:event.clientX,y:event.clientY};this.ruleDragX=event.clientX+12+'px';this.ruleDragY=event.clientY+12+'px';this.updateRuleDrop();
+    if(this.dragScrollTimer===undefined)this.dragScrollTimer=window.setInterval(()=>this.scrollRuleDrag(),30);
+  }
+  async endRulePointer(event:PointerEvent):Promise<void> {
+    const pointer=this.rulePointer;if(!pointer||pointer.event.pointerId!==event.pointerId)return;
+    this.ignoreRuleClick=true;window.setTimeout(()=>{this.ignoreRuleClick=false;},0);
+    if(this.draggedRuleId)await this.dropRule(event);
+    else {const rule=this.rules.find(rule=>rule.id===pointer.id);this.finishRuleDrag();if(rule)await this.selectRule(rule,pointer.event);}
+  }
+  private startRuleDrag(id:string):boolean {
+    if (this.savingAutoResponse || this.changingAutoResponse)return false;
+    const originalSelection=this.ruleSelection.clone();
+    if(!this.ruleSelection.ids.has(id)){if(this.draftDirty){this.finishRuleDrag();this.ruleDragText='Save or revert your properties before dragging another rule.';return false;}this.ruleSelection.replace(id);this.renderRuleSelection();}
+    this.dragOriginalSelection=originalSelection;
+    this.ruleSelection.focused=id;this.renderRuleSelection();
+    this.draggedRuleId = id;
+    this.draggedRuleIds=this.rules.filter(rule=>this.ruleSelection.ids.has(rule.id)).map(rule=>rule.id);
+    this.dragGeneration=this.automationStatus?.generation??null;this.ruleDragging=true;
+    this.ruleDragText=`Moving ${this.draggedRuleIds.length} rule${this.draggedRuleIds.length===1?'':'s'} · Hold at an edge to scroll.`;
+    this.ruleDragLabel=this.draggedRuleIds.length===1?this.rules.find(rule=>rule.id===id)?.name??'Auto-response':`Moving ${this.draggedRuleIds.length} rules`;
+    return true;
+  }
+  private updateRuleDrop():void {
+    this.ruleDropId='';const pointer=this.dragPointer;if(!pointer)return;
+    const list=this.autoResponseList.getBoundingClientRect();
+    if(pointer.x<list.left||pointer.x>list.right||pointer.y<list.top||pointer.y>list.bottom)return;
+    const rows=Array.from(this.autoResponseList.querySelectorAll<HTMLElement>('[data-rule-id]'));
+    const row=rows.find(row=>row.getBoundingClientRect().bottom>pointer.y)??rows.at(-1);
+    if(!row||this.draggedRuleIds.includes(row.dataset.ruleId??''))return;
+    const rect=row.getBoundingClientRect();this.ruleDropId=row.dataset.ruleId??'';this.ruleDropAfter=pointer.y>=rect.top+rect.height/2;
+  }
+  private scrollRuleDrag():void {
+    const pointer=this.dragPointer;if(!pointer||!this.draggedRuleId||!this.isConnected||this.view!=='automation'){this.finishRuleDrag();return;}
+    const list=this.autoResponseList,rect=list.getBoundingClientRect(),edge=Math.min(48,rect.height/4);
+    if(pointer.x<rect.left||pointer.x>rect.right||pointer.y<rect.top||pointer.y>rect.bottom)return;
+    const direction=pointer.y<rect.top+edge?-(1-(pointer.y-rect.top)/edge):pointer.y>rect.bottom-edge?1-(rect.bottom-pointer.y)/edge:0;
+    if(direction){list.scrollTop+=direction*18;this.updateRuleDrop();}
+  }
+  finishRuleDrag(): void {
+    const pointer=this.rulePointer;this.rulePointer=null;
+    if(pointer&&this.autoResponseList.hasPointerCapture(pointer.event.pointerId))this.autoResponseList.releasePointerCapture(pointer.event.pointerId);
+    window.clearInterval(this.dragScrollTimer);this.dragScrollTimer=undefined;this.dragPointer=null;this.draggedRuleId=null;
+    this.draggedRuleIds=[];this.dragGeneration=null;this.ruleDropId='';this.ruleDropAfter=false;this.ruleDragging=false;this.ruleDragText='';
+    if(this.dragOriginalSelection){this.ruleSelection=this.dragOriginalSelection;this.dragOriginalSelection=null;this.renderRuleSelection();}
+  }
+  lostRulePointer(event:PointerEvent):void {if(this.rulePointer?.event.pointerId===event.pointerId&&!this.autoResponseList.hasPointerCapture(event.pointerId))this.finishRuleDrag();}
+  cancelRulePointer():void {const focused=this.dragOriginalSelection?.focused;this.finishRuleDrag();if(focused&&this.isConnected&&this.view==='automation')this.focusRule(focused);}
+  private async dropRule(event: PointerEvent): Promise<void> {
+    event.preventDefault();
+    this.dragPointer={x:event.clientX,y:event.clientY};this.updateRuleDrop();
+    const dragged=this.draggedRuleId,selected=this.draggedRuleIds,id=this.ruleDropId,after=this.ruleDropAfter,generation=this.dragGeneration,selection=this.ruleSelection.clone();
+    this.finishRuleDrag();
     if (this.savingAutoResponse || this.changingAutoResponse) return;
-    const dragged = event.dataTransfer?.getData('application/x-transmog-autoresponse-rule') ?? this.draggedRuleId;
-    this.draggedRuleId = null;
     const current = this.automationStatus;
-    if (!dragged || dragged === id || current === null) return;
+    if (!dragged || !id || current === null) return;
+    if(current.generation!==generation){this.automationText='Rules changed while dragging. Try the move again.';this.automationKind='error';return;}
     const before = this.autoResponseRules(current);
-    let selected:string[]=[dragged];const multiple=event.dataTransfer?.getData('application/x-transmog-autoresponse-rules');
-    if(multiple){try{const parsed:unknown=JSON.parse(multiple);if(Array.isArray(parsed) && parsed.every(item=>typeof item==='string'))selected=parsed;}catch{return;}}
-    if(selected.includes(id))return;
     const group=before.filter(rule=>selected.includes(rule.id));const ordered=before.filter(rule=>!selected.includes(rule.id));const to=ordered.findIndex(rule=>rule.id===id);
-    if(!group.length || to<0)return;ordered.splice(to,0,...group);
+    if(!group.length || to<0)return;ordered.splice(to+(after?1:0),0,...group);
+    if(ordered.every((rule,index)=>rule.id===before[index]?.id))return;
     this.changingAutoResponse = true;
-    try { const status=await this.activateAutoResponseOrder(current,ordered);this.rememberRuleChange(this.autoResponseRules(current),this.autoResponseRules(status),'Changed rule priority.');this.renderAutomation(status);this.focusRule(dragged); }
+    try {
+      const status=await this.activateAutoResponseOrder(current,ordered);this.ruleSelection=selection;this.rememberRuleChange(before,this.autoResponseRules(status),'Changed rule priority.');this.renderAutomation(status);
+      this.changingAutoResponse=false;
+      if(!this.draftDirty&&this.ruleSelection.ids.size===1&&this.editingAutoResponseId!==dragged){const rule=status.rules.find(rule=>rule.id===dragged);if(rule)await this.editAutoResponse(rule,true);}
+      if(!this.rulePointer&&this.ruleSelection.focused===dragged&&this.isConnected&&this.view==='automation')this.focusRule(dragged);
+    }
     catch (error: unknown) { this.automationText = `Auto-response reorder failed: ${describeError(error)}`; this.automationKind = 'error'; }
     finally { this.changingAutoResponse = false; }
   }

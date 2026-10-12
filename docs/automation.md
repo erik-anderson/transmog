@@ -61,8 +61,11 @@ Auto-response rules form a compact top-to-bottom list beside a resizable
 properties pane. The first enabled rule that matches wins and bypasses the
 origin. Selecting one rule opens its properties; selecting several exposes
 bulk actions through More. Search and enabled/disabled/shadowed filters preserve
-the underlying priority order. Drag-and-drop or Move earlier/Move later reorders
-a selected group while preserving its internal order. New rules are inserted
+the underlying priority order. Drag above or below a rule to place a selected
+group, preserving its internal order. Holding near the list's top or bottom
+scrolls while dragging; Escape cancels and restores the prior selection.
+Move earlier/Move later or Ctrl+Alt+Up/Down also changes priority. Reordering
+preserves unsaved properties, and list Undo restores the previous order. New rules are inserted
 first. Disabled copies provide a convenient starting point for a variant.
 
 The primary creation flow starts from a completed traffic item. **Create

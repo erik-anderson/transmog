@@ -67,6 +67,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
 - Keep selection actions outside the scrolling list so populated tables cannot
   cover them. Empty-state presentation must not determine whether a populated
   workspace is usable.
+- Reordering shows the insertion position before release, preserves selected
+  groups and drafts, and supports edge scrolling. Cancellation restores the
+  prior selection and focus; offer keyboard moves and Undo alongside dragging.
 
 ## Preserve the user's place and work
 

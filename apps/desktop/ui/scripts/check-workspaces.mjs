@@ -1,4 +1,5 @@
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
+import {checkAutoResponseDragging} from './check-autoresponse-dragging.mjs';
 import { checkStreams } from './check-streams.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -1226,6 +1227,7 @@ try {
   await cancelRule();
 
   // The dense list shares keyboard range selection, bulk state changes and Undo.
+  await checkAutoResponseDragging(page,root);
   const firstRule=page.locator('.auto-response-rule').first();
   await firstRule.click();await savedProperties();
   await firstRule.press('Control+Shift+ArrowDown');
