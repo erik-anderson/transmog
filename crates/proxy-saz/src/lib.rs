@@ -4,7 +4,7 @@
 //!
 //! Strict mode emits only the conventional OPC content-types member, an explicit
 //! `raw/` directory, three `raw/<id>_{c,s,m}` files per HTTP exchange, and
-//! `raw/<id>_w.txt` frame lists for established WebSocket connections.
+//! `raw/<id>_w.txt` frame lists for established `WebSockets`.
 //! Missing heads use labeled compatibility placeholders without altering evidence.
 //! The native format remains authoritative because SAZ cannot represent every
 //! proxy boundary or hook effect.
@@ -830,7 +830,31 @@ fn connection_reason(session: &Session) -> &'static str {
     }
 }
 
-#[allow(clippy::too_many_lines)] // Keep paired head normalization and completeness metadata together.
+fn response_reason<'a>(
+    session: &'a Session,
+    response: &CapturedResponse,
+    websocket_handshake: bool,
+    diagnostic_reason: &'a str,
+) -> &'a str {
+    if session.response.is_none() {
+        diagnostic_reason
+    } else if websocket_handshake {
+        "Switching Protocols"
+    } else if session.kind == SessionKind::ConnectionContext {
+        connection_reason(session)
+    } else if session
+        .request
+        .as_ref()
+        .is_some_and(|request| request.method == "CONNECT")
+        && response.status == 200
+        && metadata::reason(session).is_none_or(|reason| reason == "OK")
+    {
+        "Connection Established"
+    } else {
+        metadata::reason(session).unwrap_or_else(|| reason_phrase(response.status))
+    }
+}
+
 fn write_http_session<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     id: usize,
@@ -908,23 +932,7 @@ fn write_http_session<W: Write + Seek>(
     let response = opaque_response.as_ref().unwrap_or(response);
     let websocket_response = websocket::response(session, response);
     let response = websocket_response.as_ref().unwrap_or(response);
-    let reason = if session.response.is_none() {
-        diagnostic.1
-    } else if websocket_response.is_some() {
-        "Switching Protocols"
-    } else if session.kind == SessionKind::ConnectionContext {
-        connection_reason(session)
-    } else if session
-        .request
-        .as_ref()
-        .is_some_and(|request| request.method == "CONNECT")
-        && response.status == 200
-        && metadata::reason(session).is_none_or(|reason| reason == "OK")
-    {
-        "Connection Established"
-    } else {
-        metadata::reason(session).unwrap_or_else(|| reason_phrase(response.status))
-    };
+    let reason = response_reason(session, response, websocket_response.is_some(), diagnostic.1);
     let response_wire = render_response(
         response,
         response_body,
