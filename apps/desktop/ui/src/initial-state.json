@@ -283,8 +283,8 @@
       },
       {
         "id": "protocol",
-        "width": 100,
-        "visible": false,
+        "width": 210,
+        "visible": true,
         "pinned": false
       },
       {
@@ -379,8 +379,8 @@
       },
       {
         "id": "protocol",
-        "width": 100,
-        "visible": false,
+        "width": 210,
+        "visible": true,
         "pinned": false
       },
       {
@@ -648,8 +648,8 @@
     },
     {
       "id": "protocol",
-      "width": 100,
-      "visible": false,
+      "width": 210,
+      "visible": true,
       "pinned": false,
       "label": "Protocol"
     },

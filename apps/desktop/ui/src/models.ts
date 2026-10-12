@@ -33,6 +33,7 @@ export interface SessionSummary {
   host: string;
   path: string;
   protocol: string;
+  streamProtocol?: 'web-socket' | 'sse' | null;
   status: number | null;
   durationMs: number | null;
   traceId?: string | null;

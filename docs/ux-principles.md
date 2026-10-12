@@ -48,6 +48,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   with other filters using AND, and show one removable chip for the group.
   No selections shows all traffic; an explicit empty destination is recorded
   fetch/XHR metadata, not missing metadata.
+- Traffic headers and cells stay on one line and clip with ellipsis when columns
+  are narrow. Keep complete values and stream state available on hover; column
+  fitting includes the protocol’s stream badge.
 - Give important labels room to wrap or reflow. Secondary URLs and metadata may
   use deliberate abbreviation or ellipsis when the complete value is readily
   available. A tooltip alone should not be necessary to discover an action's
@@ -113,6 +116,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
 - Make empty, unavailable, incomplete, truncated, redacted, and expired states
   distinguishable. Explain the next useful step. Disable an unavailable action
   with an accessible explanation rather than presenting a broken interaction.
+- Mark active WebSocket and SSE streams with a compact protocol and Active
+  badge beside the HTTP version in Traffic’s Protocol column, using the observed
+  stream lifecycle. Quiet streams remain active; ended streams and saved captures have no live badge.
 - Pending traffic means the exchange is still active. A terminal failure without
   an HTTP response shows Failed. Body completeness describes capture at its own
   message boundary; a later exchange failure does not make a fully retained body

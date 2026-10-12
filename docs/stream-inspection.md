@@ -22,7 +22,10 @@ payload with **Messages**; taller or wider panes show both.
 
 The HTTP handshake and application stream have separate lifetimes. A WebSocket
 remains **active** after its opening response (101 on H1, 200 on H2), including while quiet. SSE remains active
-until its response ends. Both appear in State contains **active**. Closed, failed
+until its response ends. Traffic marks these rows beside the HTTP version in **Protocol** with
+**WebSocket · Active** or **SSE · Active**, including while quiet. The badge
+disappears when the stream ends; saved captures never show a live badge.
+Both appear in State contains **active**. Closed, failed
 and interrupted streams stop matching that filter. Imported open streams show
 **open-at-capture**, because a saved file is not a live connection.
 

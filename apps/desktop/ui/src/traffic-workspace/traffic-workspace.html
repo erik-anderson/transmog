@@ -27,7 +27,7 @@
       <trace-drop-target variant="region" ?show-help="{{showTraceImportHelp}}" ?active="{{view == 'traffic'}}" ?busy="{{importingTrace}}"><section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
         <div class="traffic-selection-bar" ?hidden="{{selectedTrafficCount <= 1}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic || !selectedTrafficCount}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div w-ref="{sessionScroller}" class="table-wrap" @scroll="{sessionScrolled()}">
-          <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-wrap="{{preferences.wrapCells}}" ?data-compact="{{preferences.compactRows}}">
+          <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
             <thead><tr aria-rowindex="1"><for each="column in columns">
               <th key="{{column.id}}" id="header-{{column.id}}" scope="col" data-column-id="{{column.id}}" ?data-pinned="{{column.pinned}}" data-offset="{{column.offsetCss}}" aria-sort="{{column.sortDirection}}" ?data-dragging="{{column.id == draggingColumn}}" ?data-drop-target="{{column.id == dropColumnId}}" data-drop-placement="{{dropPlacement}}">
@@ -45,6 +45,7 @@
                       <if condition="session.topLevelNavigation && cell.id == 'path'"><span class="navigation-badge" title="Top-level navigation" aria-label="Top-level navigation">Page</span></if>
                       <if condition="cell.id == 'method'"><button type="button" class="session-link" @click="{selectWithButton(session,e)}">{{cell.text}}</button></if>
                       <if condition="cell.id != 'method'"><span class="cell-value" data-tone="{{cell.tone}}">{{cell.text}}</span></if>
+                      <if condition="session.activeStreamLabel && cell.id == 'protocol'"><span class="active-stream-badge" title="{{session.activeStreamLabel}}" aria-label="{{session.activeStreamLabel}}">{{session.activeStreamLabel}}</span></if>
                       <if condition="session.autoResponse && cell.id == 'status'"><span class="auto-badge" title="Served by an auto-response rule">AUTO</span></if>
                       <if condition="session.loss && cell.id == 'state'"><span title="Some exchange evidence was omitted"> · loss</span></if>
                     </td>
@@ -173,7 +174,7 @@
     </div>
     <div id="table-settings" class="table-popover table-settings" popover="auto">
       <strong class="popover-title">View</strong><label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Compare messages</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select></label>
-      <label><input type="checkbox" ?checked="{{preferences.wrapCells}}" @change="{setWrap(e)}"> Wrap cells</label><label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
+      <label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <strong class="popover-title">Columns</strong><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
       <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset columns</button>
     </div>

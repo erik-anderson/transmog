@@ -79,7 +79,7 @@ pub struct WorkspacePreferences {
     pub response_body_split: u8,
     /// Percentage allocated to the autoresponse rule list beside its properties.
     pub autoresponse_split: u8,
-    /// Wrap table cell contents.
+    /// Legacy wrapping preference retained for saved-settings compatibility; ignored by Traffic.
     pub wrap_cells: bool,
     /// Use compact row spacing.
     pub compact_rows: bool,
@@ -111,7 +111,7 @@ impl Default for WorkspacePreferences {
                 (Path, 260),
                 (Duration, 94),
                 (ResponseBytes, 112),
-                (Protocol, 100),
+                (Protocol, 210),
                 (RequestBytes, 112),
                 (State, 104),
                 (ContentType, 160),
@@ -124,7 +124,7 @@ impl Default for WorkspacePreferences {
             .map(|(index, (id, width))| ColumnPreference {
                 id,
                 width,
-                visible: index < 7,
+                visible: index < 8,
                 pinned: index < 2,
             })
             .collect(),

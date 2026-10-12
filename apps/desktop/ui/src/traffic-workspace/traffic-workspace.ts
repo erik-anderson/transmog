@@ -13,7 +13,7 @@ import type { CertificateInspector } from '../certificate-inspector/certificate-
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport } from '../models.js';
 
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
-type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
   certificateInspector!:CertificateInspector;
@@ -311,7 +311,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rowObserver=new ResizeObserver(entries=>{
       if(this.view!=='traffic'||!this.sessionScroller.clientHeight)return;
       const anchor=this.virtualList.anchor(this.sessionScroller.scrollTop);let changed=false;
-      for(const entry of entries){const element=entry.target as HTMLElement;if(element.dataset.loading==='true')continue;const size=entry.borderBoxSize[0]?.blockSize??entry.target.getBoundingClientRect().height;changed=(this.preferences.wrapCells?this.virtualList.measure(element.dataset.sessionId??'',size):this.virtualList.uniformSize(size))||changed;}
+      for(const entry of entries){const element=entry.target as HTMLElement;if(element.dataset.loading==='true')continue;const size=entry.borderBoxSize[0]?.blockSize??entry.target.getBoundingClientRect().height;changed=this.virtualList.uniformSize(size)||changed;}
       if(changed){this.updateSpacers();this.$flushUpdates();const top=this.virtualList.restore(anchor);if(top!==null)this.sessionScroller.scrollTop=top;this.scheduleViewport();}
     });
     void this.watchSessions();
@@ -443,8 +443,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(this.sessions);
   }
   private rebuildRows(rows:SessionSummary[]):void {
-    this.sessions = rows.map((row) => ({...row,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
-      cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))}));
+    this.sessions = rows.map((row) => {
+      const activeStreamLabel = row.terminal === 'active'
+        ? row.streamProtocol === 'web-socket' ? 'WebSocket · Active' : row.streamProtocol === 'sse' ? 'SSE · Active' : ''
+        : '';
+      return {...row,activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(activeStreamLabel ? activeStreamLabel+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
+      cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id)+(column.id==='protocol'&&activeStreamLabel?' · '+activeStreamLabel:''),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))};
+    });
     this.selectedTrafficCount=this.trafficSelection.ids.size;
     this.trafficSelectionText=`${this.selectedTrafficCount.toLocaleString()} selected`;
     this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
@@ -467,7 +472,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private renderViewport():void {
     if(!this.sessionScroller?.clientHeight||this.view!=='traffic')return;
     const font=parseFloat(getComputedStyle(this.sessionScroller).fontSize)||13;
-    const layout=[this.preferences.wrapCells,this.preferences.compactRows,font,this.sessionScroller.clientWidth,...this.columns.map(column=>column.width)].join(':');
+    const layout=[this.preferences.compactRows,font,this.sessionScroller.clientWidth,...this.columns.map(column=>column.width)].join(':');
     if(layout!==this.rowLayout){
       const anchor=this.virtualList.anchor(this.sessionScroller.scrollTop);this.rowLayout=layout;
       const rootFont=parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
@@ -562,7 +567,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   resizeRequest(event:CustomEvent<{value:number;committed:boolean}>):void { this.patchPreferences({requestSplit:event.detail.value},event.detail.committed); }
   resizeMessage(event:CustomEvent<{side:string;value:number;committed:boolean}>):void { this.patchPreferences(event.detail.side === 'request' ? {requestBodySplit:event.detail.value} : {responseBodySplit:event.detail.value},event.detail.committed); }
   setLayout(event:Event):void { this.patchPreferences({layout:(event.currentTarget as HTMLSelectElement).value as WorkspacePreferences['layout']}); }
-  setWrap(event:Event):void { this.patchPreferences({wrapCells:(event.currentTarget as HTMLInputElement).checked}); }
   setCompact(event:Event):void { this.patchPreferences({compactRows:(event.currentTarget as HTMLInputElement).checked}); }
   setVisible(id:ColumnId,event:Event):void {
     const visible = (event.currentTarget as HTMLInputElement).checked;
@@ -806,7 +810,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   fitColumn(id:ColumnId):void {
     const context = new OffscreenCanvas(1,1).getContext('2d');
     if (!context) return; context.font = getComputedStyle(this.trafficTable).font || '13px Segoe UI';
-    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)))+38;
+    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)+(id==='protocol'&&row.activeStreamLabel?context.measureText(row.activeStreamLabel).width+18:0)))+38;
     this.setColumnWidth(id,width,true);
   }
   private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(32,Math.min(1200,width)))} : column)},committed); }

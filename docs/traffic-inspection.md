@@ -8,8 +8,10 @@ states; display previews can be shorter than the retained source.
 
 Traffic uses one continuous list and a native scrollbar spanning all matching
 entries. Only rows near the viewport are rendered, so large captures remain
-usable. Compact and ordinary rows have consistent heights; wrapped rows retain
-their measured heights and preserve your reading position during layout changes.
+usable. Compact and ordinary rows have consistent heights. Headers and cells
+stay on one line and clip with ellipsis when columns are narrow; hover shows
+the complete value. Protocol includes the active WebSocket or SSE badge beside
+the HTTP version.
 
 ## Headers and sizes
 
@@ -136,4 +138,4 @@ and ordering. **Body options** groups decoding and preview limits.
 **Details** groups Timings, Connection, Certificates, and imported Capture source.
 **Actions** groups replay, auto-response creation, page preview, and request copy
 commands. **Files** groups importing and saving; **View** groups layout, density,
-wrapping, and columns. Bulk actions appear for multiple selected requests.
+and columns. Bulk actions appear for multiple selected requests.

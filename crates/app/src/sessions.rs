@@ -174,6 +174,8 @@ pub struct SessionSummary {
     pub path: String,
     /// Client-facing HTTP protocol.
     pub protocol: String,
+    /// Observed application stream protocol, independent of the HTTP handshake.
+    pub stream_protocol: Option<transmog_core::stream::StreamProtocol>,
     /// Last response status, if observed.
     pub status: Option<u16>,
     /// Milliseconds from start to terminal observation or the page snapshot.
@@ -541,6 +543,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         )
         .unwrap_or(u64::MAX),
         content_type: response_content_type(snapshot),
+        stream_protocol: snapshot.stream.as_ref().map(|stream| stream.protocol),
         id: format!("{:032x}", snapshot.exchange_id.0),
         caller: client_identity_view(&snapshot.metadata.client_identity),
         method: request.map_or_else(|| "—".to_owned(), |head| head.method.clone()),
@@ -1194,6 +1197,49 @@ mod tests {
                 .as_millis(),
             0
         );
+    }
+
+    #[test]
+    fn traffic_rows_preserve_stream_protocol_and_effective_lifetime() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        service.catalog().apply(started(1));
+        let mut snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        let now = SystemTime::now();
+        assert_eq!(summarize(&snapshot, now, false).stream_protocol, None);
+        for protocol in [StreamProtocol::WebSocket, StreamProtocol::Sse] {
+            for (status, terminal) in [
+                (StreamStatus::Connecting, "active"),
+                (StreamStatus::Open, "active"),
+                (StreamStatus::Closing, "active"),
+                (StreamStatus::Closed, "completed"),
+                (StreamStatus::Failed, "failed"),
+                (StreamStatus::Interrupted, "interrupted"),
+            ] {
+                snapshot.stream = Some(StreamState::now(protocol, status, None));
+                snapshot.imported = false;
+                let row = summarize(&snapshot, now, false);
+                assert_eq!(row.stream_protocol, Some(protocol));
+                assert_eq!(row.terminal, terminal);
+                let json = serde_json::to_value(&row).unwrap();
+                assert_eq!(
+                    json["streamProtocol"],
+                    serde_json::to_value(protocol).unwrap()
+                );
+                snapshot.imported = true;
+                let saved = summarize(&snapshot, now, false);
+                assert_eq!(saved.stream_protocol, Some(protocol));
+                assert_eq!(
+                    saved.terminal,
+                    if status.is_active() {
+                        "open-at-capture"
+                    } else {
+                        terminal
+                    }
+                );
+            }
+        }
     }
 
     type NavigationCase = (&'static str, Vec<(&'static str, &'static str)>, bool);

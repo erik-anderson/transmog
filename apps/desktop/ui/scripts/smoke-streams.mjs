@@ -29,16 +29,19 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
     const status=await invoke('start_proxy',{request:{listen:'127.0.0.1:0',caCertificatePath:bootstrap.caCertificatePath,caPrivateKeyPath:bootstrap.caPrivateKeyPath}});
     const proxy=new URL('http://'+status.listener);
     const options=path=>({hostname:proxy.hostname,port:proxy.port,path:base+path,agent:false,headers:{Host:new URL(base).host}});
-    client=await new Promise((resolve,reject)=>{
+    const openSocket=()=>new Promise((resolve,reject)=>{
       const opts=options('/native-stream-socket');Object.assign(opts.headers,{Connection:'Upgrade',Upgrade:'websocket','Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==','Sec-WebSocket-Version':'13'});
       const outgoing=request(opts);outgoing.on('upgrade',(_,socket)=>resolve(socket));outgoing.on('response',response=>reject(new Error('Upgrade rejected: '+response.statusCode)));outgoing.on('error',reject);outgoing.end();
     });
+    client=await openSocket();
     client.on('error',()=>{});client.resume();client.write(frame('native client',true));
     streamResponse=await new Promise((resolve,reject)=>{streamRequest=request(options('/native-stream-events'),resolve);streamRequest.on('error',reject);streamRequest.end();});
     streamResponse.on('error',()=>{});streamResponse.resume();
     const active=async()=> (await invoke('query_sessions',{query:{filters:[{column:'state',operator:'contains',value:'active'}]}})).sessions.filter(row=>row.path.startsWith('/native-stream-'));
     await wait(async()=> (await active()).length===2);
     const rows=await active(),socketId=rows.find(row=>row.path.endsWith('socket')).id,sseId=rows.find(row=>row.path.endsWith('events')).id;
+    assert.equal(rows.find(row=>row.id===socketId).streamProtocol,'web-socket');
+    assert.equal(rows.find(row=>row.id===sseId).streamProtocol,'sse');
     const page=id=>invoke('stream_page',{query:{sessionId:id,offset:0,limit:100,tail:true,anchor:null,sender:null,controls:true,search:''}});
     await wait(async()=> (await page(socketId)).rows.length===2 && (await page(sseId)).rows.length===1);
     const ws=await page(socketId);assert.deepEqual(ws.rows.map(row=>row.message.sender).sort(),['client','server']);
@@ -46,9 +49,28 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
     assert.equal(Buffer.from(payload.payload).toString(),'{"native":1}');assert.equal(payload.eventId,'first');
     await evaluate(`(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="traffic"]').click();await shell.traffic.revealSession(${JSON.stringify(socketId)});})()`);
     await wait(()=>evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamRows.length===2`));
+    const badges=()=>evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.active-stream-badge'),el=>el.textContent)`);
+    await wait(async()=> (await badges()).includes('WebSocket · Active') && (await badges()).includes('SSE · Active'));
     await evaluate(`(()=>{const inspector=document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector');inspector.select(inspector.streamRows[0]);})()`);
     await wait(()=>evaluate(`!!document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload`));
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-streams.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    const originalPreferences=await evaluate(`document.querySelector('app-shell').traffic.preferences`);
+    const rowHeight=await evaluate(`document.querySelector('app-shell').traffic.querySelector('tr[data-session-id]').getBoundingClientRect().height`);
+    try {
+      for(const width of [100,60,32]) {
+        await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,wrapCells:true,columns:t.preferences.columns.map(column=>column.id==='protocol'||column.id==='path'?{...column,width:${width}}:column)};})()`);
+        await wait(()=>evaluate(`(()=>{
+          const badges=Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.active-stream-badge'));
+          return badges.length===2&&badges.every(badge=>{
+            const cell=badge.closest('td'),text=document.createRange();text.selectNodeContents(badge);
+            return cell.dataset.columnId==='protocol'&&Math.abs(cell.getBoundingClientRect().width-${width})<1&&getComputedStyle(cell).whiteSpace==='nowrap'&&text.getClientRects().length===1&&Math.abs(cell.closest('tr').getBoundingClientRect().height-${rowHeight})<1&&cell.scrollWidth>cell.clientWidth&&cell.title.includes('Active');
+          });
+        })()`));
+        if(width===60&&screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-stream-protocol-narrow.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+      }
+    } finally {
+      await evaluate(`document.querySelector('app-shell').traffic.preferences=${JSON.stringify(originalPreferences)}`);
+    }
     await evaluate(`document.querySelector('app-shell').traffic.revealSession(${JSON.stringify(sseId)})`);
     await wait(()=>evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamRows[0]?.message.kind==='event'`));
     await evaluate(`(()=>{const inspector=document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector');inspector.select(inspector.streamRows[0]);})()`);
@@ -60,9 +82,23 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
     const resumed=await invoke('resume_application');assert.equal(resumed.lifecycle,'running');
     client.write(frame('after restart',true));events.write(': heartbeat\n\ndata: second\n\n');
     await wait(async()=> (await page(socketId)).rows.length===3 && (await page(sseId)).rows.length===3);
-    // Application exit must cancel the quiet socket instead of waiting for a peer.
+    // Closing the real peers must remove badges through the observed lifecycle.
+    events.end();
+    await wait(async()=> !(await active()).some(row=>row.id===sseId));
+    await evaluate(`document.querySelector('app-shell').traffic.refreshSessions(undefined,true)`);
+    await wait(async()=> !(await badges()).includes('SSE · Active'));
+    assert.ok((await badges()).includes('WebSocket · Active'),'Quiet WebSocket lost its active badge');
+    client.destroy();
+    await wait(async()=> (await active()).length===0);
+    await evaluate(`document.querySelector('app-shell').traffic.refreshSessions(undefined,true)`);
+    await wait(async()=> (await badges()).length===0);
+    assert.deepEqual(await badges(),[],'Ended native streams still show active badges');
+    // Application exit must cancel a new quiet socket instead of waiting for a peer.
+    client=await openSocket();client.on('error',()=>{});client.resume();
+    await wait(async()=> (await active()).length===1);
     await invoke('prepare_update_handoff');
     assert.equal((await invoke('app_status')).lifecycle,'stopped');
+
     return {liveWebSocket:true,liveSse:true,quietActive:true,stopResume:true,boundedExit:true};
   } finally {
     client?.destroy();streamResponse?.destroy();streamRequest?.destroy();

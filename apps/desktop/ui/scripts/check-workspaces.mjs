@@ -460,7 +460,7 @@ try {
   await view('traffic');
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.reviewOriginalRows;delete state.reviewOriginalRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.clearTrafficSelection();await traffic.refreshSessions(undefined,true);});
   assert.equal(await page.evaluate(() => CSS.supports('width','attr(data-width type(<length>))')), true, 'Typed CSS attributes required by resizable panels are unavailable');
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes']);
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes','protocol']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
   assert.equal(await page.locator('tr[data-session-id="cached"]').getAttribute('data-tone'),'not-modified');
   assert.equal(await page.locator('tr[data-session-id="first"] .navigation-badge').textContent(),'Page');
@@ -519,12 +519,12 @@ try {
   await page.mouse.move(pathHeader.x+pathHeader.width/2,pathHeader.y+12,{steps:8});
   assert.equal(await page.locator('#header-path').getAttribute('data-drop-target'),'','Column drop target is not visible');
   await page.mouse.up();
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes']);
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes','protocol']);
   await page.waitForTimeout(300); // Let the accidental post-drag click guard expire.
   const dragCancelBounds=await page.locator('#header-process .column-trigger').boundingBox();
   await page.mouse.move(dragCancelBounds.x+15,dragCancelBounds.y+12); await page.mouse.down();
   await page.mouse.move(dragCancelBounds.x-50,dragCancelBounds.y+12,{steps:5}); await page.keyboard.press('Escape'); await page.mouse.up();
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes'],'Cancelling a column drag changed the layout');
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes','protocol'],'Cancelling a column drag changed the layout');
   await page.waitForTimeout(300);
   await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').setColumnWidth('method',32,true));
   assert.ok(Math.abs(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width)-32)<1,'Minimum column width is stretched by table or header content');

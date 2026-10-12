@@ -62,7 +62,7 @@ export async function checkTrafficList(page,outputDirectory) {
   assert.equal(await page.locator('tr[data-current]').evaluate(el=>el===el.getRootNode().activeElement),true);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.contentSearchActive),true,'Match navigation cleared search');
   await page.getByRole('button',{name:'Clear search',exact:true}).click();await settle();
-  // Wrapped heights, narrow split, zoom and layout changes preserve a logical anchor.
+  // Long clipped values, legacy wrap settings and narrow layouts preserve a logical anchor.
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;for(let index=4900;index<5100;index++)state.sessions[index].path='/'+('long path '+index+' ').repeat(index%7+1);t.preferences={...t.preferences,wrapCells:true};await t.refreshSessions(undefined,true);const row=await t.revealCurrent('virtual-5000',true);if(row)await t.inspectSession(row);});
   await settle();await page.setViewportSize({width:800,height:600});await settle();
   await page.screenshot({path:outputDirectory+'/traffic-virtual-narrow.png'});
