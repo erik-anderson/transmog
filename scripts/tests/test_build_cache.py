@@ -18,7 +18,9 @@ class CacheTests(unittest.TestCase):
     def setUp(self):
         self.owner = tempfile.TemporaryDirectory()
         self.addCleanup(self.owner.cleanup)
-        self.root = Path(self.owner.name)
+        # Hosted Windows TEMP may use an 8.3 alias such as RUNNER~1.
+        # Use the same canonical owner spelling as the cache containment guard.
+        self.root = Path(self.owner.name).resolve()
         self.profile = self.root / "target/debug"
         (self.profile / "deps").mkdir(parents=True)
         (self.profile / ".fingerprint").mkdir()
@@ -231,7 +233,7 @@ class CargoAcceptance(unittest.TestCase):
         env.pop("CARGO_TARGET_DIR", None)
         env.pop("CARGO_BUILD_BUILD_DIR", None)
         with tempfile.TemporaryDirectory(prefix="transmog-cache-cargo-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             (root / "src").mkdir()
             (root / "helper/src").mkdir(parents=True)
             (root / "Cargo.toml").write_text('[workspace]\nmembers=["helper"]\n[package]\nname="cache-fixture"\nversion="0.1.0"\nedition="2021"\n[dependencies]\ncache-helper={path="helper"}\n')

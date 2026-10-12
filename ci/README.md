@@ -10,6 +10,12 @@ and other branches. It has no automatic push, tag, schedule, or pull-request
 trigger. Runs are serialized, time-limited, and retain intermediate artifacts
 for seven days; compiled targets and signing tools are never restored from caches.
 
+The Python tooling requires Python 3.11 or newer and uses only the standard
+library. The hosted Windows image supplies Python; the packaging, release, and
+version-maintenance workflows set `PYTHONUTF8=1` so Python child output matches
+the tooling's UTF-8 subprocess decoder. Cache fixtures resolve temporary roots
+before containment checks because Windows may supply an 8.3 path alias.
+
 For each release, set and commit the version with
 `pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch>`,
 push it to the selected branch, then use

@@ -14,6 +14,9 @@ on:
           - Canary
 
 permissions: {}
+env:
+  # Python child processes must match the tooling's UTF-8 subprocess decoder.
+  PYTHONUTF8: '1'
 concurrency:
   group: windows-signed-release
   cancel-in-progress: false

@@ -6,6 +6,8 @@ on:
     types: [published, released, edited]
 
 permissions: {}
+env:
+  PYTHONUTF8: '1'
 concurrency:
   group: release-version-maintenance
   cancel-in-progress: false

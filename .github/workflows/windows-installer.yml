@@ -9,6 +9,8 @@ on:
         default: false
 
 permissions: {}
+env:
+  PYTHONUTF8: '1'
 
 concurrency:
   group: windows-unsigned-installer

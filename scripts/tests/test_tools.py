@@ -21,7 +21,8 @@ def load(name):
 class CommandTests(unittest.TestCase):
     def test_arguments_are_literal_and_nonzero_exit_stops_the_caller(self):
         text = 'spaces & $() `echo` "quotes" ; Unicode: \u00e9'
-        result = repo_tools.command([sys.executable, "-c", "import sys; print(sys.argv[1])", text], capture=True)
+        # Match command()'s UTF-8 decoder even on Windows without PYTHONUTF8.
+        result = repo_tools.command([sys.executable, "-X", "utf8", "-c", "import sys; print(sys.argv[1])", text], capture=True)
         self.assertEqual(result.stdout.strip(), text)
         with self.assertRaises(subprocess.CalledProcessError):
             repo_tools.command([sys.executable, "-c", "raise SystemExit(19)"], capture=True)
