@@ -357,3 +357,505 @@ async fn dropping_import_future_cancels_worker_and_releases_slot_when_it_exits()
         1
     );
 }
+
+fn header(name: &str, value: &str) -> CapturedHeader {
+    CapturedHeader {
+        name: name.as_bytes().to_vec(),
+        value: Some(value.as_bytes().to_vec()),
+        original_value_bytes: None,
+    }
+}
+
+fn failed() -> CaptureRecord {
+    record(CaptureRecordKind::Failed {
+        category: "Upstream".into(),
+        message: "interrupted".into(),
+    })
+}
+
+#[test]
+fn native_samples_after_a_gap_do_not_become_a_false_contiguous_prefix() {
+    use std::io::Read;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("sample-gaps.tmcap");
+    for first in [None, Some(b"ab".to_vec())] {
+        let expected = first.clone().unwrap_or_default();
+        write_records(
+            &path,
+            vec![
+                body(3, first),
+                body(2, Some(b"de".to_vec())),
+                record(CaptureRecordKind::Completed),
+            ],
+        );
+        let imported = read(&path).unwrap();
+        let saved = &imported.bodies[0];
+        assert_eq!(saved.observed, 5);
+        assert!(!saved.complete);
+        assert_eq!(saved.source.length(), Some(expected.len() as u64));
+        let mut bytes = Vec::new();
+        saved
+            .source
+            .open()
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(
+            bytes, expected,
+            "samples on either side of a gap were joined"
+        );
+    }
+}
+
+#[test]
+fn native_transfer_encoding_prevents_content_length_completeness_inference() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("framing.tmcap");
+    for (length, bytes, finished, expected) in [
+        ("0", vec![], false, false),
+        ("3", b"abc".to_vec(), false, false),
+        ("1", b"abc".to_vec(), true, true),
+    ] {
+        let mut request = head("https://example.invalid/".into());
+        if let CaptureRecordKind::RequestHead { headers, .. } = &mut request.kind {
+            *headers = vec![
+                header("Content-Length", length),
+                header("Transfer-Encoding", "chunked"),
+            ];
+        }
+        let mut records = vec![request, body(bytes.len(), Some(bytes))];
+        if finished {
+            records.push(record(CaptureRecordKind::Unknown {
+                kind: "body-completed".into(),
+                payload: serde_json::json!({"boundary":"client-request"}),
+            }));
+        }
+        records.push(failed());
+        write_records(&path, records);
+        let imported = read(&path).unwrap();
+        assert_eq!(
+            imported.bodies[0].complete, expected,
+            "length={length}, finished={finished}"
+        );
+    }
+}
+
+#[test]
+fn native_response_framing_uses_the_request_method_on_its_own_leg() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("head-method.tmcap");
+    for client_is_head in [false, true] {
+        let mut records = vec![];
+        for (boundary, is_head) in [
+            (ExchangeBoundary::ClientRequest, client_is_head),
+            (ExchangeBoundary::UpstreamRequest, !client_is_head),
+        ] {
+            records.push(record(CaptureRecordKind::RequestHead {
+                boundary,
+                method: if is_head { "HEAD" } else { "GET" }.into(),
+                target: "https://example.invalid/".into(),
+                headers: vec![],
+            }));
+        }
+        for boundary in [
+            ExchangeBoundary::ClientResponse,
+            ExchangeBoundary::UpstreamResponse,
+        ] {
+            records.push(record(CaptureRecordKind::ResponseHead {
+                boundary,
+                status: 200,
+                headers: vec![header("Content-Length", "123")],
+            }));
+        }
+        records.push(failed());
+        write_records(&path, records);
+        let imported = read(&path).unwrap();
+        for (boundary, expected) in [
+            (ExchangeBoundary::ClientResponse, client_is_head),
+            (ExchangeBoundary::UpstreamResponse, !client_is_head),
+        ] {
+            assert_eq!(
+                imported
+                    .bodies
+                    .iter()
+                    .find(|body| body.boundary == boundary)
+                    .unwrap()
+                    .complete,
+                expected,
+                "{boundary:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn native_terminal_heads_keep_restored_protocols() {
+    use transmog_core::performance::{PerformanceEvidence, ProtocolObservation};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("terminal-protocol.tmcap");
+    write_records(
+        &path,
+        vec![
+            head("https://example.invalid/".into()),
+            record(CaptureRecordKind::ResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                status: 204,
+                headers: vec![],
+            }),
+            record(CaptureRecordKind::Performance(PerformanceEvidence {
+                protocols: ["client-request", "client-response"]
+                    .map(|boundary| ProtocolObservation {
+                        boundary: boundary.into(),
+                        version: "HTTP/2".into(),
+                        reason: None,
+                    })
+                    .to_vec(),
+                ..Default::default()
+            })),
+            record(CaptureRecordKind::Completed),
+        ],
+    );
+    let imported = read(&path).unwrap();
+    let snapshot = &imported.sessions[0];
+    assert_eq!(
+        snapshot.request_heads[0].head.source_version,
+        HttpLegVersion::Http2
+    );
+    let Some(SessionTerminal::Completed(terminal)) = &snapshot.terminal else {
+        panic!("missing completed exchange")
+    };
+    assert_eq!(terminal.request_head.source_version, HttpLegVersion::Http2);
+    assert_eq!(terminal.response_head.source_version, HttpLegVersion::Http2);
+}
+
+#[tokio::test]
+async fn native_late_metadata_error_does_not_publish_prior_valid_rows_or_bodies() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("late-error.tmcap");
+    let mut bad = record(CaptureRecordKind::Unknown {
+        kind: "body-representation".into(),
+        payload: serde_json::json!({"boundary":"client-response", "contentCodings":[false], "observedBytes":0, "retainedBytes":0, "complete":true}),
+    });
+    bad.exchange_id = 2;
+    write_records(
+        &path,
+        vec![
+            body(3, Some(b"abc".to_vec())),
+            record(CaptureRecordKind::Completed),
+            bad,
+        ],
+    );
+    let workspace = app(root.path());
+    assert!(
+        workspace
+            .import_trace(request(&path), Arc::new(|_| {}))
+            .await
+            .is_err()
+    );
+    assert_empty(&workspace, ExchangeId(1));
+    assert_eq!(workspace.body_store().unwrap().purge_terminal().unwrap(), 0);
+}
+
+#[test]
+fn native_observer_loss_stops_retaining_a_contiguous_body_prefix() {
+    use std::io::Read;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("observer-gap.tmcap");
+    write_records(
+        &path,
+        vec![
+            body(2, Some(b"ab".to_vec())),
+            record(CaptureRecordKind::Loss {
+                first_missing_sequence: 2,
+                count: 1,
+                reason: "dropped event".into(),
+            }),
+            body(2, Some(b"de".to_vec())),
+            record(CaptureRecordKind::Completed),
+        ],
+    );
+    let imported = read(&path).unwrap();
+    assert_eq!(imported.sessions[0].sequence_loss, 1);
+    let saved = &imported.bodies[0];
+    assert!(!saved.complete);
+    let mut bytes = Vec::new();
+    saved
+        .source
+        .open()
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert_eq!(bytes, b"ab");
+}
+
+#[test]
+fn native_misplaced_known_records_are_rejected_instead_of_ignored() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("record-scope.tmcap");
+    let mut global_body = body(3, Some(b"abc".to_vec()));
+    global_body.exchange_id = 0;
+    let mut global_completed = record(CaptureRecordKind::Completed);
+    global_completed.exchange_id = 0;
+    let global_body_marker = CaptureRecord {
+        exchange_id: 0,
+        ..record(CaptureRecordKind::Unknown {
+            kind: "body-completed".into(),
+            payload: serde_json::json!({"boundary":"client-request"}),
+        })
+    };
+    let local_trace_metadata = record(CaptureRecordKind::Unknown {
+        kind: "trace-metadata".into(),
+        payload: serde_json::json!({}),
+    });
+    for record in [
+        global_body,
+        global_completed,
+        global_body_marker,
+        local_trace_metadata,
+    ] {
+        write_records(&path, vec![record]);
+        assert!(read(&path).is_err(), "accepted misplaced known record");
+    }
+    // Future extension records remain ignorable in either scope.
+    write_records(
+        &path,
+        [0, 1]
+            .map(|exchange_id| CaptureRecord {
+                exchange_id,
+                ..record(CaptureRecordKind::Unknown {
+                    kind: "future-extension".into(),
+                    payload: serde_json::json!({}),
+                })
+            })
+            .to_vec(),
+    );
+    assert!(read(&path).is_ok());
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn native_import_shared_and_dictionary_bodies_remain_lazy_and_seekable() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use transmog_capture::{CaptureEncoding, CapturePassword};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("paired-bodies.tmcap");
+    let mut seed = 0x1234_5678_u32;
+    let original: Vec<u8> = (0..128 * 1024)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed.to_le_bytes()[0]
+        })
+        .collect();
+    let mut changed = original.clone();
+    changed[70_000..70_100].fill(42);
+    for encrypted in [false, true] {
+        let password = encrypted.then(|| CapturePassword::new("import test password".into()));
+        let options = CaptureEncoding {
+            password: password.clone(),
+        };
+        let mut writer =
+            CaptureWriter::with_encoding(Vec::new(), CaptureLimits::default(), &options).unwrap();
+        for (boundary, bytes) in [
+            (ExchangeBoundary::UpstreamResponse, &original),
+            (ExchangeBoundary::ClientResponse, &changed),
+        ] {
+            for chunk in bytes.chunks(64 * 1024) {
+                writer
+                    .append(&record(CaptureRecordKind::BodySegment {
+                        boundary,
+                        byte_count: chunk.len(),
+                        bytes: Some(chunk.to_vec()),
+                        truncated: false,
+                    }))
+                    .unwrap();
+            }
+        }
+        writer
+            .append(&record(CaptureRecordKind::Completed))
+            .unwrap();
+        writer.seal().unwrap();
+        let bytes = writer.into_inner().unwrap();
+        let mut index = CaptureReader::with_password(
+            std::io::Cursor::new(&bytes),
+            CaptureLimits::default(),
+            password.as_ref(),
+        )
+        .unwrap();
+        let mut frames = Vec::new();
+        while let Some(frame) = index.read_next_indexed().unwrap() {
+            frames.push(frame);
+        }
+        assert_eq!(
+            frames[0].offset, frames[2].offset,
+            "first pair must share the object"
+        );
+        assert!(
+            frames[3].frame_bytes < 1024,
+            "second pair must use a dictionary"
+        );
+        std::fs::write(&path, &bytes).unwrap();
+        let mut input = request(&path);
+        input.password = password;
+        let (imported, _, _) =
+            TraceRegistry::read(&input, &AtomicBool::new(false), &|_| {}).unwrap();
+        for (boundary, expected) in [
+            (ExchangeBoundary::UpstreamResponse, &original),
+            (ExchangeBoundary::ClientResponse, &changed),
+        ] {
+            let source = &imported
+                .bodies
+                .iter()
+                .find(|body| body.boundary == boundary)
+                .unwrap()
+                .source;
+            for offset in [0, 65_530, 65_536, 70_010, original.len()] {
+                let mut actual = Vec::new();
+                source
+                    .open_at(offset as u64)
+                    .unwrap()
+                    .take(512)
+                    .read_to_end(&mut actual)
+                    .unwrap();
+                assert_eq!(&actual, &expected[offset..expected.len().min(offset + 512)]);
+            }
+            assert!(source.open_at(original.len() as u64 + 1).is_err());
+        }
+        // Corrupt only the dictionary base, away from the metadata's blocks.
+        let corrupt_at = frames[1].offset + 20_000;
+        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.seek(SeekFrom::Start(corrupt_at)).unwrap();
+        file.write_all(&[bytes[usize::try_from(corrupt_at).unwrap()] ^ 1])
+            .unwrap();
+        drop(file);
+        // Import must stay lazy even when an unread body is corrupt.
+        let (again, _, _) = TraceRegistry::read(&input, &AtomicBool::new(false), &|_| {}).unwrap();
+        for data in [&imported, &again] {
+            let source = &data
+                .bodies
+                .iter()
+                .find(|body| body.boundary == ExchangeBoundary::ClientResponse)
+                .unwrap()
+                .source;
+            let mut first = Vec::new();
+            source
+                .open_at(0)
+                .unwrap()
+                .take(16)
+                .read_to_end(&mut first)
+                .unwrap();
+            assert_eq!(first, changed[..16]);
+            assert!(
+                source
+                    .open_at(70_000)
+                    .unwrap()
+                    .read_to_end(&mut Vec::new())
+                    .is_err()
+            );
+        }
+        drop(imported);
+        drop(again);
+    }
+}
+
+#[test]
+fn native_charges_dense_context_allocations() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("dense-context.tmcap");
+    let payload = serde_json::json!({"items": vec![Value::Null; 10_000]});
+    let minimum = 10_000 * std::mem::size_of::<Value>();
+    write_records(
+        &path,
+        vec![
+            CaptureRecord {
+                exchange_id: 0,
+                sequence: 0,
+                kind: CaptureRecordKind::Unknown {
+                    kind: "trace-metadata".into(),
+                    payload,
+                },
+            },
+            head("https://example.invalid/".into()),
+        ],
+    );
+    assert!(read(&path).unwrap().index_bytes >= minimum);
+    let workspace = app(root.path());
+    let (data, trace, _) =
+        TraceRegistry::read(&request(&path), &AtomicBool::new(false), &|_| {}).unwrap();
+    // A serialized-only charge fits; the retained tree does not.
+    workspace.traces.lock().metadata_bytes = MAX_HEAD_BYTES - minimum / 2;
+    let result = workspace.traces.publish_import(
+        data,
+        &workspace.service,
+        workspace.body_store().unwrap(),
+        trace,
+        &AtomicBool::new(false),
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        workspace.traces.lock().metadata_bytes,
+        MAX_HEAD_BYTES - minimum / 2
+    );
+    workspace.traces.lock().metadata_bytes = 0;
+    assert_empty(&workspace, ExchangeId(1));
+    let (data, trace, _) =
+        TraceRegistry::read(&request(&path), &AtomicBool::new(false), &|_| {}).unwrap();
+    let id = data.sessions[0].exchange_id;
+    workspace
+        .traces
+        .publish_import(
+            data,
+            &workspace.service,
+            workspace.body_store().unwrap(),
+            trace,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let charged = workspace.traces.lock().metadata_bytes;
+    assert!(charged >= minimum);
+    workspace.traces.forget_entries(&[]);
+    // Publishing clones the returned trace; Vec clones may shrink spare
+    // capacity. Recalculation may lower the conservative charge, but must
+    // continue covering the retained tree rather than only its JSON bytes.
+    let recalculated = workspace.traces.lock().metadata_bytes;
+    assert!(recalculated >= minimum && recalculated <= charged);
+    workspace.traces.forget_entries(&[]);
+    assert_eq!(workspace.traces.lock().metadata_bytes, recalculated);
+    workspace.traces.forget_entries(&[id]);
+    assert_eq!(workspace.traces.lock().metadata_bytes, 0);
+}
+
+#[test]
+fn native_representation_allocations_are_charged_before_retention() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("representation-budget.tmcap");
+    let payload = serde_json::json!({"boundary":"client-request", "contentCodings":[],
+        "observedBytes":0, "retainedBytes":0, "complete":true, "extra":vec![Value::Null; 1000]});
+    write_records(
+        &path,
+        vec![record(CaptureRecordKind::Unknown {
+            kind: "body-representation".into(),
+            payload,
+        })],
+    );
+    let mut capture =
+        CaptureReader::new(File::open(path).unwrap(), CaptureLimits::default()).unwrap();
+    let frame = capture.read_next_indexed().unwrap().unwrap();
+    let mut row = NativeSession::default();
+    let mut budget = MAX_HEAD_BYTES - 10_000;
+    assert!(apply_native_frame(&mut row, frame, &mut budget, &mut HashSet::new()).is_err());
+    assert!(row.bodies.is_empty());
+}
+
+#[test]
+fn metadata_budget_includes_sparse_object_node_allocations() {
+    // Tiny serialized objects each allocate a full map node, not only a key
+    // and value. This shape must not bypass the retained context budget.
+    let value = serde_json::json!(
+        (0..1000)
+            .map(|_| serde_json::json!({"a":null}))
+            .collect::<Vec<_>>()
+    );
+    assert!(json_heap_bytes(&value) >= 1000 * 1024);
+}

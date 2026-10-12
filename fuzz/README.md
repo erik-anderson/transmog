@@ -29,11 +29,15 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
   mutations of compact and normal checkpointed captures, structured footers,
   branches, index references and records, malformed zstd bodies/index objects,
   and public X.509 certificates. It checks bounded iteration, final seal
-  consistency, and agreement between indexed and full readers. Body corruption
+  consistency, and agreement between indexed, full, and random readers, including
+  record fields, body bytes, and hashes. Body corruption
   can be detected lazily; metadata-only opening need not authenticate unread bodies.
-- `capture_crypto` caches a password-derived context once per process, then
+- `capture_crypto` caches password-derived contexts for normal 16 KiB and compact
+  1 KiB blocks once per process, then
   exercises encrypted block/tag bit flips, incorrect ordinals and frame lengths.
-  Every single-bit mutation in a selected authenticated block must fail. A
+  The selected block can belong to the metadata page, independent body, or
+  dictionary base of a dependent body; mutations cover the complete block and
+  tag. Every single-bit mutation in a selected authenticated block must fail. A
   separate oracle verifies that changing public bootstrap bytes cannot replace
   an already pinned reader's key/context. This target does not rerun Argon2 or
   claim to fuzz password-based opening on each iteration; deterministic tests
@@ -61,8 +65,9 @@ The runner builds a digest-pinned Debian image with Clang, Ninja, LLVM coverage
 tools, the pinned stable and nightly toolchains, and the pinned `cargo-fuzz`.
 It mounts the checkout read-only, caches downloaded crates and compiled fuzz
 targets in named Docker volumes, and copies both semantic seeds and the
-minimized coverage corpus to ephemeral storage. Ordinary campaigns therefore
-do not dirty the checkout. The same image backs `test-linux-docker.ps1`; that
+minimized coverage corpus to ephemeral storage. Crash reproducers are written
+to the ignored `fuzz/artifacts` directory, so removing the container does not
+discard failures. Ordinary campaigns do not change source files or corpora. The same image backs `test-linux-docker.ps1`; that
 runner clears fuzz-only sanitizer flags before executing the normal workspace
 matrix with Clang, `llvm-ar`, and Ninja.
 
@@ -123,7 +128,8 @@ python scripts/dev-env.py --run cargo test -p transmog-capture --test fuzz_seeds
 [`capture-seed-expectations.json`](capture-seed-expectations.json) records whether
 each reader seed should open, which metadata/full records it must reach, and its
 intentional error, if any. The test also checks the complete seed inventory and
-all eight crypto body/context mutation modes. A valid fixture silently becoming
+all 32 crypto selector combinations for block geometry, body/context selection,
+mutation type, and dictionary-dependent bodies. A valid fixture silently becoming
 an early parser rejection now fails this test. When the format changes, update
 the semantic seeds and review their expected outcomes together; do not blindly
 replace the expectations with actual output. These tests need no libFuzzer or
@@ -207,3 +213,27 @@ Production compact/checkpoint fixtures also contain a referenced performance
 snapshot. Named seeds cover valid reuse, duplicates, missing definitions and
 forward references. The crypto target uses bit 2 of its selector to exercise a
 performance frame with pinned immutable context as well as a body frame.
+
+
+Packed-object mode `13` constructs a paired dictionary-compressed body. Named
+seeds cover valid decoding, changed base/result digests, forward references and
+a forbidden dictionary chain. Metadata lives only in leaf objects; mode `11`
+uses explicit body references. Codec/expanded-size seeds use the ten-byte packed
+header. Earlier duplicated-metadata frame fixtures are not accepted.
+
+Metadata allocation regressions include dense record quotas, excessive JSON
+nesting, and over-wide branches. Deterministic tests additionally cover the
+4096-entry leaf ceiling, pre-materialization record bounds, and viewer retained
+JSON allocation budgets. The fuzz targets exercise the capture library, not the
+entire desktop import transaction; import publication and cancellation are
+covered by application regression tests.
+
+Reader mode `14` passes raw leaf JSON through the production envelope parser;
+mode `15` mutates a valid two-level index tree and repairs block checksums. The
+`multilevel-index` seed must visit all four leaves successfully, keeping branch
+traversal and random reads reachable rather than testing only branch rejection.
+
+The `object-amplification` seed is byte-bounded but exceeds the structural
+allocation budget with thousands of tiny objects. It must fail before the
+reader constructs a `Value` tree. Writer/reader symmetry and escaped string
+punctuation are covered by deterministic tests.

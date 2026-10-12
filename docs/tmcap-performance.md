@@ -6,6 +6,60 @@ metadata and chunks smaller than 4 KiB stay on that thread. The live capture
 writer itself runs separately from asynchronous request handling. Eight pending
 records bound compression work and preserve output order.
 
+## Packed layout and runtime sharing update
+
+The current layout stores metadata once, packs index/body objects into common
+blocks, and shares body chunks between opposite boundaries of one exchange.
+The earlier tables below describe the previous experimental layout; this
+section records the new measurement, also on 2026-10-11 on the same Windows host.
+
+The actual plain container benchmark processed 128 MiB per run, three repeats,
+with CPU affinity and alternating worker order. No other tests or fuzz campaigns
+ran during the timing interval. Median input MiB/s:
+
+| CPUs | Workload | Inline | Two workers | Four workers |
+| --- | --- | ---: | ---: | ---: |
+| 1 | Text | 609 | 521 | 469 |
+| 1 | Binary | 833 | 802 | 842 |
+| 1 | Mixed | 615 | 681 | 718 |
+| 2 | Text | 693 | 996 | 1031 |
+| 2 | Binary | 820 | 842 | 819 |
+| 2 | Mixed | 753 | 861 | 834 |
+| 4 | Text | 683 | 1506 | 1391 |
+| 4 | Binary | 800 | 807 | 852 |
+| 4 | Mixed | 774 | 773 | 837 |
+
+With two CPUs, two workers improve text throughput by 44% and mixed throughput
+by 14%. One CPU still uses inline compression by default; incompressible streams
+still bypass the pool. These results support retaining the existing lazy
+two-worker policy. Affinity does not reproduce an actual older processor, and
+these short cached-file writes do not establish sustained disk throughput.
+
+```text
+python scripts/benchmark-capture.py --container --kinds text,binary,mixed --mib 128 --repeats 3 --output packed-container-perf.jsonl
+python scripts/dev-env.py --run cargo test -p transmog-capture --release --lib large_trace_metadata_io_measurement -- --ignored --nocapture
+```
+
+The deterministic large-trace test contains 2,000 paired responses, 4,001 records
+and a 65,813,972-byte file. Opening reads 17,172 bytes; indexing every record reads
+295,972 bytes total (0.45% of the file), without decompressing bodies. Selecting
+one 32 KiB body reads 82,000 bytes, including its metadata page and block edges.
+Release-mode times using an in-memory seekable file buffer were 0.15 ms to open,
+9.44 ms to index and 0.64 ms for that body. These are CPU/I/O-count measurements,
+not cold-disk latency measurements. The test asserts bounded reads, not timing.
+
+A private 43-exchange real-world fixture shrank from 2,149,173 bytes to about
+787,976 bytes (63.3% smaller), compared with 998,707 bytes for its extended SAZ.
+All 913 records and captured body digests survive repacking. Random header
+material can change size by a few bytes. The fixture is not included in the repo.
+The opt-in `repack_local_records_and_measure_metadata_open` test accepts local
+`TMCAP_RECORDS` JSONL and a `TMCAP_REPACKED` output path for reproducible analysis.
+
+Runtime regression tests separately verify that unchanged paired memory bodies
+use one allocation set, including interleaved/random chunk boundaries. They
+cover changed bytes, separate exchanges, quota pressure, eviction, clearing and
+read leases. Imported native bodies remain file references until read.
+
 ## Method
 
 Measurements were collected on 2026-10-11 on Windows, on an Intel Core Ultra 7
@@ -146,5 +200,5 @@ bodies dominate file size, and connections used once offer little reuse.
 The comparison and regression fixtures also cover changing connection facts,
 request-relative measurements, encrypted and plain checkpoints/compaction,
 independent random frame reads, metadata-only opening, dictionary bounds,
-malformed references, data/index mismatch and circular eviction. Reader and
+malformed references, canonical-metadata tampering and circular eviction. Reader and
 crypto fuzzers include connection definitions and pinned reference contexts.

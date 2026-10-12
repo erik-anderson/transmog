@@ -16,8 +16,16 @@ use std::{
 };
 
 pub(crate) const BLOCK_PLAIN: usize = 16 * 1024;
+#[cfg(test)]
 pub(crate) const BLOCK_BYTES: usize = BLOCK_PLAIN + 16;
+#[cfg(test)]
 const PAYLOAD: usize = BLOCK_PLAIN - 5;
+#[path = "container_metadata.rs"]
+mod metadata;
+#[path = "container_packed.rs"]
+mod packed;
+pub(crate) use packed::RecordLocation;
+use packed::{BodyRef, BodySharing};
 const DATA: u8 = 0;
 const LEAF: u8 = 1;
 const BRANCH: u8 = 2;
@@ -31,8 +39,7 @@ pub(crate) const LOCATORS: usize = 2 * LOCATOR_BYTES;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Node {
-    block: u64,
-    blocks: u32,
+    offset: u64,
     bytes: u32,
     first: u64,
     count: u64,
@@ -41,10 +48,10 @@ struct Node {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
-    offset: u64,
-    frame_bytes: u64,
     index: u64,
     stored: StoredRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body: Option<BodyRef>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,7 +63,8 @@ struct Commit {
 }
 #[derive(Default)]
 struct SmallCapture {
-    data: Vec<u8>,
+    objects: Vec<(u64, Vec<u8>)>,
+    object_bytes: usize,
     entries: Vec<Entry>,
     metadata_bytes: usize,
 }
@@ -66,6 +74,7 @@ struct PendingRecord {
     stored: StoredRecord,
     index: u64,
     body: Option<PendingBody>,
+    raw: Option<Vec<u8>>,
 }
 enum PendingBody {
     Ready(CompressedChunk),
@@ -84,7 +93,8 @@ pub struct CaptureWriter<W> {
     small: Option<SmallCapture>,
     limits: CaptureLimits,
     codec: FrameCodec,
-    plain: FrameCodec,
+    sharing: BodySharing,
+    positions: HashMap<(u128, String), u64>,
     compressor: ChunkCompressor,
     compression_workers: usize,
     pool: Option<CompressionPool>,
@@ -123,14 +133,25 @@ impl<W: Write> CaptureWriter<W> {
         limits: CaptureLimits,
         options: &CaptureEncoding,
     ) -> Result<Self, CaptureError> {
+        Self::with_block_size(output, limits, options, BLOCK_PLAIN)
+    }
+    fn with_block_size(
+        output: W,
+        limits: CaptureLimits,
+        options: &CaptureEncoding,
+        block_size: usize,
+    ) -> Result<Self, CaptureError> {
         let limits = limits.validate()?;
         let mut bootstrap = Vec::new();
-        let (mut codec, header) = FrameCodec::create(&mut bootstrap, options)?;
+        let (mut codec, header) = FrameCodec::create_with_block_size(
+            &mut bootstrap,
+            options,
+            u32::try_from(block_size).map_err(|_| CaptureError::QuotaExceeded)?,
+        )?;
         bootstrap.extend_from_slice(&[0; LOCATORS]);
         let start = header + LOCATORS as u64;
         codec.set_container_start(start);
-        let plain = codec.plain();
-        if start + BLOCK_BYTES as u64 > limits.max_file_bytes {
+        if start + codec.block_bytes() as u64 > limits.max_file_bytes {
             return Err(CaptureError::QuotaExceeded);
         }
         Ok(Self {
@@ -140,7 +161,8 @@ impl<W: Write> CaptureWriter<W> {
             small: Some(SmallCapture::default()),
             limits,
             codec,
-            plain,
+            sharing: BodySharing::default(),
+            positions: HashMap::new(),
             compressor: ChunkCompressor::new(1)?,
             compression_workers: std::thread::available_parallelism()
                 .map_or(1, |count| count.get().min(2)),
@@ -151,7 +173,7 @@ impl<W: Write> CaptureWriter<W> {
             connections: crate::connections::WriterContexts::default(),
             start,
             block: 0,
-            data: Vec::with_capacity(PAYLOAD),
+            data: Vec::with_capacity(block_size - 5),
             pending: Vec::with_capacity(1024 * 1024),
             entries: Vec::new(),
             entry_bytes: 0,
@@ -276,6 +298,8 @@ impl<W: Write> CaptureWriter<W> {
         {
             self.bodies
                 .remove(&(record.exchange_id, super::boundary(*boundary).into()));
+            self.positions
+                .remove(&(record.exchange_id, super::boundary(*boundary).into()));
         }
         if let CaptureRecordKind::BodySegment {
             boundary,
@@ -321,6 +345,8 @@ impl<W: Write> CaptureWriter<W> {
             CaptureRecordKind::Completed | CaptureRecordKind::Failed { .. }
         ) {
             self.bodies.retain(|(id, _), _| *id != record.exchange_id);
+            self.positions
+                .retain(|(id, _), _| *id != record.exchange_id);
         }
         Ok(())
     }
@@ -334,6 +360,7 @@ impl<W: Write> CaptureWriter<W> {
             self.finish_one()?;
         }
         let mut body = None;
+        let mut raw = None;
         let mut stored;
         if let CaptureRecordKind::BodySegment {
             boundary,
@@ -342,6 +369,7 @@ impl<W: Write> CaptureWriter<W> {
             truncated,
         } = &record.kind
         {
+            raw = Some(bytes.clone());
             let key = (record.exchange_id, super::boundary(*boundary).into());
             let state = self.bodies.entry(key.clone()).or_default();
             body = Some(
@@ -379,18 +407,13 @@ impl<W: Write> CaptureWriter<W> {
             stored = store(record)?;
         }
         // Validate before retaining a metadata payload in the bounded job queue.
-        let metadata_bytes = serde_json::to_vec(&stored)?.len();
-        if metadata_bytes > self.limits.max_record_bytes {
-            return Err(CaptureError::RecordTooLarge {
-                actual: metadata_bytes,
-                limit: self.limits.max_record_bytes,
-            });
-        }
+        metadata::check_record(&serde_json::to_vec(&stored)?, self.limits)?;
         let ready = !matches!(body, Some(PendingBody::Worker { .. }));
         self.jobs.push_back(PendingRecord {
             stored,
             index: self.records,
             body,
+            raw,
         });
         self.records += 1;
         self.dirty = true;
@@ -416,6 +439,7 @@ impl<W: Write> CaptureWriter<W> {
                 stored,
                 index: self.records,
                 body: Some(PendingBody::Ready(body)),
+                raw: None,
             });
             self.records += 1;
             self.dirty = true;
@@ -437,6 +461,7 @@ impl<W: Write> CaptureWriter<W> {
             mut stored,
             index,
             body,
+            raw,
         }) = self.jobs.pop_front()
         else {
             return Ok(());
@@ -455,93 +480,152 @@ impl<W: Write> CaptureWriter<W> {
                 Some(chunk)
             }
         };
-        let body = body
-            .map(|chunk| {
-                self.plain
-                    .encode_chunk(&chunk, index, true)
-                    .and_then(|encoded| frame(&encoded))
-            })
+        let reference = body
+            .map(|chunk| self.store_body(&mut stored, chunk, raw))
             .transpose()?;
-        if let Some(body) = &body {
-            stored
-                .body_index
-                .as_mut()
-                .ok_or(CaptureError::InvalidMagic)?
-                .frame_bytes = body.len() as u64;
-        }
         let metadata = serde_json::to_vec(&stored)?;
-        if metadata.len() > self.limits.max_record_bytes {
-            return Err(CaptureError::RecordTooLarge {
-                actual: metadata.len(),
-                limit: self.limits.max_record_bytes,
-            });
-        }
-        let chunk = self.compressor.metadata(&metadata)?;
-        let encoded = self.plain.encode_chunk(&chunk, index, false)?;
-        let mut bytes = frame(&encoded)?;
-        if let Some(body) = body {
-            bytes.extend_from_slice(&body);
-        }
-        if self.data.len() == PAYLOAD {
-            self.flush_data()?;
-        }
-        let offset = self.start + self.block * BLOCK_BYTES as u64 + 5 + self.data.len() as u64;
-        self.append_data(&bytes)?;
-        if self.small.as_ref().is_some_and(|small| {
-            small.data.len().saturating_add(bytes.len()) > SMALL_CAPTURE_LIMIT
-                || small.metadata_bytes.saturating_add(metadata.len() + 128) > SMALL_CAPTURE_LIMIT
-        }) {
+        metadata::check_record(&metadata, self.limits)?;
+        let entry = Entry {
+            index,
+            stored,
+            body: reference,
+        };
+        let charge = serde_json::to_vec(&entry)?.len() + 1;
+        if self
+            .small
+            .as_ref()
+            .is_some_and(|small| small.metadata_bytes.saturating_add(charge) > SMALL_CAPTURE_LIMIT)
+        {
             self.small = None;
         }
         if let Some(small) = &mut self.small {
-            small.entries.push(Entry {
-                offset: small.data.len() as u64,
-                frame_bytes: bytes.len() as u64,
-                index,
-                stored: stored.clone(),
-            });
-            small.metadata_bytes += metadata.len() + 128;
-            small.data.extend_from_slice(&bytes);
+            small.entries.push(entry.clone());
+            small.metadata_bytes += charge;
         }
-        self.entries.push(Entry {
-            offset,
-            frame_bytes: bytes.len() as u64,
-            index,
-            stored,
-        });
-        self.entry_bytes = self.entry_bytes.saturating_add(metadata.len() + 128);
-        if self.entry_bytes >= INDEX_BATCH {
+        self.entries.push(entry);
+        self.entry_bytes = self.entry_bytes.saturating_add(charge);
+        if self.entry_bytes >= INDEX_BATCH || self.entries.len() >= metadata::LEAF_ENTRIES {
             self.flush_index()?;
         }
         Ok(())
     }
+    fn store_body(
+        &mut self,
+        stored: &mut StoredRecord,
+        mut chunk: CompressedChunk,
+        raw: Option<Vec<u8>>,
+    ) -> Result<BodyRef, CaptureError> {
+        let reference;
+        let descriptor = stored.body_index.ok_or(CaptureError::InvalidMagic)?;
+        let boundary = stored.payload["boundary"]
+            .as_str()
+            .ok_or(CaptureError::InvalidMagic)?;
+        let position = self
+            .positions
+            .entry((stored.exchange_id, boundary.to_owned()))
+            .or_default();
+        let pair = match boundary {
+            "client-request" => Some(((stored.exchange_id, true, *position), false)),
+            "upstream-request" => Some(((stored.exchange_id, true, *position), true)),
+            "upstream-response" => Some(((stored.exchange_id, false, *position), true)),
+            "client-response" => Some(((stored.exchange_id, false, *position), false)),
+            _ => return Err(CaptureError::InvalidMagic),
+        };
+        *position = position
+            .checked_add(descriptor.bytes as u64)
+            .ok_or(CaptureError::QuotaExceeded)?;
+        if let Some((descriptor, shared)) = self.sharing.shared(&descriptor, pair) {
+            stored.body_index = Some(descriptor);
+            reference = shared;
+        } else {
+            let verify_raw = raw.is_none();
+            let raw = match raw {
+                Some(raw) => raw,
+                None => match chunk.codec {
+                    0 => chunk.bytes.clone(),
+                    1 => zstd::bulk::decompress(&chunk.bytes, descriptor.bytes)?,
+                    _ => return Err(CaptureError::InvalidMagic),
+                },
+            };
+            if raw.len() != descriptor.bytes
+                || (verify_raw && <[u8; 32]>::from(Sha256::digest(&raw)) != descriptor.digest)
+            {
+                return Err(CaptureError::AuthenticationFailed);
+            }
+            let mut dictionary = None;
+            if let Some(base) =
+                pair.and_then(|(key, upstream)| self.sharing.dictionary(key, upstream))
+            {
+                let compressed =
+                    zstd::bulk::Compressor::with_dictionary(1, &base.bytes)?.compress(&raw)?;
+                let saved = chunk.bytes.len().saturating_sub(compressed.len());
+                if saved >= 256 && saved >= raw.len().div_ceil(50) {
+                    chunk = CompressedChunk {
+                        codec: 2,
+                        expanded: raw.len(),
+                        bytes: compressed,
+                    };
+                    dictionary = Some(base.reference);
+                }
+            }
+            let bytes = packed::pack(DATA, &chunk)?;
+            let offset = self.append_object_bytes(&bytes)?;
+            let descriptor = StoredBodyIndex {
+                frame_bytes: bytes.len() as u64,
+                ..descriptor
+            };
+            let body = BodyRef { offset, dictionary };
+            stored.body_index = Some(descriptor);
+            self.sharing.insert(descriptor, &body, pair, raw);
+            reference = body;
+            if self.small.as_ref().is_some_and(|small| {
+                small.object_bytes.saturating_add(bytes.len()) > SMALL_CAPTURE_LIMIT
+            }) {
+                self.small = None;
+            }
+            if let Some(small) = &mut self.small {
+                small.object_bytes += bytes.len();
+                small.objects.push((offset, bytes));
+            }
+        }
+        Ok(reference)
+    }
+    fn append_object_bytes(&mut self, bytes: &[u8]) -> Result<u64, CaptureError> {
+        if self.data.len() == self.codec.payload() {
+            self.flush_data()?;
+        }
+        let offset =
+            self.start + self.block * self.codec.block_bytes() as u64 + 5 + self.data.len() as u64;
+        self.append_data(bytes)?;
+        Ok(offset)
+    }
     fn append_data(&mut self, mut bytes: &[u8]) -> Result<(), CaptureError> {
         while !bytes.is_empty() {
-            if self.data.len() == PAYLOAD {
+            if self.data.len() == self.codec.payload() {
                 self.flush_data()?;
             }
-            let take = bytes.len().min(PAYLOAD - self.data.len());
+            let take = bytes.len().min(self.codec.payload() - self.data.len());
             self.data.extend_from_slice(&bytes[..take]);
             bytes = &bytes[take..];
         }
         Ok(())
     }
     fn put_block(&mut self, kind: u8, bytes: &[u8]) -> Result<u64, CaptureError> {
-        if bytes.len() > PAYLOAD {
+        if bytes.len() > self.codec.payload() {
             return Err(CaptureError::QuotaExceeded);
         }
         let next = self
             .start
             .checked_add(
                 (self.block + 1)
-                    .checked_mul(BLOCK_BYTES as u64)
+                    .checked_mul(self.codec.block_bytes() as u64)
                     .ok_or(CaptureError::QuotaExceeded)?,
             )
             .ok_or(CaptureError::QuotaExceeded)?;
         if next > self.limits.max_file_bytes {
             return Err(CaptureError::QuotaExceeded);
         }
-        let mut plain = vec![0; BLOCK_PLAIN];
+        let mut plain = vec![0; self.codec.block_plain()];
         plain[0] = kind;
         plain[1..5].copy_from_slice(
             &u32::try_from(bytes.len())
@@ -591,24 +675,10 @@ impl<W: Write> CaptureWriter<W> {
             });
         }
         let chunk = self.compressor.metadata(bytes)?;
-        let mut encoded = Vec::with_capacity(chunk.bytes.len() + 5);
-        encoded.push(chunk.codec);
-        encoded.extend_from_slice(
-            &u32::try_from(chunk.expanded)
-                .map_err(|_| CaptureError::QuotaExceeded)?
-                .to_le_bytes(),
-        );
-        encoded.extend_from_slice(&chunk.bytes);
-        if encoded.len() > INDEX_LIMIT {
-            return Err(CaptureError::QuotaExceeded);
-        }
-        let block = self.block;
-        for part in encoded.chunks(PAYLOAD) {
-            self.put_block(kind, part)?;
-        }
+        let encoded = packed::pack(kind, &chunk)?;
+        let offset = self.append_object_bytes(&encoded)?;
         Ok(Node {
-            block,
-            blocks: u32::try_from(self.block - block).map_err(|_| CaptureError::QuotaExceeded)?,
+            offset,
             bytes: u32::try_from(encoded.len()).map_err(|_| CaptureError::QuotaExceeded)?,
             first,
             count,
@@ -619,7 +689,6 @@ impl<W: Write> CaptureWriter<W> {
         if self.entries.is_empty() {
             return Ok(());
         }
-        self.flush_data()?;
         let entries = std::mem::take(&mut self.entries);
         let bytes = serde_json::to_vec(&entries)?;
         let node = self.object(LEAF, &bytes, entries[0].index, entries.len() as u64, 0)?;
@@ -707,7 +776,7 @@ impl<W: Write> CaptureWriter<W> {
         let block = self.put_block(FOOTER, &packed)?;
         self.write_pending()?;
         self.output.flush()?;
-        self.committed = self.start + self.block * BLOCK_BYTES as u64;
+        self.committed = self.start + self.block * self.codec.block_bytes() as u64;
         if let Some(update) = self.locator {
             self.generation = self
                 .generation
@@ -785,91 +854,38 @@ fn compact(
     options: &CaptureEncoding,
     limits: CaptureLimits,
 ) -> Result<Vec<u8>, CaptureError> {
-    let mut output = Vec::new();
-    let (mut codec, header) = FrameCodec::create_with_block_size(&mut output, options, 1024)?;
-    output.extend_from_slice(&[0; LOCATORS]);
-    let start = header + LOCATORS as u64;
-    codec.set_container_start(start);
-    let payload = codec.payload();
-    let mut ordinal = 0;
-    let mut put = |kind: u8, bytes: &[u8]| -> Result<(), CaptureError> {
-        let mut plain = vec![0; codec.block_plain()];
-        plain[0] = kind;
-        plain[1..5].copy_from_slice(
-            &u32::try_from(bytes.len())
-                .map_err(|_| CaptureError::QuotaExceeded)?
-                .to_le_bytes(),
-        );
-        plain[5..5 + bytes.len()].copy_from_slice(bytes);
-        output.extend(codec.encode_block(ordinal, &plain)?);
-        ordinal += 1;
-        Ok(())
-    };
-    for part in small.data.chunks(payload) {
-        put(DATA, part)?;
+    // Re-encode into a new cryptographic domain. Never reuse a block nonce while
+    // changing geometry, offsets, or contents.
+    let mut writer = CaptureWriter::with_block_size(Vec::new(), limits, options, 1024)?;
+    writer.small = None;
+    let mut offsets = HashMap::new();
+    for (old, bytes) in &small.objects {
+        offsets.insert(*old, writer.append_object_bytes(bytes)?);
     }
-    let mut entries = small.entries.clone();
-    for entry in &mut entries {
-        entry.offset = start
-            + entry.offset / payload as u64 * codec.block_bytes() as u64
-            + 5
-            + entry.offset % payload as u64;
+    for original in &small.entries {
+        let mut entry = original.clone();
+        if let Some(body) = &mut entry.body {
+            body.offset = *offsets
+                .get(&body.offset)
+                .ok_or(CaptureError::InvalidMagic)?;
+            if let Some(dictionary) = &mut body.dictionary {
+                dictionary.offset = *offsets
+                    .get(&dictionary.offset)
+                    .ok_or(CaptureError::InvalidMagic)?;
+            }
+        }
+        writer.entry_bytes += serde_json::to_vec(&entry)?.len() + 1;
+        writer.entries.push(entry);
+        if writer.entry_bytes >= INDEX_BATCH || writer.entries.len() >= metadata::LEAF_ENTRIES {
+            writer.flush_index()?;
+        }
     }
-    let mut compressor = ChunkCompressor::new(1)?;
-    let mut pack = |bytes: &[u8]| -> Result<Vec<u8>, CaptureError> {
-        let chunk = compressor.metadata(bytes)?;
-        let mut packed = vec![chunk.codec];
-        packed.extend_from_slice(
-            &u32::try_from(chunk.expanded)
-                .map_err(|_| CaptureError::QuotaExceeded)?
-                .to_le_bytes(),
-        );
-        packed.extend_from_slice(&chunk.bytes);
-        Ok(packed)
-    };
-    let index = pack(&serde_json::to_vec(&entries)?)?;
-    let first_index = small.data.len().div_ceil(payload) as u64;
-    let blocks =
-        u32::try_from(index.len().div_ceil(payload)).map_err(|_| CaptureError::QuotaExceeded)?;
-    for part in index.chunks(payload) {
-        put(LEAF, part)?;
-    }
-    let footer_block = first_index + u64::from(blocks);
-    let roots = vec![Node {
-        block: first_index,
-        blocks,
-        bytes: u32::try_from(index.len()).map_err(|_| CaptureError::QuotaExceeded)?,
-        first: 0,
-        count: entries.len() as u64,
-        level: 0,
-    }];
-    let footer = pack(&serde_json::to_vec(&Commit {
-        roots,
-        count: entries.len() as u64,
-        sealed: true,
-        block: footer_block,
-    })?)?;
-    if footer.len() > payload {
-        return Err(CaptureError::QuotaExceeded);
-    }
-    put(FOOTER, &footer)?;
-    if output.len() as u64 > limits.max_file_bytes {
-        return Err(CaptureError::QuotaExceeded);
-    }
-    Ok(output)
+    writer.records = small.entries.len() as u64;
+    writer.commit(true)?;
+    writer.sealed = true;
+    writer.into_inner()
 }
 
-fn frame(bytes: &[u8]) -> Result<Vec<u8>, CaptureError> {
-    let mut result = Vec::with_capacity(bytes.len() + 8);
-    result.extend_from_slice(
-        &u32::try_from(bytes.len())
-            .map_err(|_| CaptureError::QuotaExceeded)?
-            .to_le_bytes(),
-    );
-    result.extend_from_slice(&crc32fast::hash(bytes).to_le_bytes());
-    result.extend_from_slice(bytes);
-    Ok(result)
-}
 fn unpack(bytes: &[u8], maximum: usize) -> Result<Vec<u8>, CaptureError> {
     if bytes.len() < 5 {
         return Err(CaptureError::InvalidMagic);
@@ -917,11 +933,12 @@ pub struct CaptureReader<R> {
     limits: CaptureLimits,
     codec: FrameCodec,
     stack: Vec<Node>,
-    entries: VecDeque<Entry>,
+    entries: VecDeque<metadata::RawEntry>,
     certificates: HashMap<String, std::sync::Arc<[u8]>>,
     connections: crate::connections::ReaderContexts,
     certificate_bytes: usize,
-    data_end: u64,
+    page: Option<Node>,
+    current_body: Option<(BodyRef, StoredBodyIndex)>,
     records: u64,
     count: u64,
     committed: u64,
@@ -998,7 +1015,13 @@ impl<R: Read + Seek> CaptureReader<R> {
             {
                 return Err(CaptureError::InvalidMagic);
             }
-            validate_nodes(&commit.roots, 0, commit.count, index)?;
+            validate_nodes(
+                &commit.roots,
+                0,
+                commit.count,
+                start + index * codec.block_bytes() as u64,
+                &codec,
+            )?;
             found = Some(commit);
             break;
         }
@@ -1018,7 +1041,8 @@ impl<R: Read + Seek> CaptureReader<R> {
             certificates: HashMap::new(),
             connections: crate::connections::ReaderContexts::default(),
             certificate_bytes: 0,
-            data_end: start,
+            page: None,
+            current_body: None,
             records: 0,
             count: commit.count,
             committed,
@@ -1027,72 +1051,15 @@ impl<R: Read + Seek> CaptureReader<R> {
         })
     }
     fn object(&mut self, node: &Node) -> Result<Vec<u8>, CaptureError> {
-        if node.bytes as usize > INDEX_LIMIT
-            || node.blocks == 0
-            || u64::from(node.blocks) != u64::from(node.bytes).div_ceil(self.codec.payload() as u64)
-        {
-            return Err(CaptureError::QuotaExceeded);
-        }
-        let mut bytes = Vec::with_capacity(node.bytes as usize);
-        for index in node.block..node.block + u64::from(node.blocks) {
-            let (kind, part) = block(&mut self.input, &self.codec, index)?;
-            if kind != if node.level == 0 { LEAF } else { BRANCH } {
-                return Err(CaptureError::InvalidMagic);
-            }
-            bytes.extend_from_slice(&part);
-            if bytes.len() > node.bytes as usize {
-                return Err(CaptureError::InvalidMagic);
-            }
-        }
-        if bytes.len() != node.bytes as usize {
-            return Err(CaptureError::InvalidMagic);
-        }
-        unpack(&bytes, INDEX_LIMIT)
-    }
-    // Check physical references using index metadata only; body authentication stays lazy.
-    fn validate_entry_ranges(
-        &mut self,
-        entries: &VecDeque<Entry>,
-        before: u64,
-    ) -> Result<(), CaptureError> {
-        let stride = self.codec.block_bytes() as u64;
-        let payload = self.codec.payload() as u64;
-        let start = self.codec.container_start();
-        let before = before
-            .checked_mul(stride)
-            .and_then(|n| n.checked_add(start))
-            .ok_or(CaptureError::QuotaExceeded)?;
-        let mut previous_end = self.data_end;
-        for entry in entries {
-            let relative = entry
-                .offset
-                .checked_sub(start)
-                .ok_or(CaptureError::InvalidMagic)?;
-            let within = (relative % stride)
-                .checked_sub(5)
-                .ok_or(CaptureError::InvalidMagic)?;
-            // Eight framing bytes plus the thirteen-byte inner descriptor are mandatory.
-            if within >= payload || entry.frame_bytes < 21 || entry.offset < previous_end {
-                return Err(CaptureError::InvalidMagic);
-            }
-            let last = within
-                .checked_add(entry.frame_bytes - 1)
-                .ok_or(CaptureError::QuotaExceeded)?;
-            let last_block = (relative / stride)
-                .checked_add(last / payload)
-                .ok_or(CaptureError::QuotaExceeded)?;
-            let end = last_block
-                .checked_mul(stride)
-                .and_then(|n| n.checked_add(start))
-                .and_then(|n| n.checked_add(6 + last % payload))
-                .ok_or(CaptureError::QuotaExceeded)?;
-            if end > before {
-                return Err(CaptureError::InvalidMagic);
-            }
-            previous_end = end;
-        }
-        self.data_end = previous_end;
-        Ok(())
+        packed::read_object(
+            &mut self.input,
+            &self.codec,
+            node.offset,
+            u64::from(node.bytes),
+            if node.level == 0 { LEAF } else { BRANCH },
+            INDEX_LIMIT,
+            None,
+        )
     }
     fn resolve_certificates(&mut self, record: &mut CaptureRecord) -> Result<(), CaptureError> {
         if let CaptureRecordKind::Unknown { kind, payload } = &record.kind
@@ -1139,7 +1106,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             };
             let bytes = self.object(&node)?;
             if node.level > 0 {
-                let mut children: Vec<Node> = serde_json::from_slice(&bytes)?;
+                let mut children: Vec<Node> = metadata::array(&bytes, FANOUT)?;
                 if children.len() > FANOUT
                     || children
                         .iter()
@@ -1147,47 +1114,44 @@ impl<R: Read + Seek> CaptureReader<R> {
                 {
                     return Err(CaptureError::InvalidMagic);
                 }
-                validate_nodes(&children, node.first, node.count, node.block)?;
+                validate_nodes(&children, node.first, node.count, node.offset, &self.codec)?;
                 children.reverse();
                 self.stack.extend(children);
             } else {
-                let entries: VecDeque<Entry> = serde_json::from_slice(&bytes)?;
-                if entries.len() as u64 != node.count
-                    || entries
-                        .front()
-                        .is_none_or(|entry| entry.index != node.first)
-                {
+                let entries: Vec<metadata::RawEntry> = metadata::array(
+                    &bytes,
+                    usize::try_from(node.count).map_err(|_| CaptureError::QuotaExceeded)?,
+                )?;
+                if entries.len() as u64 != node.count {
                     return Err(CaptureError::InvalidMagic);
                 }
-                self.validate_entry_ranges(&entries, node.block)?;
-                self.entries = entries;
+                self.page = Some(node);
+                self.entries = entries.into();
             }
         }
-        let entry = self.entries.pop_front().ok_or(CaptureError::InvalidMagic)?;
-        if entry.index != self.records
-            || entry.offset < self.codec.container_start()
-            || entry.offset >= self.committed
-        {
+        let entry = self
+            .entries
+            .pop_front()
+            .ok_or(CaptureError::InvalidMagic)?
+            .decode(self.limits)?;
+        if entry.index != self.records {
             return Err(CaptureError::InvalidMagic);
         }
-        let metadata_bytes = serde_json::to_vec(&entry.stored)?.len();
-        if metadata_bytes > self.limits.max_record_bytes {
-            return Err(CaptureError::RecordTooLarge {
-                actual: metadata_bytes,
-                limit: self.limits.max_record_bytes,
-            });
-        }
-        if entry.frame_bytes > (self.limits.max_record_bytes as u64 + 64) * 2 {
-            return Err(CaptureError::QuotaExceeded);
-        }
-        let frame_codec = self.connections.prepare(&entry.stored, &self.codec)?;
+        let page = self.page.clone().ok_or(CaptureError::InvalidMagic)?;
+        validate_entry(&entry, &self.codec, page.offset, self.limits)?;
+        let (offset, frame_bytes) = match (&entry.body, entry.stored.body_index) {
+            (Some(body), Some(descriptor)) => (body.offset, descriptor.frame_bytes),
+            (None, None) => (page.offset, u64::from(page.bytes)),
+            _ => return Err(CaptureError::InvalidMagic),
+        };
+        let mut frame_codec = self.connections.prepare(&entry.stored, &self.codec)?;
+        frame_codec.record = Some(RecordLocation {
+            page,
+            index: entry.index,
+            offset,
+            frame_bytes,
+        });
         let (mut record, body) = entry.stored.load_container_metadata(&frame_codec)?;
-        if let Some(body) = body {
-            body.validate(self.limits.max_record_bytes)?;
-            if body.frame_bytes < 21 || body.frame_bytes > entry.frame_bytes.saturating_sub(21) {
-                return Err(CaptureError::InvalidMagic);
-            }
-        }
         self.resolve_certificates(&mut record)?;
         if let CaptureRecordKind::Seal { record_count } = record.kind {
             if !self.sealed || record_count != entry.index || entry.index + 1 != self.count {
@@ -1196,11 +1160,12 @@ impl<R: Read + Seek> CaptureReader<R> {
         } else if self.sealed && entry.index + 1 == self.count {
             return Err(CaptureError::AuthenticationFailed);
         }
+        self.current_body = entry.body.zip(body);
         self.records += 1;
         Ok(Some(CaptureFrame {
-            offset: entry.offset,
+            offset,
             index: entry.index,
-            frame_bytes: entry.frame_bytes,
+            frame_bytes,
             codec: frame_codec,
             record,
             body: body.map(|body| CaptureBodyIndex {
@@ -1216,36 +1181,27 @@ impl<R: Read + Seek> CaptureReader<R> {
         let Some(mut frame) = self.read_next_indexed()? else {
             return Ok(None);
         };
-        self.input.seek(SeekFrom::Start(frame.offset))?;
-        let mut record = read_indexed_frame_with_codec(
-            &mut self.input,
-            frame.frame_bytes,
-            self.limits,
-            &frame.codec,
-            frame.index,
-        )?;
-        let body = match &mut record.kind {
-            CaptureRecordKind::BodySegment { bytes, .. } => bytes.take(),
-            _ => None,
-        };
-        if serde_json::to_vec(&store(&record)?)? != serde_json::to_vec(&store(&frame.record)?)? {
-            return Err(CaptureError::AuthenticationFailed);
-        }
-        match (&frame.body, &body) {
-            (Some(descriptor), Some(bytes))
-                if descriptor.bytes == bytes.len()
-                    && descriptor.digest == <[u8; 32]>::from(Sha256::digest(bytes)) => {}
-            (None, None) => {}
-            _ => return Err(CaptureError::AuthenticationFailed),
-        }
-        if let CaptureRecordKind::BodySegment { bytes, .. } = &mut frame.record.kind {
-            *bytes = body;
+        if let Some((reference, descriptor)) = self.current_body.take() {
+            let before = self.page.as_ref().ok_or(CaptureError::InvalidMagic)?.offset;
+            let bytes = packed::read_body(
+                &mut self.input,
+                &frame.codec,
+                &reference,
+                descriptor,
+                before,
+                self.limits.max_record_bytes,
+            )?;
+            let CaptureRecordKind::BodySegment { bytes: target, .. } = &mut frame.record.kind
+            else {
+                return Err(CaptureError::InvalidMagic);
+            };
+            *target = Some(bytes);
         }
         Ok(Some(frame))
     }
     /// Cryptographic context for independent lazy body readers.
-    /// For performance records, use the returned frame's codec instead: it also
-    /// pins the immutable connection definitions referenced by that snapshot.
+    /// For random reads use the returned frame's codec: it pins the canonical
+    /// metadata page, record ordinal, and any referenced connection definitions.
     pub fn codec(&self) -> FrameCodec {
         self.codec.clone()
     }
@@ -1262,19 +1218,42 @@ impl<R: Read + Seek> CaptureReader<R> {
         self.sealed && !self.truncated
     }
 }
-fn validate_nodes(nodes: &[Node], first: u64, count: u64, before: u64) -> Result<(), CaptureError> {
+fn validate_entry(
+    entry: &Entry,
+    codec: &FrameCodec,
+    before: u64,
+    limits: CaptureLimits,
+) -> Result<(), CaptureError> {
+    match (&entry.body, entry.stored.body_index) {
+        (Some(body), Some(descriptor)) => {
+            packed::validate_body(body, descriptor, codec, before, limits.max_record_bytes)
+        }
+        (None, None) => Ok(()),
+        _ => Err(CaptureError::InvalidMagic),
+    }
+}
+fn validate_nodes(
+    nodes: &[Node],
+    first: u64,
+    count: u64,
+    before: u64,
+    codec: &FrameCodec,
+) -> Result<(), CaptureError> {
     let mut next = first;
+    let mut previous_end = codec.container_start();
     for node in nodes {
+        let end = packed::span_end(codec, node.offset, u64::from(node.bytes))?;
         if node.first != next
             || node.count == 0
             || node.level > 15
-            || node
-                .block
-                .checked_add(u64::from(node.blocks))
-                .is_none_or(|end| end > before)
+            || (node.level == 0 && node.count > metadata::LEAF_ENTRIES as u64)
+            || node.bytes as usize > INDEX_LIMIT + packed::OBJECT_HEADER
+            || node.offset < previous_end
+            || end > before
         {
             return Err(CaptureError::InvalidMagic);
         }
+        previous_end = end;
         next = next
             .checked_add(node.count)
             .ok_or(CaptureError::QuotaExceeded)?;
@@ -1302,42 +1281,66 @@ pub fn read_indexed_frame_with_codec(
     index: u64,
 ) -> Result<CaptureRecord, CaptureError> {
     let limits = limits.validate()?;
-    let offset = input.stream_position()?;
-    let relative = offset
-        .checked_sub(codec.container_start())
-        .ok_or(CaptureError::InvalidMagic)?;
-    let mut ordinal = relative / codec.block_bytes() as u64;
-    let mut within = usize::try_from(
-        (relative % codec.block_bytes() as u64)
-            .checked_sub(5)
-            .ok_or(CaptureError::InvalidMagic)?,
-    )
-    .map_err(|_| CaptureError::QuotaExceeded)?;
-    let length = usize::try_from(frame_bytes).map_err(|_| CaptureError::QuotaExceeded)?;
-    if length > limits.max_record_bytes.saturating_add(64).saturating_mul(2) {
+    let location = codec.record.as_ref().ok_or(CaptureError::InvalidMagic)?;
+    if input.stream_position()? != location.offset
+        || frame_bytes != location.frame_bytes
+        || index != location.index
+    {
+        return Err(CaptureError::AuthenticationFailed);
+    }
+    if input.seek(SeekFrom::End(0))? > limits.max_file_bytes {
         return Err(CaptureError::QuotaExceeded);
     }
-    let mut bytes = Vec::with_capacity(length);
-    while bytes.len() < length {
-        let (kind, data) = block(&mut input, codec, ordinal)?;
-        if kind != DATA || within > data.len() {
-            return Err(CaptureError::InvalidMagic);
-        }
-        let take = (length - bytes.len()).min(data.len() - within);
-        if take == 0 {
-            return Err(CaptureError::InvalidMagic);
-        }
-        bytes.extend_from_slice(&data[within..within + take]);
-        within = 0;
-        ordinal += 1;
+    let page = &location.page;
+    let bytes = packed::read_object(
+        &mut input,
+        codec,
+        page.offset,
+        u64::from(page.bytes),
+        LEAF,
+        INDEX_LIMIT,
+        None,
+    )?;
+    let entries: Vec<metadata::RawEntry> = metadata::array(
+        &bytes,
+        usize::try_from(page.count).map_err(|_| CaptureError::QuotaExceeded)?,
+    )?;
+    if entries.len() as u64 != page.count {
+        return Err(CaptureError::InvalidMagic);
     }
-    super::read_scratch_frame_with_codec(
-        bytes.as_slice(),
-        frame_bytes,
-        limits,
-        &codec.plain(),
-        index,
-    )
+    let relative = index
+        .checked_sub(page.first)
+        .ok_or(CaptureError::InvalidMagic)?;
+    let entry = entries
+        .into_iter()
+        .nth(usize::try_from(relative).map_err(|_| CaptureError::QuotaExceeded)?)
+        .ok_or(CaptureError::InvalidMagic)?
+        .decode(limits)?;
+    if entry.index != index {
+        return Err(CaptureError::InvalidMagic);
+    }
+    validate_entry(&entry, codec, page.offset, limits)?;
+    let reference = entry.body.clone();
+    let (mut record, descriptor) = entry.stored.load_container_metadata(codec)?;
+    match (reference, descriptor, &mut record.kind) {
+        (Some(reference), Some(descriptor), CaptureRecordKind::BodySegment { bytes, .. }) => {
+            if reference.offset != location.offset || descriptor.frame_bytes != frame_bytes {
+                return Err(CaptureError::AuthenticationFailed);
+            }
+            *bytes = Some(packed::read_body(
+                &mut input,
+                codec,
+                &reference,
+                descriptor,
+                page.offset,
+                limits.max_record_bytes,
+            )?);
+        }
+        (None, None, _)
+            if location.offset == page.offset && frame_bytes == u64::from(page.bytes) => {}
+        _ => return Err(CaptureError::InvalidMagic),
+    }
+    Ok(record)
 }
 
 #[cfg(test)]
@@ -1351,3 +1354,7 @@ mod review_tests;
 #[cfg(test)]
 #[path = "connection_tests.rs"]
 mod connection_tests;
+
+#[cfg(test)]
+#[path = "packed_tests.rs"]
+mod packed_tests;

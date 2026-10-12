@@ -52,48 +52,104 @@ fn file(blocks: &[(u8, Vec<u8>)]) -> Vec<u8> {
 fn put(blocks: &mut Vec<(u8, Vec<u8>)>, kind: u8, bytes: &[u8]) {
     blocks.extend(bytes.chunks(PAYLOAD).map(|part| (kind, part.to_vec())));
 }
-fn frame(counter: u64, codec: u8, expanded: u32, data: &[u8]) -> Vec<u8> {
-    let mut payload = counter.to_le_bytes().to_vec();
-    payload.extend_from_slice(&expanded.to_le_bytes());
-    payload.push(codec);
-    payload.extend_from_slice(data);
-    let mut result = (payload.len() as u32).to_le_bytes().to_vec();
-    result.extend_from_slice(&crc32fast::hash(&payload).to_le_bytes());
-    result.extend(payload);
-    result
+fn packed(kind: u8, codec: u8, expanded: u32, data: &[u8]) -> Vec<u8> {
+    let mut bytes = vec![kind, codec];
+    bytes.extend_from_slice(&expanded.to_le_bytes());
+    bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(data);
+    bytes
+}
+fn page(kind: u8, data: &[u8]) -> Vec<u8> {
+    packed(kind, 0, data.len() as u32, data)
+}
+fn start() -> usize {
+    13 + header().len() + 4 + 512
 }
 fn record_file(stored: Value, body: &[u8]) -> Vec<u8> {
     record_files(&[(stored, body.to_vec())])
 }
 fn record_files(records: &[(Value, Vec<u8>)]) -> Vec<u8> {
-    let start = 13 + header().len() + 4 + 512;
+    records_with_refs(records, |_| {})
+}
+fn records_with_refs(records: &[(Value, Vec<u8>)], edit: impl FnOnce(&mut Vec<Value>)) -> Vec<u8> {
     let mut entries = Vec::new();
     let mut data = Vec::new();
     for (index, (stored, body)) in records.iter().enumerate() {
-        let logical = data.len();
-        let metadata = serde_json::to_vec(stored).unwrap();
-        let encoded = frame(index as u64 * 2 + 1, 0, metadata.len() as u32, &metadata);
-        data.extend_from_slice(&encoded);
+        let offset = start() + data.len() / PAYLOAD * (BLOCK + 16) + 5 + data.len() % PAYLOAD;
+        let mut entry = json!({"index":index,"stored":stored});
+        if !body.is_empty() {
+            entry["body"] = json!({"offset":offset});
+        }
         data.extend_from_slice(body);
-        let offset = start + logical / PAYLOAD * (BLOCK + 16) + 5 + logical % PAYLOAD;
-        entries.push(
-            json!({"offset":offset,"frame_bytes":data.len()-logical,"index":index,"stored":stored}),
-        );
+        entries.push(entry);
     }
+    edit(&mut entries);
     let mut blocks = Vec::new();
     put(&mut blocks, 0, &data);
-    let first_index = blocks.len();
-    let index = object(&serde_json::to_vec(&entries).unwrap());
-    put(&mut blocks, 1, &index);
-    let footer = json!({"roots":[{"block":first_index,"blocks":blocks.len()-first_index,
-        "bytes":index.len(),"first":0,"count":records.len(),"level":0}],"count":records.len(),
-        "sealed":false,"block":blocks.len()});
+    let offset = start() + blocks.len() * (BLOCK + 16) + 5;
+    let index = page(1, &serde_json::to_vec(&entries).unwrap());
+    put(&mut blocks, 0, &index);
+    let footer = json!({"roots":[{"offset":offset,"bytes":index.len(),"first":0,
+        "count":records.len(),"level":0}],"count":records.len(),"sealed":false,"block":blocks.len()});
     put(
         &mut blocks,
         3,
         &object(&serde_json::to_vec(&footer).unwrap()),
     );
     file(&blocks)
+}
+fn dictionary_file(data: &[u8]) -> Option<Vec<u8>> {
+    let (&mode, bytes) = data.split_first()?;
+    let base = if bytes.is_empty() {
+        b"dictionary fixture".as_slice()
+    } else {
+        bytes
+    };
+    let mut changed = base.to_vec();
+    changed[0] ^= 1;
+    let base_object = packed(
+        0,
+        if mode % 5 == 3 { 2 } else { 0 },
+        base.len() as u32,
+        base,
+    );
+    let encoded = zstd::bulk::Compressor::with_dictionary(1, base)
+        .ok()?
+        .compress(&changed)
+        .ok()?;
+    let dependent = packed(0, 2, changed.len() as u32, &encoded);
+    let stored = |bytes: &[u8], length: usize, boundary: &str| {
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        json!({"revision":3,"sequence":1,"exchange_id":1,"kind":"body-segment",
+            "payload":{"boundary":boundary,"byte_count":bytes.len(),"bytes":null,"truncated":false},
+            "body_index":{"frame_bytes":length,"bytes":bytes.len(),"digest":digest}})
+    };
+    let records = [
+        (
+            stored(base, base_object.len(), "upstream-response"),
+            base_object,
+        ),
+        (
+            stored(&changed, dependent.len(), "client-response"),
+            dependent,
+        ),
+    ];
+    Some(records_with_refs(&records, |entries| {
+        let mut descriptor = entries[0]["stored"]["body_index"].clone();
+        if mode % 5 == 1 {
+            descriptor["digest"][0] = (descriptor["digest"][0].as_u64().unwrap() ^ 1).into();
+        }
+        let offset = entries[usize::from(mode % 5 == 2)]["body"]["offset"].clone();
+        entries[1]["body"]["dictionary"] = json!({"offset":offset,"descriptor":descriptor});
+        if mode % 5 == 4 {
+            entries[1]["stored"]["body_index"]["digest"][0] = (entries[1]["stored"]["body_index"]
+                ["digest"][0]
+                .as_u64()
+                .unwrap()
+                ^ 1)
+            .into();
+        }
+    }))
 }
 fn connection_records(data: &[u8]) -> Option<Vec<u8>> {
     let mut records: Vec<Value> = serde_json::from_slice(data).ok()?;
@@ -177,7 +233,9 @@ fn template(normal: bool) -> &'static [u8] {
     })
 }
 fn mutate_template(data: &[u8], normal: bool) -> Vec<u8> {
-    let mut bytes = template(normal).to_vec();
+    mutate_bytes(template(normal).to_vec(), data)
+}
+fn mutate_bytes(mut bytes: Vec<u8>, data: &[u8]) -> Vec<u8> {
     let length = u32::from_le_bytes(bytes[9..13].try_into().unwrap()) as usize;
     let block_size =
         u32::from_le_bytes(bytes[13 + length..17 + length].try_into().unwrap()) as usize;
@@ -199,6 +257,39 @@ fn mutate_template(data: &[u8], normal: bool) -> Vec<u8> {
     }
     bytes
 }
+fn tree_template() -> &'static [u8] {
+    static TREE: OnceLock<Vec<u8>> = OnceLock::new();
+    TREE.get_or_init(|| {
+        let mut blocks = Vec::new();
+        let mut leaves = Vec::new();
+        for index in 0..4 {
+            let leaf = page(
+                1,
+                &serde_json::to_vec(&json!([{"index":index,"stored":{
+                    "revision":3,"sequence":index,"exchange_id":1,"kind":"completed","payload":null
+                }}]))
+                .unwrap(),
+            );
+            leaves.push(json!({"offset":start()+blocks.len()*(BLOCK+16)+5,
+                "bytes":leaf.len(),"first":index,"count":1,"level":0}));
+            blocks.push((0, leaf));
+        }
+        let mut branches = Vec::new();
+        for (index, children) in leaves.chunks(2).enumerate() {
+            let branch = page(2, &serde_json::to_vec(children).unwrap());
+            branches.push(json!({"offset":start()+blocks.len()*(BLOCK+16)+5,
+                "bytes":branch.len(),"first":index*2,"count":2,"level":1}));
+            blocks.push((0, branch));
+        }
+        let root = page(2, &serde_json::to_vec(&branches).unwrap());
+        let node = json!({"offset":start()+blocks.len()*(BLOCK+16)+5,
+            "bytes":root.len(),"first":0,"count":4,"level":2});
+        blocks.push((0, root));
+        let footer = json!({"roots":[node],"count":4,"sealed":false,"block":blocks.len()});
+        blocks.push((3, object(&serde_json::to_vec(&footer).unwrap())));
+        file(&blocks)
+    })
+}
 pub(crate) fn limits(control: u8) -> CaptureLimits {
     CaptureLimits {
         max_file_bytes: 1024 * 1024,
@@ -211,53 +302,84 @@ fn exercise_file(bytes: &[u8], control: u8) {
     let Ok(mut indexed) = CaptureReader::new(Cursor::new(bytes), limits) else {
         return;
     };
-    let mut frames = Vec::new();
+    let mut full = Some(CaptureReader::new(Cursor::new(bytes), limits).unwrap());
+    let mut count = 0;
+    let mut last_was_seal = false;
     loop {
-        match indexed.read_next_indexed() {
-            Ok(Some(frame)) => {
-                assert!(frames.len() < limits.max_records);
-                let mut cursor = Cursor::new(bytes);
-                cursor.set_position(frame.offset);
-                let _ = read_indexed_frame_with_codec(
-                    cursor,
-                    frame.frame_bytes,
-                    limits,
-                    &frame.codec,
-                    frame.index,
-                );
-                frames.push(frame);
-            }
-            Ok(None) => break,
-            Err(_) => return,
-        }
-    }
-    // Every sealed capture contains its consistent final seal record.
-    if indexed.sealed() {
-        assert!(matches!(
-            frames.last().map(|frame| &frame.record.kind),
-            Some(CaptureRecordKind::Seal { .. })
-        ));
-    }
-    let mut full = CaptureReader::new(Cursor::new(bytes), limits).unwrap();
-    for expected in frames {
-        let actual = match full.read_next() {
+        let expected = match indexed.read_next_indexed() {
             Ok(Some(frame)) => frame,
-            Err(_) => return, // Indexed opening deliberately skips body integrity.
-            Ok(None) => panic!("full reader ended before metadata reader"),
+            Ok(None) => break,
+            Err(_) => {
+                if let Some(full) = &mut full {
+                    assert!(full.read_next().is_err());
+                }
+                return;
+            }
         };
-        let mut expected_record = expected.record;
-        let mut actual_record = actual.record;
-        if let CaptureRecordKind::BodySegment { bytes, .. } = &mut expected_record.kind {
-            *bytes = None;
+        assert!(count < limits.max_records);
+        count += 1;
+        last_was_seal = matches!(expected.record.kind, CaptureRecordKind::Seal { .. });
+        let mut cursor = Cursor::new(bytes);
+        cursor.set_position(expected.offset);
+        let random = read_indexed_frame_with_codec(
+            cursor,
+            expected.frame_bytes,
+            limits,
+            &expected.codec,
+            expected.index,
+        );
+        if let Some(full_reader) = &mut full {
+            match (full_reader.read_next(), &random) {
+                (Ok(Some(actual)), Ok(random)) => {
+                    // DER is hydrated only by sequential readers. It is excluded
+                    // from the wire record; compare every serialized field and body byte.
+                    assert_eq!(actual.record.sequence, random.sequence);
+                    assert_eq!(actual.record.exchange_id, random.exchange_id);
+                    match (&actual.record.kind, &random.kind) {
+                        (CaptureRecordKind::Performance(a), CaptureRecordKind::Performance(b)) => {
+                            assert_eq!(
+                                serde_json::to_value(a).unwrap(),
+                                serde_json::to_value(b).unwrap()
+                            );
+                        }
+                        (a, b) => assert_eq!(a, b),
+                    }
+                    assert_eq!(
+                        actual.body.map(|body| (body.bytes, body.digest)),
+                        expected.body.map(|body| (body.bytes, body.digest))
+                    );
+                    let mut record = actual.record;
+                    if let CaptureRecordKind::BodySegment { bytes, .. } = &mut record.kind {
+                        *bytes = None;
+                    }
+                    assert_eq!(record, expected.record);
+                }
+                (Err(_), Err(_)) => full = None, // Body integrity is checked lazily.
+                other => panic!("sequential/random readers disagree: {other:?}"),
+            }
         }
-        if let CaptureRecordKind::BodySegment { bytes, .. } = &mut actual_record.kind {
-            *bytes = None;
+        if let Ok(record) = random
+            && let Some(body) = expected.body
+        {
+            let CaptureRecordKind::BodySegment {
+                bytes: Some(bytes), ..
+            } = record.kind
+            else {
+                panic!("missing body")
+            };
+            assert_eq!(bytes.len(), body.bytes);
+            assert_eq!(<[u8; 32]>::from(Sha256::digest(&bytes)), body.digest);
         }
-        assert_eq!(actual_record, expected_record);
     }
-    assert!(full.read_next().unwrap().is_none());
+    if indexed.sealed() {
+        assert!(last_was_seal);
+    }
+    if let Some(full) = &mut full {
+        assert!(full.read_next().unwrap().is_none());
+    }
 }
 
+#[allow(clippy::too_many_lines)] // Explicit bounded mutation modes match the semantic seed inventory.
 pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
     let (&control, data) = input.split_first()?;
     if data.len() > 65536 {
@@ -274,12 +396,23 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             record_file(stored, &[])
         }
         4 => {
-            let bytes = object(&data[..data.len().min(PAYLOAD - 5)]);
-            let footer = json!({"roots":[{"block":1,"blocks":1,"bytes":bytes.len(),
+            let mut children: Value = serde_json::from_slice(data).ok()?;
+            for child in children.as_array_mut()? {
+                if let Some(offset) = child["offset"].as_u64() {
+                    child["offset"] = offset.saturating_add(start() as u64).into();
+                }
+            }
+            let raw = serde_json::to_vec(&children).ok()?;
+            let encoded = zstd::bulk::compress(&raw, 1).ok()?;
+            let bytes = packed(2, 1, raw.len() as u32, &encoded);
+            if bytes.len() > PAYLOAD {
+                return None;
+            }
+            let footer = json!({"roots":[{"offset":start()+BLOCK+16+5,"bytes":bytes.len(),
                 "first":0,"count":1,"level":1}],"count":1,"sealed":false,"block":2});
             file(&[
-                (1, object(b"[]")),
-                (2, bytes),
+                (0, page(1, b"[]")),
+                (0, bytes),
                 (3, object(&serde_json::to_vec(&footer).unwrap())),
             ])
         }
@@ -298,7 +431,7 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             } else {
                 u32::from_le_bytes(data[2..6].try_into().unwrap())
             };
-            let encoded = frame(2 + u64::from(data[6]), data[7], expanded, &encoded);
+            let encoded = packed(data[6], data[7], expanded, &encoded);
             let digest: [u8; 32] = Sha256::digest(body).into();
             let stored = json!({"revision":3,"sequence":1,"exchange_id":1,"kind":"body-segment",
                 "payload":{"boundary":"client-response","byte_count":body.len(),"bytes":null,"truncated":false},
@@ -327,14 +460,14 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             };
             let start = 13 + header().len() + 4 + 512;
             for entry in &mut entries {
-                if let Some(offset) = entry["offset"].as_u64() {
-                    entry["offset"] = offset.saturating_add(start as u64).into();
+                if let Some(offset) = entry["body"]["offset"].as_u64() {
+                    entry["body"]["offset"] = offset.saturating_add(start as u64).into();
                 }
             }
-            let index = object(&serde_json::to_vec(&entries).unwrap());
+            let index = page(1, &serde_json::to_vec(&entries).unwrap());
             let mut blocks = vec![(0, vec![0; PAYLOAD])];
-            put(&mut blocks, 1, &index);
-            let footer = json!({"roots":[{"block":1,"blocks":blocks.len()-1,"bytes":index.len(),
+            put(&mut blocks, 0, &index);
+            let footer = json!({"roots":[{"offset":start+BLOCK+16+5,"bytes":index.len(),
                 "first":0,"count":entries.len(),"level":0}],"count":entries.len(),"sealed":false,"block":blocks.len()});
             put(
                 &mut blocks,
@@ -344,13 +477,31 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             file(&blocks)
         }
         12 => connection_records(data)?,
+        13 => dictionary_file(data)?,
+        15 => mutate_bytes(tree_template().to_vec(), data),
+        14 => {
+            // Keep hostile stored JSON raw until the production reader applies
+            // its record limit and nesting checks.
+            let (&count, raw) = data.split_first()?;
+            let page = page(1, raw);
+            if page.len() > PAYLOAD {
+                return None;
+            }
+            let count = u64::from(count) + 1;
+            let footer = json!({"roots":[{"offset":start()+5,"bytes":page.len(),
+                "first":0,"count":count,"level":0}],"count":count,"sealed":false,"block":1});
+            file(&[
+                (0, page),
+                (3, object(&serde_json::to_vec(&footer).unwrap())),
+            ])
+        }
         _ => {
             // Raw compressed index object: correct envelope, hostile codec/length/zstd bytes.
             let data = &data[..data.len().min(PAYLOAD)];
-            let footer = json!({"roots":[{"block":0,"blocks":1,"bytes":data.len(),"first":0,
+            let footer = json!({"roots":[{"offset":start()+5,"bytes":data.len(),"first":0,
                 "count":1,"level":0}],"count":1,"sealed":false,"block":1});
             file(&[
-                (1, data.to_vec()),
+                (0, data.to_vec()),
                 (3, object(&serde_json::to_vec(&footer).unwrap())),
             ])
         }

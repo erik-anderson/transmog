@@ -37,7 +37,7 @@ zero. They are not a nonce or an index key.
 | Geometry proof | 4 plain / 20 encrypted bytes | Plaintext is `LE32(B)` |
 | Locator A | 256 bytes | Mutable checkpoint slot 0 |
 | Locator B | 256 bytes | Mutable checkpoint slot 1 |
-| Blocks | Multiples of `B + 16` bytes | Data, index or footer blocks |
+| Blocks | Multiples of `B + 16` bytes | Packed-object or footer blocks |
 
 `B` is either 1024 or 16384. Let `S = 13 + H + proof_length + 512`;
 block ordinal `i` starts at `S + i * (B + 16)`. A final sealed file has no
@@ -122,7 +122,7 @@ does not itself establish that an implementation is correct.
 
 | Offset | Size | Field |
 | --- | --- | --- |
-| 0 | 1 | Kind: data `0`, leaf `1`, branch `2`, footer `3` |
+| 0 | 1 | Kind: packed data `0`, footer `3` |
 | 1 | 4 | Used payload length, at most `B - 5` |
 | 5 | Used length | Payload |
 | Remaining | To `B` bytes | Padding (writer emits zeros) |
@@ -131,32 +131,38 @@ Kind, used length and padding are all protected by the block operation. Padding
 does not participate in logical frame lengths. The reader ignores authenticated
 padding bytes. Unknown block kinds cannot satisfy an index or data reference.
 
-## Data records and body chunks
+## Packed objects and body chunks
 
-Data-block payloads contain inner frames. A record comprises one metadata frame
-and, when `body_index` is present, one immediately following body frame. Frames
-can cross consecutive data blocks; they never cross an index or footer block.
+Data-block payloads pack body blobs, metadata leaves and index branches together.
+Objects can cross consecutive full data blocks. An object never crosses a footer
+or a partially filled intermediate block. Only checkpoints force a partial data
+block to be padded; flushing a metadata page does not waste the rest of a block.
 
-| Offset in frame | Size | Field |
+| Offset in object | Size | Field |
 | --- | --- | --- |
-| 0 | 4 | Encoded payload length `N`, excluding these first eight bytes |
-| 4 | 4 | IEEE CRC32 of the following `N` bytes |
-| 8 | 8 | Counter: `2 * record_ordinal + 1` for metadata, `+ 2` for body |
-| 16 | 4 | Expanded payload length |
-| 20 | 1 | Codec: `0` raw, `1` zstd |
-| 21 | `N - 13` | Encoded payload |
+| 0 | 1 | Kind: body `0`, metadata leaf `1`, index branch `2` |
+| 1 | 1 | Codec: raw `0`, zstd `1`, dictionary zstd `2` |
+| 2 | 4 | Expanded payload length |
+| 6 | 4 | Encoded payload length |
+| 10 | Encoded length | Encoded bytes |
 
-Counters must not overflow. Inner frames are not separately encrypted in the
-public container: their outer blocks supply encryption and authentication. The
-private circular-storage scratch representation is an implementation detail,
-not another supported TMCap file layout.
+The authenticated index reference includes the exact object size, including the
+ten-byte header. Raw and decoded lengths must match the expanded length. Validate
+bounds before allocation or decompression. Codec 2 is valid only for a body with
+an explicit dictionary reference; metadata always decodes independently.
 
-Raw payload length must equal the expanded length. Zstd output must equal the
-declared expanded length and stay within configured allocation limits. Each
-compressed chunk is independently decodable, without a preceding dictionary.
-Writers split retained bodies into chunks of at most 128 KiB. Readers additionally
-enforce their configured record bound; changing a compression level, probe
-threshold or chunking policy does not change how a frame is decoded.
+Identical client/upstream chunks may share one body blob. A nearly identical
+chunk may use an earlier, independently encoded body blob as a raw zstd
+dictionary. Its descriptor includes the base's offset, encoded size, expanded
+size and SHA-256. Verify the base digest before using it and verify the result
+digest after decompression. The base must end before the dependent blob, must
+expand to at most 128 KiB, and must use codec 0 or 1. Dependencies cannot chain.
+The writer emits body chunks of at most 128 KiB; a lazy read needs at most the
+requested chunk and one bounded base, with no scan of preceding bodies.
+
+Metadata is stored once, in compressed index pages. There is no second metadata
+record in the body stream. The private circular-storage scratch representation
+is an implementation detail, not another supported TMCap layout.
 
 Metadata expands to a stored-record JSON object:
 
@@ -173,7 +179,7 @@ Metadata expands to a stored-record JSON object:
     "truncated": false
   },
   "body_index": {
-    "frame_bytes": 26,
+    "frame_bytes": 15,
     "bytes": 5,
     "digest": [44, 242, 77, 186, 95, 176, 163, 14, 38, 232, 59, 42, 197, 185, 226, 158, 27, 22, 30, 92, 31, 167, 66, 94, 115, 4, 51, 98, 147, 139, 152, 36]
   }
@@ -181,7 +187,7 @@ Metadata expands to a stored-record JSON object:
 ```
 
 This example describes a raw body containing UTF-8 `hello`; its body frame is
-21 descriptor/framing bytes plus five payload bytes. `body_index` is absent for
+10 descriptor bytes plus five payload bytes. `body_index` is absent for
 records without retained body bytes. Its digest is SHA-256 of the uncompressed
 retained bytes; `frame_bytes` includes the entire body frame. A body index is
 valid only on a `body-segment`, whose metadata `bytes` must be null. Empty retained
@@ -268,10 +274,10 @@ from index pages without reading body blocks. The Rust reader returns expanded
 `PerformanceEvidence` to preserve the application API. A returned performance
 frame's `codec` pins only its referenced immutable contexts; use that frame's
 codec when rereading it independently. Body-frame codecs pin no connection
-dictionary. Full reads still check data/index agreement after resolving context.
+dictionary. Full reads resolve canonical metadata and validate referenced bodies.
 Definitions and references receive the same encryption as other metadata.
 
-As with all metadata, each definition has a data-record copy and an index copy;
+As with all metadata, each definition appears once in a compressed metadata page;
 there is no copy for each request. Private circular scratch storage uses expanded
 snapshots; final TMCap output builds the dictionary from retained snapshots, so
 contexts belonging only to evicted exchanges are absent. The initial format
@@ -279,67 +285,73 @@ version and record revision are unchanged.
 
 ## Index objects and footer
 
-A leaf, branch or footer payload is an object envelope:
-
-```text
-codec: u8 | expanded_length: u32 | encoded JSON bytes
-```
-
-Codec values and length checks are the same as for data frames. A leaf or branch
-object can span consecutive blocks of its kind; the footer fits in one block.
-Both the encoded object and expanded index JSON are bounded to 16 MiB. Footer
-JSON is bounded to 64 KiB. Writers normally batch approximately 128 KiB of
-metadata into a leaf and combine 32 children into a branch.
+Leaves and branches use the ten-byte packed-object header above and expand to
+JSON. Their expanded JSON is bounded to 16 MiB, and encoded sizes cannot exceed
+that bound plus the header. Writers target approximately 128 KiB of expanded
+metadata per leaf and combine 32 children per branch.
 
 A leaf expands to an array of entries:
 
 ```text
-Entry = { offset:u64, frame_bytes:u64, index:u64, stored:StoredRecord }
+Entry = { index:u64, stored:StoredRecord, body?:BodyRef }
+BodyRef = { offset:u64, dictionary?:BaseRef }
+BaseRef = { offset:u64, descriptor:StoredBodyIndex }
+StoredBodyIndex = { frame_bytes:u64, bytes:usize, digest:[u8;32] }
 ```
 
-`offset` points into a data-block payload at the first byte of a metadata frame.
-`frame_bytes` is the logical byte length of metadata plus optional body frame,
-excluding outer block headers, tags and padding. `stored` duplicates the metadata
-so opening the traffic list requires no body-block reads.
+`body` and `stored.body_index` must both be present or both absent. Both describe
+the same body blob. The offset points into a data-block payload, and frame_bytes
+includes the ten-byte object header but excludes physical block headers/tags.
+Shared references may overlap: client and upstream records retain their own
+boundary, observed counts and completeness even when they reference one blob.
 
-A branch expands to an array of nodes; the footer uses the same node descriptors:
+A branch expands to an array of nodes. A footer is a dedicated physical block
+whose payload retains this small envelope:
 
 ```text
-Node = { block:u64, blocks:u32, bytes:u32, first:u64, count:u64, level:u8 }
+codec:u8 | expanded_length:u32 | encoded JSON bytes
+Node = { offset:u64, bytes:u32, first:u64, count:u64, level:u8 }
 Commit = { roots:[Node...], count:u64, sealed:bool, block:u64 }
 ```
 
-`bytes` is the encoded object size including its five-byte envelope; `blocks`
-equals `ceil(bytes / (B - 5))`. `first` is the first record ordinal and `count`
-the number of covered records. Level zero is a leaf; a branch's children have
-exactly one lower level. Depth is at most 15. Node, entry and commit descriptors
-reject unknown fields.
+Footer codec is 0 or 1; expanded JSON is bounded to 64 KiB and its encoded envelope
+fits in one physical block. Node bytes includes the ten-byte object header.
+`first` and `count` describe record ordinals; level zero means leaf, with maximum
+depth 15. Nodes, entries, body references and commits reject unknown fields.
 
-Validate all arithmetic before seeking or allocating. In particular:
+Validate arithmetic before seeking or allocating:
 
-- Node counts are nonzero. Sibling record intervals are contiguous and exactly
-  cover their parent's interval. Root intervals cover `[0, commit.count)`.
-- Child physical ranges end before their parent block, and roots end before the
-  footer. References cannot cycle. Branches contain at most 32 children.
-- Leaf entry count and first ordinal match the node. Iteration requires every
-  ordinal exactly once, in order, and exactly the committed record count.
-- Entry offsets point into payloads, not headers or tags. Record ranges are
-  ordered and nonoverlapping, contain at least the inner descriptor, and end
-  before their leaf. Body frame lengths must fit within the whole record.
-- Referenced objects and blocks have the required kinds and exact lengths.
-  Body content and data/index agreement are checked when those data are read.
-- A footer's `block` equals its actual block ordinal. A sealed footer has at
-  least one record and is at the physical end of the file.
-- A sealed capture's last record is `seal` with `record_count` equal to its own
-  ordinal (all preceding records). A seal cannot appear earlier or in an
-  unsealed checkpoint. Only writer finalization generates seals.
+- Sibling record intervals are contiguous and exactly cover their parent;
+  roots cover `[0, commit.count)`. Counts are nonzero and branches have at most
+  32 children, each exactly one level lower.
+- Sibling node ranges are ordered and nonoverlapping. Children end before their
+  parent object, and roots end before the footer. Sharing a physical block is
+  allowed. These backward references prevent cycles.
+- Leaves contain at most 4096 entries; their counts and every ordinal match their node. Iteration consumes
+  exactly the committed count in order.
+- Body references end before their metadata leaf. Dictionary references end
+  before their dependent blob. Their offsets cannot point into a block header,
+  tag or outside the data payload. Bounds are checked without reading bodies.
+- Reading an object verifies block integrity, physical kind, object kind,
+  exact encoded length, expanded length, and any required body digests.
+- The footer's block ordinal matches its position. A sealed footer ends the
+  file and commits at least one record. Its final record is `seal`, whose
+  `record_count` equals its ordinal. Earlier seals and seals in unsealed
+  checkpoints are invalid.
 
-For lazy reading, authenticate the requested data blocks, decode its metadata and
-body, check counters and lengths, and verify the body digest against the trusted
-index. Full validation additionally compares every data record's metadata with
-its index copy. Metadata-only opening intentionally does not prove that unread
-body blocks are intact. `CaptureReader::sealed()` describes the selected footer;
-callers must iterate and validate records before claiming full-file validity.
+Opening reads the bootstrap and footer; populating the traffic list reads
+compressed metadata pages. It does not seek to or decompress body objects.
+A page read can incidentally fetch neighboring body ciphertext in the same
+physical block (at most one block at either edge). The random-read API pins the
+page location and record ordinal in `CaptureFrame.codec`, rereads that canonical
+page, and validates only the requested body and optional dictionary. It rejects
+substituted offsets, ordinals and lengths. Pass the frame's codec, not a bare
+reader-wide codec, to `read_indexed_frame_with_codec`.
+
+Metadata-only opening intentionally does not validate unread bodies.
+`CaptureReader::sealed()` describes the selected footer; full validation must
+iterate all records and read their bodies. No compatibility reader accepts the
+earlier experimental duplicated-metadata layout.
 
 ## Checkpoint locators and crash recovery
 
@@ -393,7 +405,14 @@ compact replacement is written with fresh cryptographic parameters and published
 atomically; never rewrite published ciphertext in place under its old nonce.
 Approximately 5 KiB of overhead is a goal, not an encryption or validity rule.
 
-The default per-record allocation limit is 8 MiB. Header, index, footer, depth,
+The default per-record serialized-size limit is 8 MiB. Leaf record envelopes
+remain serialized until requested, and the record limit is checked before
+constructing their JSON payload trees. A punctuation-aware scan of validated raw
+JSON also bounds estimated allocation before constructing any values, covering
+arrays and sparse map nodes. Its budget is `clamp(16 * max_record_bytes, 64 KiB,
+64 MiB)`; writers enforce the same check to avoid producing unreadable records.
+Punctuation inside strings does not count toward container allocation. Branch and leaf array limits are enforced
+during parsing. Random reads enforce the caller's file-size limit as well. Header, index, footer, depth,
 certificate-size (1 MiB), and certificate-dictionary (256 MiB) limits apply in
 addition to caller-selected file-size and record-count limits. Defaults leave
 total file size and count unlimited. Applications must also bound retained UI
@@ -402,12 +421,26 @@ memory. Malformed input must produce an error rather than a panic or unchecked
 allocation.
 
 The viewer charges retained request targets, caller names, header storage,
-session rows and performance metadata against its import index budget. Shared
+session rows and performance metadata against its import index budget. Retained
+JSON contexts and body representations include their array capacity, object
+entries, keys, and string buffers in this budget, in addition to serialized size.
+The same retained-context accounting applies to the combined workspace metadata
+budget when publishing imports. Shared
 certificate DER is charged once per import as well: it can outlive the reader's
 temporary dictionaries. Body segments cannot retain more bytes than their
 observation count, and accumulated counts must not overflow. A decoded saved
 body may exceed its original wire size; its `body-representation` observation
 count describes the original transfer, independently of segment counts.
+Individual segment samples are prefixes: after an omitted byte the viewer
+retains only the contiguous body prefix, without joining later samples across
+the gap. An explicit observer-loss marker also stops prefix retention because
+the missing event's body offset is unknown. Observed counts still include every
+available segment. Known artifact records require exchange ID zero, and known
+exchange records require a nonzero ID; misplaced records are rejected instead
+of silently ignored. Unknown extensions remain ignorable. Completion inference uses
+the request method on the response's own leg; transfer coding prevents a
+Content-Length field from proving completeness. Protocol evidence is restored
+before constructing both observed and terminal heads.
 Request and response heads must use their corresponding boundaries, and
 response status codes must be in the HTTP range 100–999. Failed or canceled
 imports publish no partial session/body/source state. Cancellation is checked
@@ -429,6 +462,8 @@ integrity.
 
 - [`container.rs`](../crates/proxy-capture/src/container.rs): blocks, writer,
   index, checkpoint selection, compaction and lazy reads.
+- [`container_packed.rs`](../crates/proxy-capture/src/container_packed.rs): packed
+  objects, bounded sharing and dictionary validation.
 - [`encoding.rs`](../crates/proxy-capture/src/encoding.rs): bootstrap, Argon2,
   HKDF, AES-GCM, locators and inner frame encoding.
 - [`compression.rs`](../crates/proxy-capture/src/compression.rs): adaptive zstd

@@ -11,7 +11,7 @@ with no compatibility reader for earlier experimental layouts.
 
 ```
 public bootstrap | protected geometry | locator A | locator B | fixed-size blocks
-                                                           data / index / footer
+                                                      packed objects / footer
 ```
 
 The public bootstrap contains the nine-byte magic, a little-endian u32 JSON
@@ -24,8 +24,8 @@ sizes are 16384 and 1024 bytes, each followed by a 16-byte authentication tag or
 checksum. Two fixed 256-byte checkpoint locator slots follow the bootstrap.
 
 Each block's **encrypted** plaintext starts with a one-byte kind and a
-little-endian u32 used length, followed by payload and padding. Kinds are data
-(0), index leaf (1), index branch (2) and footer (3). All blocks in a file have
+little-endian u32 used length, followed by payload and padding. Physical kinds are packed data (0) and footer (3).
+Packed data contains body (0), metadata leaf (1) and branch (2) objects. All blocks in a file have
 the same physical size. Records can share blocks or cross block boundaries;
 blocks do not identify individual requests or responses.
 
@@ -68,37 +68,39 @@ in file order, so it can load request/response metadata in batches. It does not
 seek to each body's data location. Memory used by the application's traffic
 list still scales with the metadata it chooses to display.
 
-An index entry includes the logical record ordinal, data offset, encoded length,
-and record metadata. A body descriptor includes its retained length, observed
-length, boundary, completeness and SHA-256 digest. Bodies are independently
-encoded chunks of at most 128 KiB. A body click, byte range or explicit body
-search reads only the relevant indexed chunks and authenticates their containing
-blocks. Shared-block corruption can affect another record in that same block.
-Expanded-size and digest checks apply before exposing body data. There is no
-whole-file decompression or plaintext temporary-file requirement.
+An index entry contains the record ordinal, its canonical metadata and an
+optional body reference. Metadata is stored only in compressed pages. Bodies
+are at most 128 KiB per chunk; identical opposite-boundary chunks can reference
+one blob. Nearly identical chunks can use an earlier independent chunk as a
+zstd dictionary, with at most one additional 128 KiB read. No dependency chains
+or whole-file decompression are needed.
 
-Data records retain bounded metadata/body pairs. Each inner frame has a u32
-encoded length and CRC32 followed by a u64 counter, u32 expanded length, one-byte
-codec (raw or zstd), and payload. These descriptors are inside the outer block
-encryption. The outer block is the authentication boundary. Explicit full
-validation checks indexed metadata against data records and verifies every body.
-The public indexed-frame API takes the complete original seekable source,
-positioned at the indexed offset; a slice containing only the record is insufficient.
-
-Index objects have a codec byte and u32 expanded length before their payload.
-Readers bound header/KDF parameters, index objects (16 MiB), individual metadata
-and body allocations, tree depth, node ranges, certificate and connection dictionaries, and
-caller-specified file/record limits. Unknown encodings are rejected. Defaults
-do not cap total file size or record count.
+Packed objects have kind, codec, expanded length and encoded length in a ten-byte
+header. Bodies and index pages share physical blocks; only checkpoints pad a
+partial block. Metadata-only loading may fetch neighboring body ciphertext in
+the page's boundary blocks, but never decompresses body blobs. A random read
+authenticates its metadata page and selected body blocks, verifies lengths and
+digests, and uses the indexed frame's pinned codec. Full validation reads every
+referenced body. All allocations, tree ranges, dictionaries and decompression
+are bounded; defaults do not cap total file size or record count.
 
 ## Compression and scheduling
 
 Reusable zstd level-1 contexts encode independent chunks. A result is retained
 only if it saves at least 2% and 64 bytes; inputs smaller than 256 bytes stay raw.
 Request/response headers, shared connection definitions and other metadata use
-this same zstd policy. Data records compress metadata independently, while index
-pages compress batches of metadata together, exploiting repeated header names
-and values across records. Metadata never inherits a body's adaptive bypass.
+this same zstd policy on batches, exploiting repeated header names and values
+across client/upstream records and exchanges. Metadata never inherits a body's adaptive bypass.
+
+Body sharing is scoped to opposite boundaries of the same exchange and direction,
+at matching captured offsets. A bounded table retains 65,536 exact-match
+descriptors, and a separate 8 MiB cache holds independent dictionary bytes
+(including a per-entry allowance). Near-match encoding is kept only when it
+saves at least 256 bytes and 2% beyond the independent encoding, to cover its
+reference. It is attempted even when ordinary body compression is bypassed.
+Cache eviction or different segmentation can forgo sharing; correctness and
+random access do not depend on a cache hit. The format supports shared blobs
+without retaining a second full response in memory.
 
 Each body representation has independent adaptive state, reset on a new head and
 released at completion or eviction. Once at least 64 KiB has been sampled, weak
@@ -125,8 +127,8 @@ budget; this is flow control, not a hard process-memory cap. Lossless capture
 waits for capacity and slows forwarding instead of dropping evidence. Encoder,
 index, compression-context and active-exchange memory are additional bounded or
 workload-dependent costs. Circular capture uses the same adaptive policy and
-copies authenticated compressed body frames when finalizing, without another
-decompress/recompress pass.
+preserves authenticated independent compressed chunks where possible. It may
+expand a chunk to compare the opposite boundary and try dictionary compression.
 
 ## Writes, checkpoints and small traces
 
@@ -176,8 +178,8 @@ addressed by SHA-256 of normalized context JSON. Performance snapshots carry a
 context reference plus changing counters, measurements and request-relative
 timings. Changed facts create a new definition even when the physical connection
 ID stays the same. Both definitions and references are encrypted and indexed;
-metadata-only opening resolves them without touching bodies. Each definition
-still has one data copy and one index copy. Circular finalization emits only the
+metadata-only opening resolves them without decompressing bodies. Each definition
+has one canonical copy in the metadata index. Circular finalization emits only the
 contexts needed by retained exchanges. The Rust API expands references back into
 the existing performance model. See the [wire schema](tmcap-format.md#shared-connection-context).
 
@@ -186,3 +188,20 @@ versions at all four request/response boundaries, including HTTP/1 minor version
 Record schema, redaction, body-retention limits and incomplete-evidence semantics
 remain independent of the container layout. Encryption stays opt-in. Independent
 pinned file cursors allow concurrent body readers.
+
+## Runtime body memory
+
+The live memory body store compares a new chunk with the retained range at the
+opposite boundary of the same exchange. Equal bytes reuse immutable allocations;
+modified bytes own new allocations. Matching works while streaming, in either
+direction, across different or interleaved chunk boundaries. There is no lookup
+or deduplication across different exchanges. Request and response pairs are
+separate. Newly owned prefixes are copied at their retained size so a short
+retention limit cannot pin a much larger observer sample.
+
+The aggregate quota charges each allocation once, including while a read lease
+keeps it alive after rows are removed. Per-boundary retained lengths and hashes
+remain independent. Eviction, clearing and leases cannot invalidate the other
+boundary's shared bytes. Disk-cache policy is unchanged. Imported TMCap bodies
+remain file references and are decoded only for an active read; they are not
+loaded into the live memory cache during import.

@@ -53,8 +53,10 @@ fn opening_and_indexing_do_not_read_bodies_and_random_seek_authenticates_only_se
         )
         .unwrap();
         let source = binary();
-        for id in 0..128 {
-            writer.append(&body(id, source.clone())).unwrap();
+        for id in 0..128_u128 {
+            let mut unique = source.clone();
+            unique[..16].copy_from_slice(&id.to_le_bytes());
+            writer.append(&body(id, unique)).unwrap();
         }
         writer.seal().unwrap();
         let bytes = writer.into_inner().unwrap();
@@ -96,12 +98,17 @@ fn opening_and_indexing_do_not_read_bodies_and_random_seek_authenticates_only_se
                 frame.index
             )
             .unwrap(),
-            body(100, source)
+            {
+                let mut expected = source;
+                expected[..16].copy_from_slice(&100_u128.to_le_bytes());
+                body(100, expected)
+            }
         );
         let mut changed = bytes;
         let block =
             usize::try_from((frame.offset - frame.codec.container_start()) / BLOCK_BYTES as u64)
-                .unwrap();
+                .unwrap()
+                + 1;
         let changed_byte =
             usize::try_from(frame.codec.container_start()).unwrap() + block * BLOCK_BYTES + 70;
         changed[changed_byte] ^= 1;

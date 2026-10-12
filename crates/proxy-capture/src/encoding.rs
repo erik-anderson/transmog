@@ -70,6 +70,7 @@ struct Header {
 pub struct FrameCodec {
     // Only the immutable connection definitions needed by this indexed frame.
     pub(crate) connections: Arc<crate::connections::Definitions>,
+    pub(crate) record: Option<crate::container::RecordLocation>,
     inner: Arc<CodecInner>,
     start: u64,
 }
@@ -101,18 +102,6 @@ impl FrameCodec {
     }
     pub(crate) fn container_start(&self) -> u64 {
         self.start
-    }
-    pub(crate) fn plain(&self) -> Self {
-        Self {
-            start: self.start,
-            connections: self.connections.clone(),
-            inner: Arc::new(CodecInner {
-                header: self.inner.header.clone(),
-                key: None,
-                prefix: self.inner.prefix,
-                block_size: self.inner.block_size,
-            }),
-        }
     }
     pub(crate) fn encode_chunk(
         &self,
@@ -418,6 +407,7 @@ impl FrameCodec {
         Ok(Self {
             start: 0,
             connections: Arc::default(),
+            record: None,
             inner: Arc::new(CodecInner {
                 header: encoded,
                 key,
@@ -623,6 +613,7 @@ mod tests {
         let changed = FrameCodec {
             start: codec.start,
             connections: codec.connections.clone(),
+            record: None,
             inner: Arc::new(CodecInner {
                 header,
                 key: codec.inner.key.clone(),

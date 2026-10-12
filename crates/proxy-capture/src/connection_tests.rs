@@ -223,7 +223,9 @@ fn context_metadata_does_not_require_body_reads_or_pin_dictionary_to_body_frames
     let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
     writer.append(&record(1, evidence())).unwrap();
     let body = super::tests::binary();
-    for id in 1..=32 {
+    for id in 1..=32_u128 {
+        let mut body = body.clone();
+        body[..16].copy_from_slice(&id.to_le_bytes());
         writer
             .append(&super::tests::body(id, body.clone()))
             .unwrap();
@@ -284,22 +286,40 @@ fn shared_connection_storage_comparison() {
 }
 
 #[test]
-fn expanded_performance_still_checks_data_index_agreement() {
+fn canonical_performance_metadata_tampering_fails_both_readers() {
     let mut writer = CaptureWriter::new(Vec::new(), CaptureLimits::default()).unwrap();
     writer.append(&record(1, evidence())).unwrap();
-    writer.drain_jobs().unwrap();
-    writer.small = None;
-    writer.entries.last_mut().unwrap().stored.payload["transports"][0]["bytesRead"] = json!(999);
     writer.seal().unwrap();
-    let bytes = writer.into_inner().unwrap();
-    let mut indexed = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
-    while indexed.read_next_indexed().unwrap().is_some() {}
-    let mut full = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
-    full.read_next().unwrap().unwrap();
-    assert!(matches!(
-        full.read_next(),
-        Err(CaptureError::AuthenticationFailed)
-    ));
+    let mut bytes = writer.into_inner().unwrap();
+    let mut reader = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+    let frame = reader.read_next_indexed().unwrap().unwrap();
+    let codec = frame.codec;
+    let mut cursor = Cursor::new(bytes.clone());
+    cursor.set_position(frame.offset);
+    bytes[usize::try_from(frame.offset).unwrap() + 10] ^= 1;
+    for full in [false, true] {
+        let mut reader = CaptureReader::new(Cursor::new(&bytes), CaptureLimits::default()).unwrap();
+        assert!(
+            if full {
+                reader.read_next()
+            } else {
+                reader.read_next_indexed()
+            }
+            .is_err()
+        );
+    }
+    cursor = Cursor::new(bytes);
+    cursor.set_position(frame.offset);
+    assert!(
+        read_indexed_frame_with_codec(
+            cursor,
+            frame.frame_bytes,
+            CaptureLimits::default(),
+            &codec,
+            frame.index
+        )
+        .is_err()
+    );
 }
 
 #[test]

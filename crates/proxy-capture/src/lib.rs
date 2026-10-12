@@ -389,7 +389,7 @@ impl StoredRecord {
     }
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 struct StoredBodyIndex {
     frame_bytes: u64,
     bytes: usize,
@@ -1053,11 +1053,12 @@ pub struct CaptureBodyIndex {
 /// One checked native frame with its stable on-disk location.
 #[derive(Clone, Debug)]
 pub struct CaptureFrame {
-    /// Offset of its frame header, suitable for a later bounded re-read.
+    /// Packed body object offset, or canonical metadata page for a record without a body.
+    /// Use this together with this frame's codec and ordinal for a bounded re-read.
     pub offset: u64,
-    /// Zero-based physical frame index used for authenticated random reads.
+    /// Zero-based logical record ordinal used for authenticated random reads.
     pub index: u64,
-    /// Total header and payload bytes.
+    /// Encoded object bytes, including its header but excluding physical block overhead.
     pub frame_bytes: u64,
     /// Decoding context for an independently indexed payload.
     pub codec: FrameCodec,

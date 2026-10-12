@@ -1,32 +1,49 @@
-//! Encrypted `TMCap` fixtures and mutation oracles shared with seed regression tests.
+//! Encrypted `TMCap` fixtures: both geometries, shared dictionaries, and every read block.
 use std::{io::Cursor, sync::OnceLock};
 use transmog_capture::{
     CaptureEncoding, CaptureFrame, CaptureLimits, CapturePassword, CaptureReader, CaptureRecord,
     CaptureRecordKind, CaptureWriter, read_indexed_frame_with_codec,
 };
+use transmog_core::observe::ExchangeBoundary;
 
 struct Seed {
     bytes: Vec<u8>,
-    frame: CaptureFrame,
-    expected: CaptureRecord,
-    performance: CaptureFrame,
-    expected_performance: CaptureRecord,
+    frames: Vec<CaptureFrame>,
+    expected: Vec<CaptureRecord>,
     start: usize,
+    block_plain: usize,
 }
-fn seed() -> &'static Seed {
-    static SEED: OnceLock<Seed> = OnceLock::new();
-    SEED.get_or_init(|| {
+fn seed(compact: bool) -> &'static Seed {
+    static NORMAL: OnceLock<Seed> = OnceLock::new();
+    static COMPACT: OnceLock<Seed> = OnceLock::new();
+    (if compact { &COMPACT } else { &NORMAL }).get_or_init(|| {
         let password = CapturePassword::new("fuzz-only-password".into());
-        let expected = CaptureRecord {
+        let mut number = 123_456_789_u32;
+        let base: Vec<u8> = (0..32 * 1024)
+            .map(|_| {
+                number ^= number << 13;
+                number ^= number >> 17;
+                number ^= number << 5;
+                number.to_le_bytes()[0]
+            })
+            .collect();
+        let mut changed = base.clone();
+        changed[20_000] ^= 1;
+        let mut expected = [
+            (ExchangeBoundary::UpstreamResponse, base),
+            (ExchangeBoundary::ClientResponse, changed),
+        ]
+        .map(|(boundary, bytes)| CaptureRecord {
             sequence: 1,
             exchange_id: 1,
             kind: CaptureRecordKind::BodySegment {
-                boundary: transmog_core::observe::ExchangeBoundary::ClientResponse,
-                byte_count: 2048,
-                bytes: Some(vec![b'x'; 2048]),
+                boundary,
+                byte_count: bytes.len(),
+                bytes: Some(bytes),
                 truncated: false,
             },
-        };
+        })
+        .to_vec();
         let mut writer = CaptureWriter::with_encoding(
             Vec::new(),
             CaptureLimits::default(),
@@ -35,8 +52,10 @@ fn seed() -> &'static Seed {
             },
         )
         .unwrap();
-        writer.append(&expected).unwrap();
-        let expected_performance = CaptureRecord {
+        for record in &expected {
+            writer.append(record).unwrap();
+        }
+        expected.push(CaptureRecord {
             sequence: 2,
             exchange_id: 1,
             kind: CaptureRecordKind::Performance(transmog_core::performance::PerformanceEvidence {
@@ -48,63 +67,96 @@ fn seed() -> &'static Seed {
                 }],
                 ..Default::default()
             }),
-        };
-        writer.append(&expected_performance).unwrap();
+        });
+        writer.append(expected.last().unwrap()).unwrap();
+        if !compact {
+            writer.checkpoint().unwrap();
+        }
         writer.seal().unwrap();
         let bytes = writer.into_inner().unwrap();
         let header = u32::from_le_bytes(bytes[9..13].try_into().unwrap()) as usize;
         let start = 13 + header + 20 + 512;
+        let block_plain = if compact { 1024 } else { 16 * 1024 };
+        assert!((bytes.len() - start).is_multiple_of(block_plain + 16));
         let mut reader = CaptureReader::with_password(
             Cursor::new(&bytes),
             CaptureLimits::default(),
             Some(&password),
         )
         .unwrap();
-        let frame = reader.read_next_indexed().unwrap().unwrap();
-        reader.read_next_indexed().unwrap().unwrap(); // Shared definition.
-        let performance = reader.read_next_indexed().unwrap().unwrap();
+        let mut frames = Vec::new();
+        while let Some(frame) = reader.read_next_indexed().unwrap() {
+            if matches!(
+                frame.record.kind,
+                CaptureRecordKind::BodySegment { .. } | CaptureRecordKind::Performance(_)
+            ) {
+                frames.push(frame);
+            }
+        }
+        assert_eq!(frames.len(), 3);
+        assert!(
+            frames[1].frame_bytes < 1024,
+            "fixture must use a dictionary"
+        );
         Seed {
             bytes,
-            frame,
+            frames,
             expected,
-            performance,
-            expected_performance,
             start,
+            block_plain,
         }
     })
+}
+fn object_blocks(seed: &Seed, frame: &CaptureFrame, blocks: &mut Vec<usize>) {
+    let stride = seed.block_plain + 16;
+    let relative = usize::try_from(frame.offset).unwrap() - seed.start;
+    let first = relative / stride;
+    let within = relative % stride - 5;
+    let last =
+        first + (within + usize::try_from(frame.frame_bytes).unwrap() - 1) / (seed.block_plain - 5);
+    blocks.extend((first..=last).map(|ordinal| seed.start + ordinal * stride));
 }
 pub(crate) fn exercise(input: &[u8]) {
     if input.len() < 4 {
         return;
     }
-    let seed = seed();
-    let (frame, expected) = if input[0] & 4 == 0 {
-        (&seed.frame, &seed.expected)
+    let seed = seed(input[0] & 8 != 0);
+    let selected = if input[0] & 4 != 0 {
+        2
     } else {
-        (&seed.performance, &seed.expected_performance)
+        usize::from(input[0] & 16 != 0)
     };
-    let block = seed.start + (usize::try_from(frame.offset).unwrap() - seed.start) / 1040 * 1040;
+    let frame = &seed.frames[selected];
+    let expected = &seed.expected[selected];
+    let mut blocks = Vec::new();
+    object_blocks(seed, frame, &mut blocks);
+    // All random reads load the canonical metadata page. Dependent bodies also
+    // read the independent base, potentially spanning many physical blocks.
+    object_blocks(seed, &seed.frames[2], &mut blocks);
+    if selected == 1 {
+        object_blocks(seed, &seed.frames[0], &mut blocks);
+    }
+    blocks.sort_unstable();
+    blocks.dedup();
+    let block = blocks[usize::from(input.get(4).copied().unwrap_or(0)) % blocks.len()];
     let mut bytes = seed.bytes.clone();
-    let mut offset = frame.offset;
     let mut index = frame.index;
     let mut length = frame.frame_bytes;
     match input[0] % 4 {
         0 => {
-            // Every single-bit ciphertext/tag mutation in the selected block must fail.
-            let p = block + u16::from_le_bytes([input[1], input[2]]) as usize % 1040;
-            bytes[p] ^= 1 << (input[3] % 8);
+            let position = block
+                + usize::from(u16::from_le_bytes([input[1], input[2]])) % (seed.block_plain + 16);
+            bytes[position] ^= 1 << (input[3] % 8);
         }
         1 => index = index.saturating_add(1 + u64::from(input[1])),
         2 => length = if input[1] & 1 == 0 { u64::MAX } else { 0 },
         _ => {
-            // Header/index replacement cannot turn the pinned context into a new key.
-            let p = u16::from_le_bytes([input[1], input[2]]) as usize % seed.start;
-            bytes[p] ^= 1 << (input[3] % 8);
-            offset = frame.offset;
+            let position = usize::from(u16::from_le_bytes([input[1], input[2]])) % seed.start;
+            bytes[position] ^= 1 << (input[3] % 8);
         }
     }
     let mut cursor = Cursor::new(bytes);
-    cursor.set_position(offset);
+    cursor.set_position(frame.offset);
     let result = read_indexed_frame_with_codec(
         cursor,
         length,

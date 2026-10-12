@@ -1,7 +1,7 @@
 {
   "bad-expanded": {
     "full": {
-      "error": "RecordTooLarge { actual: 4294967295, limit: 131072 }",
+      "error": "QuotaExceeded",
       "records": [],
       "stage": "full"
     },
@@ -154,6 +154,108 @@
       "sealed": false
     }
   },
+  "deep-record": {
+    "full": {
+      "error": "Json",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "Json",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "dense-record-quota": {
+    "full": {
+      "error": "RecordTooLarge { actual: 5079, limit: 1024 }",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "RecordTooLarge { actual: 5079, limit: 1024 }",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "dictionary-bad-base-digest": {
+    "full": {
+      "error": "AuthenticationFailed",
+      "records": [
+        "body-segment:2400"
+      ],
+      "stage": "full"
+    },
+    "indexed": {
+      "records": [
+        "body-segment:2400",
+        "body-segment:2400"
+      ],
+      "sealed": false
+    }
+  },
+  "dictionary-bad-result-digest": {
+    "full": {
+      "error": "AuthenticationFailed",
+      "records": [
+        "body-segment:2400"
+      ],
+      "stage": "full"
+    },
+    "indexed": {
+      "records": [
+        "body-segment:2400",
+        "body-segment:2400"
+      ],
+      "sealed": false
+    }
+  },
+  "dictionary-chain": {
+    "full": {
+      "error": "InvalidMagic",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "records": [
+        "body-segment:2400",
+        "body-segment:2400"
+      ],
+      "sealed": false
+    }
+  },
+  "dictionary-forward": {
+    "full": {
+      "error": "InvalidMagic",
+      "records": [
+        "body-segment:2400"
+      ],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "InvalidMagic",
+      "records": [
+        "body-segment:2400"
+      ],
+      "stage": "index"
+    }
+  },
+  "dictionary-valid": {
+    "full": {
+      "records": [
+        "body-segment:2400",
+        "body-segment:2400"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "body-segment:2400",
+        "body-segment:2400"
+      ],
+      "sealed": false
+    }
+  },
   "empty-checkpoint": {
     "full": {
       "records": [],
@@ -198,13 +300,13 @@
   },
   "index-reference": {
     "full": {
-      "error": "AuthenticationFailed",
+      "error": "InvalidMagic",
       "records": [],
       "stage": "full"
     },
     "indexed": {
       "records": [
-        "completed"
+        "body-segment:1"
       ],
       "sealed": false
     }
@@ -231,6 +333,26 @@
       "stage": "open"
     }
   },
+  "multilevel-index": {
+    "full": {
+      "records": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "sealed": false
+    },
+    "indexed": {
+      "records": [
+        "completed",
+        "completed",
+        "completed",
+        "completed"
+      ],
+      "sealed": false
+    }
+  },
   "normal-checkpoint": {
     "full": {
       "records": [
@@ -251,14 +373,26 @@
       "sealed": true
     }
   },
-  "oversized-index": {
+  "object-amplification": {
     "full": {
-      "error": "RecordTooLarge { actual: 4294967295, limit: 16777216 }",
+      "error": "QuotaExceeded",
       "records": [],
       "stage": "full"
     },
     "indexed": {
-      "error": "RecordTooLarge { actual: 4294967295, limit: 16777216 }",
+      "error": "QuotaExceeded",
+      "records": [],
+      "stage": "index"
+    }
+  },
+  "oversized-index": {
+    "full": {
+      "error": "QuotaExceeded",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "QuotaExceeded",
       "records": [],
       "stage": "index"
     }
@@ -301,6 +435,18 @@
         "seal"
       ],
       "sealed": true
+    }
+  },
+  "wide-branch": {
+    "full": {
+      "error": "Json",
+      "records": [],
+      "stage": "full"
+    },
+    "indexed": {
+      "error": "Json",
+      "records": [],
+      "stage": "index"
     }
   },
   "zstd-index": {

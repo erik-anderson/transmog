@@ -30,6 +30,7 @@ run_target() {
         -rss_limit_mb=2048 \
         -timeout=10 \
         -verbosity=0 \
+        -print_final_stats=1 \
         -runs="$runs" \
         "$@"
 }

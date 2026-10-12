@@ -229,9 +229,8 @@ impl TraceRegistry {
         state.metadata_bytes = state
             .metadata
             .values()
-            .filter_map(|meta| serde_json::to_vec(meta).ok())
-            .map(|bytes| bytes.len())
-            .sum();
+            .map(|meta| trace_metadata_bytes(meta).unwrap_or(MAX_HEAD_BYTES))
+            .fold(0usize, usize::saturating_add);
     }
     pub(crate) fn source_id(&self, id: &str) -> Option<String> {
         self.lock()
@@ -407,7 +406,7 @@ impl TraceRegistry {
         let extra_metadata = std::iter::once(&trace)
             .chain(imported.sources.values())
             .try_fold(0usize, |total, source| {
-                serde_json::to_vec(source).map(|bytes| total.saturating_add(bytes.len()))
+                trace_metadata_bytes(source).map(|bytes| total.saturating_add(bytes))
             })
             .map_err(|_| invalid("Invalid trace source metadata"))?;
         {
@@ -1233,6 +1232,7 @@ fn import_native(
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
+        validate_native_scope(&frame.record)?;
         if frame.record.exchange_id == 0 {
             if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind {
                 // CaptureReader bounds the transient dictionaries. Hydrated DER
@@ -1244,7 +1244,9 @@ fn import_native(
                 let bytes = serde_json::to_vec(&payload)
                     .map_err(|_| invalid("Invalid trace metadata"))?
                     .len();
-                budget = budget.saturating_add(bytes);
+                budget = budget
+                    .saturating_add(bytes)
+                    .saturating_add(json_heap_bytes(&payload));
                 if budget > MAX_HEAD_BYTES {
                     return Err(invalid("Trace source metadata exceeds its index limit"));
                 }
@@ -1324,6 +1326,23 @@ fn import_native(
     Ok(result)
 }
 
+fn validate_native_scope(record: &transmog_capture::CaptureRecord) -> Result<(), AppError> {
+    let global = match &record.kind {
+        CaptureRecordKind::Seal { .. } => Some(true),
+        CaptureRecordKind::Unknown { kind, .. } => match kind.as_str() {
+            "trace-metadata" | "trace-source" | "circular-retention" | "public-certificate"
+            | "connection-context" => Some(true),
+            "body-representation" | "body-completed" | "entry-provenance" => Some(false),
+            _ => None, // Future extensions can belong to either scope.
+        },
+        _ => Some(false),
+    };
+    if global.is_some_and(|global| global != (record.exchange_id == 0)) {
+        return Err(invalid("Saved native record has an invalid exchange scope"));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn apply_native_frame(
     row: &mut NativeSession,
@@ -1341,7 +1360,7 @@ fn apply_native_frame(
             if bytes > 16 * 1024 {
                 return Err(invalid("Body representation exceeds its limit"));
             }
-            *budget = budget.saturating_add(bytes);
+            charge_native_index(budget, bytes.saturating_add(json_heap_bytes(&payload)))?;
             let body = row
                 .bodies
                 .entry(crate::inspector::boundary(boundary))
@@ -1496,6 +1515,11 @@ fn apply_native_frame(
             if body.body_completed {
                 return Err(invalid("Body data appears after its completion marker"));
             }
+            // Samples are prefixes of individual segments. After omitted bytes,
+            // later samples must not be exposed as adjacent bytes of one body.
+            // A lost observer event may itself contain body bytes. Its size
+            // is unknown, so later samples cannot extend a known prefix either.
+            let contiguous = row.loss == 0 && body.retained == body.observed;
             body.observed = body
                 .observed
                 .checked_add(byte_count as u64)
@@ -1507,7 +1531,7 @@ fn apply_native_frame(
                 return Err(invalid("Saved body retains more bytes than were observed"));
             }
             body.incomplete |= truncated || captured != byte_count;
-            if captured > 0 {
+            if captured > 0 && contiguous {
                 let digest = frame.body.map_or_else(
                     || Sha256::digest(bytes.as_ref().unwrap()).into(),
                     |index| index.digest,
@@ -1627,6 +1651,21 @@ fn append_native(
     {
         result.notes.push("Some native entries predate timing and protocol retention; unavailable fields are left blank.".into());
     }
+    // Restore before cloning the selected heads into the terminal snapshot.
+    for observed in &mut row.requests {
+        restore_native_version(
+            &row.performance,
+            observed.boundary,
+            &mut observed.head.source_version,
+        );
+    }
+    for observed in &mut row.responses {
+        restore_native_version(
+            &row.performance,
+            observed.boundary,
+            &mut observed.head.source_version,
+        );
+    }
     let request = row
         .requests
         .iter()
@@ -1672,20 +1711,6 @@ fn append_native(
             .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
     }
     snapshot.performance = row.performance;
-    for observed in &mut snapshot.request_heads {
-        restore_native_version(
-            &snapshot.performance,
-            observed.boundary,
-            &mut observed.head.source_version,
-        );
-    }
-    for observed in &mut snapshot.response_heads {
-        restore_native_version(
-            &snapshot.performance,
-            observed.boundary,
-            &mut observed.head.source_version,
-        );
-    }
     if !row.completed || row.failed {
         snapshot.terminal = Some(saved_failure(
             snapshot.metadata.clone(),
@@ -1704,10 +1729,15 @@ fn append_native(
             (
                 head.boundary,
                 &head.head.headers,
-                request
-                    .as_ref()
-                    .is_some_and(|request| request.method == "HEAD")
-                    || (100..200).contains(&head.head.status)
+                snapshot.request_heads.iter().any(|request| {
+                    request.boundary
+                        == if head.boundary == ExchangeBoundary::ClientResponse {
+                            ExchangeBoundary::ClientRequest
+                        } else {
+                            ExchangeBoundary::UpstreamRequest
+                        }
+                        && request.head.method == "HEAD"
+                }) || (100..200).contains(&head.head.status)
                     || [204, 304].contains(&head.head.status),
             )
         }))
@@ -1717,6 +1747,15 @@ fn append_native(
             .entry(crate::inspector::boundary(boundary))
             .or_default();
         if body.representation.is_some() {
+            continue;
+        }
+        // Transfer coding overrides Content-Length. Only a completion event
+        // proves the end of a chunked body, including its terminal chunk.
+        if headers
+            .iter()
+            .any(|field| field.name_eq("transfer-encoding"))
+        {
+            body.framing_complete = bodyless;
             continue;
         }
         let lengths = headers
@@ -1841,6 +1880,43 @@ fn append_native(
     result.entries.insert(format!("{:032x}", id.0), entry);
     result.sessions.push(snapshot);
     Ok(())
+}
+
+fn trace_metadata_bytes(source: &TraceMetadataView) -> Result<usize, serde_json::Error> {
+    serde_json::to_vec(source)
+        .map(|bytes| bytes.len().saturating_add(json_heap_bytes(&source.context)))
+}
+
+// Serialized JSON can be much smaller than its retained Value tree. Charge
+// vector capacity, map entries (including conservative node overhead), keys,
+// and string buffers. Input nesting is bounded by serde_json's reader.
+fn json_heap_bytes(value: &Value) -> usize {
+    match value {
+        Value::String(value) => value.capacity(),
+        Value::Array(values) => values.iter().fold(
+            values
+                .capacity()
+                .saturating_mul(std::mem::size_of::<Value>()),
+            |total, value| total.saturating_add(json_heap_bytes(value)),
+        ),
+        Value::Object(values) => {
+            // A one-entry BTreeMap still allocates a full node. Reserve the
+            // first node separately, then allow for partially occupied nodes
+            // and allocator overhead as the map grows.
+            values.iter().fold(
+                usize::from(!values.is_empty()) * 1024,
+                |total, (key, value)| {
+                    total
+                        .saturating_add(
+                            std::mem::size_of::<Value>() + std::mem::size_of::<String>() + 128,
+                        )
+                        .saturating_add(key.capacity())
+                        .saturating_add(json_heap_bytes(value))
+                },
+            )
+        }
+        _ => 0,
+    }
 }
 
 fn charge_native_index(budget: &mut usize, bytes: usize) -> Result<(), AppError> {

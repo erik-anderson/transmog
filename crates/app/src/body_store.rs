@@ -254,6 +254,7 @@ impl Read for BodyReadLease {
 
 impl Drop for BodyReadLease {
     fn drop(&mut self) {
+        self.reader = Box::new(std::io::empty());
         let mut state = self
             .inner
             .state
@@ -270,7 +271,7 @@ impl Drop for BodyReadLease {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BodyStoreCounters {
-    /// Bytes represented by live retained bodies.
+    /// Unique live body allocations and disk bytes; shared memory is counted once.
     pub retained_bytes: u64,
     /// Terminal blobs removed by circular eviction.
     pub evicted_bodies: u64,
@@ -359,7 +360,7 @@ struct StoredBody {
     source: Option<Arc<dyn SavedBodySource>>,
     source_size_deferred: bool,
     path: Option<PathBuf>,
-    memory: Option<Vec<bytes::Bytes>>,
+    memory: Option<Vec<MemoryChunk>>,
     observed_bytes: u64,
     retained_bytes: u64,
     availability: BodyAvailability,
@@ -448,40 +449,112 @@ impl StoredBody {
     }
 }
 
-fn memory_range_chunks(
-    chunks: &[bytes::Bytes],
-    mut offset: u64,
-    length: usize,
-) -> Vec<bytes::Bytes> {
+// Each allocation is charged exactly once, including while a read lease keeps
+// it alive after its traffic row is removed. Sharing is only between opposite
+// boundaries of the same exchange; no global content/digest table is retained.
+#[derive(Debug)]
+struct MemoryCharge {
+    bytes: u64,
+    resident: Arc<AtomicU64>,
+}
+impl Drop for MemoryCharge {
+    fn drop(&mut self) {
+        self.resident.fetch_sub(self.bytes, Ordering::Relaxed);
+    }
+}
+#[derive(Clone, Debug, Default)]
+struct MemoryChunk {
+    bytes: bytes::Bytes,
+    offset: u64,
+    charge: Option<Arc<MemoryCharge>>,
+}
+impl std::ops::Deref for MemoryChunk {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+impl MemoryChunk {
+    fn owned(bytes: &[u8], offset: u64, resident: &Arc<AtomicU64>) -> Self {
+        let bytes = bytes::Bytes::copy_from_slice(bytes);
+        resident.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        let charge = Some(Arc::new(MemoryCharge {
+            bytes: bytes.len() as u64,
+            resident: resident.clone(),
+        }));
+        Self {
+            bytes,
+            offset,
+            charge,
+        }
+    }
+    fn slice(&self, range: std::ops::Range<usize>) -> Self {
+        Self {
+            bytes: self.bytes.slice(range.clone()),
+            offset: self.offset + range.start as u64,
+            charge: self.charge.clone(),
+        }
+    }
+}
+fn memory_range_chunks(chunks: &[MemoryChunk], offset: u64, length: usize) -> Vec<MemoryChunk> {
+    let first = chunks.partition_point(|chunk| chunk.offset + chunk.len() as u64 <= offset);
     let mut needed = length;
     let mut selected = Vec::new();
-    for chunk in chunks {
+    for chunk in &chunks[first..] {
         if needed == 0 {
             break;
         }
-        if offset >= chunk.len() as u64 {
-            offset -= chunk.len() as u64;
-            continue;
-        }
-        let start = usize::try_from(offset).expect("offset within one memory chunk");
+        let start = usize::try_from(offset.saturating_sub(chunk.offset))
+            .expect("offset within memory chunk");
         let take = needed.min(chunk.len() - start);
         selected.push(chunk.slice(start..start + take));
         needed -= take;
-        offset = 0;
     }
     selected
 }
+fn matching_memory(
+    state: &StoreState,
+    key: BodyKey,
+    offset: u64,
+    bytes: &[u8],
+) -> Option<Vec<MemoryChunk>> {
+    let opposite = match key.boundary {
+        BoundaryKey::ClientRequest => BoundaryKey::UpstreamRequest,
+        BoundaryKey::UpstreamRequest => BoundaryKey::ClientRequest,
+        BoundaryKey::ClientResponse => BoundaryKey::UpstreamResponse,
+        BoundaryKey::UpstreamResponse => BoundaryKey::ClientResponse,
+    };
+    let record = state.records.get(&BodyKey {
+        boundary: opposite,
+        ..key
+    })?;
+    let available = usize::try_from(record.retained_bytes.saturating_sub(offset))
+        .unwrap_or(usize::MAX)
+        .min(bytes.len());
+    if available == 0 {
+        return None;
+    }
+    let chunks = memory_range_chunks(record.memory.as_ref()?, offset, available);
+    let mut remaining = &bytes[..available];
+    for chunk in &chunks {
+        if !remaining.starts_with(chunk) {
+            return None;
+        }
+        remaining = &remaining[chunk.len()..];
+    }
+    remaining.is_empty().then_some(chunks)
+}
 
 struct MemoryBodyReader {
-    chunks: std::vec::IntoIter<bytes::Bytes>,
-    current: bytes::Bytes,
+    chunks: std::vec::IntoIter<MemoryChunk>,
+    current: MemoryChunk,
     offset: usize,
 }
 impl MemoryBodyReader {
-    fn new(chunks: Vec<bytes::Bytes>) -> Self {
+    fn new(chunks: Vec<MemoryChunk>) -> Self {
         Self {
             chunks: chunks.into_iter(),
-            current: bytes::Bytes::new(),
+            current: MemoryChunk::default(),
             offset: 0,
         }
     }
@@ -522,6 +595,7 @@ pub(crate) trait SavedBodySource: Send + Sync + std::fmt::Debug {
 
 #[derive(Debug)]
 struct StoreState {
+    memory_bytes: Arc<AtomicU64>,
     mode: RetentionMode,
     buffer: BufferStatus,
     exchange_modes: HashMap<ExchangeId, ExchangeRetention>,
@@ -531,6 +605,8 @@ struct StoreState {
     completed_bodies: HashMap<ExchangeId, HashSet<BoundaryKey>>,
     last_sequences: HashMap<ExchangeId, u64>,
     discarded: HashSet<ExchangeId>,
+    // The internal retained-byte field counts disk storage. Memory is charged
+    // by allocation lifetime and combined when publishing counters.
     counters: BodyStoreCounters,
 }
 
@@ -560,6 +636,14 @@ enum WorkerCommand {
     Event(Box<ObserverEvent>),
     Flush(mpsc::Sender<()>),
     Shutdown,
+}
+
+impl StoreState {
+    fn retained_bytes(&self) -> u64 {
+        self.counters
+            .retained_bytes
+            .saturating_add(self.memory_bytes.load(Ordering::Relaxed))
+    }
 }
 
 struct BodyStoreInner {
@@ -663,6 +747,7 @@ impl BodyStore {
             request_limit: AtomicU64::new(transmog_capture::DEFAULT_REQUEST_BODY_CAPTURE_BYTES),
             retain_responses: AtomicBool::new(true),
             state: Mutex::new(StoreState {
+                memory_bytes: Arc::default(),
                 mode: config.mode,
                 buffer: BufferStatus {
                     installed_ram: installed_ram(),
@@ -747,7 +832,7 @@ impl BodyStore {
         state.buffer = buffer;
         enforce_quota(&self.inner, &mut state);
         Ok(BufferStatus {
-            retained_bytes: state.counters.retained_bytes,
+            retained_bytes: state.retained_bytes(),
             ..state.buffer
         })
     }
@@ -756,7 +841,7 @@ impl BodyStore {
     pub fn buffer_status(&self) -> BufferStatus {
         let state = self.lock_state();
         BufferStatus {
-            retained_bytes: state.counters.retained_bytes,
+            retained_bytes: state.retained_bytes(),
             ..state.buffer
         }
     }
@@ -781,7 +866,11 @@ impl BodyStore {
 
     /// Returns aggregate retained-byte and loss counters.
     pub fn counters(&self) -> BodyStoreCounters {
-        self.lock_state().counters
+        let state = self.lock_state();
+        BodyStoreCounters {
+            retained_bytes: state.retained_bytes(),
+            ..state.counters
+        }
     }
 
     /// Lists known boundaries for one exchange in stable boundary order.
@@ -1032,10 +1121,15 @@ impl BodyStore {
         for key in &keys {
             if let Some(record) = state.records.remove(key) {
                 remove_record_file(&record);
-                state.counters.retained_bytes = state
-                    .counters
-                    .retained_bytes
-                    .saturating_sub(record.retained_bytes);
+                state.counters.retained_bytes =
+                    state
+                        .counters
+                        .retained_bytes
+                        .saturating_sub(if record.memory.is_none() {
+                            record.retained_bytes
+                        } else {
+                            0
+                        });
             }
         }
         state.terminal_order.retain(|key| !keys.contains(key));
@@ -1065,10 +1159,15 @@ impl BodyStore {
             if let Some(record) = state.records.remove(&key) {
                 remove_record_file(&record);
                 if record.source.is_none() {
-                    state.counters.retained_bytes = state
-                        .counters
-                        .retained_bytes
-                        .saturating_sub(record.retained_bytes);
+                    state.counters.retained_bytes =
+                        state
+                            .counters
+                            .retained_bytes
+                            .saturating_sub(if record.memory.is_none() {
+                                record.retained_bytes
+                            } else {
+                                0
+                            });
                 }
             }
         }
@@ -1358,13 +1457,40 @@ fn observe_chunk(
         record.reason = Some("per-body retention limit reached".to_owned());
         return;
     }
-    make_capacity(inner, state, desired, Some(key), mode);
+    retain_chunk(inner, state, key, &sample, desired, mode);
+}
+
+fn retain_chunk(
+    inner: &BodyStoreInner,
+    state: &mut StoreState,
+    key: BodyKey,
+    sample: &[u8],
+    desired: u64,
+    mode: RetentionMode,
+) {
+    let record = state.records.get(&key).expect("record exists");
+    let shared = if record.memory.is_some() {
+        let offset = record.retained_bytes;
+        matching_memory(
+            state,
+            key,
+            offset,
+            &sample[..usize::try_from(desired).unwrap_or(sample.len())],
+        )
+    } else {
+        None
+    };
+    let shared_bytes = shared.as_ref().map_or(0, |chunks| {
+        chunks.iter().map(|chunk| chunk.len() as u64).sum::<u64>()
+    });
+    make_capacity(inner, state, desired - shared_bytes, Some(key), mode);
     let aggregate_remaining = state
         .buffer
         .max_bytes
         .unwrap_or(u64::MAX)
-        .saturating_sub(state.counters.retained_bytes);
-    let take = usize::try_from(desired.min(aggregate_remaining)).unwrap_or(sample.len());
+        .saturating_sub(state.retained_bytes());
+    let take = usize::try_from(desired.min(shared_bytes.saturating_add(aggregate_remaining)))
+        .unwrap_or(sample.len());
     if take == 0 {
         let record = state.records.get_mut(&key).expect("record exists");
         record.availability = if mode == RetentionMode::StopWhenFull {
@@ -1376,7 +1502,16 @@ fn observe_chunk(
         return;
     }
     let record = state.records.get_mut(&key).expect("record exists");
-    if append_body(record, &inner.config.root, key, &sample[..take]).is_err() {
+    if append_body(
+        record,
+        &inner.config.root,
+        key,
+        &sample[..take],
+        shared,
+        &state.memory_bytes,
+    )
+    .is_err()
+    {
         record.availability = BodyAvailability::Lost;
         record.reason = Some("body cache write failed".to_owned());
         state.counters.storage_failures = state.counters.storage_failures.saturating_add(1);
@@ -1386,10 +1521,15 @@ fn observe_chunk(
         .retained_bytes
         .saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
     record.hasher.update(&sample[..take]);
-    state.counters.retained_bytes = state
-        .counters
-        .retained_bytes
-        .saturating_add(u64::try_from(take).unwrap_or(u64::MAX));
+    state.counters.retained_bytes =
+        state
+            .counters
+            .retained_bytes
+            .saturating_add(if record.memory.is_none() {
+                u64::try_from(take).unwrap_or(u64::MAX)
+            } else {
+                0
+            });
     if take < sample.len() || desired < u64::try_from(sample.len()).unwrap_or(u64::MAX) {
         record.availability = BodyAvailability::Truncated;
         record.reason = Some("body retention quota reached".to_owned());
@@ -1414,10 +1554,24 @@ fn append_body(
     root: &Path,
     key: BodyKey,
     bytes: &[u8],
+    shared: Option<Vec<MemoryChunk>>,
+    resident: &Arc<AtomicU64>,
 ) -> std::io::Result<()> {
     if let Some(chunks) = &mut record.memory {
         // Own exactly these bytes: a short retained prefix must not pin a larger source sample.
-        chunks.push(bytes::Bytes::copy_from_slice(bytes));
+        let shared_bytes = shared
+            .as_ref()
+            .map_or(0, |parts| parts.iter().map(|part| part.len()).sum());
+        if let Some(shared) = shared {
+            chunks.extend(shared);
+        }
+        if shared_bytes < bytes.len() {
+            chunks.push(MemoryChunk::owned(
+                &bytes[shared_bytes..],
+                record.retained_bytes + shared_bytes as u64,
+                resident,
+            ));
+        }
     } else {
         let path = partial_path(root, key);
         OpenOptions::new()
@@ -1440,7 +1594,7 @@ fn make_capacity(
     if mode != RetentionMode::Circular {
         return;
     }
-    while state.counters.retained_bytes.saturating_add(desired)
+    while state.retained_bytes().saturating_add(desired)
         > state.buffer.max_bytes.unwrap_or(u64::MAX)
     {
         let Some(candidate) = state.terminal_order.iter().copied().find(|key| {
@@ -1457,10 +1611,15 @@ fn make_capacity(
             if let Some(path) = record.path.take() {
                 let _ = fs::remove_file(path);
             }
-            state.counters.retained_bytes = state
-                .counters
-                .retained_bytes
-                .saturating_sub(record.retained_bytes);
+            state.counters.retained_bytes =
+                state
+                    .counters
+                    .retained_bytes
+                    .saturating_sub(if record.memory.is_none() {
+                        record.retained_bytes
+                    } else {
+                        0
+                    });
             record.memory = None;
             record.retained_bytes = 0;
             record.availability = BodyAvailability::Evicted;
@@ -1785,6 +1944,203 @@ mod tests {
             store.enqueue(event);
         }
         store.flush().unwrap();
+    }
+
+    fn boundary_chunk(
+        id: u128,
+        sequence: u64,
+        boundary: ExchangeBoundary,
+        bytes: &[u8],
+    ) -> ObserverEvent {
+        event(
+            id,
+            sequence,
+            ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                boundary,
+                byte_count: bytes.len(),
+                sample: Some(Bytes::copy_from_slice(bytes)),
+                truncated: false,
+            }),
+        )
+    }
+
+    #[test]
+    fn paired_memory_sharing_handles_interleaved_different_chunk_boundaries_at_full_quota() {
+        for reverse in [false, true] {
+            let root = root("paired-memory");
+            let mut settings = config(root.clone(), 8);
+            settings.storage = BufferStorage::Memory;
+            settings.mode = RetentionMode::StopWhenFull;
+            let store = BodyStore::new(settings).unwrap();
+            let mut a = ExchangeBoundary::UpstreamResponse;
+            let mut b = ExchangeBoundary::ClientResponse;
+            if reverse {
+                std::mem::swap(&mut a, &mut b);
+            }
+            push(
+                &store,
+                [
+                    started(1),
+                    boundary_chunk(1, 2, a, b"ab"),
+                    boundary_chunk(1, 3, b, b"abcd"),
+                    boundary_chunk(1, 4, a, b"cdefgh"),
+                    boundary_chunk(1, 5, b, b"efgh"),
+                    completed(1, 6),
+                ],
+            );
+            assert_eq!(store.counters().retained_bytes, 8);
+            assert_eq!(store.buffer_status().retained_bytes, 8);
+            for boundary in [a, b] {
+                let range = store.read_range(ExchangeId(1), boundary, 0, 8).unwrap();
+                assert_eq!(range.bytes, b"abcdefgh");
+                assert_eq!(range.availability, BodyAvailability::Complete);
+            }
+            // Clearing rows cannot undercount bytes still pinned by a reader.
+            let mut lease = store.open_complete(ExchangeId(1), b).unwrap();
+            store.forget_entries(&[ExchangeId(1)]).unwrap();
+            assert_eq!(store.counters().retained_bytes, 8);
+            let mut bytes = Vec::new();
+            lease.read_to_end(&mut bytes).unwrap();
+            assert_eq!(bytes, b"abcdefgh");
+            drop(lease);
+            assert_eq!(store.counters().retained_bytes, 0);
+            drop(store);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn arbitrary_stream_splits_keep_only_one_unchanged_body_allocation() {
+        let root = root("paired-random-splits");
+        let mut settings = config(root.clone(), 1024);
+        settings.storage = BufferStorage::Memory;
+        settings.mode = RetentionMode::StopWhenFull;
+        let store = BodyStore::new(settings).unwrap();
+        let bytes = (0..1024_u32)
+            .map(|i| i.to_le_bytes()[0])
+            .collect::<Vec<_>>();
+        let mut random = 0x1234_5678_u64;
+        for id in 0..20 {
+            push(&store, [started(id)]);
+            let mut positions = [0, 0];
+            let mut sequence = 2;
+            while positions != [bytes.len(); 2] {
+                random ^= random << 13;
+                random ^= random >> 7;
+                random ^= random << 17;
+                let side = usize::from(random & 1 != 0);
+                let start = positions[side];
+                if start == bytes.len() {
+                    continue;
+                }
+                let end = (start + 1 + usize::from(random.to_le_bytes()[1]) % 83).min(bytes.len());
+                let boundary = if side == 0 {
+                    ExchangeBoundary::UpstreamResponse
+                } else {
+                    ExchangeBoundary::ClientResponse
+                };
+                push(
+                    &store,
+                    [boundary_chunk(id, sequence, boundary, &bytes[start..end])],
+                );
+                sequence += 1;
+                positions[side] = end;
+            }
+            push(&store, [completed(id, sequence)]);
+            assert_eq!(store.counters().retained_bytes, bytes.len() as u64);
+            for boundary in [
+                ExchangeBoundary::UpstreamResponse,
+                ExchangeBoundary::ClientResponse,
+            ] {
+                assert_eq!(
+                    store
+                        .read_range(ExchangeId(id), boundary, 0, bytes.len())
+                        .unwrap()
+                        .bytes,
+                    bytes
+                );
+            }
+            store.forget_entries(&[ExchangeId(id)]).unwrap();
+            assert_eq!(store.counters().retained_bytes, 0);
+        }
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn paired_memory_sharing_preserves_modifications_and_does_not_cross_exchanges() {
+        let root = root("paired-modified");
+        let mut settings = config(root.clone(), 64);
+        settings.storage = BufferStorage::Memory;
+        settings.retain_requests = true;
+        let store = BodyStore::new(settings).unwrap();
+        let up = ExchangeBoundary::UpstreamResponse;
+        let client = ExchangeBoundary::ClientResponse;
+        push(
+            &store,
+            [
+                started(1),
+                boundary_chunk(1, 2, up, b"abcdefgh"),
+                boundary_chunk(1, 3, client, b"ABCD"),
+                boundary_chunk(1, 4, client, b"efgh"),
+                completed(1, 5),
+                started(2),
+                boundary_chunk(2, 2, up, b"abcdefgh"),
+                completed(2, 3),
+            ],
+        );
+        assert_eq!(store.counters().retained_bytes, 20);
+        assert_eq!(
+            store.read_range(ExchangeId(1), client, 0, 8).unwrap().bytes,
+            b"ABCDefgh"
+        );
+        assert_eq!(
+            store.read_range(ExchangeId(1), up, 0, 8).unwrap().bytes,
+            b"abcdefgh"
+        );
+        store.forget_entries(&[ExchangeId(1)]).unwrap();
+        assert_eq!(store.counters().retained_bytes, 8);
+        assert_eq!(store.purge_terminal().unwrap(), 1);
+        assert_eq!(store.counters().retained_bytes, 0);
+        drop(store);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shared_memory_eviction_keeps_a_leased_opposite_boundary_readable() {
+        let root = root("paired-eviction");
+        let mut settings = config(root.clone(), 8);
+        settings.storage = BufferStorage::Memory;
+        let store = BodyStore::new(settings).unwrap();
+        let up = ExchangeBoundary::UpstreamResponse;
+        let client = ExchangeBoundary::ClientResponse;
+        push(
+            &store,
+            [
+                started(1),
+                boundary_chunk(1, 2, up, b"abcdefgh"),
+                boundary_chunk(1, 3, client, b"abcdefgh"),
+                completed(1, 4),
+            ],
+        );
+        let mut lease = store.open_complete(ExchangeId(1), client).unwrap();
+        push(
+            &store,
+            [
+                started(2),
+                boundary_chunk(2, 2, up, b"12345678"),
+                completed(2, 3),
+            ],
+        );
+        assert_eq!(store.counters().retained_bytes, 8);
+        let mut bytes = Vec::new();
+        lease.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"abcdefgh");
+        drop(lease);
+        store.purge_terminal().unwrap();
+        assert_eq!(store.counters().retained_bytes, 0);
+        drop(store);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test]
