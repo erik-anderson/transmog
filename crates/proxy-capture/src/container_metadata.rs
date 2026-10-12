@@ -155,7 +155,7 @@ mod tests {
     fn tiny_object_amplification_is_rejected_before_constructing_values() {
         let payload = format!("[{}null]", r#"{"a":0},"#.repeat(60_000));
         let raw = format!(
-            r#"{{"index":0,"stored":{{"revision":5,"sequence":0,"exchange_id":1,"kind":"extension","payload":{payload}}}}}"#
+            r#"{{"index":0,"stored":{{"revision":1,"sequence":0,"exchange_id":1,"kind":"extension","payload":{payload}}}}}"#
         );
         let entry: RawEntry = serde_json::from_str(&raw).unwrap();
         assert!(matches!(

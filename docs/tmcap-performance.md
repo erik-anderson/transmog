@@ -8,9 +8,9 @@ records bound compression work and preserve output order.
 
 ## Persistent SSE IDs
 
-Revision 5 stores a persistent SSE ID once and references its defining record
+TMCap stores a persistent SSE ID once and references its defining record
 from later messages. A regression fixture with one 64 KiB ID and 1,024 heartbeat
-messages occupies 82,772 bytes, compared with 17,302,773 bytes when the same
+messages occupies 82,776 bytes, compared with 17,302,771 bytes when the same
 compressor writes the ID inline in every message (about 209 times smaller).
 The ID uses deterministic pseudorandom hex text, so this measures sharing across
 metadata pages rather than an unusually compressible identifier. This is a

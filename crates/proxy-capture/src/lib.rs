@@ -38,7 +38,8 @@ const FRAME_HEADER_BYTES: usize = 8;
 pub const DEFAULT_REQUEST_BODY_CAPTURE_BYTES: u64 = 25_000_000;
 
 /// Durable record schema revision, independent of the container header version.
-pub const CAPTURE_FORMAT_REVISION: u32 = 5;
+/// Remains one while experimental layouts have no compatibility requirement.
+pub const CAPTURE_FORMAT_REVISION: u32 = 1;
 
 /// Writer/recovery limits; artifact size and record count default to no maximum.
 #[derive(Clone, Copy, Debug)]
@@ -1922,7 +1923,7 @@ pub enum CaptureError {
         /// Zero-based record index.
         record_index: usize,
     },
-    /// Record used a future incompatible schema revision.
+    /// Record used an unsupported schema revision.
     #[error("capture revision {0} is not supported")]
     UnsupportedRevision(u32),
     /// Known record payload was structurally invalid.
@@ -2018,12 +2019,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn outdated_revisions_are_rejected_and_performance_round_trips() {
-        for revision in [1, 2] {
-            let mut old = store(&completed(3)).unwrap();
-            old.revision = revision;
+    fn initial_revision_is_retained_and_performance_round_trips() {
+        let initial = store(&completed(3)).unwrap();
+        assert_eq!(initial.revision, 1);
+        assert_eq!(load(initial).unwrap(), completed(3));
+        for revision in [0, 2, 4, 5, u32::MAX] {
+            let mut unsupported = store(&completed(3)).unwrap();
+            unsupported.revision = revision;
             assert!(matches!(
-                load(old),
+                load(unsupported),
                 Err(CaptureError::UnsupportedRevision(_))
             ));
         }

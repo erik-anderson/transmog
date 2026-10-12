@@ -4,7 +4,9 @@ TMCap stores HTTP traffic metadata and independently readable body chunks in an
 indexed file. This documents the initial format implemented by
 [`transmog-capture`](../crates/proxy-capture/src/lib.rs). There is no compatibility
 requirement for earlier experimental layouts. The magic remains `TMCAP001\0`,
-the container header version is `1`, and the record revision is `5`.
+the container header version is `1`, and the record revision is `1`. Keep these
+at their initial values while the format is experimental; layout changes do not
+require a version bump or compatibility support during this period.
 
 For design choices, compression heuristics, buffering and performance results,
 see [the native capture overview](native-capture-format.md) and
@@ -168,7 +170,7 @@ Metadata expands to a stored-record JSON object:
 
 ```json
 {
-  "revision": 5,
+  "revision": 1,
   "sequence": 42,
   "exchange_id": 123,
   "kind": "body-segment",

@@ -63,13 +63,14 @@ Request body privacy settings control subsequently retained client messages;
 response body settings control server messages and SSE content. Disabling content
 retention keeps lifecycle and size metadata. Existing retained traffic is unchanged.
 
-TMCap revision 5 stores lifecycle, message metadata and independently indexed
+TMCap stores lifecycle, message metadata and independently indexed
 message content. Imported content is authenticated and read lazily from pinned
 source files. Save trace saves the retained history and counters, including eviction
 and open-at-capture state. Persistent SSE IDs are shared on disk and in memory,
 so heartbeats do not repeatedly store a large earlier ID. File recording writes observed items independently of
 whole-session retention. Headers only omits
-payloads and SSE field content. Earlier experimental TMCap revisions are rejected.
+payloads and SSE field content. No compatibility support is provided for earlier
+experimental layouts.
 
 HAR and SAZ export HTTP evidence but omit WebSocket messages and parsed SSE events.
 The Save dialog and exported entry comments disclose that limitation. Use TMCap to
