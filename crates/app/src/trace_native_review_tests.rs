@@ -910,3 +910,29 @@ fn imported_stream_is_open_at_capture_and_reads_message_payload_lazily() {
     assert!(item.source.is_some());
     assert_eq!(item.read().unwrap(), message);
 }
+
+#[test]
+fn imported_stream_diagnostics_do_not_inflate_transfer_counts() {
+    use transmog_core::stream::{StreamHistory, StreamMessage};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("stream-diagnostics.tmcap");
+    let messages = [
+        StreamMessage::new("server", "text", b"hello".to_vec().into()),
+        StreamMessage::new("server", "unavailable", b"decoder failed".to_vec().into()),
+        StreamMessage::new("client", "incomplete", b"partial frame".to_vec().into()),
+    ];
+    let mut records = vec![head("https://example.invalid/socket".into())];
+    let mut live = StreamHistory::default();
+    for (index, message) in messages.into_iter().enumerate() {
+        live.push(index as u64 + 2, message.clone());
+        let mut entry = record(CaptureRecordKind::StreamMessage(message));
+        entry.sequence = index as u64 + 2;
+        records.push(entry);
+    }
+    write_records(&path, records);
+    let data = read(&path).unwrap();
+    let imported = &data.sessions[0].stream_history;
+    assert_eq!(imported.observed, live.observed);
+    assert_eq!(imported.client_bytes, live.client_bytes);
+    assert_eq!(imported.server_bytes, live.server_bytes);
+}

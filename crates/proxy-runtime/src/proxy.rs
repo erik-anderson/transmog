@@ -1502,9 +1502,14 @@ impl ProxyState {
                     .await;
                 return Err(error);
             }
-            return self
-                .handle_websocket_upgrade(request, session, request_head, upstream, chain)
+            let result = self
+                .handle_websocket_upgrade(request, session, request_head, upstream, chain.clone())
                 .await;
+            if let Err(error) = &result {
+                self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, error, false, false)
+                    .await;
+            }
+            return result;
         }
 
         if let Err(error) = validate_declared_body_limit(
@@ -1929,6 +1934,30 @@ impl ProxyState {
             PerMessageDeflateCodec::new(compression, WebSocketDirection::ClientToServer)?;
             PerMessageDeflateCodec::new(compression, WebSocketDirection::ServerToClient)?;
         }
+        let downstream_upgrade = hyper::upgrade::on(&mut request);
+        let cancellation = SessionCancellation::new();
+        let websocket_target = format!(
+            "{}://{}{}",
+            if request_head.target.scheme == "https" {
+                "wss"
+            } else {
+                "ws"
+            },
+            request_head.target.authority,
+            request_head.target.path
+        );
+        let websocket_chain = if self.websocket_hooks.is_empty() {
+            None
+        } else {
+            Some(Arc::new(self.websocket_hooks.create_session(
+                WebSocketSessionMetadata {
+                    session_id: session.session_id.0,
+                    target: Arc::from(websocket_target.clone()),
+                    subprotocol: negotiated.subprotocol.clone().map(Arc::from),
+                },
+                cancellation.clone(),
+            )?))
+        };
         observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
         let stream_observer = (!self.observers.is_empty())
             .then(|| runtime_observer(&chain))
@@ -1965,30 +1994,6 @@ impl ProxyState {
             trust_generation: upstream_generation.trust_generation,
         });
 
-        let downstream_upgrade = hyper::upgrade::on(&mut request);
-        let cancellation = SessionCancellation::new();
-        let websocket_target = format!(
-            "{}://{}{}",
-            if request_head.target.scheme == "https" {
-                "wss"
-            } else {
-                "ws"
-            },
-            request_head.target.authority,
-            request_head.target.path
-        );
-        let websocket_chain = if self.websocket_hooks.is_empty() {
-            None
-        } else {
-            Some(Arc::new(self.websocket_hooks.create_session(
-                WebSocketSessionMetadata {
-                    session_id: session.session_id.0,
-                    target: Arc::from(websocket_target.clone()),
-                    subprotocol: negotiated.subprotocol.clone().map(Arc::from),
-                },
-                cancellation.clone(),
-            )?))
-        };
         let upgrade_timeout = self.config.limits.header_read_timeout;
         let relay_limits = self.config.websocket;
         let relay_activity = self.activity.continue_websocket();
@@ -6928,6 +6933,56 @@ mod tests {
             .unwrap()
             .unwrap();
         origin_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_websocket_handshake_publishes_terminal_failure() {
+        let ca = ProxyCa::generate("Transmog failed WebSocket", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 1).unwrap(),
+        );
+        let phases = Arc::new(StdMutex::new(Vec::new()));
+        let components = ProxyComponents::new(
+            InterceptorChainFactory::new(Vec::new(), RuntimeLimits::default().hooks),
+            Arc::new(CachedMitmCertificateResolver::new(ca, 32, 1).unwrap()),
+        )
+        .with_observer(
+            Arc::new(LifecycleObserver {
+                performance: Arc::new(StdMutex::new(
+                    transmog_core::performance::PerformanceEvidence::default(),
+                )),
+                phases: phases.clone(),
+                client_identity: Arc::new(StdMutex::new(None)),
+            }),
+            ObserverConfig::default(),
+        );
+        let proxy = ProxyServer::bind_with_components(ProxyConfig::default(), trust, components)
+            .await
+            .unwrap();
+        let addr = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(proxy.serve(async {
+            let _ = shutdown_rx.await;
+        }));
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(b"GET http://localhost/socket HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: invalid\r\n\r\n").await.unwrap();
+        assert!(
+            read_http_head(&mut client)
+                .await
+                .starts_with(b"HTTP/1.1 400")
+        );
+        shutdown_tx.send(()).unwrap();
+        task.await.unwrap().unwrap();
+        assert_eq!(
+            phases
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|phase| **phase == "failed")
+                .count(),
+            1
+        );
+        assert!(!phases.lock().unwrap().contains(&"completed"));
     }
 
     #[tokio::test]

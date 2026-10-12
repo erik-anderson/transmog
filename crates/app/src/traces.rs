@@ -1375,7 +1375,9 @@ fn apply_native_frame(
             let history = &mut row.stream_history;
             history.observed = history.observed.saturating_add(1);
             history.last_activity = Some(message.at_millis);
-            if message.sender == "client" {
+            if matches!(message.kind.as_str(), "unavailable" | "incomplete") {
+                // Match live accounting: diagnostics are not application payload.
+            } else if message.sender == "client" {
                 history.client_bytes = history.client_bytes.saturating_add(message.byte_count);
             } else {
                 history.server_bytes = history.server_bytes.saturating_add(message.byte_count);
