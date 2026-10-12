@@ -3,6 +3,8 @@ import { attr, observable } from '@microsoft/webui-framework';
 import '../script-editor/script-editor.js';
 import '../match-editor/match-editor.js';
 import '../user-agent-overrides/user-agent-overrides.js';
+import '../response-body-editor/response-body-editor.js';
+import {responseBodyLanguage, type BodyCommit, type ResponseBodyEditor} from '../response-body-editor/response-body-editor.js';
 import type {UserAgentOverrides} from '../user-agent-overrides/user-agent-overrides.js';
 import type { MatchEditor } from '../match-editor/match-editor.js';
 import type { ScriptEditor } from '../script-editor/script-editor.js';
@@ -139,6 +141,11 @@ export class AutomationWorkspace extends WorkspaceElement {
   autoResponseBody!: HTMLTextAreaElement;
   autoResponseEditBody!: HTMLInputElement;
   autoResponsePreserveEncoding!: HTMLInputElement;
+  bodyEditor!:ResponseBodyEditor;
+  bodyDialogButton!:HTMLButtonElement;
+  private savedNonBodySnapshot='';
+  private bodyDialogBefore:{revision:number;value:string;edit:boolean;readOnly:boolean;dirty:boolean;error:string}|null=null;
+  private bodyDialogCommitted=false;
   newResponseButton!: HTMLButtonElement;
   newResponseOptionsButton!:HTMLButtonElement;
   undoRemoveButton!: HTMLButtonElement;
@@ -183,6 +190,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
   async canLeaveEditor():Promise<boolean> {
     if(this.savingAutoResponse)return false;
+    if(this.bodyEditor?.surface?.open&&!this.bodyEditor.bodyBusy)return false;
     if(!this.draftDirty || this.editorHidden)return true;
     if(this.leaveEditorPromise)return this.leaveEditorPromise;
     this.leaveEditorPromise=new Promise(resolve=>{this.resolveLeave=resolve;});this.unsavedDialog.showModal();
@@ -194,6 +202,40 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.unsavedDialog.close();const resolve=this.resolveLeave;this.resolveLeave=null;this.leaveEditorPromise=null;resolve?.(choice!=='stay');
   }
   unsavedCancelled(event:Event):void {event.preventDefault();void this.resolveUnsaved('stay');}
+  private nonBodySnapshot():string {
+    const value=(name:string)=>(this.autoResponseForm.elements.namedItem(name) as HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement).value;
+    const selected=value('method'),method=(selected==='CUSTOM'?value('customMethod'):selected).toUpperCase();
+    const headers=(name:string)=>{try{return parseHeaderLines(value(name)).filter(header=>name!=='responseHeaders'||!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase()));}catch{return value(name);}};
+    return JSON.stringify({name:value('name').trim(),method,url:this.matchEditor.value,requestHeaders:headers('requestHeaders'),retainAdvanced:this.retainAdvancedMatcher,examples:this.matchExamples,status:Number(value('status')),mediaType:optionalText(value('mediaType')),responseHeaders:headers('responseHeaders'),compression:this.autoResponsePreserveEncoding.checked});
+  }
+  openBodyDialog():void {
+    if(this.savingAutoResponse||this.loadingSavedResponse||this.fileChoiceBusy||this.responseBodyPath||this.editBodyDisabled)return;
+    this.bodyDialogBefore={revision:this.editorRevision,value:this.autoResponseBody.value,edit:this.autoResponseEditBody.checked,readOnly:this.bodyReadOnly,dirty:this.draftDirty,error:this.autoResponseError};this.bodyDialogCommitted=false;
+    const canSave=Boolean(this.editingAutoResponseId&&this.savedResponse&&this.nonBodySnapshot()===this.savedNonBodySnapshot);
+    this.bodyEditor.open(this.autoResponseBody.value,responseBodyLanguage(this.autoResponseMediaType.value,this.autoResponseBody.value),canSave,this.bodyDialogButton);
+  }
+  async commitBodyDialog(event:CustomEvent<BodyCommit>):Promise<void> {
+    const before=this.bodyDialogBefore;
+    if(!before||before.revision!==this.editorRevision){this.bodyEditor.bodyError='The selected rule changed. Close this editor and reopen it for the current rule.';return;}
+    const {value,save}=event.detail;
+    if(value!==this.autoResponseBody.value){
+      this.autoResponseBody.value=value;this.draftDirty=true;
+      if(this.autoResponseSourceState?.kind==='captured'){this.autoResponseEditBody.checked=true;this.updateAutoResponseBodyEditState();}
+    }
+    if(!save){this.bodyDialogCommitted=true;this.bodyEditor.close();return;}
+    if(!this.bodyEditor.bodyCanSave||this.nonBodySnapshot()!==this.savedNonBodySnapshot){this.bodyEditor.bodyError='Other properties have unsaved changes. Apply the body, then save the rule.';return;}
+    this.bodyEditor.bodyBusy=true;this.bodyEditor.bodyError='';
+    let saved=false;
+    try {if(this.autoResponseForm.reportValidity())saved=await this.saveAutoResponse(new Event('submit',{cancelable:true}));}
+    finally{this.bodyEditor.bodyBusy=false;}
+    if(saved){this.bodyDialogCommitted=true;this.bodyEditor.close();}
+    else this.bodyEditor.bodyError=this.autoResponseError||'The rule could not be saved. Apply the body and review the rule properties.';
+  }
+  bodyDialogClosed():void {
+    const before=this.bodyDialogBefore;
+    if(before&&!this.bodyDialogCommitted&&before.revision===this.editorRevision){this.autoResponseBody.value=before.value;this.autoResponseEditBody.checked=before.edit;this.bodyReadOnly=before.readOnly;this.draftDirty=before.dirty;this.autoResponseError=before.error;this.updateCompressionChoice();}
+    this.bodyDialogBefore=null;this.bodyDialogCommitted=false;
+  }
   async revertAutoResponse():Promise<void> {
     const rule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);this.draftDirty=false;
     const captured=this.capturedDraft;
@@ -375,7 +417,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   clearResponseBodyFile():void {
     this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
-    if(this.savedResponse?.asset.linkedBody){this.bodyReadOnly=false;this.bodyStatusText='Enter a replacement text body, or choose another file. Text uses UTF-8.';}
+    if(this.savedResponse?.asset.linkedBody){this.bodyReadOnly=false;this.editBodyDisabled=false;this.bodyStatusText='Enter a replacement text body, or choose another file. Text uses UTF-8.';}
     this.updateCompressionChoice();
   }
   private editableHeaders(asset:Pick<ResponseAsset,'headers'>):string {
@@ -396,7 +438,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.draftDirty=false;this.batchReviewHidden=true;this.retainAdvancedMatcher=true;this.advancedMatcherText='';this.ruleDiagnosticText='';this.ruleSupersededBy='';this.customMethodHidden=true;
     this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
-    this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;
+    this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;this.editBodyDisabled=true;this.savedNonBodySnapshot='';
     this.compressionType='';
     this.compressionUnavailableText='';
     this.savedHeaderText='';this.protectedResponseHeaders=[];
@@ -674,7 +716,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.responseFieldsHidden = false;
     this.responseHeadersHidden = false;
     this.capturedOptionsHidden = true;
-    this.bodyReadOnly = false;
+    this.bodyReadOnly = false;this.editBodyDisabled=false;
     this.autoResponseBody.value = '';
     this.updateAutoResponseHeaderFilterState();
     this.openEditor();
@@ -724,14 +766,14 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.preserveEncodingDisabled=codings.length===0 || unsupported || (!this.responseBodyPath && !editable);
   }
 
-  async saveAutoResponse(event: Event): Promise<void> {
+  async saveAutoResponse(event: Event): Promise<boolean> {
     event.preventDefault();
-    if (this.savingAutoResponse || this.changingAutoResponse || this.fileChoiceBusy) return;
-    if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return;}
-    if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return;}
+    if (this.savingAutoResponse || this.changingAutoResponse || this.fileChoiceBusy) return false;
+    if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return false;}
+    if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return false;}
     const data = new FormData(this.autoResponseForm);
     const source = this.autoResponseSourceState;
-    if (source === null) return;
+    if (source === null) return false;
     const editingId = this.editingAutoResponseId;
     const replaceBody = this.autoResponseEditBody.checked && !this.responseBodyPath;
     const preserveEncoding = this.autoResponsePreserveEncoding.checked;
@@ -820,10 +862,12 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.automationKind = 'success';
       this.focusRule(id);
       const saved=status.rules.find(rule=>rule.id===id);if(saved)await this.editAutoResponse(saved,true);
+      return true;
     } catch (error: unknown) {
       this.automationText = `Auto-response could not be saved: ${describeError(error)}`;
       this.automationKind = 'error';
       this.autoResponseError = describeError(error);
+      return false;
     } finally {
       this.savingAutoResponse = false;
       this.$flushUpdates();
@@ -916,6 +960,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.loadingSavedResponse=true;
     this.updateAutoResponseHeaderFilterState();
     this.openEditor(false);
+    const initialIdentity=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
     try {
       const inspection = await invoke<ResponseAssetInspection>('inspect_response_asset',{reference:rule.request.responseAsset});
       if (revision !== this.editorRevision || !this.isConnected) return;
@@ -925,7 +970,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.autoResponseStatus.value = String(asset.status);
       this.autoResponseMediaType.value = asset.mediaType ?? '';
       this.responseReadOnly=false;this.responseHeadersHidden=false;this.bodyHidden=false;
-      this.autoResponseBody.value=inspection.display;this.bodyReadOnly=inspection.textEncoding===null;
+      this.autoResponseBody.value=inspection.display;this.bodyReadOnly=inspection.textEncoding===null;this.editBodyDisabled=inspection.textEncoding===null;
       if(asset.linkedBody){this.setResponseFile({path:asset.linkedBody.path,bytes:asset.bodyBytes,linked:true,error:null});void this.refreshResponseFile();}
       this.bodyStatusText=inspection.explanation;this.savedHeaderText=this.editableHeaders(asset);
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
@@ -934,6 +979,9 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.updateCompressionChoice();
       if(this.automationStatus)this.renderRuleUsage(this.automationStatus);
       this.responseFieldsHidden = false;
+      const baseline=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
+      for(const key of ['name','method','url','requestHeaders','retainAdvanced','examples'])baseline[key]=initialIdentity[key];
+      this.savedNonBodySnapshot=JSON.stringify(baseline);
       if (asset.provenance.kind === 'session') {
         this.sourceSessionId = asset.provenance.exchange_id;
         this.sourceLabel = 'Original captured request';

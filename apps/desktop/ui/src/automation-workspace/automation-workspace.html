@@ -74,7 +74,7 @@
             <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Edit response body</label>
           </div>
           <label class="wide-field" ?hidden="{{encodingOptionsHidden}}"><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Apply original compression type ({{compressionType}})<small ?hidden="{{!compressionUnavailableText}}">{{compressionUnavailableText}}</small></label>
-          <div class="actions wide-field"><button type="button" class="secondary compact-button" @click="{chooseResponseBody()}" ?disabled="{{fileChoiceBusy || savingAutoResponse || loadingSavedResponse}}">Serve response body from file…</button></div>
+          <div class="actions wide-field"><button w-ref="{bodyDialogButton}" type="button" class="secondary compact-button" @click="{openBodyDialog()}" ?disabled="{{editBodyDisabled || loadingSavedResponse || fileChoiceBusy || responseBodyFile}}">Edit in dialog…</button><button type="button" class="secondary compact-button" @click="{chooseResponseBody()}" ?disabled="{{fileChoiceBusy || savingAutoResponse || loadingSavedResponse}}">Serve response body from file…</button></div>
           <div class="auto-response-editor-actions wide-field">
             <output class="field-error" aria-live="polite" ?hidden="{{!autoResponseError}}">{{autoResponseError}}</output>
             <div class="actions"><button type="submit" ?disabled="{{changingAutoResponse || loadingSavedResponse}}"><if condition="savingAutoResponse">Saving…</if><if condition="!savingAutoResponse">Save rule</if></button>
@@ -84,6 +84,7 @@
           </div>
           </fieldset>
         </form>
+          <response-body-editor w-ref="{bodyEditor}" theme="{{theme}}" @body-commit="{commitBodyDialog(e)}" @body-editor-closed="{bodyDialogClosed()}"></response-body-editor>
           </div>
         </div>
         <div id="batch-row-menu" class="table-popover rule-menu" data-x="{{ruleMenuX}}" data-y="{{ruleMenuY}}" popover="auto"><button type="button" @click="{moveBatchRow(batchActionId,-1)}">Move earlier</button><button type="button" @click="{moveBatchRow(batchActionId,1)}">Move later</button><button type="button" @click="{skipBatchRow(batchActionId)}">Exclude response <kbd>Del</kbd></button></div>

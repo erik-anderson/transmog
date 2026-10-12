@@ -1,3 +1,4 @@
+import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
 import { checkStreams } from './check-streams.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -342,6 +343,8 @@ await page.addInitScript((workspace) => {
           return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:state.assetTextEncoding===null?null:'utf-8',contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
         }
         case 'edit_response_asset': {
+          if(state.deferAssetEdit){state.assetEditPending=true;await new Promise(resolve=>state.finishAssetEdit=resolve);}
+          if(state.assetError)throw new Error('Fixture asset write failed');
           const source=state.assets.find(asset=>asset.id+'@'+asset.revision===args.input.assetReference);
           const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
           const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder().decode(new Uint8Array(args.input.decodedBody)):source.display};
@@ -1138,6 +1141,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
 
 
+  await checkResponseBodyEditor(page,root);
   await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['gzip','br'];s.assetTextEncoding=null;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
   await autoEditor.getByText('Apply original compression type (gzip, Brotli)',{exact:false}).waitFor();
   assert.equal(await autoField('preserveEncoding').isDisabled(),true);

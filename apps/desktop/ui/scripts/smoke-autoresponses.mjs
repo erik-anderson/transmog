@@ -32,7 +32,31 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
     await evaluate(`(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();w.$flushUpdates();if(!w.responseBodyFileError.includes('missing or unreadable')||!w.responseBodyFile)throw new Error('Native missing-file state lost configuration or recovery');})()`);
     await writeFile(path,'external replacement');
     await evaluate(`(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();if(w.responseBodyFileError)throw new Error('Native restored-file state did not recover');w.clearResponseBodyFile();w.$flushUpdates();if(w.autoResponseBody.disabled||w.autoResponseBody.readOnly)throw new Error('Native clear-file action did not restore editing');})()`);
-    return {linkedPath:true,disabledEditor:true,compressionChoice:true,missingFile:true,recovery:true,clearFile:true};
+    await evaluate(`(async()=>{
+      const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace'),body='{"native":[1,2],"ready":true}';
+      w.autoResponseBody.value=body;w.openBodyDialog();
+      const deadline=Date.now()+15000;while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+      if(!w.bodyEditor.editor||w.bodyEditor.bodyLanguage!=='json'||!w.bodyEditor.bodyCanSave)throw new Error('Native syntax dialog did not hydrate with body-only saving');
+      await w.bodyEditor.format();if(!w.bodyEditor.model.getValue().includes('\\n'))throw new Error('Native JSON formatting did not run');
+      w.bodyEditor.editor.focus();
+    })()`);
+    await call('Input.dispatchKeyEvent',{type:'keyDown',modifiers:2,key:'z',code:'KeyZ',windowsVirtualKeyCode:90});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',modifiers:2,key:'z',code:'KeyZ',windowsVirtualKeyCode:90});
+    await evaluate(`(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await new Promise(resolve=>setTimeout(resolve,50));if(w.bodyEditor.model.getValue()!=='{"native":[1,2],"ready":true}')throw new Error('Native formatting undo failed');await w.bodyEditor.format();})()`);
+    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-body-dialog.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    await evaluate(`(async()=>{
+      const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');w.bodyEditor.commit(false);
+      await new Promise(resolve=>setTimeout(resolve,50));if(!w.autoResponseBody.value.includes('\\n')||w.bodyEditor.model)throw new Error('Native dialog Apply did not restore and release the draft');
+      const applied=w.autoResponseBody.value;w.openBodyDialog();const deadline=Date.now()+15000;
+      while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+      w.bodyEditor.editor.setValue('cancelled');w.bodyEditor.cancel();await new Promise(resolve=>setTimeout(resolve,50));
+      if(w.autoResponseBody.value!==applied)throw new Error('Native Cancel changed the draft');
+      w.openBodyDialog();while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+      w.bodyEditor.commit(true);const savedDeadline=Date.now()+15000;
+      while(w.bodyEditor.surface.open&&Date.now()<savedDeadline)await new Promise(resolve=>setTimeout(resolve,25));
+      if(w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)throw new Error('Native dialog Save rule failed: '+w.bodyEditor.bodyError);
+    })()`);
+    return {linkedPath:true,disabledEditor:true,compressionChoice:true,missingFile:true,recovery:true,clearFile:true,syntaxEditor:true,formatUndo:true,applyCancel:true,dialogSave:true};
   } finally {
     await evaluate(`(async()=>{
       const probe=globalThis.__responseFileProbe;if(!probe)return;

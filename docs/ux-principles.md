@@ -60,7 +60,10 @@ its actual effect on the user's task. For a short per-change workflow, follow
   source provenance.
 - Let long-form editing use the available space. Response-body authoring starts
   at twelve lines. Preserve resize and expand affordances, with actions still
-  reachable and drafts intact after restoring the editor.
+  reachable and drafts intact after restoring the editor. Body dialogs use
+  Apply/Cancel; offer Save rule only when other properties have no unsaved changes.
+  Formatting is explicit and undoable. Closing releases the editor model and
+  returns focus to the opening action.
 - Keep selection actions outside the scrolling list so populated tables cannot
   cover them. Empty-state presentation must not determine whether a populated
   workspace is usable.

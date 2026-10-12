@@ -142,7 +142,11 @@ unknown encoded length, without reusing a stale Content-Length. Pasted framing a
 fields cannot override these choices in the editor. Response edits create an
 immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor
-starts at twelve lines. The open Response section groups status, content type,
+starts at twelve lines. Edit in dialog opens a syntax editor for HTML, CSS,
+JavaScript, JSON or plain text, with an undoable Format action and manual language
+choice. Apply updates the draft; Cancel retains its previous body. An existing
+rule with only body changes also offers Save rule. Failed saves keep the dialog
+and edits available, and closing restores focus and releases the editor model. The open Response section groups status, content type,
 ten-line editable headers and neutral original-response context; rule usage is
 shown with the rule properties. A friendly source link opens the original request when
 it is still retained; otherwise the label remains plain text. Match counts and

@@ -1,0 +1,18 @@
+response-body-editor { display:contents; }
+.response-body-dialog { box-sizing:border-box; width:min(76rem,calc(100vw - 2rem)); height:min(52rem,calc(100dvh - 2rem)); max-width:none; max-height:none; padding:1rem; border:1px solid var(--line); border-radius:.45rem; background:var(--panel); color:var(--text); }
+.response-body-dialog[open] { display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:.6rem; }
+.response-body-dialog::backdrop { background:rgb(0 0 0 / .4); }
+.response-body-dialog header { display:flex; align-items:baseline; flex-wrap:wrap; gap:.6rem; }
+.response-body-dialog h2 { margin:0; font-size:1rem; flex:1 1 10rem; }
+.response-body-dialog header label { display:flex; align-items:baseline; gap:.4rem; }
+.body-editor-status { margin:0; color:var(--muted); font-size:.8rem; }
+.body-dialog-content,.body-code-host { min-width:0; min-height:0; height:100%; }
+.body-dialog-content > label { display:flex; flex-direction:column; height:100%; gap:.3rem; font-size:.8rem; }
+.body-dialog-content textarea { flex:1; min-height:0; resize:none; font:.85rem/1.5 "Cascadia Mono",Consolas,monospace; }
+.response-body-dialog footer { min-width:0; }
+.response-body-dialog footer .field-error { margin:0 0 .4rem; }
+.response-body-dialog footer .actions { justify-content:flex-end; flex-wrap:wrap; }
+@media (forced-colors:active) { .response-body-dialog { background:Canvas; color:CanvasText; border-color:CanvasText; } }
+
+.body-apply[data-secondary] { background:var(--panel); color:var(--text); border-color:var(--line-strong); }
+.response-body-dialog footer > small { display:block; color:var(--muted); margin-bottom:.4rem; }
