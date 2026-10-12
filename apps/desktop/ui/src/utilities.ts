@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Lifecycle, ClientIdentity, SessionDetail, HeadView, StoredBodyMetadata } from './models.js';
 
+/** Remove only the scheme's explicit default port; preserve authored path/query bytes. */
+export function implicitDefaultPort(value:string):string {
+  return value.replace(/^(http:\/\/(?:\[[^\]]+\]|[^\/:?#]+)):80(?=[/?#]|$)/i,'$1')
+    .replace(/^(https:\/\/(?:\[[^\]]+\]|[^\/:?#]+)):443(?=[/?#]|$)/i,'$1');
+}
+
 export function lifecycleLabel(lifecycle: Lifecycle): string {
   switch (lifecycle) {
       case 'running': return 'Running';

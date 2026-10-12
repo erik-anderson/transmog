@@ -695,6 +695,11 @@ async fn inspect_response_asset(
 }
 
 #[tauri::command]
+fn autoresponse_source_headers(id: String, state: State<'_, DesktopState>) -> Result<transmog_app::ResponseAssetHeaders, AppError> {
+    state.application.autoresponse_source_headers(&id)
+}
+
+#[tauri::command]
 async fn edit_response_asset(
     input: ResponseAssetEdit,
     state: State<'_, DesktopState>,
@@ -2041,6 +2046,7 @@ pub fn run() {
                 disable_script,
                 response_assets,
                 inspect_response_asset,
+                autoresponse_source_headers,
                 edit_response_asset,
                 create_autoresponse_batch,
                 pick_response_body,

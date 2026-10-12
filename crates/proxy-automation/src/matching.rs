@@ -197,6 +197,14 @@ pub fn request_for_test(
     })
 }
 
+/// Normalizes an absolute HTTP URL using the same representation as live matching.
+///
+/// # Errors
+/// Rejects malformed URLs and fragments.
+pub fn normalize_url(value: &str) -> Result<String, String> {
+    Ok(absolute_url(&parse_target(value)?))
+}
+
 fn parse_target(url: &str) -> Result<Target, String> {
     if url.len() > 8192 || url.contains('#') {
         return Err("Use an HTTP or HTTPS URL without a fragment (maximum 8192 bytes).".into());
@@ -710,6 +718,22 @@ fn url_checks(url: &CompiledUrl, target: &Target) -> Vec<MatchCheck> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_ports_share_exact_matching_and_preserve_other_url_parts() {
+        for (implicit, explicit, other) in [
+            ("http://example.test/a%2Fb?q=1&q=2", "http://example.test:80/a%2Fb?q=1&q=2", "http://example.test:8080/a%2Fb?q=1&q=2"),
+            ("https://[::1]/a?", "https://[::1]:443/a?", "https://[::1]:8443/a?"),
+        ] {
+            assert_eq!(normalize_url(explicit).unwrap(), implicit);
+            assert_eq!(normalize_url(other).unwrap(), other);
+            for authored in [implicit, explicit] {
+                let condition=UrlCondition::Exact(authored.into());
+                assert!(condition.compile().unwrap().matches(&target(implicit)));
+                assert!(condition.compile().unwrap().matches(&target(explicit)));
+                assert!(!condition.compile().unwrap().matches(&target(other)));
+            }
+        }
+    }
     fn pattern(address: &str, query: QueryCondition) -> UrlCondition {
         UrlCondition::Pattern(UrlPattern {
             address: address.into(),

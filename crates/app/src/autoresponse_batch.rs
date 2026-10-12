@@ -102,6 +102,8 @@ impl Application {
                     false,
                 )
             })?;
+            let url = transmog_automation::normalize_url(&url)
+                .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
             sources.push((id.clone(), method, url));
         }
         let mut created_assets = Vec::new();

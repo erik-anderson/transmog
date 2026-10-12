@@ -28,7 +28,7 @@ use matching::CompiledUrl;
 pub use matching::{
     ExampleHeader, MatchCapture, MatchCheck, MatchExample, MatchTest, QueryCondition,
     QueryParameter, RegexScope, UrlCondition, UrlPattern, UrlRegex, matcher_key, request_for_test,
-    same_matching_behavior, test_matcher,
+    normalize_url, same_matching_behavior, test_matcher,
 };
 pub use user_agent::UserAgentOverride;
 

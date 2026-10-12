@@ -101,7 +101,7 @@ pub use product_state::{
 pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
-    ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
+    ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
@@ -811,6 +811,18 @@ impl Application {
     /// Lists durable immutable response assets.
     pub fn response_assets(&self) -> Vec<ResponseAsset> {
         self.response_assets.list()
+    }
+
+    /// Returns complete retained response headers for local rule authoring.
+    ///
+    /// # Errors
+    /// Rejects missing response heads or unavailable retention.
+    pub fn autoresponse_source_headers(&self, id: &str) -> Result<transmog_core::HeaderBlock, AppError> {
+        let exchange = response_assets::parse_exchange_id(id)?;
+        self.body_store.as_ref()
+            .and_then(|store| store.response_head(exchange, transmog_core::observe::ExchangeBoundary::ClientResponse))
+            .map(|head| head.headers)
+            .ok_or_else(|| AppError::new(ErrorCategory::Unavailable, "Original response headers are unavailable. Choose another response in Traffic.", false))
     }
 
     /// Inspects saved response text independently of its original traffic source.

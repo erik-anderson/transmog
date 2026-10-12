@@ -68,8 +68,14 @@ first. Disabled copies provide a convenient starting point for a variant.
 The primary creation flow starts from a completed traffic item. **Create
 auto-response** copies the exact client-visible status, ordered response headers,
 and encoded body into an immutable response asset, then pre-fills a method and
-exact normalized absolute-URL match. The primary Automation action opens
-Traffic to choose responses, or uses the current reusable response. Multiple
+exact normalized absolute-URL match.
+
+HTTP port 80 and HTTPS port 443 are implicit in created rules; matching accepts
+either spelling. Nondefault ports remain explicit. Revert restores the captured
+draft and its source. Status, content type, headers and file replacement are
+available before the first save, with protected header bytes retained.
+The primary Automation action opens Traffic to choose responses, or uses the
+current reusable response. Multiple
 selected rows open a review with eligibility,
 priority and duplicate explanations in a compact table. Excluded responses stay
 visible, and refresh keeps their inclusion choices. The review can skip

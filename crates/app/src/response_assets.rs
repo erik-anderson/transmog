@@ -27,6 +27,9 @@ const MAX_AUTHORED_BYTES: usize = 16 * 1024 * 1024;
 const BUFFERED_RESPONSE_BYTES: u64 = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Complete ordered response headers for local auto-response authoring.
+pub type ResponseAssetHeaders = HeaderBlock;
+
 /// Origin of a complete reusable response asset.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]

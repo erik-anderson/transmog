@@ -334,6 +334,7 @@ await page.addInitScript((workspace) => {
           if(matcher.method){const method=matcher.method===args.input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
           return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({method:item.method,url:item.url,passed:true}))??[]};
         }
+        case 'autoresponse_source_headers': return detail(args.id).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))}));
         case 'response_assets': return structuredClone(state.assets??[]);
         case 'inspect_response_asset': {
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
@@ -967,6 +968,23 @@ try {
   assert.match(await autoField('body').evaluate(body=>getComputedStyle(body).fontFamily),/Mono|Consolas/);
   assert.equal(await autoField('name').evaluate(input=>input.getRootNode().activeElement===input),true,'Rule editor did not receive focus');
   await sourceLink.getByText('GET example.test/second',{exact:true}).waitFor({state:'visible'});
+  assert.equal(await autoField('status').getAttribute('readonly'),null,'Captured status requires an unnecessary first save');
+  await autoField('name').fill('Changed captured draft');
+  await autoField('status').fill('201');
+  const capturedPreview=await autoField('body').inputValue();
+  await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+  await page.locator('#auto-response-body-help').getByText(/text uses utf-8/).waitFor();
+  assert.equal(await autoField('status').inputValue(),'200');
+  assert.equal(await autoField('body').inputValue(),capturedPreview);
+  assert.equal(await autoEditor.locator('h3').textContent(),'New rule from captured response');
+  assert.equal(await sourceLink.isVisible(),true,'Revert lost captured source');
+  for(const [url,expected] of [['http://example.test:80/second','http://example.test/second'],['https://example.test:443/second','https://example.test/second'],['https://example.test:8443/second','https://example.test:8443/second']]) {
+    await page.evaluate(async url=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'});detail.requests[0].target=url;await w.populateCapturedAutoResponse('second',detail);},url);
+    assert.equal(await autoField('url').inputValue(),expected,'Traffic-derived URL has the wrong port');
+  }
+  await page.evaluate(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.populateCapturedAutoResponse('second',await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'second'}));});
+
+
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
   const capturedRuleId=await page.locator('.auto-response-rule').getAttribute('data-rule-id');

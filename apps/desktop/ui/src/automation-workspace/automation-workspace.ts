@@ -9,7 +9,7 @@ import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
-import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, editableCharacterEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
+import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, editableCharacterEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 
@@ -17,6 +17,7 @@ const AUTORESPONSE_PRIORITY_BASE = -1_000_000;
 const MAX_AUTORESPONSE_EDIT_BYTES = 16 * 1024 * 1024;
 type RuleRow=AutomationRule & {order:number;name:string;criteria:string;state:string;toggleLabel:string;first:boolean;last:boolean;selected:boolean;selectionState:string;tabIndex:string;shadowedName:string;shadowedBy:string;diagnostic:string;responseText:string};
 type BatchRow={included:boolean;order:number;id:string;name:string;method:string;url:string;eligible:boolean;reason:string;duplicate:string;startedAt:number};
+type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset['headers'];inspection:BodyInspection|null};
 
 export class AutomationWorkspace extends WorkspaceElement {
   userAgentOverrides!:UserAgentOverrides;
@@ -59,6 +60,8 @@ export class AutomationWorkspace extends WorkspaceElement {
   private matcherTestRevision=0;
   private savedHeaderText='';
   private protectedResponseHeaders:ResponseAsset['headers']=[];
+  private capturedDraft:CapturedDraft|null=null;
+  private capturedOrigin:{sessionId:string;detail:SessionDetail}|null=null;
   autoresponseStateChanged():void {if(this.autoresponseState && this.autoresponseState!==this.automationStatus)this.renderAutomation(this.autoresponseState);}
   @observable automationText = initialState.automationText;
   @observable automationKind = initialState.automationKind;
@@ -184,7 +187,11 @@ export class AutomationWorkspace extends WorkspaceElement {
   unsavedCancelled(event:Event):void {event.preventDefault();void this.resolveUnsaved('stay');}
   async revertAutoResponse():Promise<void> {
     const rule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);this.draftDirty=false;
-    if(rule)await this.editAutoResponse(rule,true);else await this.beginScratchAutoResponse();
+    const captured=this.capturedDraft;
+    if(rule)await this.editAutoResponse(rule,true);
+    else if(captured)await this.populateCapturedAutoResponse(captured.sessionId,captured.detail,captured);
+    else if(this.capturedOrigin)await this.populateCapturedAutoResponse(this.capturedOrigin.sessionId,this.capturedOrigin.detail);
+    else await this.beginScratchAutoResponse();
   }
   async setEditorEnabled():Promise<void> {
     const id=this.editingAutoResponseId;if(!id){this.draftDirty=true;return;}
@@ -273,7 +280,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const status=await invoke<AutomationStatus>('automation_status');if(revision!==this.editorRevision)return;this.batchGeneration=status.generation;
     for(let offset=0;offset<ids.length;offset+=8) {
       const results=await Promise.all(ids.slice(offset,offset+8).map(async id=>{
-        try {const detail=await invoke<SessionDetail>('session_detail',{id});const source=clientResponseSource(detail);const request=detail.requests.find(head=>head.boundary==='client-request');const method=request?.method??'';const url=request?.target??'';return {id,included:true,order:0,name:method+' '+shortUrl(url),method,url,eligible:Boolean(source),reason:source?'Ready':autoResponseUnavailableReason(detail),duplicate:'',startedAt:detail.startedAt??0};}
+        try {const detail=await invoke<SessionDetail>('session_detail',{id});const source=clientResponseSource(detail);const request=detail.requests.find(head=>head.boundary==='client-request');const method=request?.method??'';const url=implicitDefaultPort(request?.target??'');return {id,included:true,order:0,name:method+' '+shortUrl(url),method,url,eligible:Boolean(source),reason:source?'Ready':autoResponseUnavailableReason(detail),duplicate:'',startedAt:detail.startedAt??0};}
         catch(error:unknown){return {id,included:true,order:0,name:'Unavailable response',method:'',url:'',eligible:false,reason:describeError(error),duplicate:'',startedAt:0};}
       }));
       if(revision!==this.editorRevision)return;const updates=new Map(results.map(row=>[row.id,row]));this.batchRows=this.batchRows.map(row=>updates.get(row.id)??row);this.renderBatchReview();
@@ -286,7 +293,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const seen=new Set<string>();
     this.batchRows=this.batchRows.map((row,index)=>{
       const key=row.method+' '+row.url;let duplicate=row.eligible && row.included && seen.has(key)?'Always superseded by an earlier selected response with the same match.':'';
-      if(!duplicate && row.eligible && row.included){const existing=this.automationStatus?.rules.find(rule=>rule.request.responseAsset && rule.matcher.method===row.method && rule.matcher.url?.kind==='exact' && rule.matcher.url.value===row.url && rule.matcher.requestHeaders.length===0 && !rule.matcher.host && !rule.matcher.scheme && !rule.matcher.port && !rule.matcher.pathPrefix && rule.matcher.query===null);if(existing)duplicate=`Will have higher priority than existing “${existing.displayName??'Auto-response'}” with the same match.`;}
+      if(!duplicate && row.eligible && row.included){const existing=this.automationStatus?.rules.find(rule=>rule.request.responseAsset && rule.matcher.method===row.method && rule.matcher.url?.kind==='exact' && implicitDefaultPort(rule.matcher.url.value)===row.url && rule.matcher.requestHeaders.length===0 && !rule.matcher.host && !rule.matcher.scheme && !rule.matcher.port && !rule.matcher.pathPrefix && rule.matcher.query===null);if(existing)duplicate=`Will have higher priority than existing “${existing.displayName??'Auto-response'}” with the same match.`;}
       if(row.eligible && row.included)seen.add(key);return {...row,order:index+1,duplicate};
     });
     this.batchEligibleCount=this.batchRows.filter(row=>row.eligible && row.included).length;const unavailable=this.batchRows.filter(row=>!row.eligible).length;const excluded=this.batchRows.filter(row=>row.eligible && !row.included).length;
@@ -338,7 +345,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(path && revision===this.editorRevision){this.draftDirty=true;this.responseBodyPath=path;this.responseBodyFile=path.split(/[\\/]/).pop()??'Selected file';}
   }
   clearResponseBodyFile():void {this.draftDirty=true;this.responseBodyPath=null;this.responseBodyFile='';}
-  private editableHeaders(asset:ResponseAsset):string {
+  private editableHeaders(asset:Pick<ResponseAsset,'headers'>):string {
     this.protectedResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
     for(const field of asset.headers??[]) {
       const name=new TextDecoder().decode(new Uint8Array(field.name));
@@ -357,6 +364,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
     this.savedHeaderText='';this.protectedResponseHeaders=[];
+    this.capturedDraft=null;
+    this.capturedOrigin=null;
     window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;
     this.autoResponseEnabled.checked=true;
     for (const field of ['requestHeaders','responseHeaders']) (this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement).setCustomValidity('');
@@ -506,7 +515,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     await this.populateCapturedAutoResponse(this.selection.sessionId, this.selection.detail);
   }
 
-  async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail): Promise<void> {
+  async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail, restored?:CapturedDraft): Promise<void> {
     if (this.savingAutoResponse) return;
     const source = clientResponseSource(detail);
     if (source === null || source.request.method === null || source.request.target === null || source.response.status === null) {
@@ -521,19 +530,21 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(!await this.canLeaveEditor() || this.savingAutoResponse)return;
     this.editingAutoResponseId = null;
     this.prepareEditor();
+    this.capturedOrigin={sessionId,detail:structuredClone(detail)};
     const elements = this.autoResponseForm.elements;
-    (elements.namedItem('name') as HTMLInputElement).value = `${source.request.method} ${shortUrl(source.request.target)}`;
+    const url=implicitDefaultPort(source.request.target);
+    (elements.namedItem('name') as HTMLInputElement).value = `${source.request.method} ${shortUrl(url)}`;
     this.setEditorMethod(source.request.method.toUpperCase());
-    (elements.namedItem('url') as HTMLInputElement).value = source.request.target;
-    this.matcherCondition={kind:'exact',value:source.request.target};this.matchTestUrl.value=source.request.target;
+    (elements.namedItem('url') as HTMLInputElement).value = url;
+    this.matcherCondition={kind:'exact',value:url};this.matchTestUrl.value=url;
     this.matchTestMethod.value=source.request.method;
     this.matchTestHeaders.value=source.request.headers.filter(header=>!header.sensitive && !header.binary).map(header=>header.name+': '+header.value).join('\n');
     this.autoResponseStatus.value = String(source.response.status);
-    this.responseReadOnly = true;
+    this.responseReadOnly = false;
     this.autoResponseMediaType.value = source.body.mediaType ?? '';
     this.responseFieldsHidden = false;
     (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value = '';
-    this.responseHeadersHidden = true;
+    this.responseHeadersHidden = false;
     this.capturedOptionsHidden = false;
     this.autoResponseEditBody.checked = false;
     this.autoResponsePreserveEncoding.checked = true;
@@ -561,6 +572,19 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.openEditor();
     void this.refreshSourceAvailability();
 
+    this.loadingSavedResponse=true;
+    this.responseReadOnly=true;
+    try {
+      const headers=restored?.headers??await invoke<ResponseAsset['headers']>('autoresponse_source_headers',{id:sessionId});
+      if(revision!==this.editorRevision || !this.isConnected)return;
+      this.savedHeaderText=this.editableHeaders({headers});
+      (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
+      this.capturedDraft={sessionId,detail:structuredClone(detail),headers,inspection:restored?.inspection??null};
+      this.responseReadOnly=false;
+    }catch(error:unknown){if(revision===this.editorRevision){this.autoResponseError=describeError(error);this.responseReadOnly=true;}}
+    finally{if(revision===this.editorRevision)this.loadingSavedResponse=false;}
+    if(revision!==this.editorRevision || !this.isConnected)return;
+
     if (source.body.retainedBytes === 0) {
       captured.bodyEditable = captured.textEncoding !== null;
       this.bodyStatusText = 'Empty response body. Enable editing to replace it.';
@@ -573,7 +597,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
     this.bodyStatusText = 'Loading response body…';
     try {
-      const inspection = await invoke<BodyInspection>('inspect_body', {
+      const inspection = restored?.inspection??await invoke<BodyInspection>('inspect_body', {
         request: {
           sessionId,
           boundary: 'client-response',
@@ -584,6 +608,7 @@ export class AutomationWorkspace extends WorkspaceElement {
         },
       });
       if (revision !== this.editorRevision || this.autoResponseSourceState !== captured || !this.isConnected) return;
+      if(this.capturedDraft)this.capturedDraft.inspection=inspection;
       if (!inspection.truncated && inspection.representation === 'original-text' && inspection.textEncoding !== null) {
         this.autoResponseBody.value = inspection.display;
         captured.bodyEditable = true;
@@ -652,6 +677,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   async saveAutoResponse(event: Event): Promise<void> {
     event.preventDefault();
     if (this.savingAutoResponse || this.changingAutoResponse) return;
+    if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return;}
     if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return;}
     const data = new FormData(this.autoResponseForm);
     const source = this.autoResponseSourceState;
@@ -666,8 +692,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     try {
       const displayName = String(data.get('name') ?? '').trim();
       if (!displayName) throw new Error('Enter a rule name.');
-      const editableResponseHeaders=source.kind==='scratch' || source.kind==='existing'
-        ? this.parseEditorHeaders('responseHeaders',data).filter(header=>!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase())):[];
+      const editableResponseHeaders=this.parseEditorHeaders('responseHeaders',data).filter(header=>!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase()));
       const responseHeaders=[...encodeHeaders(editableResponseHeaders),...this.protectedResponseHeaders];
       const editedBody = source.kind === 'captured' && replaceBody
         ? encodeEditedText(String(data.get('body') ?? ''), source.textEncoding) : null;
@@ -689,7 +714,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       } else {
         const suffix = crypto.randomUUID().replaceAll('-', '');
         const assetId = `autoresponse-${suffix}`;
-        const asset = source.kind === 'captured'
+        let asset = source.kind === 'captured'
           ? await invoke<ResponseAsset>('create_response_asset_from_session', {
               input: {
                 id: assetId,
@@ -710,6 +735,9 @@ export class AutomationWorkspace extends WorkspaceElement {
                 mediaType: optionalText(data.get('mediaType')),
               },
             });
+        if(source.kind==='captured' && (this.responseBodyPath || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==asset.status || String(data.get('mediaType')??'')!==(asset.mediaType??''))) {
+          asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference:`${asset.id}@${asset.revision}`,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:null,bodyPath:this.responseBodyPath,preserveContentEncoding:preserveEncoding}});
+        }
         assetReference = `${asset.id}@${asset.revision}`;
       }
 
