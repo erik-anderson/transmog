@@ -12,6 +12,80 @@ fn pair(id: u128, upstream: bool, bytes: Vec<u8>) -> CaptureRecord {
 }
 
 #[test]
+fn body_expansion_must_match_index_before_decoding() {
+    for password in [None, Some(CapturePassword::new("body size review".into()))] {
+        let limits = CaptureLimits::default();
+        let mut writer = CaptureWriter::with_encoding(
+            Vec::new(),
+            limits,
+            &CaptureEncoding {
+                password: password.clone(),
+            },
+        )
+        .unwrap();
+        let mut http = super::tests::body(1, vec![0; 8]);
+        if let CaptureRecordKind::BodySegment { bytes, .. } = &mut http.kind {
+            *bytes = None;
+        }
+        let stream = CaptureRecord {
+            exchange_id: 2,
+            sequence: 1,
+            kind: CaptureRecordKind::StreamMessage(transmog_core::stream::StreamMessage::new(
+                "server",
+                "event",
+                Vec::new().into(),
+            )),
+        };
+        for record in [http, stream] {
+            let mut stored = store(&record).unwrap();
+            stored.body_index = Some(StoredBodyIndex {
+                frame_bytes: 0,
+                bytes: 8,
+                digest: Sha256::digest([0; 8]).into(),
+            });
+            // Intentionally bypass normal compression to produce conflicting sizes.
+            // Invalid zstd proves rejection happens before invoking its decoder:
+            // decoding first would return an I/O error instead of InvalidMagic.
+            writer.jobs.push_back(PendingRecord {
+                stored,
+                index: writer.records,
+                body: Some(PendingBody::Ready(CompressedChunk {
+                    codec: 1,
+                    expanded: 32 * 1024,
+                    bytes: b"invalid zstd".to_vec(),
+                })),
+                raw: Some(vec![0; 8]),
+            });
+            writer.records += 1;
+            writer.dirty = true;
+            writer.finish_one().unwrap();
+        }
+        writer.seal().unwrap();
+        let bytes = writer.into_inner().unwrap();
+        let mut reader =
+            CaptureReader::with_password(Cursor::new(&bytes), limits, password.as_ref()).unwrap();
+        let mut full =
+            CaptureReader::with_password(Cursor::new(&bytes), limits, password.as_ref()).unwrap();
+        for _ in 0..2 {
+            let frame = reader.read_next_indexed().unwrap().unwrap();
+            assert!(matches!(full.read_next(), Err(CaptureError::InvalidMagic)));
+            let mut input = Cursor::new(&bytes);
+            input.set_position(frame.offset);
+            assert!(matches!(
+                read_indexed_frame_with_codec(
+                    input,
+                    frame.frame_bytes,
+                    limits,
+                    &frame.codec,
+                    frame.index,
+                ),
+                Err(CaptureError::InvalidMagic)
+            ));
+        }
+    }
+}
+
+#[test]
 #[allow(clippy::too_many_lines)] // One fixture matrix exercises plain/encrypted checkpoint/compaction paths.
 fn exact_and_near_identical_boundaries_share_bodies_with_bounded_lazy_reads() {
     for encrypted in [false, true] {
@@ -75,6 +149,7 @@ fn exact_and_near_identical_boundaries_share_bodies_with_bounded_lazy_reads() {
                     u64::from(location.page.bytes),
                     LEAF,
                     INDEX_LIMIT,
+                    None,
                     None,
                 )
                 .unwrap();

@@ -149,8 +149,10 @@ block to be padded; flushing a metadata page does not waste the rest of a block.
 | 10 | Encoded length | Encoded bytes |
 
 The authenticated index reference includes the exact object size, including the
-ten-byte header. Raw and decoded lengths must match the expanded length. Validate
-bounds before allocation or decompression. Codec 2 is valid only for a body with
+ten-byte header. Raw and decoded lengths must match the expanded length. For
+bodies and dictionary bases, the object header's expanded length must match the
+index descriptor before decompression. Validate bounds before allocation or
+decompression. Codec 2 is valid only for a body with
 an explicit dictionary reference; metadata always decodes independently.
 
 Identical client/upstream chunks may share one body blob. A nearly identical

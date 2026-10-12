@@ -1106,6 +1106,7 @@ impl<R: Read + Seek> CaptureReader<R> {
             if node.level == 0 { LEAF } else { BRANCH },
             INDEX_LIMIT,
             None,
+            None,
         )
     }
     fn resolve_certificates(&mut self, record: &mut CaptureRecord) -> Result<(), CaptureError> {
@@ -1359,6 +1360,7 @@ pub fn read_indexed_frame_with_codec(
         u64::from(page.bytes),
         LEAF,
         INDEX_LIMIT,
+        None,
         None,
     )?;
     let entries: Vec<metadata::RawEntry> = metadata::array(

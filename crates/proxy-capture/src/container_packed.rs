@@ -160,6 +160,7 @@ pub(super) fn span_end(codec: &FrameCodec, offset: u64, bytes: u64) -> Result<u6
         .ok_or(CaptureError::QuotaExceeded)
 }
 
+#[allow(clippy::too_many_arguments)] // Independent encoded bound, exact body length, and dictionary.
 pub(super) fn read_object(
     input: &mut (impl Read + Seek),
     codec: &FrameCodec,
@@ -167,6 +168,7 @@ pub(super) fn read_object(
     length: u64,
     kind: u8,
     maximum: usize,
+    expected_expanded: Option<usize>,
     dictionary: Option<&[u8]>,
 ) -> Result<Vec<u8>, CaptureError> {
     span_end(codec, offset, length)?;
@@ -201,6 +203,11 @@ pub(super) fn read_object(
     let encoded = u32::from_le_bytes(bytes[6..10].try_into().unwrap()) as usize;
     if expanded > maximum {
         return Err(CaptureError::QuotaExceeded);
+    }
+    // Body sizes are committed twice: in the index and in the object header.
+    // Reject disagreement before letting the object's declaration drive decoding.
+    if expected_expanded.is_some_and(|expected| expanded != expected) {
+        return Err(CaptureError::InvalidMagic);
     }
     if encoded != bytes.len() - OBJECT_HEADER {
         return Err(CaptureError::InvalidMagic);
@@ -271,6 +278,7 @@ pub(super) fn read_body(
                 base.descriptor.frame_bytes,
                 DATA,
                 maximum.min(BODY_CHUNK_BYTES),
+                Some(base.descriptor.bytes),
                 None,
             )?;
             check_digest(&bytes, base.descriptor)?;
@@ -284,6 +292,7 @@ pub(super) fn read_body(
         descriptor.frame_bytes,
         DATA,
         maximum,
+        Some(descriptor.bytes),
         dictionary.as_deref(),
     )?;
     check_digest(&bytes, descriptor)?;
