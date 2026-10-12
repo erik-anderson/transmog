@@ -414,6 +414,15 @@ impl ProxyControl {
     pub fn finish_drain(&self, generation: u64) -> bool {
         self.state.activity.seal(generation)
     }
+    /// Expedites physical cleanup for restart after admitted work has finished.
+    /// Returns false while requests, handshakes or upgraded relays are draining.
+    pub fn finish_connection_cleanup(&self) -> bool {
+        if !self.state.activity.finalized() {
+            return false;
+        }
+        self.state.finish_connection_cleanup.cancel();
+        true
+    }
     /// Replaces the complete upstream TLS context and connection-pool generation.
     ///
     /// Exchanges that already captured the previous generation may finish on
@@ -550,6 +559,7 @@ impl ProxyServer {
             authentication: components.authentication,
             activity: Arc::new(ActivityTracker::default()),
             final_shutdown: ExchangeCancellation::new(),
+            finish_connection_cleanup: ExchangeCancellation::new(),
             tunnels: Mutex::new(JoinSet::new()),
             hooks: components.hooks,
             content: components.content,
@@ -672,30 +682,24 @@ impl ProxyServer {
                 }
             }
         }
-        let unbounded = self.state.activity.finalized();
         self.state.activity.drain();
         self.state.final_shutdown.cancel();
-        if unbounded {
+        // Admitted work has already finished before a drain is sealed. Idle
+        // HTTP/2 peers can still withhold the PING ACK required by graceful
+        // GOAWAY, so physical connection cleanup must always have a deadline.
+        let cleanup = timeout(self.state.config.limits.shutdown_timeout, async {
             while tasks.join_next().await.is_some() {}
-            while self.state.tunnels.lock().await.join_next().await.is_some() {}
-        } else {
-            while timeout(self.state.config.limits.shutdown_timeout, tasks.join_next())
-                .await
-                .ok()
-                .flatten()
-                .is_some()
-            {}
             let mut tunnels = self.state.tunnels.lock().await;
-            while timeout(
-                self.state.config.limits.shutdown_timeout,
-                tunnels.join_next(),
-            )
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-            {}
-            tunnels.abort_all();
+            while tunnels.join_next().await.is_some() {}
+        });
+        tokio::select! {
+            _ = cleanup => {},
+            () = self.state.finish_connection_cleanup.cancelled() => {},
+        }
+        tasks.shutdown().await;
+        {
+            let mut tunnels = self.state.tunnels.lock().await;
+            tunnels.shutdown().await;
         }
         self.state.observers.shutdown().await;
         Ok(())
@@ -711,6 +715,7 @@ struct ProxyState {
     isolate_outbound: AtomicBool,
     activity: Arc<ActivityTracker>,
     final_shutdown: ExchangeCancellation,
+    finish_connection_cleanup: ExchangeCancellation,
     tunnels: Mutex<JoinSet<()>>,
     hooks: InterceptorChainFactory,
     content: ContentPolicy,
@@ -6511,6 +6516,91 @@ mod tests {
         drop(client);
         shutdown_tx.send(()).unwrap();
         task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn finalized_drain_does_not_wait_for_an_idle_h2_peer_to_ack_shutdown() {
+        let proxy_ca = ProxyCa::generate("Transmog idle H2 drain test", 2).unwrap();
+        let browser_trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![proxy_ca.certificate().to_der().unwrap()]),
+                1,
+            )
+            .unwrap(),
+        );
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                limits: RuntimeLimits {
+                    shutdown_timeout: Duration::from_millis(50),
+                    ..RuntimeLimits::default()
+                },
+                ..ProxyConfig::default()
+            },
+            proxy_ca,
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap()),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let endpoint = proxy.local_addr().unwrap();
+        let control = proxy.control();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(proxy.serve(async move {
+            let _ = shutdown_rx.await;
+        }));
+        let mut transport = TcpStream::connect(endpoint).await.unwrap();
+        transport
+            .write_all(b"CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n")
+            .await
+            .unwrap();
+        assert!(
+            read_http_head(&mut transport)
+                .await
+                .starts_with(b"HTTP/1.1 200")
+        );
+        let connector = UpstreamTlsContextFactory::new(browser_trust, UpstreamTlsPolicy::default())
+            .hyper_connector_builder(b"\x02h2")
+            .unwrap()
+            .build();
+        let mut browser =
+            tokio_boring::connect(connector.configure().unwrap(), "localhost", transport)
+                .await
+                .unwrap();
+        // Complete the H2 preface, then keep the socket open without responding
+        // to the PING used by graceful GOAWAY. There is no admitted request.
+        browser
+            .write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let mut header = [0_u8; 9];
+                browser.read_exact(&mut header).await.unwrap();
+                let length = (usize::from(header[0]) << 16)
+                    | (usize::from(header[1]) << 8)
+                    | usize::from(header[2]);
+                browser.read_exact(&mut vec![0_u8; length]).await.unwrap();
+                if header[3] == 4 && header[4] == 1 {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("H2 settings were not acknowledged");
+        let generation = control.begin_drain();
+        assert!(control.wait_for_drain(generation).await);
+        assert!(control.finish_drain(generation));
+        shutdown_tx.send(()).unwrap();
+        timeout(Duration::from_secs(1), task)
+            .await
+            .expect("Idle H2 peer blocked final shutdown")
+            .unwrap()
+            .unwrap();
+        // A new run must be able to reclaim the listener even while a status
+        // reader retains the old control handle.
+        let listener = TcpListener::bind(endpoint).await.unwrap();
+        drop(listener);
+        drop(browser);
     }
 
     #[tokio::test]

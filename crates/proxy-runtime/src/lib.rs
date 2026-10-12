@@ -58,7 +58,7 @@ pub struct RuntimeLimits {
     pub body_idle_timeout: std::time::Duration,
     /// Maximum duration of a downstream TLS handshake.
     pub tls_handshake_timeout: std::time::Duration,
-    /// Maximum time to drain accepted connection tasks after shutdown begins.
+    /// Total grace period for physical connection cleanup after shutdown begins.
     pub shutdown_timeout: std::time::Duration,
     /// Maximum duration of one route-selector call.
     pub route_selection_timeout: std::time::Duration,

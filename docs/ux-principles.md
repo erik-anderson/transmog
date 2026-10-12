@@ -247,6 +247,9 @@ Turning the proxy off restores the host proxy settings first. Show **Finishing
 requests** while admitted requests, TLS handshakes or upgraded connections
 finish; idle clients do not delay shutdown. Keep **Start proxy** available during
 this state so turning it back on resumes the same run without disrupting work.
+Once active work finishes and the run commits to shutdown, **Start proxy** must
+expedite idle-connection cleanup and start a new run without waiting for peer
+acknowledgements.
 Reject stale shutdown and status results after a new state transition.
 
 Honor explicit manual client routing: when system proxy configuration is disabled,

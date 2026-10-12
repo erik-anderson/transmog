@@ -42,6 +42,12 @@ its shutdown flow; a journal restores interrupted host configuration on the next
 launch after a hard termination. Setup and recovery actions are in Settings →
 Connection. Certificate paths and exact removal are in Advanced.
 
+Once active work finishes, physical connections have a bounded grace period to
+close. An idle HTTP/2 client that does not acknowledge shutdown cannot leave the
+proxy stuck in **Stopping** or prevent a new run.
+**Start proxy** expedites that idle-connection cleanup before binding a new run;
+it does not wait for the grace period to expire.
+
 **Settings → Preferences → Advanced network settings** offers HTTPS decryption,
 caller-process connection isolation and allowed outbound HTTP protocols. Isolation
 and protocol changes do not restart the proxy; existing protocol connections remain

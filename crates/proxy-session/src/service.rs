@@ -123,6 +123,7 @@ struct RunTask {
 
 struct Lifecycle {
     runtime_abort: Option<(tokio::task::AbortHandle, Arc<AtomicBool>)>,
+    stopping_control: Option<ProxyControl>,
     status: ServiceStatus,
     next_generation: u64,
     task: Option<RunTask>,
@@ -137,6 +138,7 @@ struct ServiceInner {
     observer_queue_capacity: NonZeroUsize,
     lifecycle: Mutex<Lifecycle>,
     operation: AsyncMutex<()>,
+    stopping: tokio::sync::Notify,
 }
 
 impl Drop for ServiceInner {
@@ -188,12 +190,14 @@ impl ApplicationSessionService {
                 observer_queue_capacity: config.observer_queue_capacity,
                 lifecycle: Mutex::new(Lifecycle {
                     runtime_abort: None,
+                    stopping_control: None,
                     status: ServiceStatus::Stopped,
                     next_generation: 0,
                     task: None,
                     pending_restore: None,
                 }),
                 operation: AsyncMutex::new(()),
+                stopping: tokio::sync::Notify::new(),
                 redact_sensitive: Arc::new(AtomicBool::new(true)),
             }),
         })
@@ -396,10 +400,12 @@ impl ApplicationSessionService {
                 _ => None,
             };
             if let Some(task) = lifecycle.task.take() {
+                lifecycle.stopping_control.clone_from(&task.control);
                 task.shutdown.cancel();
                 lifecycle.status = ServiceStatus::Stopping {
                     local_addr: task.local_addr,
                 };
+                self.inner.stopping.notify_waiters();
                 let pending = lifecycle.pending_restore.take();
                 (Some(task), pending, existing_failure)
             } else {
@@ -456,6 +462,7 @@ impl ApplicationSessionService {
             .and(host_result);
         let mut lifecycle = self.lock_lifecycle();
         lifecycle.runtime_abort = None;
+        lifecycle.stopping_control = None;
         lifecycle.status = match &result {
             Ok(()) => ServiceStatus::Stopped,
             Err(error) => ServiceStatus::Failed {
@@ -537,13 +544,31 @@ impl ApplicationSessionService {
         Ok(self.status())
     }
 
-    /// Re-enables a still-pending drain with the same listener and run. A
-    /// completed drain returns false so the caller can start a fresh run.
+    /// Re-enables a still-pending drain with the same listener and run. If the
+    /// run has sealed, expedites idle connection cleanup and returns false so
+    /// the caller can start a fresh run without waiting out its grace period.
     ///
     /// # Errors
     /// Returns host apply/recovery errors without discarding active work.
     pub async fn resume_drain(&self) -> Result<bool, ServiceError> {
-        let _operation = self.inner.operation.lock().await;
+        // Start must also wake a sealed run that is only waiting for idle
+        // physical peers. Register before inspecting state to cover the race
+        // between waiting for this lock and the drain entering Stopping.
+        let operation = self.inner.operation.lock();
+        tokio::pin!(operation);
+        let _operation = loop {
+            let stopping = self.inner.stopping.notified();
+            tokio::pin!(stopping);
+            stopping.as_mut().enable();
+            let control = self.lock_lifecycle().stopping_control.clone();
+            if let Some(control) = control {
+                control.finish_connection_cleanup();
+            }
+            tokio::select! {
+                guard = &mut operation => break guard,
+                () = stopping => {},
+            }
+        };
         if self.has_pending_host_restore() {
             return Err(ServiceError::HostRestorePending);
         }
@@ -1068,6 +1093,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restart_expedites_idle_cleanup_already_holding_the_lifecycle_lock() {
+        use transmog_core::intercept::{HookLimits, InterceptorChainFactory};
+        use transmog_runtime::{ClientIdentityResolver, ProxyConfig, RuntimeLimits};
+        use transmog_tls::{
+            CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot,
+        };
+
+        struct StalledIdentity {
+            entered: tokio::sync::Notify,
+            release: StdMutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl ClientIdentityResolver for StalledIdentity {
+            fn resolve(&self, _: SocketAddr, _: SocketAddr) -> transmog_core::ClientIdentity {
+                self.entered.notify_one();
+                let _ = self
+                    .release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5));
+                transmog_core::ClientIdentity::LocalUnknown
+            }
+        }
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let identity = Arc::new(StalledIdentity {
+            entered: tokio::sync::Notify::new(),
+            release: StdMutex::new(release_rx),
+        });
+        let certificates = Arc::new(
+            CachedMitmCertificateResolver::new(
+                ProxyCa::generate("Idle cleanup restart test", 2).unwrap(),
+                16,
+                1,
+            )
+            .unwrap(),
+        );
+        let trust = Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap());
+        let server = ProxyServer::bind_with_components(
+            ProxyConfig {
+                limits: RuntimeLimits {
+                    shutdown_timeout: Duration::from_secs(60),
+                    ..RuntimeLimits::default()
+                },
+                ..ProxyConfig::default()
+            },
+            trust.clone(),
+            ProxyComponents::new(
+                InterceptorChainFactory::new(Vec::new(), HookLimits::default()),
+                certificates,
+            )
+            .with_client_identity_resolver(identity.clone()),
+        )
+        .await
+        .unwrap();
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let endpoint = service.start(server).await.unwrap();
+        let _idle = tokio::net::TcpStream::connect(endpoint).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), identity.entered.notified())
+            .await
+            .unwrap();
+        service.begin_drain().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !matches!(service.status(), ServiceStatus::Stopping { .. }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // This is the Start path even when the old run has sealed and removed
+        // its task from the lifecycle. It must not wait out the 60-second grace.
+        assert!(
+            !tokio::time::timeout(Duration::from_secs(1), service.resume_drain())
+                .await
+                .expect("Start waited for idle connection cleanup")
+                .unwrap()
+        );
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+        release_tx.send(()).unwrap();
+        let mut config = ProxyConfig::default();
+        config.listener.listen_addr = endpoint;
+        let restarted = ProxyServer::bind(
+            config,
+            ProxyCa::generate("Idle cleanup new run", 2).unwrap(),
+            trust,
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        assert_eq!(service.start(restarted).await.unwrap(), endpoint);
+        assert!(matches!(service.status(), ServiceStatus::Running { .. }));
+        service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Streaming drain, resume, and restart share one owned run.
     async fn drain_restores_first_keeps_a_stream_alive_and_resume_invalidates_old_shutdown() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use transmog_runtime::ProxyConfig;
@@ -1095,7 +1214,13 @@ mod tests {
         let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
         let host = Arc::new(TestHost::default());
         let server = ProxyServer::bind(
-            ProxyConfig::default(),
+            ProxyConfig {
+                limits: transmog_runtime::RuntimeLimits {
+                    shutdown_timeout: Duration::from_millis(50),
+                    ..transmog_runtime::RuntimeLimits::default()
+                },
+                ..ProxyConfig::default()
+            },
             ProxyCa::generate("Drain test", 2).unwrap(),
             Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap()),
             Arc::new(transmog_core::intercept::NoopInterceptorFactory),
@@ -1130,6 +1255,9 @@ mod tests {
             "Host restoration waited for the response"
         );
         assert!(service.proxy_control().unwrap().activity().requests > 0);
+        // Connection cleanup deadlines must not time out admitted requests.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(matches!(service.status(), ServiceStatus::Draining { .. }));
         assert!(service.resume_drain().await.unwrap());
         assert_eq!(host.applied.lock().unwrap().len(), 2);
         assert!(matches!(service.status(), ServiceStatus::Running { .. }));
@@ -1157,5 +1285,24 @@ mod tests {
             2,
             "Old drain restored host state a second time"
         );
+        let mut config = ProxyConfig::default();
+        config.listener.listen_addr = endpoint;
+        let restarted = ProxyServer::bind(
+            config,
+            ProxyCa::generate("Restart after drain test", 2).unwrap(),
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 2).unwrap()),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), service.start(restarted))
+                .await
+                .expect("Completed shutdown blocked restart")
+                .unwrap(),
+            endpoint
+        );
+        assert!(matches!(service.status(), ServiceStatus::Running { .. }));
+        service.stop().await.unwrap();
     }
 }
