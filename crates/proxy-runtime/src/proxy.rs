@@ -63,6 +63,7 @@ use transmog_core::{
         OriginalDestinationOnly, PolicyRouteSelector, RouteError, RouteInput,
         RouteSelectionService, RouteSelector, UpstreamPlan,
     },
+    stream::{StreamProtocol, StreamState, StreamStatus},
     upstream::{UpstreamError, UpstreamExecutor, UpstreamService},
 };
 use transmog_h3::{
@@ -1930,6 +1931,16 @@ impl ProxyState {
             PerMessageDeflateCodec::new(compression, WebSocketDirection::ServerToClient)?;
         }
         observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
+        let stream_observer = runtime_observer(&chain);
+        if let Some(observer) = &stream_observer {
+            observer
+                .emit(ObserverEventKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Connecting,
+                    None,
+                )))
+                .await;
+        }
         self.complete_chain(&chain, &request_head, &response_head)
             .await;
         let attempts = vec![RouteAttemptEvidence {
@@ -1979,99 +1990,78 @@ impl ProxyState {
         };
         let upgrade_timeout = self.config.limits.header_read_timeout;
         let relay_limits = self.config.websocket;
-        let relay_activity = self.activity.continue_transport();
+        let relay_activity = self.activity.continue_websocket();
         let websocket_evidence = self.websocket_evidence.clone();
         let websocket_session_id = session.session_id;
         let mut tunnels = self.tunnels.lock().await;
         while tunnels.try_join_next().is_some() {}
+        let shutdown = self.final_shutdown.clone();
         tunnels.spawn(async move {
             let _relay_activity = relay_activity;
-            let (downstream, upstream) = tokio::join!(
-                timeout(upgrade_timeout, downstream_upgrade),
-                timeout(upgrade_timeout, upstream_upgrade),
-            );
-            let downstream = match downstream {
-                Ok(Ok(stream)) => stream,
-                Ok(Err(error)) => {
-                    debug!(%error, "downstream WebSocket upgrade failed");
-                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
-                        session_id: websocket_session_id,
-                        target: websocket_target.clone(),
-                        outcome: WebSocketSessionOutcome::Failed(format!(
-                            "downstream upgrade failed: {error}"
-                        )),
-                    });
-                    return;
+            let relay = async {
+                let (downstream, upstream) = tokio::join!(
+                    timeout(upgrade_timeout, downstream_upgrade),
+                    timeout(upgrade_timeout, upstream_upgrade),
+                );
+                let downstream = downstream
+                    .map_err(|_| "downstream upgrade timed out".to_owned())?
+                    .map_err(|error| format!("downstream upgrade failed: {error}"))?;
+                let upstream = upstream
+                    .map_err(|_| "upstream upgrade timed out".to_owned())?
+                    .map_err(|error| format!("upstream upgrade failed: {error}"))?;
+                if let Some(observer) = &stream_observer {
+                    observer
+                        .emit(ObserverEventKind::StreamState(StreamState::now(
+                            StreamProtocol::WebSocket,
+                            StreamStatus::Open,
+                            None,
+                        )))
+                        .await;
                 }
-                Err(_) => {
-                    debug!("downstream WebSocket upgrade timed out");
-                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
-                        session_id: websocket_session_id,
-                        target: websocket_target.clone(),
-                        outcome: WebSocketSessionOutcome::Failed(
-                            "downstream upgrade timed out".to_owned(),
-                        ),
-                    });
-                    return;
-                }
+                let result = if let Some(hooks) = websocket_chain {
+                    relay_inspected(
+                        TokioIo::new(downstream),
+                        TokioIo::new(upstream),
+                        negotiated,
+                        relay_limits,
+                        hooks,
+                        cancellation,
+                    )
+                    .await
+                } else {
+                    relay_transparent(
+                        TokioIo::new(downstream),
+                        TokioIo::new(upstream),
+                        relay_limits,
+                        cancellation,
+                    )
+                    .await
+                };
+                result.map_err(|error| error.to_string())
             };
-            let upstream = match upstream {
-                Ok(Ok(stream)) => stream,
-                Ok(Err(error)) => {
-                    debug!(%error, "upstream WebSocket upgrade failed");
-                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
-                        session_id: websocket_session_id,
-                        target: websocket_target.clone(),
-                        outcome: WebSocketSessionOutcome::Failed(format!(
-                            "upstream upgrade failed: {error}"
-                        )),
-                    });
-                    return;
-                }
-                Err(_) => {
-                    debug!("upstream WebSocket upgrade timed out");
-                    let _ = websocket_evidence.send(WebSocketSessionEvidence {
-                        session_id: websocket_session_id,
-                        target: websocket_target.clone(),
-                        outcome: WebSocketSessionOutcome::Failed(
-                            "upstream upgrade timed out".to_owned(),
-                        ),
-                    });
-                    return;
-                }
+            let (result, interrupted) = tokio::select! {
+                result = relay => (result, false),
+                () = shutdown.cancelled() => (Err("Application shutdown".to_owned()), true),
             };
-            let result = if let Some(hooks) = websocket_chain {
-                relay_inspected(
-                    TokioIo::new(downstream),
-                    TokioIo::new(upstream),
-                    negotiated,
-                    relay_limits,
-                    hooks,
-                    cancellation,
-                )
-                .await
-            } else {
-                relay_transparent(
-                    TokioIo::new(downstream),
-                    TokioIo::new(upstream),
-                    relay_limits,
-                    cancellation,
-                )
-                .await
-            };
+            if let Some(observer) = &stream_observer {
+                let status = if interrupted {
+                    StreamStatus::Interrupted
+                } else if result.is_ok() {
+                    StreamStatus::Closed
+                } else {
+                    StreamStatus::Failed
+                };
+                observer
+                    .emit(ObserverEventKind::StreamState(StreamState::now(
+                        StreamProtocol::WebSocket,
+                        status,
+                        result.as_ref().err().cloned(),
+                    )))
+                    .await;
+            }
             let outcome = match result {
-                Ok(report) => {
-                    debug!(
-                        messages = report.messages,
-                        control_frames = report.control_frames,
-                        "WebSocket relay completed"
-                    );
-                    WebSocketSessionOutcome::Completed(report)
-                }
-                Err(error) => {
-                    debug!(%error, "WebSocket relay ended");
-                    WebSocketSessionOutcome::Failed(error.to_string())
-                }
+                Ok(report) => WebSocketSessionOutcome::Completed(report),
+                Err(error) => WebSocketSessionOutcome::Failed(error),
             };
             let _ = websocket_evidence.send(WebSocketSessionEvidence {
                 session_id: websocket_session_id,
@@ -5789,7 +5779,9 @@ mod tests {
                 ObserverEventKind::ResponseHeadFinalized(_) => "response-head",
                 ObserverEventKind::BodyChunk(_) => "body",
                 ObserverEventKind::BodyTrailers(_) => "trailers",
-                ObserverEventKind::BodyCompleted { .. } => return Box::pin(async { Ok(()) }),
+                ObserverEventKind::BodyCompleted { .. } | ObserverEventKind::StreamState(_) => {
+                    return Box::pin(async { Ok(()) });
+                }
                 ObserverEventKind::HookEffect(_) => "hook-effect",
                 ObserverEventKind::Completed(_) => "completed",
                 ObserverEventKind::Failed(_) => "failed",

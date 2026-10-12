@@ -614,7 +614,8 @@ fn event_kind(kind: &ObserverEventKind) -> Option<EventKind> {
         ObserverEventKind::Failed(failure) => Some(EventKind::Failed {
             category: failure_kind_name(&failure.kind).to_owned(),
         }),
-        ObserverEventKind::Performance(_)
+        ObserverEventKind::StreamState(_)
+        | ObserverEventKind::Performance(_)
         | ObserverEventKind::HookInitializationSkipped(_)
         | ObserverEventKind::RequestHeadFinalized(_)
         | ObserverEventKind::BodyTrailers(_)

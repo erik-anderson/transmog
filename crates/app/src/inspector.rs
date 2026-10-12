@@ -617,11 +617,7 @@ pub(crate) fn detail_from_snapshot(
         route_selection,
         route_attempts,
         terminal,
-        terminal_state: match snapshot.terminal {
-            Some(SessionTerminal::Completed(_)) => "completed",
-            Some(SessionTerminal::Failed(_)) => "failed",
-            None => "active",
-        },
+        terminal_state: snapshot.state(),
         websocket: snapshot.websocket.as_ref().map(bounded_debug),
         sequence_loss: snapshot.sequence_loss,
     })

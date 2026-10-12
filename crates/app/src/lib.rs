@@ -923,17 +923,18 @@ impl Application {
                 host_restore_pending: pending,
             },
             ServiceStatus::Draining { local_addr } => {
-                let active = self.service.proxy_control().map_or(0, |control| {
-                    let activity = control.activity();
-                    activity.requests + activity.transports
-                });
+                let summary = self.service.proxy_control().map_or_else(
+                    || "Proxy routing off".to_owned(),
+                    |control| {
+                        let activity = control.activity();
+                        format!("Proxy routing off · {} requests · {} WebSockets open · {} other connections",
+                            activity.requests, activity.websockets, activity.transports.saturating_sub(activity.websockets))
+                    },
+                );
                 AppStatus {
                     lifecycle: AppLifecycle::Draining,
                     listener: Some(local_addr.to_string()),
-                    summary: format!(
-                        "Finishing {active} active request/connection{}",
-                        if active == 1 { "" } else { "s" }
-                    ),
+                    summary,
                     host_restore_pending: pending,
                 }
             }

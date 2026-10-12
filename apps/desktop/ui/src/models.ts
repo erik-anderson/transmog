@@ -38,7 +38,7 @@ export interface SessionSummary {
   traceId?: string | null;
   requestBytes: number;
   responseBytes: number;
-  terminal: 'active' | 'completed' | 'failed';
+  terminal: 'active' | 'completed' | 'failed' | 'interrupted' | 'open-at-capture' | 'incomplete';
   loss: boolean;
   capturing: boolean;
   autoResponse: AutoResponseMatch | null;

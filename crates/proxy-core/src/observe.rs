@@ -201,6 +201,8 @@ pub struct ObservedRouteAttempt {
 /// Immutable observer lifecycle payload.
 #[derive(Clone, Debug)]
 pub enum ObserverEventKind {
+    /// Application stream lifecycle, which can continue after HTTP completion.
+    StreamState(crate::stream::StreamState),
     /// Bounded measured timing, protocol and transport evidence.
     Performance(crate::performance::PerformanceEvidence),
     /// An exchange and its isolated extension store were created.
@@ -740,7 +742,7 @@ impl ExchangeObserver {
     /// Cancelling a capacity wait does not publish the event or advance sequence.
     pub async fn emit(&self, kind: ObserverEventKind) -> ObserverDeliveryReport {
         let mut state = self.state.lock().await;
-        if state.terminal {
+        if state.terminal && !matches!(kind, ObserverEventKind::StreamState(_)) {
             return ObserverDeliveryReport::default();
         }
         self.emit_locked(&mut state, kind).await

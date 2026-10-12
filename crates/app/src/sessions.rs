@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use transmog_core::ClientIdentity;
 use transmog_session::{
     ApplicationSessionService, CatalogCursor, CatalogQuery, CatalogSubscription, SessionFilter,
-    SessionSnapshot, SessionTerminal, SubscriptionEvent,
+    SessionSnapshot, SubscriptionEvent,
 };
 
 use crate::workspace::TrafficColumn;
@@ -516,11 +516,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
                     }
                 },
             );
-    let terminal = match snapshot.terminal {
-        Some(SessionTerminal::Completed(_)) => "completed",
-        Some(SessionTerminal::Failed(_)) => "failed",
-        None => "active",
-    };
+    let terminal = snapshot.state();
     SessionSummary {
         top_level_navigation,
         fetch_destination,

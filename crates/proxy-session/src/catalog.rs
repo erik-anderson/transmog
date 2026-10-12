@@ -137,6 +137,8 @@ pub struct SessionSnapshot {
     pub terminal_at: Option<SystemTime>,
     /// Terminal relay evidence when the exchange upgraded to WebSocket.
     pub websocket: Option<WebSocketSessionEvidence>,
+    /// Latest application stream state, independent of HTTP completion.
+    pub stream: Option<transmog_core::stream::StreamState>,
 }
 
 /// Monotonic catalog loss and pressure counters.
@@ -279,9 +281,46 @@ struct MutableSession {
     terminal: Option<SessionTerminal>,
     terminal_at: Option<SystemTime>,
     websocket: Option<WebSocketSessionEvidence>,
+    stream: Option<transmog_core::stream::StreamState>,
+}
+
+impl SessionSnapshot {
+    /// Effective category used consistently by traffic queries and inspectors.
+    pub fn state(&self) -> &'static str {
+        if let Some(stream) = &self.stream {
+            if stream.status.is_active() {
+                return if self.imported {
+                    "open-at-capture"
+                } else {
+                    "active"
+                };
+            }
+            return match stream.status {
+                transmog_core::stream::StreamStatus::Failed => "failed",
+                transmog_core::stream::StreamStatus::Interrupted => "interrupted",
+                _ => "completed",
+            };
+        }
+        match self.terminal {
+            Some(SessionTerminal::Completed(_)) => "completed",
+            Some(SessionTerminal::Failed(_)) => "failed",
+            None => {
+                if self.imported {
+                    "incomplete"
+                } else {
+                    "active"
+                }
+            }
+        }
+    }
 }
 
 impl MutableSession {
+    fn is_active(&self) -> bool {
+        self.stream
+            .as_ref()
+            .map_or(self.terminal.is_none(), |stream| stream.status.is_active())
+    }
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             performance: self.performance.clone(),
@@ -310,6 +349,7 @@ impl MutableSession {
             terminal: self.terminal.clone(),
             terminal_at: self.terminal_at,
             websocket: self.websocket.clone(),
+            stream: self.stream.clone(),
         }
     }
 }
@@ -418,6 +458,7 @@ impl SessionCatalog {
                     terminal: None,
                     terminal_at: None,
                     websocket: None,
+                    stream: None,
                 },
             );
         }
@@ -435,7 +476,7 @@ impl SessionCatalog {
             state.counters.stale_events = state.counters.stale_events.saturating_add(1);
             return CatalogApply::Stale;
         }
-        if terminal {
+        if terminal && !matches!(event.kind, ObserverEventKind::StreamState(_)) {
             state.counters.post_terminal_events =
                 state.counters.post_terminal_events.saturating_add(1);
             return CatalogApply::PostTerminal;
@@ -460,7 +501,7 @@ impl SessionCatalog {
         let delta = CatalogDelta {
             exchange_id,
             sequence: session.last_sequence,
-            terminal: session.terminal.is_some(),
+            terminal: !session.is_active(),
         };
         state.counters.detail_records_dropped = state
             .counters
@@ -566,6 +607,7 @@ impl SessionCatalog {
                     terminal: snapshot.terminal,
                     terminal_at: snapshot.terminal_at,
                     websocket: snapshot.websocket,
+                    stream: snapshot.stream,
                 },
             );
         }
@@ -821,7 +863,7 @@ impl SessionCatalog {
         let delta = CatalogDelta {
             exchange_id,
             sequence: session.last_sequence,
-            terminal: session.terminal.is_some(),
+            terminal: !session.is_active(),
         };
         drop(state);
         let _ = self.inner.deltas.send(delta);
@@ -920,7 +962,7 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
             .by_id
             .get(exchange_id)
             .filter(|session| !session.imported)
-            .and_then(|session| session.terminal.as_ref())
+            .filter(|session| !session.is_active())
             .map(|_| (*admission, *exchange_id))
     });
     let Some((admission, exchange_id)) = candidate else {
@@ -941,6 +983,7 @@ fn apply_kind(
     detail_dropped: &mut u64,
 ) {
     match kind {
+        ObserverEventKind::StreamState(stream) => session.stream = Some(stream),
         ObserverEventKind::Performance(evidence) => session.performance.merge(&evidence),
         ObserverEventKind::ExchangeStarted { .. } | ObserverEventKind::BodyCompleted { .. } => {}
         ObserverEventKind::HookInitializationSkipped(diagnostic) => push_bounded(
@@ -1083,7 +1126,7 @@ fn apply_trailers(session: &mut MutableSession, trailers: ObservedBodyTrailers) 
 fn matches_filter(session: &MutableSession, filter: &SessionFilter) -> bool {
     if filter
         .terminal
-        .is_some_and(|terminal| terminal != session.terminal.is_some())
+        .is_some_and(|terminal| terminal == session.is_active())
     {
         return false;
     }
@@ -1391,6 +1434,52 @@ mod tests {
                 .project_retained(|session| session.exchange_id)
                 .len(),
             3
+        );
+    }
+
+    #[test]
+    fn websocket_remains_active_after_handshake_until_relay_closes() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let catalog = SessionCatalog::new(limits(1));
+        start(&catalog, 1, "socket.test");
+        let state = |status| {
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                status,
+                None,
+            ))
+        };
+        catalog.apply(event(1, 2, state(StreamStatus::Connecting)));
+        catalog.apply(event(
+            1,
+            3,
+            ObserverEventKind::Completed(CompletedExchange {
+                metadata: metadata(1, "socket.test"),
+                request_head: head("GET"),
+                response_head: ResponseHead {
+                    status: 101,
+                    headers: HeaderBlock::default(),
+                    source_version: HttpLegVersion::Http1,
+                },
+            }),
+        ));
+        assert_eq!(
+            catalog.apply(event(1, 4, state(StreamStatus::Open))),
+            CatalogApply::Applied
+        );
+        assert_eq!(catalog.get(ExchangeId(1)).unwrap().state(), "active");
+        start(&catalog, 2, "other.test");
+        assert!(
+            catalog.get(ExchangeId(1)).is_some(),
+            "open socket was evicted as completed HTTP"
+        );
+        assert_eq!(
+            catalog.apply(event(1, 5, state(StreamStatus::Closed))),
+            CatalogApply::Applied
+        );
+        assert!(
+            catalog.get(ExchangeId(1)).is_none(),
+            "closed socket should now be evictable"
         );
     }
 

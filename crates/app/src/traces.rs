@@ -2060,6 +2060,7 @@ fn empty_snapshot(
         terminal: Some(terminal),
         terminal_at: ended,
         websocket: None,
+        stream: None,
     }
 }
 fn import_failure(metadata: Arc<ExchangeMetadata>) -> SessionTerminal {

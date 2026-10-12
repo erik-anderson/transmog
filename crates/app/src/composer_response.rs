@@ -158,6 +158,7 @@ impl ComposerResponse {
             })),
             terminal_at: Some(SystemTime::now()),
             websocket: None,
+            stream: None,
         };
         let retained = Arc::new(Self {
             snapshot,

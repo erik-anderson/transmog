@@ -29,8 +29,8 @@ pub struct RelayLimits {
     pub outbound_frame_payload_bytes: usize,
     /// Size of each transport read buffer.
     pub read_buffer_bytes: usize,
-    /// Maximum period without bytes in either inspected direction.
-    pub idle_timeout: Duration,
+    /// Optional maximum period without bytes in a direction; disabled by default.
+    pub idle_timeout: Option<Duration>,
     /// Maximum duration of one backpressured write.
     pub write_timeout: Duration,
     /// Time allowed for the peer's close response after one side closes.
@@ -43,7 +43,7 @@ impl Default for RelayLimits {
             frames: FrameLimits::default(),
             outbound_frame_payload_bytes: 64 * 1024,
             read_buffer_bytes: 16 * 1024,
-            idle_timeout: Duration::from_secs(120),
+            idle_timeout: None,
             write_timeout: Duration::from_secs(30),
             close_handshake_timeout: Duration::from_secs(5),
         }
@@ -59,7 +59,7 @@ impl RelayLimits {
     pub fn validate(self) -> Result<Self, RelayError> {
         if self.outbound_frame_payload_bytes == 0
             || self.read_buffer_bytes == 0
-            || self.idle_timeout.is_zero()
+            || self.idle_timeout.is_some_and(|duration| duration.is_zero())
             || self.write_timeout.is_zero()
             || self.close_handshake_timeout.is_zero()
         {
@@ -165,6 +165,20 @@ where
     })
 }
 
+async fn read_with_idle<Reader: AsyncRead + Unpin>(
+    reader: &mut Reader,
+    buffer: &mut [u8],
+    idle: Option<Duration>,
+) -> Result<usize, RelayError> {
+    match idle {
+        Some(duration) => timeout(duration, reader.read(buffer))
+            .await
+            .map_err(|_| RelayError::IdleTimeout)?
+            .map_err(Into::into),
+        None => reader.read(buffer).await.map_err(Into::into),
+    }
+}
+
 async fn copy_transparent_direction<Reader, Writer>(
     mut reader: Reader,
     mut writer: Writer,
@@ -180,9 +194,7 @@ where
     loop {
         let read = tokio::select! {
             () = cancellation.cancelled() => return Err(RelayError::Cancelled),
-            result = timeout(limits.idle_timeout, reader.read(&mut buffer)) => {
-                result.map_err(|_| RelayError::IdleTimeout)??
-            }
+            result = read_with_idle(&mut reader, &mut buffer, limits.idle_timeout) => result?,
         };
         if read == 0 {
             writer.shutdown().await?;
@@ -322,9 +334,7 @@ where
     loop {
         let read = tokio::select! {
             () = cancellation.cancelled() => return Err(RelayError::Cancelled),
-            result = timeout(limits.idle_timeout, reader.read(&mut buffer)) => {
-                result.map_err(|_| RelayError::IdleTimeout)??
-            }
+            result = read_with_idle(&mut reader, &mut buffer, limits.idle_timeout) => result?,
         };
         if read == 0 {
             writer.shutdown().await?;
@@ -520,7 +530,7 @@ mod tests {
             proxy_downstream,
             proxy_upstream,
             RelayLimits {
-                idle_timeout: Duration::from_secs(1),
+                idle_timeout: Some(Duration::from_secs(1)),
                 ..RelayLimits::default()
             },
             cancellation,

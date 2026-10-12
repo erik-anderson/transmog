@@ -21,6 +21,7 @@ mod policy;
 mod protocol;
 pub mod route;
 mod session;
+pub mod stream;
 mod task;
 mod tls_evidence;
 mod translation;

@@ -250,6 +250,10 @@ this state so turning it back on resumes the same run without disrupting work.
 Once active work finishes and the run commits to shutdown, **Start proxy** must
 expedite idle-connection cleanup and start a new run without waiting for peer
 acknowledgements.
+Open WebSockets and SSE responses remain active even between messages. Keep their
+HTTP result separate from stream lifetime, and include them in Active filters.
+Stop proxy preserves established streams; app exit interrupts them with bounded
+cleanup. Report open streams separately from ordinary requests and setup work.
 Reject stale shutdown and status results after a new state transition.
 
 Honor explicit manual client routing: when system proxy configuration is disabled,

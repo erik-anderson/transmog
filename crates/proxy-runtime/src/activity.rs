@@ -11,6 +11,8 @@ pub struct ProxyActivity {
     pub requests: usize,
     /// Active TLS negotiations and upgraded relays.
     pub transports: usize,
+    /// Open WebSockets included in transports.
+    pub websockets: usize,
     /// Connected clients, including idle keep-alive clients.
     pub clients: usize,
 }
@@ -20,6 +22,7 @@ struct State {
     finalizing: bool,
     requests: usize,
     transports: usize,
+    websockets: usize,
     clients: usize,
 }
 pub(crate) struct ActivityTracker {
@@ -35,6 +38,7 @@ impl Default for ActivityTracker {
                 finalizing: false,
                 requests: 0,
                 transports: 0,
+                websockets: 0,
                 clients: 0,
             }),
             changed: Notify::new(),
@@ -45,6 +49,7 @@ impl Default for ActivityTracker {
 pub(crate) enum ActivityKind {
     Request,
     Transport,
+    WebSocket,
     Client,
 }
 pub(crate) struct ActivityLease {
@@ -63,6 +68,7 @@ impl ActivityTracker {
             accepting: state.accepting,
             requests: state.requests,
             transports: state.transports,
+            websockets: state.websockets,
             clients: state.clients,
         }
     }
@@ -77,6 +83,10 @@ impl ActivityTracker {
         match kind {
             ActivityKind::Request => state.requests += 1,
             ActivityKind::Transport => state.transports += 1,
+            ActivityKind::WebSocket => {
+                state.transports += 1;
+                state.websockets += 1;
+            }
             ActivityKind::Client => state.clients += 1,
         }
         Some(ActivityLease {
@@ -86,11 +96,13 @@ impl ActivityTracker {
     }
     /// Extends an admitted exchange into an upgraded relay even if Off arrived
     /// between its admission and its successful upgrade.
-    pub(crate) fn continue_transport(self: &Arc<Self>) -> ActivityLease {
-        self.lock().transports += 1;
+    pub(crate) fn continue_websocket(self: &Arc<Self>) -> ActivityLease {
+        let mut state = self.lock();
+        state.transports += 1;
+        state.websockets += 1;
         ActivityLease {
             owner: self.clone(),
-            kind: ActivityKind::Transport,
+            kind: ActivityKind::WebSocket,
         }
     }
     pub(crate) fn drain(&self) -> u64 {
@@ -149,6 +161,10 @@ impl Drop for ActivityLease {
         match self.kind {
             ActivityKind::Request => state.requests = state.requests.saturating_sub(1),
             ActivityKind::Transport => state.transports = state.transports.saturating_sub(1),
+            ActivityKind::WebSocket => {
+                state.transports = state.transports.saturating_sub(1);
+                state.websockets = state.websockets.saturating_sub(1);
+            }
             ActivityKind::Client => state.clients = state.clients.saturating_sub(1),
         }
         drop(state);
