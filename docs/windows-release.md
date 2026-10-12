@@ -18,6 +18,11 @@ only when none exists. Windows' existing default remains authoritative; users
 can select Transmog through Open with or default-app settings. Silent installs
 preserve saved choices; `/TMCAP=1`, `/SAZ=1`, or `/HAR=1` enables each handler,
 and the corresponding `=0` disables it.
+The **Update checks** page defaults automatic checks to enabled on a fresh
+install and reflects the saved About preference on upgrades. Silent and passive
+updates preserve the latest preference unless `/AUTOUPDATECHECKS=0` or `=1`
+explicitly changes it. Preference queries use the new bundled executable's
+maintenance mode, so older installed versions never receive unfamiliar switches.
 Updates preserve registration, and uninstall removes only registrations owned by
 that installation's exact command path. Interactive and silent upgrades install
 in place, running the old executable's update cleanup before replacing files.
@@ -477,6 +482,12 @@ Use a disposable, fully updated Windows 11 VM with no Transmog state:
 8. Uninstall and approve exact certificate removal. Confirm the system proxy is
    not enabled, the ownership record and declared app data are gone, unrelated
    current-user roots remain, and user-created captures/exports remain.
+9. In a disposable VM, open Settings → Connection → Manage loopback exemptions.
+   Verify installed metadata, users and enabled state, filter and select several
+   owned test AppContainers, approve enabling and removing the selection, and
+   confirm unrelated exemptions remain. Cancel Windows approval and verify no
+   change. Close the modal during a pending operation and verify completion does
+   not reopen it. Automated checks use fixture writes and read-only enumeration.
 
 Record OS build, WebView2 version, installer SHA-256, signer, test command
 outputs, and the pre/post proxy and certificate inventories in the release

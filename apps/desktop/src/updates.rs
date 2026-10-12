@@ -87,6 +87,22 @@ impl UpdateCoordinator {
         inner.reminder.set_automatic_checks(enabled)?;
         inner.status.automatic_checks_enabled = enabled;
         inner.status.remind_after_unix_ms = inner.reminder.reminder.remind_after_unix_ms;
+        if enabled && inner.status.message == "Automatic update checking is off." {
+            inner.status.suppressed = inner.status.remind_after_unix_ms > now_ms();
+            inner.status.phase = if inner.candidate.is_some() {
+                "available"
+            } else {
+                "idle"
+            };
+            let message = if inner.candidate.is_some() {
+                "A new stable release is available."
+            } else if inner.status.last_checked_unix_ms > 0 {
+                "You’re up to date with the stable release."
+            } else {
+                "Updates have not been checked yet."
+            };
+            message.clone_into(&mut inner.status.message);
+        }
         Ok(inner.status.clone())
     }
     pub(crate) fn watch_close(&self, channel: Channel<()>) {
@@ -414,6 +430,32 @@ pub(crate) fn artifact_verification_exit_code() -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reenabling_after_a_suppressed_check_restores_accurate_status() {
+        let root = tempfile::tempdir().unwrap();
+        let coordinator = UpdateCoordinator::new(root.path().to_owned());
+        coordinator.set_automatic_checks(false).unwrap();
+        {
+            let mut inner = coordinator.inner.lock().unwrap();
+            inner.status.message = "Automatic update checking is off.".into();
+            inner.status.suppressed = true;
+        }
+        let status = coordinator.set_automatic_checks(true).unwrap();
+        assert!(status.automatic_checks_enabled);
+        assert!(!status.suppressed);
+        assert_eq!(status.message, "Updates have not been checked yet.");
+        assert_eq!(status.last_checked_unix_ms, 0);
+        {
+            let mut inner = coordinator.inner.lock().unwrap();
+            inner.status.message = "Automatic update checking is off.".into();
+            inner.status.last_checked_unix_ms = 1;
+        }
+        assert_eq!(
+            coordinator.set_automatic_checks(true).unwrap().message,
+            "You’re up to date with the stable release."
+        );
+    }
 
     #[test]
     fn installers_are_bound_to_the_repository_tag_version_and_architecture() {

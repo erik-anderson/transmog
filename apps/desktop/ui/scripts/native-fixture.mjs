@@ -1,13 +1,21 @@
 import {zstdCompressSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 
-// Deterministic encoder for the plain indexed TMCap envelope used by native
+// Deterministic encoder for the plain packed-object TMCap envelope used by native
 // probes. IDs and offsets in these fixtures stay within exact JS integers.
 export function nativeFixture(records, exchangeId) {
   const sort=value=>Array.isArray(value)?value.map(sort):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,sort(value[key])])):value;
   const expanded=[];
   const known=new Set();
   for(const original of structuredClone(records)) {
+    if(original.kind==='body-segment'&&Array.isArray(original.payload.bytes)&&original.payload.bytes.length>128*1024) {
+      const bytes=original.payload.bytes;
+      for(let offset=0;offset<bytes.length;offset+=128*1024) {
+        const part=bytes.slice(offset,offset+128*1024),last=offset+part.length===bytes.length;
+        expanded.push({...original,payload:{...original.payload,bytes:part,byte_count:part.length+(last?Math.max(0,original.payload.byte_count-bytes.length):0)}});
+      }
+      continue;
+    }
     if(original.kind==='performance') {
       original.payload.work??=[];
       original.payload.transports=original.payload.transports.map(transport=>{
@@ -25,26 +33,26 @@ export function nativeFixture(records, exchangeId) {
   const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
   const geometry=Buffer.alloc(4);geometry.writeUInt32LE(blockSize);
   const envelope=Buffer.concat([Buffer.from('TMCAP001\0'),size,header,geometry,Buffer.alloc(512)]);
-  const crc=bytes=>{let value=0xffffffff;for(const byte of bytes){value^=byte;for(let bit=0;bit<8;bit++)value=(value>>>1)^((value&1)?0xedb88320:0);}return (value^0xffffffff)>>>0;};
-  const encode=(bytes,counter)=>{
+  const pack=(kind,bytes)=>{
     const compressed=zstdCompressSync(bytes),useCompressed=compressed.length<bytes.length;
-    const prefix=Buffer.alloc(13);prefix.writeBigUInt64LE(BigInt(counter));prefix.writeUInt32LE(bytes.length,8);prefix[12]=Number(useCompressed);
-    const payload=Buffer.concat([prefix,useCompressed?compressed:bytes]);
-    const frame=Buffer.alloc(8);frame.writeUInt32LE(payload.length);frame.writeUInt32LE(crc(payload),4);
-    return Buffer.concat([frame,payload]);
+    const encoded=useCompressed?compressed:bytes;
+    const prefix=Buffer.alloc(10);prefix[0]=kind;prefix[1]=Number(useCompressed);prefix.writeUInt32LE(bytes.length,2);prefix.writeUInt32LE(encoded.length,6);
+    return Buffer.concat([prefix,encoded]);
   };
   const chunks=[],entries=[];let logicalBytes=0;
-  for(const [index,original] of [...expanded,{kind:'seal',payload:{record_count:expanded.length}}].entries()) {
-    const record={revision:1,sequence:index+1,exchange_id:original.kind==='seal'?0:exchangeId,...structuredClone(original)};
+  const append=bytes=>{
+    const offset=envelope.length+Math.floor(logicalBytes/payloadSize)*blockBytes+5+logicalBytes%payloadSize;
+    chunks.push(bytes);logicalBytes+=bytes.length;return offset;
+  };
+  for(const [index,original] of [...expanded,{kind:'seal',sequence:0,exchange_id:0,payload:{record_count:expanded.length}}].entries()) {
+    const record={revision:1,sequence:index+1,exchange_id:exchangeId,...structuredClone(original)};
     let body;
     if(record.kind==='body-segment'&&Array.isArray(record.payload.bytes)) {
-      const bytes=Buffer.from(record.payload.bytes);body=encode(bytes,index*2+2);
-      record.body_index={frame_bytes:body.length,bytes:bytes.length,digest:Array.from(createHash('sha256').update(bytes).digest())};record.payload.bytes=null;
+      const bytes=Buffer.from(record.payload.bytes),object=pack(0,bytes);
+      body={offset:append(object)};
+      record.body_index={frame_bytes:object.length,bytes:bytes.length,digest:Array.from(createHash('sha256').update(bytes).digest())};record.payload.bytes=null;
     }
-    const frame=encode(Buffer.from(JSON.stringify(record)),index*2+1),frameBytes=frame.length+(body?.length??0);
-    const offset=envelope.length+Math.floor(logicalBytes/payloadSize)*blockBytes+5+logicalBytes%payloadSize;
-    entries.push({offset,frame_bytes:frameBytes,index,stored:record});
-    chunks.push(frame);if(body)chunks.push(body);logicalBytes+=frameBytes;
+    entries.push({index,stored:record,...(body?{body}:{})});
   }
   const blocks=[];
   const put=(kind,payload)=>{
@@ -55,9 +63,9 @@ export function nativeFixture(records, exchangeId) {
   };
   const putObject=(kind,bytes)=>{for(let offset=0;offset<bytes.length;offset+=payloadSize)put(kind,bytes.subarray(offset,offset+payloadSize));};
   const packed=value=>{const bytes=Buffer.from(JSON.stringify(value)),prefix=Buffer.alloc(5);prefix.writeUInt32LE(bytes.length,1);return Buffer.concat([prefix,bytes]);};
+  const index=pack(1,Buffer.from(JSON.stringify(entries))),offset=append(index);
   putObject(0,Buffer.concat(chunks));
-  const firstIndex=blocks.length,index=packed(entries);putObject(1,index);
-  const root={block:firstIndex,blocks:blocks.length-firstIndex,bytes:index.length,first:0,count:entries.length,level:0};
+  const root={offset,bytes:index.length,first:0,count:entries.length,level:0};
   const footer=packed({roots:[root],count:entries.length,sealed:true,block:blocks.length});
   if(footer.length>payloadSize)throw new Error('Fixture footer exceeds one block');
   put(3,footer);

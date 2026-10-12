@@ -14,6 +14,7 @@ loopback-exemptions {display:contents;}
 .loopback-table-scroll {min-height:4rem;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);padding:.25rem;}
 .loopback-table {border-collapse:separate;border-spacing:0;table-layout:fixed;width:115rem;min-width:100%;font-size:.75rem;}
 .loopback-table th,.loopback-table td {box-sizing:border-box;padding:.4rem .5rem;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;overflow-wrap:anywhere;}
+.loopback-table td {white-space:normal;text-overflow:clip;overflow:visible;height:auto;}
 .loopback-table th {position:sticky;top:-.25rem;z-index:1;background:var(--panel-subtle);font-weight:600;}
 .loopback-table th:first-child {width:4rem;}
 .loopback-table th:nth-child(2) {width:8rem;}
@@ -27,7 +28,7 @@ loopback-exemptions {display:contents;}
 .loopback-table th[aria-sort="descending"] button::after {content:' ↓';}
 .loopback-table tr[data-selected] td {background:var(--accent-soft);}
 .loopback-table tr:focus-visible {outline:2px solid var(--focus);outline-offset:-2px;}
-.loopback-users {white-space:pre-wrap;}
+.loopback-table .loopback-users {white-space:pre-wrap;}
 .loopback-sid {font-family:var(--font-mono,monospace);font-size:.6875rem;}
 .loopback-dialog footer {padding-top:.25rem;}
 @media (forced-colors:active) {.loopback-table tr[data-selected] td {color:HighlightText;background:Highlight;}.loopback-table tr:focus-visible {outline-color:Highlight;}.loopback-dialog {border-color:CanvasText;}}

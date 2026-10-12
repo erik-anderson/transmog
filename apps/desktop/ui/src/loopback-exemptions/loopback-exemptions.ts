@@ -23,6 +23,7 @@ export class LoopbackExemptions extends WebUIElement {
   @observable loopbackDirection=initialState.loopbackDirection;
   @observable loopbackSortStates:Record<SortKey,string>=initialState.loopbackSortStates;
   exemptionDialog!:HTMLDialogElement;
+  containerTable!:HTMLTableElement;
   private containers:AppContainer[]=[];
   private selected=new Set<string>();
   private anchor='';
@@ -143,7 +144,7 @@ export class LoopbackExemptions extends WebUIElement {
     if(!target)return;
     if(!control||event.shiftKey)this.select(target,event.shiftKey,control);else {this.focused=target;this.render();}
     this.$flushUpdates();
-    const row=this.querySelector<HTMLElement>('tr[data-appcontainer-sid="'+CSS.escape(target)+'"]');
+    const row=this.containerTable.querySelector<HTMLElement>('tr[data-appcontainer-sid="'+CSS.escape(target)+'"]');
     row?.focus({preventScroll:true});row?.scrollIntoView({block:'nearest',inline:'nearest'});
   }
   disconnectedCallback():void {this.generation++;super.disconnectedCallback();}

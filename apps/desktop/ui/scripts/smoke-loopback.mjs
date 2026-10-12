@@ -11,6 +11,7 @@ export async function smokeLoopback(call,evaluate,screenshotPath) {
       if(manager.loopbackBusy||manager.loopbackError||!manager.loopbackCurrent)throw new Error('Native AppContainer enumeration failed: '+manager.loopbackError);
       if(!manager.exemptionDialog.matches(':modal'))throw new Error('Loopback manager did not open as a modal');
       const count=manager.loopbackRows.length;
+      if(count){const cells=manager.containerTable.querySelector('tbody tr').children;if(getComputedStyle(cells[3]).whiteSpace!=='normal'||getComputedStyle(cells[7]).whiteSpace!=='pre-wrap')throw new Error('Native AppContainer metadata is truncated instead of wrapped');}
       if(new Set(manager.loopbackRows.map(row=>row.sid)).size!==count)throw new Error('AppContainers were not grouped by SID');
       if(count){manager.selectVisible();manager.$flushUpdates();if(manager.loopbackSelected!==count)throw new Error('Native inventory multiselection failed');}
       for(const heading of ['Display Name','Description','Package','AppContainer name','AppContainer SID','AppContainer user(s)'])if(!manager.exemptionDialog.textContent.includes(heading))throw new Error('Missing column '+heading);

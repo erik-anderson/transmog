@@ -932,7 +932,12 @@ fn write_http_session<W: Write + Seek>(
     let response = opaque_response.as_ref().unwrap_or(response);
     let websocket_response = websocket::response(session, response);
     let response = websocket_response.as_ref().unwrap_or(response);
-    let reason = response_reason(session, response, websocket_response.is_some(), diagnostic.1);
+    let reason = response_reason(
+        session,
+        response,
+        websocket_response.is_some(),
+        diagnostic.1,
+    );
     let response_wire = render_response(
         response,
         response_body,

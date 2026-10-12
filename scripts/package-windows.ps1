@@ -149,6 +149,7 @@ try {
         & (Join-Path $PSScriptRoot 'test-capture-associations.ps1')
         & (Join-Path $PSScriptRoot 'test-capture-upgrade.ps1')
         & (Join-Path $PSScriptRoot 'test-update-check-preferences.ps1') -ExecutablePath (Join-Path $repositoryRoot 'target\release\transmog.exe')
+        & (Join-Path $PSScriptRoot 'test-loopback.ps1')
     }
 } finally {
     $env:CARGO_NET_OFFLINE = $priorCargoOffline

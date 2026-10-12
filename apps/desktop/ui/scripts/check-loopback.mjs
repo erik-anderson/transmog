@@ -16,6 +16,8 @@ export async function checkLoopback(page,root) {
   assert.equal(await grid.locator('tbody tr[data-appcontainer-sid]').count(),84);
   for(const heading of ['Display Name','Description','Package','AppContainer name','AppContainer SID','AppContainer user(s)'])assert.equal(await grid.getByRole('columnheader',{name:heading,exact:true}).count(),1);
   assert.match(await grid.locator('tbody tr').first().textContent(),/<script>inert text<\/script>/);
+  assert.equal(await grid.locator('tbody tr').first().locator('td').nth(3).evaluate(element=>getComputedStyle(element).whiteSpace),'normal','AppContainer descriptions inherit single-line truncation');
+  assert.equal(await grid.locator('tbody tr').first().locator('td').last().evaluate(element=>getComputedStyle(element).whiteSpace),'pre-wrap','AppContainer users are flattened into a truncated line');
   assert.equal(await grid.locator('tbody tr').first().locator('td').nth(1).textContent(),'Enabled');
   const row=index=>grid.locator('tbody tr[data-appcontainer-sid]').nth(index);
   await row(1).locator('td').nth(2).click();
