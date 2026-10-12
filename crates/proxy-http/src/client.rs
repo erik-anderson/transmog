@@ -25,6 +25,17 @@ use transmog_core::{
 use transmog_network::HappyEyeballsConfig;
 use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
+#[path = "websocket_h2.rs"]
+mod websocket_h2;
+
+/// Transport exposed by a successful WebSocket handshake on either HTTP version.
+pub trait WebSocketIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> WebSocketIo for T {}
+/// Deferred acquisition of a WebSocket byte stream.
+pub type WebSocketUpgrade = Pin<
+    Box<dyn std::future::Future<Output = Result<Box<dyn WebSocketIo>, HyperOriginError>> + Send>,
+>;
+
 use crate::{
     HyperEgressMode,
     metrics::{ConnectionObservation, MeasuredHttpsConnector},
@@ -56,6 +67,7 @@ pub struct HyperOriginClient {
     factory: UpstreamTlsContextFactory,
     happy_eyeballs: HappyEyeballsConfig,
     performance: Option<PerformanceRecorder>,
+    websockets: websocket_h2::Pool,
 }
 #[derive(Clone)]
 struct GenerationPools {
@@ -74,17 +86,19 @@ impl GenerationPools {
     }
 }
 
-/// Result of an HTTP/1.1 upgrade attempt.
+/// Result of an HTTP/1.1 Upgrade or HTTP/2 extended CONNECT attempt.
 pub enum HyperUpgradeResponse {
     /// Origin accepted the protocol switch and exposed the upgraded stream.
     Switched {
-        /// Canonical 101 response head.
+        /// Canonical successful response head (101 for H1, 2xx for H2).
         head: ResponseHead,
         /// Future resolving to the origin byte stream.
-        upgraded: hyper::upgrade::OnUpgrade,
+        upgraded: WebSocketUpgrade,
+        /// Exact canonical request sent on the selected HTTP leg.
+        request: RequestHead,
     },
     /// Origin declined the switch with an ordinary streaming response.
-    Rejected(StreamingResponse),
+    Rejected(StreamingResponse, RequestHead),
 }
 
 impl std::fmt::Debug for HyperUpgradeResponse {
@@ -94,7 +108,9 @@ impl std::fmt::Debug for HyperUpgradeResponse {
                 .debug_struct("Switched")
                 .field("head", head)
                 .finish_non_exhaustive(),
-            Self::Rejected(response) => formatter.debug_tuple("Rejected").field(response).finish(),
+            Self::Rejected(response, _) => {
+                formatter.debug_tuple("Rejected").field(response).finish()
+            }
         }
     }
 }
@@ -369,6 +385,7 @@ impl HyperOriginClient {
             factory: factory.clone(),
             happy_eyeballs,
             performance: None,
+            websockets: websocket_h2::Pool::default(),
         })
     }
 
@@ -548,13 +565,38 @@ impl HyperOriginClient {
     ///
     /// Returns [`HyperOriginError`] for invalid canonical data or a transport
     /// failure before the response head is available.
+    #[allow(clippy::too_many_lines)]
     pub async fn execute_upgrade(
         &self,
         request: RequestHead,
         max_response_bytes: usize,
         body_channel_capacity: NonZeroUsize,
         body_idle_timeout: Duration,
+        mode: HyperEgressMode,
+        header_timeout: Duration,
     ) -> Result<HyperUpgradeResponse, HyperOriginError> {
+        if mode == HyperEgressMode::Http2Only
+            || (mode == HyperEgressMode::Auto && request.target.scheme == "https")
+        {
+            let result = timeout(
+                header_timeout,
+                self.websockets.execute(
+                    self,
+                    &request,
+                    mode,
+                    max_response_bytes,
+                    body_channel_capacity,
+                    body_idle_timeout,
+                ),
+            )
+            .await
+            .map_err(|_| HyperOriginError::UpgradeTimeout)?;
+            match result {
+                Err(HyperOriginError::ExtendedConnectUnsupported)
+                    if mode == HyperEgressMode::Auto => {}
+                result => return result,
+            }
+        }
         let mut headers = prepare_headers(
             &request.headers,
             TranslationOptions {
@@ -590,7 +632,17 @@ impl HyperOriginClient {
             .body(CanonicalHttpBody::new(Vec::new())?.observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
 
-        let mut response = self.request(outgoing, HyperEgressMode::Http1Only).await?;
+        let sent_request = RequestHead {
+            headers,
+            source_version: HttpLegVersion::Http1,
+            ..request
+        };
+        let mut response = timeout(
+            header_timeout,
+            self.request(outgoing, HyperEgressMode::Http1Only),
+        )
+        .await
+        .map_err(|_| HyperOriginError::UpgradeTimeout)??;
         let source_version = protocol_version(response.version())?;
         let head = ResponseHead {
             status: response.status().as_u16(),
@@ -600,7 +652,14 @@ impl HyperOriginClient {
         if response.status() == http::StatusCode::SWITCHING_PROTOCOLS {
             return Ok(HyperUpgradeResponse::Switched {
                 head,
-                upgraded: hyper::upgrade::on(&mut response),
+                request: sent_request,
+                upgraded: {
+                    let upgrade = hyper::upgrade::on(&mut response);
+                    Box::pin(async move {
+                        Ok(Box::new(hyper_util::rt::TokioIo::new(upgrade.await?))
+                            as Box<dyn WebSocketIo>)
+                    })
+                },
             });
         }
         let (sender, body) = BodyStream::channel(body_channel_capacity);
@@ -619,10 +678,10 @@ impl HyperOriginClient {
             observation,
             event_stream,
         ));
-        Ok(HyperUpgradeResponse::Rejected(StreamingResponse {
-            head,
-            body,
-        }))
+        Ok(HyperUpgradeResponse::Rejected(
+            StreamingResponse { head, body },
+            sent_request,
+        ))
     }
 }
 
@@ -868,6 +927,18 @@ fn protocol_version(version: Version) -> Result<HttpLegVersion, HyperOriginError
 /// Hyper origin-adapter failure.
 #[derive(Debug, Error)]
 pub enum HyperOriginError {
+    /// The peer did not advertise RFC 8441 support; no CONNECT was sent.
+    #[error("origin does not support HTTP/2 extended CONNECT")]
+    ExtendedConnectUnsupported,
+    /// WebSocket connection or response headers did not arrive in time.
+    #[error("WebSocket opening handshake timed out")]
+    UpgradeTimeout,
+    /// Opening the measured origin transport failed.
+    #[error("origin transport failed: {0}")]
+    Transport(Box<dyn std::error::Error + Send + Sync>),
+    /// HTTP/2 stream operation failed.
+    #[error(transparent)]
+    H2(#[from] h2::Error),
     /// Shared TLS connector configuration failed.
     #[error(transparent)]
     Trust(#[from] TrustError),

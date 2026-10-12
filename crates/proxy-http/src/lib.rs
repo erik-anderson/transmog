@@ -7,7 +7,9 @@ mod service;
 mod upstream;
 
 pub use authority::{AuthorityError, ConnectAuthority};
-pub use client::{HyperOriginClient, HyperOriginError, HyperUpgradeResponse};
+pub use client::{
+    HyperOriginClient, HyperOriginError, HyperUpgradeResponse, WebSocketIo, WebSocketUpgrade,
+};
 pub use service::HyperUpstreamService;
 pub use upstream::{
     HappyEyeballsResolver, HttpsOriginConnector, HyperEgressMode, build_https_connector,

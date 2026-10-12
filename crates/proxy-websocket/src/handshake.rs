@@ -156,12 +156,61 @@ pub fn validate_response(
     if input.accept.trim() != expected_accept(&request.key) {
         return Err(HandshakeError::InvalidAccept);
     }
-    let permessage_deflate = parse_extension_response(input.extensions)?;
+    validate_negotiation(request, input.extensions, input.subprotocol)
+}
+
+/// Validates RFC 8441 offers without the HTTP/1 nonce and upgrade fields.
+/// # Errors
+/// Rejects unsupported versions or malformed extension/subprotocol offers.
+pub fn validate_extended_request(
+    version: &str,
+    extensions: Option<&str>,
+    subprotocols: Option<&str>,
+) -> Result<ClientHandshake, HandshakeError> {
+    if version.trim() != "13" {
+        return Err(HandshakeError::UnsupportedVersion);
+    }
+    Ok(ClientHandshake {
+        key: String::new(),
+        compression_offered: parse_extension_offer(extensions)?,
+        subprotocols: parse_tokens(subprotocols, false)?,
+    })
+}
+
+/// Validates the successful RFC 8441 response and its selected options.
+/// # Errors
+/// Rejects non-2xx responses and invalid or unsolicited negotiation.
+pub fn validate_extended_response(
+    request: &ClientHandshake,
+    status: u16,
+    extensions: Option<&str>,
+    subprotocol: Option<&str>,
+) -> Result<NegotiatedExtensions, HandshakeError> {
+    if !(200..300).contains(&status) {
+        return Err(HandshakeError::InvalidExtendedStatus(status));
+    }
+    validate_negotiation(request, extensions, subprotocol)
+}
+
+/// Generates a fresh nonce when bridging extended CONNECT to HTTP/1.1.
+/// # Errors
+/// Returns an error if the operating system random source is unavailable.
+pub fn generate_key() -> Result<String, HandshakeError> {
+    let mut nonce = [0; 16];
+    getrandom::fill(&mut nonce).map_err(|_| HandshakeError::NonceGeneration)?;
+    Ok(STANDARD.encode(nonce))
+}
+
+fn validate_negotiation(
+    request: &ClientHandshake,
+    extensions: Option<&str>,
+    subprotocol: Option<&str>,
+) -> Result<NegotiatedExtensions, HandshakeError> {
+    let permessage_deflate = parse_extension_response(extensions)?;
     if permessage_deflate.is_some() && !request.compression_offered {
         return Err(HandshakeError::UnsolicitedExtension);
     }
-    let subprotocol = input
-        .subprotocol
+    let subprotocol = subprotocol
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
@@ -329,6 +378,12 @@ fn is_token(value: &str) -> bool {
 /// WebSocket opening-handshake failure.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum HandshakeError {
+    /// An extended CONNECT response did not establish a tunnel.
+    #[error("WebSocket extended CONNECT returned status {0}, not 2xx")]
+    InvalidExtendedStatus(u16),
+    /// OS random bytes could not be obtained for a bridge nonce.
+    #[error("WebSocket nonce generation failed")]
+    NonceGeneration,
     /// Upgrade requests must use GET.
     #[error("WebSocket upgrade request must use GET")]
     InvalidMethod,

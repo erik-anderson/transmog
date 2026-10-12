@@ -1186,6 +1186,7 @@ impl ProxyState {
             let mut builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
             builder
                 .timer(TokioTimer::new())
+                .enable_connect_protocol()
                 .max_concurrent_streams(max_h2_streams)
                 .max_header_list_size(max_header_list_size)
                 .keep_alive_interval(Some(body_idle_timeout))
@@ -1215,7 +1216,13 @@ impl ProxyState {
         mut request: Request<Incoming>,
         context: ConnectionContext,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        if request.method() == Method::CONNECT {
+        let extended_websocket = request.version() == Version::HTTP_2
+            && request.method() == Method::CONNECT
+            && request
+                .extensions()
+                .get::<hyper::ext::Protocol>()
+                .is_some_and(|p| p.as_str() == "websocket");
+        if request.method() == Method::CONNECT && !extended_websocket {
             return Err(ProxyRuntimeError::NestedConnectUnsupported);
         }
         let ingress_version = protocol_version(request.version())?;
@@ -1486,7 +1493,7 @@ impl ProxyState {
             return Err(error);
         }
 
-        if is_websocket_upgrade_candidate(&request_head.headers) {
+        if extended_websocket || is_websocket_upgrade_candidate(&request_head.headers) {
             if self.application_upstream.is_some() {
                 let error = ProxyRuntimeError::WebSocketApplicationUpstreamUnsupported;
                 self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
@@ -1495,15 +1502,22 @@ impl ProxyState {
             }
             if !matches!(
                 plan.pool_key.version_policy,
-                RoutePolicy::Http1Only | RoutePolicy::Auto
+                RoutePolicy::Http1Only | RoutePolicy::Http2Only | RoutePolicy::Auto
             ) {
-                let error = ProxyRuntimeError::WebSocketRequiresHttp1;
+                let error = ProxyRuntimeError::WebSocketRequiresHttp1Or2;
                 self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, &error, false, false)
                     .await;
                 return Err(error);
             }
             let result = self
-                .handle_websocket_upgrade(request, session, request_head, upstream, chain.clone())
+                .handle_websocket_upgrade(
+                    request,
+                    session,
+                    request_head,
+                    upstream,
+                    chain.clone(),
+                    plan.pool_key.version_policy,
+                )
                 .await;
             if let Err(error) = &result {
                 self.fail_runtime_exchange(&chain, ExchangeStage::Upstream, error, false, false)
@@ -1800,7 +1814,7 @@ impl ProxyState {
         response_to_hyper(response)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     async fn handle_websocket_upgrade(
         &self,
         mut request: Request<Incoming>,
@@ -1808,45 +1822,71 @@ impl ProxyState {
         request_head: RequestHead,
         upstream_generation: Arc<UpstreamGeneration>,
         chain: Arc<ExchangeChain>,
+        route: RoutePolicy,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        if request_head.source_version != HttpLegVersion::Http1 {
-            return Err(ProxyRuntimeError::WebSocketRequiresHttp1);
+        let extended = request.version() == Version::HTTP_2;
+        if !matches!(
+            request_head.source_version,
+            HttpLegVersion::Http1 | HttpLegVersion::Http2
+        ) {
+            return Err(ProxyRuntimeError::WebSocketRequiresHttp1Or2);
         }
         if websocket_request_has_body(&request_head.headers)? {
             return Err(ProxyRuntimeError::InvalidWebSocketHandshake(
-                "upgrade request must not carry a body".to_owned(),
+                "opening handshake must not declare an HTTP body".to_owned(),
             ));
         }
-        let client_handshake = validate_websocket_request(RequestHandshake {
-            method: &request_head.method,
-            connection: &required_combined_header(&request_head.headers, "connection")?,
-            upgrade: &required_combined_header(&request_head.headers, "upgrade")?,
-            version: &required_single_header(&request_head.headers, "sec-websocket-version")?,
-            key: &required_single_header(&request_head.headers, "sec-websocket-key")?,
-            extensions: combined_header(&request_head.headers, "sec-websocket-extensions")?
-                .as_deref(),
-            subprotocols: combined_header(&request_head.headers, "sec-websocket-protocol")?
-                .as_deref(),
-        })?;
-        observe_request_head(&chain, ExchangeBoundary::UpstreamRequest, &request_head).await;
+        let client_handshake = websocket_handshake_request(&request_head, extended)?;
+        // The H1 representation supplies a fresh nonce for a possible H2 -> H1
+        // bridge. The origin adapter removes it for extended CONNECT.
+        let mut origin_request = request_head.clone();
+        if extended {
+            origin_request.method = "GET".into();
+            origin_request.headers.replace_all(HeaderField::try_new(
+                "sec-websocket-key",
+                transmog_websocket::generate_key()?,
+            )?);
+            origin_request
+                .headers
+                .replace_all(HeaderField::try_new("connection", "Upgrade")?);
+            origin_request
+                .headers
+                .replace_all(HeaderField::try_new("upgrade", "websocket")?);
+        }
+        origin_request.source_version = HttpLegVersion::Http1;
+        let origin_handshake = websocket_handshake_request(&origin_request, false)?;
+        let mode = match route {
+            RoutePolicy::Http1Only => HyperEgressMode::Http1Only,
+            RoutePolicy::Http2Only => HyperEgressMode::Http2Only,
+            _ => HyperEgressMode::Auto,
+        };
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
         let upstream = upstream_generation
             .hyper
             .execute_upgrade(
-                request_head.clone(),
+                origin_request,
                 self.config.limits.max_response_body_bytes,
                 capacity,
                 self.config.limits.body_idle_timeout,
+                mode,
+                self.config.limits.header_read_timeout,
             )
             .await?;
-        session.egress_version = Some(HttpLegVersion::Http1);
+        let sent_head = match &upstream {
+            HyperUpgradeResponse::Switched { request, .. }
+            | HyperUpgradeResponse::Rejected(_, request) => request,
+        };
+        let upstream_version = sent_head.source_version;
+        session.egress_version = Some(upstream_version);
+        observe_request_head(&chain, ExchangeBoundary::UpstreamRequest, sent_head).await;
         let HyperUpgradeResponse::Switched {
             head: upstream_head,
             upgraded: upstream_upgrade,
+            ..
         } = upstream
         else {
-            let HyperUpgradeResponse::Rejected(response) = upstream else {
+            let HyperUpgradeResponse::Rejected(response, _) = upstream else {
                 unreachable!("upgrade response variants are exhaustive")
             };
             return self
@@ -1861,8 +1901,15 @@ impl ProxyState {
         };
 
         observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream_head).await;
+        let negotiated_origin = websocket_handshake_response(
+            &origin_handshake,
+            &upstream_head,
+            upstream_version == HttpLegVersion::Http2,
+        )?;
+        let client_head =
+            websocket_response_for_client(upstream_head, &client_handshake, extended)?;
         let response_outcome = chain
-            .response_head(&request_head, upstream_head, None, false)
+            .response_head(&request_head, client_head, None, false)
             .await;
         observe_hook_effects(&chain).await;
         let (response_head, replacement_body, local_response) = match response_outcome {
@@ -1896,8 +1943,15 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
-        if replacement_body.is_some() || local_response || response_head.status != 101 {
+        if replacement_body.is_some()
+            || local_response
+            || !websocket_success(response_head.status, extended)
+        {
             drop(upstream_upgrade);
+            let mut response_head = response_head;
+            if websocket_success(response_head.status, extended) {
+                response_head.status = 502;
+            }
             return self
                 .finish_prepared_local_response(
                     CanonicalResponse {
@@ -1912,22 +1966,12 @@ impl ProxyState {
                 .await;
         }
 
-        let negotiated = validate_websocket_response(
-            &client_handshake,
-            ResponseHandshake {
-                status: response_head.status,
-                connection: &required_combined_header(&response_head.headers, "connection")?,
-                upgrade: &required_combined_header(&response_head.headers, "upgrade")?,
-                accept: &required_single_header(&response_head.headers, "sec-websocket-accept")?,
-                extensions: combined_header(&response_head.headers, "sec-websocket-extensions")?
-                    .as_deref(),
-                subprotocol: optional_single_header(
-                    &response_head.headers,
-                    "sec-websocket-protocol",
-                )?
-                .as_deref(),
-            },
-        )?;
+        let negotiated = websocket_handshake_response(&client_handshake, &response_head, extended)?;
+        if negotiated != negotiated_origin {
+            return Err(ProxyRuntimeError::InvalidWebSocketHandshake(
+                "response hooks changed the negotiated WebSocket protocol or compression".into(),
+            ));
+        }
         if !self.websocket_hooks.is_empty()
             && let Some(compression) = negotiated.permessage_deflate
         {
@@ -1958,6 +2002,10 @@ impl ProxyState {
                 cancellation.clone(),
             )?))
         };
+        let downstream_response = response_to_hyper(CanonicalResponse {
+            head: response_head.clone(),
+            body: Vec::new(),
+        })?;
         observe_response_head(&chain, ExchangeBoundary::ClientResponse, &response_head).await;
         let stream_observer = (!self.observers.is_empty())
             .then(|| runtime_observer(&chain))
@@ -1974,7 +2022,7 @@ impl ProxyState {
         self.complete_chain(&chain, &request_head, &response_head)
             .await;
         let attempts = vec![RouteAttemptEvidence {
-            protocol: HttpLegVersion::Http1,
+            protocol: upstream_version,
             outcome: "websocket-upgrade".to_owned(),
         }];
         observe_route_attempts(&chain, &attempts).await;
@@ -1986,7 +2034,7 @@ impl ProxyState {
             target_scheme: request_head.target.scheme.clone(),
             target_path: request_head.target.path.clone(),
             ingress_version: session.ingress_version,
-            egress_version: HttpLegVersion::Http1,
+            egress_version: upstream_version,
             request_breakpoint_fired: true,
             response_breakpoint_fired: true,
             route_attempts: attempts,
@@ -2027,7 +2075,7 @@ impl ProxyState {
                 let result = if let Some(hooks) = websocket_chain {
                     transmog_websocket::relay_inspected_observed(
                         TokioIo::new(downstream),
-                        TokioIo::new(upstream),
+                        upstream,
                         negotiated,
                         relay_limits,
                         hooks,
@@ -2041,7 +2089,7 @@ impl ProxyState {
                 } else if let Some(observer) = stream_observer.clone() {
                     transmog_websocket::relay_observed(
                         TokioIo::new(downstream),
-                        TokioIo::new(upstream),
+                        upstream,
                         negotiated,
                         relay_limits,
                         cancellation,
@@ -2051,7 +2099,7 @@ impl ProxyState {
                 } else {
                     transmog_websocket::relay_transparent(
                         TokioIo::new(downstream),
-                        TokioIo::new(upstream),
+                        upstream,
                         relay_limits,
                         cancellation,
                     )
@@ -2089,10 +2137,7 @@ impl ProxyState {
                 outcome,
             });
         });
-        response_to_hyper(CanonicalResponse {
-            head: response_head,
-            body: Vec::new(),
-        })
+        Ok(downstream_response)
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -2105,12 +2150,19 @@ impl ProxyState {
         chain: Arc<ExchangeChain>,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream.head).await;
+        let upstream_version = upstream.head.source_version;
+        // A 2xx decline from H1 would otherwise open an H2 CONNECT tunnel.
+        if session.ingress_version == HttpLegVersion::Http2
+            && (200..300).contains(&upstream.head.status)
+        {
+            upstream.head.status = 502;
+        }
         let response_outcome = chain
             .response_head(&request_head, upstream.head, None, false)
             .await?;
         observe_hook_effects(&chain).await;
         let ResponseHeadOutcome::Continue {
-            head,
+            mut head,
             replacement_body,
             local_response,
         } = response_outcome
@@ -2120,6 +2172,14 @@ impl ProxyState {
             };
             return Err(reason.into());
         };
+        // Hooks may author a rejection, but cannot synthesize an accepted
+        // tunnel after the origin has declined it.
+        if websocket_success(
+            head.status,
+            session.ingress_version == HttpLegVersion::Http2,
+        ) {
+            head.status = 502;
+        }
         upstream.head = head;
         if let Some(body) = replacement_body {
             drop(upstream.body);
@@ -2144,7 +2204,7 @@ impl ProxyState {
                     &session,
                     &request_head,
                     vec![RouteAttemptEvidence {
-                        protocol: HttpLegVersion::Http1,
+                        protocol: upstream_version,
                         outcome: "websocket-rejected".to_owned(),
                     }],
                     None,
@@ -2167,7 +2227,7 @@ impl ProxyState {
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
         let attempts = vec![RouteAttemptEvidence {
-            protocol: HttpLegVersion::Http1,
+            protocol: upstream_version,
             outcome: "websocket-rejected".to_owned(),
         }];
         tokio::spawn(stream_response_through_hooks(
@@ -4759,6 +4819,117 @@ fn is_websocket_upgrade_candidate(headers: &HeaderBlock) -> bool {
         .any(|value| header_bytes_have_token(value, b"websocket"))
 }
 
+fn websocket_success(status: u16, extended: bool) -> bool {
+    if extended {
+        (200..300).contains(&status)
+    } else {
+        status == 101
+    }
+}
+
+fn websocket_handshake_request(
+    head: &RequestHead,
+    extended: bool,
+) -> Result<transmog_websocket::ClientHandshake, ProxyRuntimeError> {
+    let version = required_single_header(&head.headers, "sec-websocket-version")?;
+    let extensions = combined_header(&head.headers, "sec-websocket-extensions")?;
+    let subprotocols = combined_header(&head.headers, "sec-websocket-protocol")?;
+    Ok(if extended {
+        if head.method != "CONNECT"
+            || ["connection", "upgrade"]
+                .iter()
+                .any(|name| head.headers.values(name).next().is_some())
+        {
+            return Err(ProxyRuntimeError::InvalidWebSocketHandshake(
+                "HTTP/2 WebSockets require extended CONNECT without Connection or Upgrade headers"
+                    .into(),
+            ));
+        }
+        transmog_websocket::validate_extended_request(
+            &version,
+            extensions.as_deref(),
+            subprotocols.as_deref(),
+        )?
+    } else {
+        validate_websocket_request(RequestHandshake {
+            method: &head.method,
+            connection: &required_combined_header(&head.headers, "connection")?,
+            upgrade: &required_combined_header(&head.headers, "upgrade")?,
+            version: &version,
+            key: &required_single_header(&head.headers, "sec-websocket-key")?,
+            extensions: extensions.as_deref(),
+            subprotocols: subprotocols.as_deref(),
+        })?
+    })
+}
+
+fn websocket_handshake_response(
+    request: &transmog_websocket::ClientHandshake,
+    head: &ResponseHead,
+    extended: bool,
+) -> Result<transmog_websocket::NegotiatedExtensions, ProxyRuntimeError> {
+    let extensions = combined_header(&head.headers, "sec-websocket-extensions")?;
+    let subprotocol = optional_single_header(&head.headers, "sec-websocket-protocol")?;
+    Ok(if extended {
+        transmog_websocket::validate_extended_response(
+            request,
+            head.status,
+            extensions.as_deref(),
+            subprotocol.as_deref(),
+        )?
+    } else {
+        validate_websocket_response(
+            request,
+            ResponseHandshake {
+                status: head.status,
+                connection: &required_combined_header(&head.headers, "connection")?,
+                upgrade: &required_combined_header(&head.headers, "upgrade")?,
+                accept: &required_single_header(&head.headers, "sec-websocket-accept")?,
+                extensions: extensions.as_deref(),
+                subprotocol: subprotocol.as_deref(),
+            },
+        )?
+    })
+}
+
+fn websocket_response_for_client(
+    mut head: ResponseHead,
+    client: &transmog_websocket::ClientHandshake,
+    extended: bool,
+) -> Result<ResponseHead, ProxyRuntimeError> {
+    let destination = if extended {
+        HttpLegVersion::Http2
+    } else {
+        HttpLegVersion::Http1
+    };
+    head.headers = prepare_headers(
+        &head.headers,
+        TranslationOptions {
+            destination,
+            kind: MessageKind::Response,
+            body_modified: false,
+            force_identity_encoding: false,
+        },
+    )?;
+    head.headers.remove_all("content-length");
+    head.headers.remove_all("sec-websocket-accept");
+    if extended {
+        head.status = 200;
+    } else {
+        head.status = 101;
+        head.headers
+            .replace_all(HeaderField::try_new("connection", "Upgrade")?);
+        head.headers
+            .replace_all(HeaderField::try_new("upgrade", "websocket")?);
+        head.headers.replace_all(HeaderField::try_new(
+            "sec-websocket-accept",
+            transmog_websocket::expected_accept(client.key()),
+        )?);
+    }
+    head.source_version = destination;
+    Ok(head)
+}
+
 fn header_bytes_have_token(value: &[u8], expected: &[u8]) -> bool {
     value
         .split(|byte| *byte == b',')
@@ -4996,7 +5167,7 @@ fn failed_exchange_response(error: &ProxyRuntimeError) -> Response<DownstreamBod
         | ProxyRuntimeError::PlaintextConnectRequiresWebSocket
         | ProxyRuntimeError::WebSocketHandshake(_)
         | ProxyRuntimeError::InvalidWebSocketHandshake(_)
-        | ProxyRuntimeError::WebSocketRequiresHttp1
+        | ProxyRuntimeError::WebSocketRequiresHttp1Or2
         | ProxyRuntimeError::WebSocketApplicationUpstreamUnsupported
         | ProxyRuntimeError::ConnectAuthority(_)
         | ProxyRuntimeError::Identity(_) => StatusCode::BAD_REQUEST,
@@ -5225,9 +5396,9 @@ pub enum ProxyRuntimeError {
     /// Handshake fields could not be interpreted safely.
     #[error("invalid WebSocket handshake: {0}")]
     InvalidWebSocketHandshake(String),
-    /// WebSocket upgrade routing is constrained to HTTP/1.1.
-    #[error("WebSocket upgrades require HTTP/1.1 origin routing")]
-    WebSocketRequiresHttp1,
+    /// WebSocket routing requires HTTP/1.1 or HTTP/2.
+    #[error("WebSocket connections require HTTP/1.1 or HTTP/2 origin routing")]
+    WebSocketRequiresHttp1Or2,
     /// Application-owned HTTP services cannot provide an upgraded byte stream.
     #[error("application-owned upstream services do not support WebSocket byte streams")]
     WebSocketApplicationUpstreamUnsupported,
@@ -5336,6 +5507,7 @@ mod tests {
     };
 
     use super::*;
+    include!("websocket_h2_tests.rs");
 
     #[derive(Clone, Copy)]
     struct EditingHandler;

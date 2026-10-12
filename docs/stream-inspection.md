@@ -21,7 +21,7 @@ payload with **Messages**; taller or wider panes show both.
 ## Lifetime and stopping
 
 The HTTP handshake and application stream have separate lifetimes. A WebSocket
-remains **active** after its 101 response, including while quiet. SSE remains active
+remains **active** after its opening response (101 on H1, 200 on H2), including while quiet. SSE remains active
 until its response ends. Both appear in State contains **active**. Closed, failed
 and interrupted streams stop matching that filter. Imported open streams show
 **open-at-capture**, because a saved file is not a live connection.
@@ -36,8 +36,12 @@ hold the proxy indefinitely in its draining state.
 
 Passive WebSocket inspection preserves forwarded wire bytes, reassembles fragmented
 messages, and decodes negotiated permessage-deflate in each direction. Existing
-message hooks retain their mutation behavior. This release covers HTTP/1.1 Upgrade
-for `ws` and intercepted `wss`; HTTP/2 and HTTP/3 extended CONNECT are not supported.
+message hooks retain their mutation behavior. HTTP/1.1 Upgrade and HTTP/2 extended
+CONNECT use the same live inspector and Active filter. H2 clients connect through
+intercepted TLS; the origin leg can use H1 or H2 independently. Auto routing uses
+H2 when TLS negotiates it and the origin advertises extended CONNECT, otherwise
+it falls back to H1 before sending the opening request. Forced H2 requires origin
+support. HTTP/3 extended CONNECT is not supported.
 
 SSE decoding handles arbitrary frame boundaries, content compression, UTF-8,
 CR/LF/CRLF, multiline data, comments and unterminated tails. Ordinary cumulative

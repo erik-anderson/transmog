@@ -273,7 +273,7 @@ where
             result = read_with_idle(&mut reader, &mut buffer, limits.idle_timeout) => result?,
         };
         if read == 0 {
-            writer.shutdown().await?;
+            shutdown_bounded(&mut writer, limits, &cancellation).await?;
             return Ok((copied, false));
         }
         copied = copied
@@ -283,7 +283,21 @@ where
         if let Some(observation) = &mut observation
             && observation.push(&buffer[..read]).await
         {
+            shutdown_bounded(&mut writer, limits, &cancellation).await?;
             return Ok((copied, true));
+        }
+    }
+}
+
+async fn shutdown_bounded<Writer: AsyncWrite + Unpin>(
+    writer: &mut Writer,
+    limits: RelayLimits,
+    cancellation: &SessionCancellation,
+) -> Result<(), RelayError> {
+    tokio::select! {
+        () = cancellation.cancelled() => Err(RelayError::Cancelled),
+        result = timeout(limits.write_timeout, writer.shutdown()) => {
+            result.map_err(|_| RelayError::WriteTimeout)?.map_err(Into::into)
         }
     }
 }
@@ -450,7 +464,7 @@ where
             result = read_with_idle(&mut reader, &mut buffer, limits.idle_timeout) => result?,
         };
         if read == 0 {
-            writer.shutdown().await?;
+            shutdown_bounded(&mut writer, limits, &cancellation).await?;
             return Ok(report);
         }
         report.wire_bytes = report
@@ -512,6 +526,7 @@ where
                                 &cancellation,
                             )
                             .await?;
+                            shutdown_bounded(&mut writer, limits, &cancellation).await?;
                             report.end = PumpEnd::Close;
                             return Ok(report);
                         }
@@ -530,6 +545,7 @@ where
                             write_control(&mut writer, direction, control, limits, &cancellation)
                                 .await?;
                             if close {
+                                shutdown_bounded(&mut writer, limits, &cancellation).await?;
                                 report.end = PumpEnd::Close;
                                 return Ok(report);
                             }
@@ -554,6 +570,7 @@ where
                                 &cancellation,
                             )
                             .await?;
+                            shutdown_bounded(&mut writer, limits, &cancellation).await?;
                             report.end = PumpEnd::Close;
                             return Ok(report);
                         }

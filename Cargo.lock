@@ -7096,6 +7096,7 @@ version = "0.1.2"
 dependencies = [
  "boring",
  "bytes",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

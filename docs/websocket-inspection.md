@@ -2,8 +2,8 @@
 
 WebSocket support is split across three clean boundaries:
 
-1. `transmog-http` retains Hyper's upgraded origin stream while returning a
-   canonical handshake head.
+1. `transmog-http` retains an H1 upgraded stream or an H2 extended CONNECT stream,
+   returning the actual canonical request and response heads.
 2. `transmog-runtime` applies the ordinary HTTP interceptor chain to the
    opening request and response, authenticates the server accept proof, and
    connects the two upgraded streams.
@@ -12,16 +12,16 @@ WebSocket support is split across three clean boundaries:
    attribution, and the bounded bidirectional relay.
 
 WebSocket frames are never represented as HTTP body frames. The HTTP exchange
-finishes when the validated `101 Switching Protocols` response is committed;
+finishes when the validated opening response (H1 `101` or H2 `200`) is committed;
 the upgraded session then has its own cancellation, close, framing, and hook
 lifecycle.
 
 ## Transparent and inspected paths
 
-`ProxyComponents` has no WebSocket hooks by default. In that configuration the
-runtime uses `relay_transparent`, a byte-for-byte bidirectional copy which does
-not parse, buffer, remask, or otherwise normalize frames. This remains useful
-for extensions or traffic the inspection layer does not understand.
+`ProxyComponents` has no WebSocket hooks by default. Without observers the runtime
+uses `relay_transparent`, a byte-for-byte bidirectional copy. With observers it
+uses passive, bounded frame/message decoding while forwarding the original bytes.
+Decoder errors disable inspection with a visible diagnostic; forwarding continues.
 
 Installing a `WebSocketHookFactory` selects `relay_inspected`. Each session gets
 isolated interceptor instances. Complete decompressed messages and control
@@ -34,13 +34,9 @@ replacements, and concurrent pauses have finite limits.
 `ProxyServer::subscribe_websocket_evidence` publishes a bounded terminal report
 for each runtime session. A successful inspected report contains the centrally
 attributed effects; failures carry a redaction-safe reason. Consumers that need
-message bytes while traffic is live should use an observation-only hook and
-their own bounded storage or delivery policy.
-
-An application that only needs observation can install a hook that records the
-message/control events and always returns `Continue`. This is also the seam for
-a future native-capture WebSocket record stream; capture state does not belong
-in the frame engine.
+message bytes while traffic is live use sequenced stream lifecycle and message
+observer events. The desktop catalog, native capture, retention and privacy
+policies consume these events; see [stream inspection](stream-inspection.md).
 
 ## Protocol and resource policy
 
@@ -69,7 +65,26 @@ proxy requests, browser-style plaintext HTTP/1.1 carried inside a `CONNECT` to
 the WebSocket origin, and `wss://` requests inside intercepted CONNECT TLS. The
 CONNECT preface detector preserves the first byte, accepts only TLS or a
 WebSocket `GET` preface, and retains the usual inner-authority validation; this
-is not a general blind TCP tunnel. HTTP/2 extended CONNECT, HTTP/3 WebSockets, and
-application-owned `UpstreamService` byte-stream upgrades are separate future
-adapters. An origin that declines the upgrade is returned through the ordinary
-bounded HTTP response pipeline.
+is not a general blind TCP tunnel.
+
+Intercepted TLS H2 connections advertise RFC 8441 support. Extended CONNECT with
+`:protocol = websocket` uses the same authority checks, hooks, observation and
+relay as H1; ordinary or unsupported nested CONNECT requests remain rejected.
+H1/H2 translation generates an H1 nonce and accept proof only where required,
+removes connection-specific headers on H2, and preserves subprotocol/compression
+negotiation. Response hooks cannot change negotiated wire semantics.
+
+Origins advertise extended CONNECT through SETTINGS before an opening request
+is sent. A bounded PING exchange establishes that the initial SETTINGS have been
+processed. Auto routing falls back to H1 if ALPN selects H1 or H2 lacks this setting;
+it never retries an opening request after it was sent. Forced H2 reports the lack
+of capability. Concurrent WebSockets can share a dedicated origin H2 connection,
+partitioned by the existing trust, caller, isolation and certificate authorization
+rules. Weak pool entries release idle origin connections after the last stream.
+Flow control applies per stream; closure or reset never closes unrelated streams.
+
+An origin that declines the handshake is returned through the bounded ordinary
+HTTP response pipeline. An H1 2xx decline becomes a downstream H2 502, since an H2
+2xx CONNECT response would incorrectly establish a tunnel. Captured origin heads
+retain the original status. HTTP/3 WebSockets and application-owned
+`UpstreamService` byte-stream upgrades remain unsupported.

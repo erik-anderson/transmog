@@ -85,6 +85,9 @@ impl ConnectionSetup {
 #[derive(Clone, Debug)]
 pub(crate) struct ConnectionObservation(Arc<ConnectionSetup>);
 impl ConnectionObservation {
+    pub(crate) fn permits_reuse(&self) -> bool {
+        !self.0.values().no_reuse
+    }
     pub(crate) fn snapshot(
         &self,
         shared: bool,

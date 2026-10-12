@@ -21,7 +21,8 @@ pub use frame::{
 };
 pub use handshake::{
     ClientHandshake, HandshakeError, NegotiatedExtensions, PerMessageDeflate, RequestHandshake,
-    ResponseHandshake, expected_accept, validate_request, validate_response,
+    ResponseHandshake, expected_accept, generate_key, validate_extended_request,
+    validate_extended_response, validate_request, validate_response,
 };
 pub use hook::{
     BoxWebSocketFuture, ControlAction, ControlEvent, ControlOutcome, HookActionKind, MessageAction,

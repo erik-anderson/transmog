@@ -68,6 +68,7 @@ image = { version = "=0.25.10", default-features = false, features = ["gif", "ic
 libc = "=0.2.190"
 percent-encoding = "2.3.2"
 hyper = { version = "1.11.1", features = ["client", "http1", "http2", "server"] }
+h2 = "0.4.19"
 hyper-boring = "=5.2.0"
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
 quiche = { version = "=0.30.0", default-features = false, features = ["boringssl-boring-crate"] }
