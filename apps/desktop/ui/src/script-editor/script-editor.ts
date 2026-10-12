@@ -38,6 +38,7 @@ export class ScriptEditor extends WorkspaceElement {
   scriptTestHeaders!:HTMLTextAreaElement;
   scriptTestBody!:HTMLTextAreaElement;
   scriptTestHandler!:HTMLSelectElement;
+  scriptMenu!:HTMLDivElement;
   private editVersion=0;
   private hasLoadedDraft=false;
   markScriptChanged():void {this.editVersion++;this.candidate=null;this.canEnable=false;this.scriptDirty=true;this.scriptStage='Draft';}
@@ -47,8 +48,8 @@ export class ScriptEditor extends WorkspaceElement {
   async validateScript(event?:Event):Promise<void> {event?.preventDefault();await this.runScript(()=>this.validateDraft());}
   async testScript():Promise<void> {await this.runScript(()=>this.testDraft());}
   async activateScript():Promise<void> {await this.runScript(()=>this.activateDraft());}
-  async disableScript():Promise<void> {await this.runScript(()=>this.disableActive());}
-  async compareActiveScript():Promise<void> {await this.runScript(()=>this.compareDraft());}
+  async disableScript():Promise<void> {this.scriptMenu.hidePopover();this.focusEditor();await this.runScript(()=>this.disableActive());}
+  async compareActiveScript():Promise<void> {this.scriptMenu.hidePopover();await this.runScript(()=>this.compareDraft());}
   useSelectedTestRequest():void {const request=this.selection?.detail.requests.find(head=>head.boundary==='client-request');if(!request)return;this.scriptTestUrl.value=request.target??'';this.scriptTestMethod.value=request.method??'GET';this.scriptTestHeaders.value=request.headers.filter(header=>!header.sensitive).map(header=>header.name+': '+header.value).join('\n');}
   @attr({mode:'boolean'}) active = false;
   @observable scriptText = initialState.scriptText;
@@ -63,7 +64,7 @@ export class ScriptEditor extends WorkspaceElement {
   private revisionDiff: Monaco.editor.IStandaloneDiffEditor | null = null;
   private diffModels: Monaco.editor.ITextModel[] = [];
   private candidate: ScriptCandidate | null = null;
-  private scriptRevision = Date.now();
+  private scriptRevision = 1;
   private loading: Promise<void> | null = null;
   private monaco: typeof Monaco | null = null;
   private declarationsDisposable: Monaco.IDisposable | null = null;
@@ -142,7 +143,9 @@ export class ScriptEditor extends WorkspaceElement {
   private async saveDraft(): Promise<void> {
     const version=this.editVersion;
     try {
-      const status = await invoke<ScriptStatus>('save_script', { draft: this.scriptDraft() });
+      const draft = await this.prepareDraft();
+      if (version !== this.editVersion) return;
+      const status = await invoke<ScriptStatus>('save_script', { draft });
       this.renderScriptStatus('Draft saved.', status);
       if(version===this.editVersion){this.scriptDirty=false;this.scriptStage='Saved';}
     } catch (error: unknown) {
@@ -153,7 +156,8 @@ export class ScriptEditor extends WorkspaceElement {
   private async validateDraft(): Promise<void> {
     const version=this.editVersion;
     try {
-      const draft=this.scriptDraft();
+      const draft=await this.prepareDraft();
+      if(version!==this.editVersion)return;
       const candidate=await invoke<ScriptCandidate>('validate_script',{draft});
       if(version!==this.editVersion){this.scriptText='The draft changed during validation. Validate the current changes.';return;}
       this.candidate=candidate;this.canEnable=true;this.scriptStage='Validated';this.testHandlers=draft.handlers.map(name=>({name}));
@@ -257,11 +261,22 @@ export class ScriptEditor extends WorkspaceElement {
   private async refreshScripts(): Promise<void> {
     try {
       const status=await invoke<ScriptStatus>('script_status');
-      if(!this.hasLoadedDraft){this.hasLoadedDraft=true;const draft=status.saved.find(item=>item.id==='user-script');if(draft){this.sourceEditor?.setValue(draft.source);this.scriptRevision=draft.revision;const set=(name:string,value:string|boolean)=>{const input=this.scriptForm.elements.namedItem(name) as HTMLInputElement;if(typeof value==='boolean')input.checked=value;else input.value=value;};set('scriptHost',draft.prefilter.host??'');set('scriptPath',draft.prefilter.pathPrefix??'');set('scriptHeaders',draft.capabilities.writeHeaders.join(', '));set('readBodies',draft.capabilities.readBodies);set('writeBody',draft.capabilities.writeBody);set('respond',draft.capabilities.respond);set('abort',draft.capabilities.abort);set('sensitive',draft.capabilities.readSensitiveHeaders);this.scriptDirty=false;this.scriptStage='Saved';}}
+      if(!this.hasLoadedDraft){this.hasLoadedDraft=true;const draft=status.saved.filter(item=>item.id==='user-script').sort((a,b)=>b.revision-a.revision)[0];if(draft){this.sourceEditor?.setValue(draft.source);this.scriptRevision=draft.revision;const set=(name:string,value:string|boolean)=>{const input=this.scriptForm.elements.namedItem(name) as HTMLInputElement;if(typeof value==='boolean')input.checked=value;else input.value=value;};set('scriptHost',draft.prefilter.host??'');set('scriptPath',draft.prefilter.pathPrefix??'');set('scriptHeaders',draft.capabilities.writeHeaders.join(', '));set('readBodies',draft.capabilities.readBodies);set('writeBody',draft.capabilities.writeBody);set('respond',draft.capabilities.respond);set('abort',draft.capabilities.abort);set('sensitive',draft.capabilities.readSensitiveHeaders);this.scriptDirty=false;this.scriptStage='Saved';}}
       this.renderScriptStatus('Script workspace loaded.',status);
     } catch (error: unknown) {
       this.scriptFailure('Script workspace unavailable', error);
     }
+  }
+
+  private async prepareDraft(): Promise<ScriptDraft> {
+    const draft = this.scriptDraft();
+    const status = await invoke<ScriptStatus>('script_status');
+    const revisions = [...status.saved.filter(item => item.id === draft.id).map(item => item.revision),
+      ...status.active.filter(item => item.manifest.id === draft.id).map(item => item.manifest.revision + 1)];
+    const revision = Math.max(this.scriptRevision, ...revisions);
+    if (!Number.isSafeInteger(revision)) throw new Error('Script revision limit reached.');
+    this.scriptRevision = revision;
+    return {...draft, revision};
   }
 
   private scriptDraft(): ScriptDraft {
@@ -308,8 +323,14 @@ export class ScriptEditor extends WorkspaceElement {
 
   private scriptFailure(prefix: string, error: unknown): void {
     this.canEnable=false;
+    this.candidate=null;
     const message = describeError(error);
-    this.scriptText = `${prefix}: ${message}\n\nThe draft was not activated. Correct the source or capabilities, validate again, and rerun the sandbox test.`;
+    const conflict = message.includes('revision must increase') || message.includes('candidate is unknown or expired');
+    const recovery = conflict ? 'The enabled script changed or this validation expired. Validate the current draft again, test it, then enable it.'
+      : prefix === 'Rust validation failed' || prefix === 'Sandbox test aborted' ? 'Correct the source or capabilities, validate again, and rerun the sandbox test.'
+      : 'Your draft is preserved. Try the action again.';
+    this.scriptText = `${prefix}: ${message}\n\n${recovery}`;
+    if (prefix !== 'Rust validation failed' && prefix !== 'Sandbox test aborted') return;
     const model = this.sourceEditor?.getModel();
     if (model !== null && model !== undefined) {
       this.monaco!.editor.setModelMarkers(model, 'transmog-rust', [{

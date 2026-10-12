@@ -394,11 +394,11 @@ await page.addInitScript((workspace) => {
           return {detail:structuredClone(response),id:1,status:201,headers:response.responses[0].headers,body,bodyIsHex:false,truncated:false,attribution:'composer',source:state.composerResultSource??null};
         }
         case 'script_declarations': return '';
-        case 'script_status': return {generation:0,active:state.activeScripts??[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
+        case 'script_status': return {generation:0,active:state.activeScripts??[],saved:state.savedScripts??(state.savedScript?[state.savedScript]:[]),candidateCount:0,historyCount:0};
         case 'save_script': state.savedScript=structuredClone(args.draft);return {generation:1,active:state.activeScripts??[],saved:[state.savedScript],candidateCount:0,historyCount:0};
         case 'validate_script': state.scriptCandidate=structuredClone(args.draft);if(state.deferScriptValidation){state.scriptValidationPending=true;await new Promise(resolve=>state.finishScriptValidation=resolve);}return {candidateId:'fixture-script',scriptId:args.draft.id,revision:args.draft.revision,sourceHash:'0'.repeat(64)};
         case 'test_script': state.scriptTestInput=structuredClone(args.invocation);return {action:'continue'};
-        case 'activate_script': state.activeScripts=[{manifest:{id:state.scriptCandidate.id,revision:state.scriptCandidate.revision,sourceHash:'0'.repeat(64)},source:state.scriptCandidate.source}];return {generation:1,active:state.activeScripts,saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
+        case 'activate_script': if(state.activeScripts?.some(item=>item.manifest.id===state.scriptCandidate.id&&item.manifest.revision>=state.scriptCandidate.revision))throw new Error('script revision must increase before activation');state.activeScripts=[{manifest:{id:state.scriptCandidate.id,revision:state.scriptCandidate.revision,sourceHash:'0'.repeat(64)},source:state.scriptCandidate.source}];return {generation:1,active:state.activeScripts,saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
         case 'disable_script': state.activeScripts=[];return {generation:2,active:[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
         case 'breakpoint_status': return { enabled: true, paused: structuredClone(state.paused) };
         case 'decide_breakpoint': state.paused = state.paused.filter((item) => item.decisionId !== args.decision.decisionId); return { enabled: true, paused: structuredClone(state.paused) };
@@ -1254,6 +1254,8 @@ try {
   assert.equal(await page.locator('.auto-response-editor textarea[name="requestHeaders"]').isVisible(), true);
   await view('composer');
   await page.locator('input[name="url"]').filter({ visible: true }).fill('http://example.test/replay');
+  const composerFocus=await page.locator('input[name="url"]').filter({visible:true}).evaluate(input=>({control:input.closest('.composer-request').querySelector('input').getBoundingClientRect().x,clip:input.closest('.composer-request').getBoundingClientRect().x}));
+  assert.ok(composerFocus.control-composerFocus.clip>=4,'Composer focus outline is clipped by its scrolling pane');
   await view('automation');
   assert.equal(await page.locator('.auto-response-editor input[name="name"]').inputValue(), 'Preserved draft');
   await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();
@@ -1279,8 +1281,14 @@ try {
   assert.deepEqual(await page.evaluate(()=>{const input=globalThis.__workspaceFixture.scriptTestInput.request;return {method:input.method,host:input.host,port:input.port,path:input.path,query:input.query};}),{method:'PATCH',host:'sandbox.example.test',port:8443,path:'/users/42',query:'ready=yes'});
   await scripts.getByRole('button',{name:'Enable',exact:true}).click();
   await scripts.locator('.script-state').getByText('Active · Unsaved',{exact:true}).waitFor({state:'visible'});
+  await sourceSurface.getByRole('button',{name:'Expand editor',exact:true}).click();
   await scripts.getByRole('button',{name:'More',exact:true}).click();
+  const scriptButton=await scripts.getByRole('button',{name:'More',exact:true}).boundingBox();
+  const scriptMenu=await scripts.locator('#script-actions-menu').boundingBox();
+  assert.ok(scriptMenu.x<scriptButton.x+scriptButton.width&&scriptMenu.x+scriptMenu.width>scriptButton.x&&Math.abs(scriptMenu.y-scriptButton.y-scriptButton.height)<12,'Script menu is detached from More');
   await scripts.getByRole('button',{name:'Pause script',exact:true}).click();
+  assert.equal(await scripts.evaluate(editor=>editor.sourceEditor.hasTextFocus()),true);
+  await sourceSurface.getByRole('button',{name:'Return to panel',exact:true}).click();
   await page.keyboard.press('Escape');
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferScriptValidation=true;globalThis.__scriptValidation=document.querySelector('app-shell').shadowRoot.querySelector('script-editor').validateScript();});
   await page.waitForFunction(()=>globalThis.__workspaceFixture.scriptValidationPending);
@@ -1289,6 +1297,18 @@ try {
   assert.equal(await scripts.getByRole('button',{name:'Enable',exact:true}).isDisabled(),true,'An older validation enabled changed source');
   await scripts.getByRole('button',{name:'Save draft',exact:true}).click();
   await scripts.locator('.script-state').getByText('Saved',{exact:true}).waitFor({state:'visible'});
+  await page.evaluate(async()=>{
+    const editor=document.querySelector('app-shell').shadowRoot.querySelector('script-editor');
+    const draft=globalThis.__workspaceFixture.savedScript;
+    globalThis.__workspaceFixture.savedScripts=[{...draft,revision:10,source:draft.source+'\n// older'}, {...draft,revision:20,source:draft.source+'\n// newest'}];
+    globalThis.__workspaceFixture.activeScripts=[{manifest:{id:draft.id,revision:20},source:draft.source}];
+    editor.hasLoadedDraft=false;await editor.refreshScripts();
+  });
+  assert.match(await scripts.evaluate(editor=>editor.sourceEditor.getValue()),/newest/,'Reload selected an older saved draft');
+  await scripts.getByRole('button',{name:'Validate',exact:true}).click();
+  await scripts.getByRole('button',{name:'Enable',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.activeScripts[0].manifest.revision>20);
+  await page.evaluate(()=>delete globalThis.__workspaceFixture.savedScripts);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/scripts-wide.png')});
   await page.setViewportSize({width:760,height:520});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/scripts-small.png')});
@@ -1331,6 +1351,8 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
   await view('captures');
   const captures=page.locator('capture-workspace');
+  const focusBounds=await captures.getByLabel('Traffic to record',{exact:true}).evaluate(input=>({control:input.getBoundingClientRect().x,clip:input.closest('.capture-content').getBoundingClientRect().x}));
+  assert.ok(focusBounds.control-focusBounds.clip>=4,'Capture focus outline is clipped by its scrolling pane');
   await captures.getByRole('button',{name:'Switch to recording…',exact:true}).waitFor();
   await page.evaluate(async()=>{globalThis.__workspaceFixture.lifecycle='stopped';await document.querySelector('app-shell').refreshStatus();});
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.recordingDefaultBodies=true;await document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').loadRecordingDefaults();});
