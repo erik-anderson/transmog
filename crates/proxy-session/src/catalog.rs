@@ -139,6 +139,8 @@ pub struct SessionSnapshot {
     pub websocket: Option<WebSocketSessionEvidence>,
     /// Latest application stream state, independent of HTTP completion.
     pub stream: Option<transmog_core::stream::StreamState>,
+    /// Bounded stream messages and lifetime counters.
+    pub stream_history: transmog_core::stream::StreamHistory,
 }
 
 /// Monotonic catalog loss and pressure counters.
@@ -282,6 +284,7 @@ struct MutableSession {
     terminal_at: Option<SystemTime>,
     websocket: Option<WebSocketSessionEvidence>,
     stream: Option<transmog_core::stream::StreamState>,
+    stream_history: transmog_core::stream::StreamHistory,
 }
 
 impl SessionSnapshot {
@@ -350,6 +353,7 @@ impl MutableSession {
             terminal_at: self.terminal_at,
             websocket: self.websocket.clone(),
             stream: self.stream.clone(),
+            stream_history: self.stream_history.clone(),
         }
     }
 }
@@ -459,6 +463,7 @@ impl SessionCatalog {
                     terminal_at: None,
                     websocket: None,
                     stream: None,
+                    stream_history: Default::default(),
                 },
             );
         }
@@ -476,7 +481,12 @@ impl SessionCatalog {
             state.counters.stale_events = state.counters.stale_events.saturating_add(1);
             return CatalogApply::Stale;
         }
-        if terminal && !matches!(event.kind, ObserverEventKind::StreamState(_)) {
+        if terminal
+            && !matches!(
+                event.kind,
+                ObserverEventKind::StreamState(_) | ObserverEventKind::StreamMessage(_)
+            )
+        {
             state.counters.post_terminal_events =
                 state.counters.post_terminal_events.saturating_add(1);
             return CatalogApply::PostTerminal;
@@ -608,6 +618,7 @@ impl SessionCatalog {
                     terminal_at: snapshot.terminal_at,
                     websocket: snapshot.websocket,
                     stream: snapshot.stream,
+                    stream_history: snapshot.stream_history,
                 },
             );
         }
@@ -983,7 +994,16 @@ fn apply_kind(
     detail_dropped: &mut u64,
 ) {
     match kind {
-        ObserverEventKind::StreamState(stream) => session.stream = Some(stream),
+        ObserverEventKind::StreamMessage(message) => {
+            session.stream_history.push(session.last_sequence, message)
+        }
+        ObserverEventKind::StreamState(stream) => {
+            session
+                .stream_history
+                .opened_at
+                .get_or_insert(stream.at_millis);
+            session.stream = Some(stream);
+        }
         ObserverEventKind::Performance(evidence) => session.performance.merge(&evidence),
         ObserverEventKind::ExchangeStarted { .. } | ObserverEventKind::BodyCompleted { .. } => {}
         ObserverEventKind::HookInitializationSkipped(diagnostic) => push_bounded(
@@ -1032,10 +1052,32 @@ fn apply_kind(
         ObserverEventKind::Completed(completed) => {
             session.terminal = Some(SessionTerminal::Completed(completed));
             session.terminal_at = Some(SystemTime::now());
+            if let Some(stream) = &mut session.stream {
+                if stream.protocol == transmog_core::stream::StreamProtocol::Sse {
+                    stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_)))
+                    {
+                        transmog_core::stream::StreamStatus::Failed
+                    } else {
+                        transmog_core::stream::StreamStatus::Closed
+                    };
+                    stream.at_millis = transmog_core::stream::observed_millis();
+                }
+            }
         }
         ObserverEventKind::Failed(failure) => {
             session.terminal = Some(SessionTerminal::Failed(failure));
             session.terminal_at = Some(SystemTime::now());
+            if let Some(stream) = &mut session.stream {
+                if stream.protocol == transmog_core::stream::StreamProtocol::Sse {
+                    stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_)))
+                    {
+                        transmog_core::stream::StreamStatus::Failed
+                    } else {
+                        transmog_core::stream::StreamStatus::Closed
+                    };
+                    stream.at_millis = transmog_core::stream::observed_millis();
+                }
+            }
         }
     }
 }

@@ -10,7 +10,9 @@ mod compression;
 mod frame;
 mod handshake;
 mod hook;
+mod observation;
 mod relay;
+pub use observation::RelayObserver;
 
 pub use compression::{CompressionError, PerMessageDeflateCodec};
 pub use frame::{
@@ -29,5 +31,6 @@ pub use hook::{
     WebSocketSessionMetadata,
 };
 pub use relay::{
-    RelayError, RelayLimits, RelayReport, SessionCancellation, relay_inspected, relay_transparent,
+    RelayError, RelayLimits, RelayReport, SessionCancellation, relay_inspected,
+    relay_inspected_observed, relay_observed, relay_transparent,
 };

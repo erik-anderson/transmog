@@ -1379,6 +1379,18 @@ pub fn record_from_observer(
     let response_headers =
         |headers: &HeaderBlock| captured_headers(headers, &policy.response_header_names);
     let kind = match &event.kind {
+        ObserverEventKind::StreamMessage(message) => {
+            let mut message = message.clone();
+            if !policy.retain_body_samples {
+                message.payload = Default::default();
+                message.raw = None;
+                message.truncated |= message.byte_count > 0;
+            }
+            CaptureRecordKind::Unknown {
+                kind: "stream-message".into(),
+                payload: serde_json::to_value(message).ok()?,
+            }
+        }
         ObserverEventKind::StreamState(state) => CaptureRecordKind::Unknown {
             kind: "stream-state".into(),
             payload: serde_json::to_value(state).ok()?,

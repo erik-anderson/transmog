@@ -9,6 +9,7 @@ use thiserror::Error;
 mod activity;
 mod provider;
 mod proxy;
+mod streams;
 
 pub use activity::ProxyActivity;
 

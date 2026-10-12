@@ -203,6 +203,8 @@ pub struct ObservedRouteAttempt {
 pub enum ObserverEventKind {
     /// Application stream lifecycle, which can continue after HTTP completion.
     StreamState(crate::stream::StreamState),
+    /// Bounded message/event evidence, including after a WebSocket HTTP handshake.
+    StreamMessage(crate::stream::StreamMessage),
     /// Bounded measured timing, protocol and transport evidence.
     Performance(crate::performance::PerformanceEvidence),
     /// An exchange and its isolated extension store were created.
@@ -289,6 +291,7 @@ impl ObserverEvent {
             })
         };
         let payload = match &self.kind {
+            ObserverEventKind::StreamMessage(message) => message.retained_bytes(),
             ObserverEventKind::BodyChunk(chunk) => chunk.sample.as_ref().map_or(0, Bytes::len),
             ObserverEventKind::RequestHeadObserved { head, .. }
             | ObserverEventKind::RequestHeadFinalized(head) => headers(&head.headers)
@@ -567,6 +570,26 @@ impl ObserverDispatcher {
         if !self.interest.sensitive_headers {
             event.kind = redact(event.kind);
         }
+        if let ObserverEventKind::StreamMessage(message) = &mut event.kind {
+            let policy = if message.sender == "client" {
+                self.interest.request_body
+            } else {
+                self.interest.response_body
+            };
+            let limit = match policy {
+                BodyObservation::MetadataOnly => 0,
+                BodyObservation::Prefix(limit) => limit.get(),
+                BodyObservation::Full => usize::MAX,
+            };
+            if message.payload.len() > limit {
+                message.payload = Bytes::copy_from_slice(&message.payload[..limit]);
+                message.truncated = true;
+            }
+            if message.raw.as_ref().is_some_and(|raw| raw.len() > limit) {
+                message.raw = None;
+                message.truncated = true;
+            }
+        }
         if event.kind.is_lifecycle() {
             return self.interest.lifecycle.then_some(event);
         }
@@ -742,7 +765,12 @@ impl ExchangeObserver {
     /// Cancelling a capacity wait does not publish the event or advance sequence.
     pub async fn emit(&self, kind: ObserverEventKind) -> ObserverDeliveryReport {
         let mut state = self.state.lock().await;
-        if state.terminal && !matches!(kind, ObserverEventKind::StreamState(_)) {
+        if state.terminal
+            && !matches!(
+                kind,
+                ObserverEventKind::StreamState(_) | ObserverEventKind::StreamMessage(_)
+            )
+        {
             return ObserverDeliveryReport::default();
         }
         self.emit_locked(&mut state, kind).await

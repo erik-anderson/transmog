@@ -155,12 +155,87 @@ where
             upstream_write,
             limits,
             cancellation.clone(),
+            None,
         ),
-        copy_transparent_direction(upstream_read, downstream_write, limits, cancellation),
+        copy_transparent_direction(upstream_read, downstream_write, limits, cancellation, None),
     )?;
     Ok(RelayReport {
-        client_to_server_wire_bytes: client_to_server,
-        server_to_client_wire_bytes: server_to_client,
+        client_to_server_wire_bytes: client_to_server.0,
+        server_to_client_wire_bytes: server_to_client.0,
+        ..RelayReport::default()
+    })
+}
+
+/// Relays exact bytes while passively observing complete messages and control frames.
+/// Parser failures are reported to the observer and never interrupt forwarding.
+///
+/// # Errors
+/// Returns transport, cancellation, and configured deadline failures.
+pub async fn relay_observed<Downstream, Upstream>(
+    downstream: Downstream,
+    upstream: Upstream,
+    negotiated: NegotiatedExtensions,
+    limits: RelayLimits,
+    cancellation: SessionCancellation,
+    observer: Arc<dyn crate::RelayObserver>,
+) -> Result<RelayReport, RelayError>
+where
+    Downstream: AsyncRead + AsyncWrite + Unpin,
+    Upstream: AsyncRead + AsyncWrite + Unpin,
+{
+    let limits = limits.validate()?;
+    let (dr, dw) = tokio::io::split(downstream);
+    let (ur, uw) = tokio::io::split(upstream);
+    let client = crate::observation::PassiveDecoder::new(
+        Direction::ClientToServer,
+        limits.frames,
+        &negotiated,
+        observer.clone(),
+    );
+    let server = crate::observation::PassiveDecoder::new(
+        Direction::ServerToClient,
+        limits.frames,
+        &negotiated,
+        observer,
+    );
+    let mut client = Box::pin(copy_transparent_direction(
+        dr,
+        uw,
+        limits,
+        cancellation.clone(),
+        Some(client),
+    ));
+    let mut server = Box::pin(copy_transparent_direction(
+        ur,
+        dw,
+        limits,
+        cancellation.clone(),
+        Some(server),
+    ));
+    let (client, server) = tokio::select! {
+        result = &mut client => {
+            let first = result?;
+            let second = timeout(limits.close_handshake_timeout, &mut server).await.map_err(|_| RelayError::CloseHandshakeTimeout)??;
+            (first, second)
+        }
+        result = &mut server => {
+            let first = result?;
+            let second = timeout(limits.close_handshake_timeout, &mut client).await.map_err(|_| RelayError::CloseHandshakeTimeout)??;
+            (second, first)
+        }
+        () = cancellation.cancelled() => return Err(RelayError::Cancelled),
+    };
+    if !client.1 || !server.1 {
+        return Err(RelayError::UncleanEof(if !client.1 {
+            Direction::ClientToServer
+        } else {
+            Direction::ServerToClient
+        }));
+    }
+    Ok(RelayReport {
+        client_to_server_wire_bytes: client.0,
+        server_to_client_wire_bytes: server.0,
+        clean_close: true,
         ..RelayReport::default()
     })
 }
@@ -184,7 +259,8 @@ async fn copy_transparent_direction<Reader, Writer>(
     mut writer: Writer,
     limits: RelayLimits,
     cancellation: SessionCancellation,
-) -> Result<u64, RelayError>
+    mut observation: Option<crate::observation::PassiveDecoder>,
+) -> Result<(u64, bool), RelayError>
 where
     Reader: AsyncRead + Unpin,
     Writer: AsyncWrite + Unpin,
@@ -198,12 +274,17 @@ where
         };
         if read == 0 {
             writer.shutdown().await?;
-            return Ok(copied);
+            return Ok((copied, false));
         }
         copied = copied
             .checked_add(u64::try_from(read).map_err(|_| RelayError::AccountingOverflow)?)
             .ok_or(RelayError::AccountingOverflow)?;
         write_all_bounded(&mut writer, &buffer[..read], limits, &cancellation).await?;
+        if let Some(observation) = &mut observation {
+            if observation.push(&buffer[..read]).await {
+                return Ok((copied, true));
+            }
+        }
     }
 }
 
@@ -229,6 +310,35 @@ where
     Downstream: AsyncRead + AsyncWrite + Unpin,
     Upstream: AsyncRead + AsyncWrite + Unpin,
 {
+    relay_inspected_observed(
+        downstream,
+        upstream,
+        negotiated,
+        limits,
+        hooks,
+        cancellation,
+        None,
+    )
+    .await
+}
+
+/// Relays through hooks and records the messages actually forwarded by the hooks.
+///
+/// # Errors
+/// Returns the same protocol, hook, transport and deadline errors as `relay_inspected`.
+pub async fn relay_inspected_observed<Downstream, Upstream>(
+    downstream: Downstream,
+    upstream: Upstream,
+    negotiated: NegotiatedExtensions,
+    limits: RelayLimits,
+    hooks: Arc<WebSocketHookChain>,
+    cancellation: SessionCancellation,
+    observer: Option<Arc<dyn crate::RelayObserver>>,
+) -> Result<RelayReport, RelayError>
+where
+    Downstream: AsyncRead + AsyncWrite + Unpin,
+    Upstream: AsyncRead + AsyncWrite + Unpin,
+{
     let limits = limits.validate()?;
     let (downstream_read, downstream_write) = tokio::io::split(downstream);
     let (upstream_read, upstream_write) = tokio::io::split(upstream);
@@ -240,6 +350,7 @@ where
         limits,
         Arc::clone(&hooks),
         cancellation.clone(),
+        observer.clone(),
     ));
     let mut server_to_client = Box::pin(pump_direction(
         upstream_read,
@@ -249,6 +360,7 @@ where
         limits,
         Arc::clone(&hooks),
         cancellation.clone(),
+        observer.clone(),
     ));
 
     let (client, server, clean_close) = tokio::select! {
@@ -315,6 +427,7 @@ async fn pump_direction<Reader, Writer>(
     limits: RelayLimits,
     hooks: Arc<WebSocketHookChain>,
     cancellation: SessionCancellation,
+    observer: Option<Arc<dyn crate::RelayObserver>>,
 ) -> Result<PumpReport, RelayError>
 where
     Reader: AsyncRead + Unpin,
@@ -350,6 +463,11 @@ where
                     report.messages = report.messages.saturating_add(1);
                     match hooks.process_message(direction, message).await? {
                         MessageOutcome::Forward(message) => {
+                            if let Some(observer) = &observer {
+                                observer
+                                    .observe(direction, Ok(MessageEvent::Message(message.clone())))
+                                    .await;
+                            }
                             let (wire_payload, compressed) = if message.was_compressed {
                                 (
                                     deflater
@@ -376,6 +494,16 @@ where
                         }
                         MessageOutcome::Drop => {}
                         MessageOutcome::Close(close) => {
+                            if let Some(observer) = &observer {
+                                observer
+                                    .observe(
+                                        direction,
+                                        Ok(MessageEvent::Control(ControlFrame::Close(
+                                            close.clone(),
+                                        ))),
+                                    )
+                                    .await;
+                            }
                             write_control(
                                 &mut writer,
                                 direction,
@@ -393,6 +521,11 @@ where
                     report.controls = report.controls.saturating_add(1);
                     match hooks.process_control(direction, control).await? {
                         ControlOutcome::Forward(control) => {
+                            if let Some(observer) = &observer {
+                                observer
+                                    .observe(direction, Ok(MessageEvent::Control(control.clone())))
+                                    .await;
+                            }
                             let close = matches!(control, ControlFrame::Close(_));
                             write_control(&mut writer, direction, control, limits, &cancellation)
                                 .await?;
@@ -403,6 +536,16 @@ where
                         }
                         ControlOutcome::Drop => {}
                         ControlOutcome::Close(close) => {
+                            if let Some(observer) = &observer {
+                                observer
+                                    .observe(
+                                        direction,
+                                        Ok(MessageEvent::Control(ControlFrame::Close(
+                                            close.clone(),
+                                        ))),
+                                    )
+                                    .await;
+                            }
                             write_control(
                                 &mut writer,
                                 direction,
@@ -709,5 +852,117 @@ mod tests {
         .unwrap();
         client.write_all(&frame).await.unwrap();
         assert!(matches!(task.await.unwrap(), Err(RelayError::WriteTimeout)));
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    use bytes::Bytes;
+    struct Recorder(tokio::sync::mpsc::UnboundedSender<Result<MessageEvent, String>>);
+    impl crate::RelayObserver for Recorder {
+        fn observe(
+            &self,
+            _: Direction,
+            event: Result<MessageEvent, String>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            Box::pin(async move {
+                self.0.send(event).unwrap();
+            })
+        }
+    }
+    #[tokio::test]
+    async fn passive_messages_arrive_live_and_close_does_not_wait_for_tcp_eof() {
+        let (mut client, downstream) = tokio::io::duplex(1024);
+        let (upstream, mut server) = tokio::io::duplex(1024);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let relay = tokio::spawn(relay_observed(
+            downstream,
+            upstream,
+            NegotiatedExtensions::default(),
+            RelayLimits::default(),
+            SessionCancellation::new(),
+            Arc::new(Recorder(tx)),
+        ));
+        let frame = encode_frame(
+            &Frame {
+                fin: true,
+                compressed: false,
+                opcode: 1,
+                payload: Bytes::from_static(b"live"),
+            },
+            Direction::ClientToServer,
+            Some([1, 2, 3, 4]),
+        )
+        .unwrap();
+        client.write_all(&frame).await.unwrap();
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event, MessageEvent::Message(message) if message.payload == b"live"[..]));
+        let mut wire = vec![0; frame.len()];
+        server.read_exact(&mut wire).await.unwrap();
+        assert_eq!(wire, frame);
+        assert!(!relay.is_finished());
+        let close = encode_frame(
+            &Frame {
+                fin: true,
+                compressed: false,
+                opcode: 8,
+                payload: Bytes::new(),
+            },
+            Direction::ClientToServer,
+            Some([4, 3, 2, 1]),
+        )
+        .unwrap();
+        client.write_all(&close).await.unwrap();
+        let mut wire = vec![0; close.len()];
+        server.read_exact(&mut wire).await.unwrap();
+        assert_eq!(wire, close);
+        server.write_all(&[0x88, 0]).await.unwrap();
+        let mut wire = [0; 2];
+        client.read_exact(&mut wire).await.unwrap();
+        assert_eq!(wire, [0x88, 0]);
+        assert!(
+            timeout(Duration::from_secs(1), relay)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .clean_close
+        );
+    }
+    #[tokio::test]
+    async fn passive_decoder_failure_preserves_forwarded_bytes() {
+        let (mut client, downstream) = tokio::io::duplex(1024);
+        let (upstream, mut server) = tokio::io::duplex(1024);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = SessionCancellation::new();
+        let relay = tokio::spawn(relay_observed(
+            downstream,
+            upstream,
+            NegotiatedExtensions::default(),
+            RelayLimits::default(),
+            cancel.clone(),
+            Arc::new(Recorder(tx)),
+        ));
+        client.write_all(b"invalid framing").await.unwrap();
+        assert!(
+            timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        let mut wire = [0; 15];
+        server.read_exact(&mut wire).await.unwrap();
+        assert_eq!(&wire, b"invalid framing");
+        client.write_all(b"still forwarded").await.unwrap();
+        server.read_exact(&mut wire).await.unwrap();
+        assert_eq!(&wire, b"still forwarded");
+        cancel.cancel();
+        assert!(matches!(relay.await.unwrap(), Err(RelayError::Cancelled)));
     }
 }

@@ -521,13 +521,19 @@ impl HyperOriginClient {
         };
         let (sender, body) = BodyStream::channel(body_channel_capacity);
         let observation = response.extensions().get::<ResponseObservation>().cloned();
+        let event_stream = transmog_core::stream::is_event_stream(&head.headers);
         tokio::spawn(stream_incoming(
             response.into_body(),
             sender,
-            max_response_bytes,
+            if event_stream {
+                usize::MAX
+            } else {
+                max_response_bytes
+            },
             body_idle_timeout,
             self.performance.clone(),
             observation,
+            event_stream,
         ));
         Ok(StreamingResponse { head, body })
     }
@@ -599,13 +605,19 @@ impl HyperOriginClient {
         }
         let (sender, body) = BodyStream::channel(body_channel_capacity);
         let observation = response.extensions().get::<ResponseObservation>().cloned();
+        let event_stream = transmog_core::stream::is_event_stream(&head.headers);
         tokio::spawn(stream_incoming(
             response.into_body(),
             sender,
-            max_response_bytes,
+            if event_stream {
+                usize::MAX
+            } else {
+                max_response_bytes
+            },
             body_idle_timeout,
             self.performance.clone(),
             observation,
+            event_stream,
         ));
         Ok(HyperUpgradeResponse::Rejected(StreamingResponse {
             head,
@@ -708,10 +720,15 @@ async fn stream_incoming(
     body_idle_timeout: Duration,
     performance: Option<PerformanceRecorder>,
     _observation: Option<ResponseObservation>,
+    event_stream: bool,
 ) {
     let mut received = 0_usize;
     loop {
-        let frame = match timeout(body_idle_timeout, body.frame()).await {
+        let frame = match if event_stream {
+            Ok(body.frame().await)
+        } else {
+            timeout(body_idle_timeout, body.frame()).await
+        } {
             Ok(Some(frame)) => frame,
             Ok(None) => {
                 if let Some(performance) = &performance {

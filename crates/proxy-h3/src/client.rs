@@ -1208,12 +1208,16 @@ impl ResponseTarget {
             Self::Streaming {
                 head_completion,
                 pending,
+                limit,
                 ..
             } => {
                 if head_completion.is_some() {
                     let Some(head) = response_head(headers)? else {
                         return Ok(());
                     };
+                    if transmog_core::stream::is_event_stream(&head.headers) {
+                        *limit = usize::MAX;
+                    }
                     let completion = head_completion.take().expect("checked above");
                     let evidence = telemetry(connection, peer_addr, tls)?;
                     let _ = completion.send(Ok((head, evidence)));

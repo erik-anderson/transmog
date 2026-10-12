@@ -12,6 +12,7 @@ mod coding;
 mod pipeline;
 mod plan;
 mod policy;
+pub mod sse;
 
 pub use budget::{
     ContentBudget, ContentLimitError, ContentLimits, ContentWorkLimitError, ContentWorkLimits,

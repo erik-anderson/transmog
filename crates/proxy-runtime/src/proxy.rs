@@ -85,8 +85,7 @@ use transmog_websocket::{
     CompressionError as WebSocketCompressionError, Direction as WebSocketDirection,
     HandshakeError as WebSocketHandshakeError, PerMessageDeflateCodec, RelayError, RelayLimits,
     RelayReport, RequestHandshake, ResponseHandshake, SessionCancellation, WebSocketHookError,
-    WebSocketHookFactory, WebSocketSessionMetadata, relay_inspected, relay_transparent,
-    validate_request as validate_websocket_request,
+    WebSocketHookFactory, WebSocketSessionMetadata, validate_request as validate_websocket_request,
     validate_response as validate_websocket_response,
 };
 
@@ -2019,21 +2018,29 @@ impl ProxyState {
                         .await;
                 }
                 let result = if let Some(hooks) = websocket_chain {
-                    relay_inspected(
+                    transmog_websocket::relay_inspected_observed(
                         TokioIo::new(downstream),
                         TokioIo::new(upstream),
                         negotiated,
                         relay_limits,
                         hooks,
                         cancellation,
+                        stream_observer.clone().map(|observer| {
+                            Arc::new(crate::streams::WebSocketObserver(observer))
+                                as Arc<dyn transmog_websocket::RelayObserver>
+                        }),
                     )
                     .await
                 } else {
-                    relay_transparent(
+                    transmog_websocket::relay_observed(
                         TokioIo::new(downstream),
                         TokioIo::new(upstream),
+                        negotiated,
                         relay_limits,
                         cancellation,
+                        Arc::new(crate::streams::WebSocketObserver(
+                            stream_observer.clone().expect("runtime observer"),
+                        )),
                     )
                     .await
                 };
@@ -3270,7 +3277,11 @@ impl ProxyState {
         Ok(ContentBodyPipeline::from_policy(
             pipeline,
             &response_head.headers,
-            self.content,
+            if transmog_core::stream::is_event_stream(&response_head.headers) {
+                self.content.for_event_stream()
+            } else {
+                self.content
+            },
         )?)
     }
 
@@ -3895,6 +3906,37 @@ async fn observe_response_head(
             })
             .await;
         if boundary == ExchangeBoundary::ClientResponse {
+            if transmog_content::sse::is_event_stream(&head.headers)
+                && head.status != 204
+                && head.status != 304
+            {
+                observer
+                    .emit(ObserverEventKind::StreamState(StreamState::now(
+                        StreamProtocol::Sse,
+                        StreamStatus::Open,
+                        None,
+                    )))
+                    .await;
+                let decoder = match transmog_content::sse::SseDecoder::new(&head.headers) {
+                    Ok(decoder) => Some(decoder),
+                    Err(error) => {
+                        observer
+                            .emit(ObserverEventKind::StreamMessage(
+                                transmog_core::stream::StreamMessage::new(
+                                    "server",
+                                    "unavailable",
+                                    Bytes::from(error),
+                                ),
+                            ))
+                            .await;
+                        None
+                    }
+                };
+                chain
+                    .context()
+                    .extensions()
+                    .insert(crate::streams::SseObservation(Mutex::new(decoder)));
+            }
             observer
                 .emit(ObserverEventKind::ResponseHeadFinalized(head.clone()))
                 .await;
@@ -3950,6 +3992,52 @@ async fn observe_body(
     let Some(observer) = runtime_observer(chain) else {
         return;
     };
+    if boundary == ExchangeBoundary::ClientResponse {
+        if let Some(observation) = chain
+            .context()
+            .extensions()
+            .get::<crate::streams::SseObservation>()
+        {
+            let mut decoder = observation.0.lock().await;
+            if let Some(active) = decoder.as_mut() {
+                let result = async {
+                    let mut messages = Vec::new();
+                    for frame in frames {
+                        messages.extend(active.push(frame.clone()).await?);
+                    }
+                    if complete {
+                        messages.extend(active.finish().await?);
+                    }
+                    Ok::<_, String>(messages)
+                }
+                .await;
+                match result {
+                    Ok(messages) => {
+                        for message in messages {
+                            observer
+                                .emit(ObserverEventKind::StreamMessage(message))
+                                .await;
+                        }
+                    }
+                    Err(error) => {
+                        *decoder = None;
+                        observer
+                            .emit(ObserverEventKind::StreamMessage(
+                                transmog_core::stream::StreamMessage::new(
+                                    "server",
+                                    "unavailable",
+                                    Bytes::from(error),
+                                ),
+                            ))
+                            .await;
+                    }
+                }
+            }
+            if complete {
+                *decoder = None;
+            }
+        }
+    }
     if boundary == ExchangeBoundary::UpstreamResponse
         && frames
             .iter()
@@ -4204,10 +4292,16 @@ async fn stream_response_through_hooks(
     h3: Option<H3Telemetry>,
     trust_generation: u64,
 ) {
+    let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
+    let limit = if event_stream { usize::MAX } else { limit };
     let mut input = StreamingBodyTracker::new(limit);
     let mut output = StreamingBodyTracker::new(limit);
     loop {
-        let frame = match timeout(body_idle_timeout, body.recv()).await {
+        let frame = match if event_stream {
+            Ok(body.recv().await)
+        } else {
+            timeout(body_idle_timeout, body.recv()).await
+        } {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(_) => {
@@ -4319,10 +4413,16 @@ async fn stream_local_response_through_hooks(
     limit: usize,
     body_idle_timeout: Duration,
 ) {
+    let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
+    let limit = if event_stream { usize::MAX } else { limit };
     let mut input = StreamingBodyTracker::new(limit);
     let mut output = StreamingBodyTracker::new(limit);
     loop {
-        let frame = match timeout(body_idle_timeout, body.recv()).await {
+        let frame = match if event_stream {
+            Ok(body.recv().await)
+        } else {
+            timeout(body_idle_timeout, body.recv()).await
+        } {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(_) => {
@@ -5779,7 +5879,9 @@ mod tests {
                 ObserverEventKind::ResponseHeadFinalized(_) => "response-head",
                 ObserverEventKind::BodyChunk(_) => "body",
                 ObserverEventKind::BodyTrailers(_) => "trailers",
-                ObserverEventKind::BodyCompleted { .. } | ObserverEventKind::StreamState(_) => {
+                ObserverEventKind::BodyCompleted { .. }
+                | ObserverEventKind::StreamState(_)
+                | ObserverEventKind::StreamMessage(_) => {
                     return Box::pin(async { Ok(()) });
                 }
                 ObserverEventKind::HookEffect(_) => "hook-effect",

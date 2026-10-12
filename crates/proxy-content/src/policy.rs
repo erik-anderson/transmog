@@ -13,6 +13,12 @@ pub struct ContentPolicy {
 }
 
 impl ContentPolicy {
+    /// Keeps streaming work bounded per operation rather than by total lifetime.
+    pub fn for_event_stream(mut self) -> Self {
+        self.limits = self.limits.for_event_stream();
+        self
+    }
+
     /// Disables decoding of non-identity representations.
     ///
     /// Neutral and raw hooks still run. Decoded hooks run for identity bodies;
