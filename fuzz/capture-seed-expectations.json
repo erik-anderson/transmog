@@ -417,6 +417,72 @@
       "stage": "open"
     }
   },
+  "stream-content": {
+    "indexed": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    },
+    "full": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    }
+  },
+  "stream-content-expanded": {
+    "indexed": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    },
+    "full": {
+      "stage": "full",
+      "records": [],
+      "error": "InvalidMagic"
+    }
+  },
+  "stream-content-length": {
+    "indexed": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    },
+    "full": {
+      "stage": "full",
+      "records": [],
+      "error": "InvalidMagic"
+    }
+  },
+  "stream-content-short": {
+    "indexed": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    },
+    "full": {
+      "stage": "full",
+      "records": [],
+      "error": "InvalidMagic"
+    }
+  },
+  "stream-content-utf8": {
+    "indexed": {
+      "records": [
+        "stream-message"
+      ],
+      "sealed": false
+    },
+    "full": {
+      "stage": "full",
+      "records": [],
+      "error": "InvalidMagic"
+    }
+  },
   "stream-id-forward": {
     "full": {
       "error": "MalformedRecord: invalid stream ID reference",

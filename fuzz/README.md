@@ -23,7 +23,16 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
 - `websocket_frames` combines raw hostile streams with synthesized valid
   client/server frames, both mask roles, arbitrary transport chunking, text and
   binary messages, and `permessage-deflate`. Successful events must remain
-  within their declared allocation bounds and preserve UTF-8 invariants.
+  within their declared allocation bounds and preserve UTF-8 invariants. It also
+  exercises the uncapped production defaults, huge incomplete length declarations,
+  and fragmented compressed messages. Valid synthesized messages must decode
+  completely and reproduce the input bytes.
+- `sse_stream` compares whole-buffer observation with arbitrary transport chunks,
+  both directly and through gzip, deflate, Brotli, and zstd. It covers persistent
+  IDs, resets, CR/LF boundaries, BOMs, malformed UTF-8, heartbeats, empty events,
+  and incomplete tails. Event content and fields must be independent of chunking.
+  Raw input is bounded to 8 KiB; synthesized compressed input to 512 bytes so
+  campaigns spend their time on SSE behavior rather than compression setup.
 
 - `capture_reader` combines arbitrary files and headers with checksum-repaired
   mutations of compact and normal checkpointed captures, structured footers,
@@ -44,7 +53,9 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
   cover bootstrap authentication and KDF parameter rejection.
 
 The capture reader harness limits input to 64 KiB, files to 1 MiB, records to
-256, and individual records to at most 128 KiB. This bounds campaign resources;
+256, and JSON metadata records to at most 128 KiB. Stream content exercises the
+production u32 object bound, including false large expanded-size declarations.
+This bounds synthesized input, without adding a production stream-size cap;
 the normal test suite separately covers larger files, metadata trees, 128 KiB
 body splitting, short writes, and encrypted checkpoint recovery. Semantic seeds
 retain the malformed branch-level and missing-seal regressions.
@@ -128,7 +139,7 @@ python scripts/dev-env.py --run cargo test -p transmog-capture --test fuzz_seeds
 [`capture-seed-expectations.json`](capture-seed-expectations.json) records whether
 each reader seed should open, which metadata/full records it must reach, and its
 intentional error, if any. The test also checks the complete seed inventory and
-all 32 crypto selector combinations for block geometry, body/context selection,
+all 64 crypto selector combinations for block geometry, body/context/stream selection,
 mutation type, and dictionary-dependent bodies. A valid fixture silently becoming
 an early parser rejection now fails this test. When the format changes, update
 the semantic seeds and review their expected outcomes together; do not blindly
@@ -199,7 +210,7 @@ from `fuzz/artifacts/<target>/` and replay with
 smoke runner now includes both capture targets. To evolve only their checked-in
 corpora, use `FUZZ_TARGETS="capture_reader capture_crypto"` with
 `fuzz/update-corpus.sh`. The existing source-coverage floors in
-`report-coverage.sh` apply to content/WebSocket targets; no TMCap coverage floor
+`report-coverage.sh` apply to the original content/WebSocket targets; no SSE or TMCap coverage floor
 is claimed yet. Execution counts and sanitizer coverage are not a proof that
 the format has no defects.
 
@@ -237,3 +248,14 @@ The `object-amplification` seed is byte-bounded but exceeds the structural
 allocation budget with thousands of tiny objects. It must fail before the
 reader constructs a `Value` tree. Writer/reader symmetry and escaped string
 punctuation are covered by deterministic tests.
+
+Stream-message records in reader mode 12 now have independently indexed content,
+so the same oracle checks persistent-ID resolution alongside lazy and random
+body reads. Modes 5 and 6 with bit 7 set exercise malformed stream content
+prefixes, UTF-8 raw fields, and zstd expanded lengths. Crypto bit 5 selects a
+stream definition or reference (bit 4), covering content and metadata integrity.
+
+The SSE semantic seeds also replay in the ordinary content crate tests across
+all four content codings and four chunk sizes. Large-session integration tests
+cover 24 MiB messages through both memory and encrypted disk circular storage;
+those checks complement the deliberately smaller fuzz inputs.

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use transmog_websocket::{
     DataKind, Direction, Frame, FrameLimits, MessageDecoder, MessageEvent, PerMessageDeflate,
-    PerMessageDeflateCodec, encode_frame,
+    PerMessageDeflateCodec, encode_frame, encode_message,
 };
 
 const MAX_WIRE: usize = 8 * 1024;
@@ -30,24 +30,45 @@ fn fuzz(data: &[u8]) {
     } else {
         structured_wire(payload, flags, direction, negotiated)
     };
-    let limits = FrameLimits {
-        max_frame_payload_bytes: MAX_WIRE,
-        max_message_payload_bytes: MAX_MESSAGE,
-        max_buffered_bytes: MAX_WIRE + 14,
+    let limits = if flags & 32 != 0 {
+        FrameLimits::default()
+    } else {
+        FrameLimits {
+            max_frame_payload_bytes: MAX_WIRE,
+            max_message_payload_bytes: MAX_MESSAGE,
+            max_buffered_bytes: MAX_WIRE + 14,
+        }
     };
     let Ok(mut decoder) = MessageDecoder::new(direction, limits, negotiated) else {
         return;
     };
     let chunk_size = usize::from(chunk_selector % 64).saturating_add(1);
+    let expected = &payload[..payload.len().min(MAX_WIRE / 2)];
+    let valid_structured =
+        flags & 4 != 0 && (flags & 8 == 0 || std::str::from_utf8(expected).is_ok());
+    let mut messages = 0;
     for chunk in wire.chunks(chunk_size) {
         let events = match decoder.push(chunk) {
             Ok(events) => events,
-            Err(_) => return,
+            Err(error) => {
+                assert!(
+                    !valid_structured,
+                    "valid synthesized message was rejected: {error}"
+                );
+                return;
+            }
         };
         for event in events {
             match event {
                 MessageEvent::Message(message) => {
-                    assert!(message.payload.len() <= MAX_MESSAGE);
+                    messages += 1;
+                    assert!(message.payload.len() <= limits.max_message_payload_bytes);
+                    if flags & 4 != 0 {
+                        assert_eq!(
+                            &message.payload[..],
+                            &payload[..payload.len().min(MAX_WIRE / 2)]
+                        );
+                    }
                     if message.kind == DataKind::Text {
                         assert!(std::str::from_utf8(&message.payload).is_ok());
                     }
@@ -63,6 +84,9 @@ fn fuzz(data: &[u8]) {
                 },
             }
         }
+    }
+    if valid_structured {
+        assert_eq!(messages, 1);
     }
 }
 
@@ -95,8 +119,7 @@ fn structured_wire(
     let compress = flags & 16 != 0 && negotiated.is_some();
     let payload = &payload[..payload.len().min(MAX_WIRE / 2)];
     let wire_payload = if compress {
-        let Ok(mut codec) =
-            PerMessageDeflateCodec::new(negotiated.unwrap_or_default(), direction)
+        let Ok(mut codec) = PerMessageDeflateCodec::new(negotiated.unwrap_or_default(), direction)
         else {
             return Vec::new();
         };
@@ -111,6 +134,22 @@ fn structured_wire(
     let mask = direction
         .requires_mask()
         .then_some([0x12, 0x34, 0x56, 0x78]);
+    if flags & 64 != 0 {
+        return encode_message(
+            if text {
+                DataKind::Text
+            } else {
+                DataKind::Binary
+            },
+            &wire_payload,
+            compress,
+            direction,
+            17,
+            &mut || Ok([0x12, 0x34, 0x56, 0x78]),
+        )
+        .unwrap()
+        .concat();
+    }
     encode_frame(
         &Frame {
             fin: true,

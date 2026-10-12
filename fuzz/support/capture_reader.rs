@@ -187,7 +187,28 @@ fn connection_records(data: &[u8]) -> Option<Vec<u8>> {
     Some(record_files(
         &records
             .into_iter()
-            .map(|record| (record, Vec::new()))
+            .map(|mut record| {
+                let mut body = Vec::new();
+                if record["kind"] == "stream-message"
+                    && let Ok(mut message) = serde_json::from_value::<
+                        transmog_core::stream::StreamMessage,
+                    >(record["payload"].clone())
+                {
+                    let mut content = u32::try_from(message.payload.len())
+                        .unwrap()
+                        .to_le_bytes()
+                        .to_vec();
+                    content.extend_from_slice(&message.payload);
+                    content.extend_from_slice(message.raw.take().unwrap_or_default().as_bytes());
+                    message.payload.clear();
+                    body = page(0, &content);
+                    let digest: [u8; 32] = Sha256::digest(&content).into();
+                    record["payload"] = serde_json::to_value(message).unwrap();
+                    record["body_index"] =
+                        json!({"frame_bytes":body.len(), "bytes":content.len(), "digest":digest});
+                }
+                (record, body)
+            })
             .collect::<Vec<_>>(),
     ))
 }
@@ -351,6 +372,11 @@ fn exercise_file(bytes: &[u8], control: u8) {
                     let mut record = actual.record;
                     if let CaptureRecordKind::BodySegment { bytes, .. } = &mut record.kind {
                         *bytes = None;
+                    } else if let CaptureRecordKind::StreamMessage(message) = &mut record.kind
+                        && expected.body.is_some()
+                    {
+                        message.payload.clear();
+                        message.raw = None;
                     }
                     assert_eq!(record, expected.record);
                 }
@@ -361,11 +387,20 @@ fn exercise_file(bytes: &[u8], control: u8) {
         if let Ok(record) = random
             && let Some(body) = expected.body
         {
-            let CaptureRecordKind::BodySegment {
-                bytes: Some(bytes), ..
-            } = record.kind
-            else {
-                panic!("missing body")
+            let bytes = match record.kind {
+                CaptureRecordKind::BodySegment {
+                    bytes: Some(bytes), ..
+                } => bytes,
+                CaptureRecordKind::StreamMessage(message) => {
+                    let mut bytes = u32::try_from(message.payload.len())
+                        .unwrap()
+                        .to_le_bytes()
+                        .to_vec();
+                    bytes.extend_from_slice(&message.payload);
+                    bytes.extend_from_slice(message.raw.as_deref().unwrap_or_default().as_bytes());
+                    bytes
+                }
+                _ => panic!("missing body"),
             };
             assert_eq!(bytes.len(), body.bytes);
             assert_eq!(<[u8; 32]>::from(Sha256::digest(&bytes)), body.digest);
@@ -433,9 +468,16 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             };
             let encoded = packed(data[6], data[7], expanded, &encoded);
             let digest: [u8; 32] = Sha256::digest(body).into();
-            let stored = json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":1,"exchange_id":1,"kind":"body-segment",
+            let mut stored = json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":1,"exchange_id":1,"kind":"body-segment",
                 "payload":{"boundary":"client-response","byte_count":body.len(),"bytes":null,"truncated":false},
                 "body_index":{"frame_bytes":encoded.len(),"bytes":body.len(),"digest":digest}});
+            if control & 128 != 0 {
+                stored["kind"] = "stream-message".into();
+                stored["payload"] = serde_json::to_value(
+                    transmog_core::stream::StreamMessage::new("server", "event", Vec::new().into()),
+                )
+                .unwrap();
+            }
             record_file(stored, &encoded)
         }
         8 => {

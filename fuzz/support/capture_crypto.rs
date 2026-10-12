@@ -69,6 +69,10 @@ fn seed(compact: bool) -> &'static Seed {
             }),
         });
         writer.append(expected.last().unwrap()).unwrap();
+        for record in stream_records() {
+            writer.append(&record).unwrap();
+            expected.push(record);
+        }
         if !compact {
             writer.checkpoint().unwrap();
         }
@@ -88,12 +92,14 @@ fn seed(compact: bool) -> &'static Seed {
         while let Some(frame) = reader.read_next_indexed().unwrap() {
             if matches!(
                 frame.record.kind,
-                CaptureRecordKind::BodySegment { .. } | CaptureRecordKind::Performance(_)
+                CaptureRecordKind::BodySegment { .. }
+                    | CaptureRecordKind::Performance(_)
+                    | CaptureRecordKind::StreamMessage(_)
             ) {
                 frames.push(frame);
             }
         }
-        assert_eq!(frames.len(), 3);
+        assert_eq!(frames.len(), 5);
         assert!(
             frames[1].frame_bytes < 1024,
             "fixture must use a dictionary"
@@ -104,6 +110,23 @@ fn seed(compact: bool) -> &'static Seed {
             expected,
             start,
             block_plain,
+        }
+    })
+}
+fn stream_records() -> [CaptureRecord; 2] {
+    let id: std::sync::Arc<str> = "persistent SSE identity".repeat(128).into();
+    [3, 4].map(|sequence| {
+        let mut message = transmog_core::stream::StreamMessage::new(
+            "server",
+            "event",
+            b"encrypted stream payload".to_vec().into(),
+        );
+        message.event_id = Some(id.clone());
+        message.raw = Some("data: encrypted stream payload\n\n".into());
+        CaptureRecord {
+            sequence,
+            exchange_id: 1,
+            kind: CaptureRecordKind::StreamMessage(message),
         }
     })
 }
@@ -121,7 +144,9 @@ pub(crate) fn exercise(input: &[u8]) {
         return;
     }
     let seed = seed(input[0] & 8 != 0);
-    let selected = if input[0] & 4 != 0 {
+    let selected = if input[0] & 32 != 0 {
+        3 + usize::from(input[0] & 16 != 0)
+    } else if input[0] & 4 != 0 {
         2
     } else {
         usize::from(input[0] & 16 != 0)

@@ -102,15 +102,15 @@ fn reader_seeds_reach_their_documented_stage() {
 }
 
 #[test]
-fn crypto_seeds_exercise_all_body_and_context_oracles() {
+fn crypto_seeds_exercise_all_body_context_and_stream_oracles() {
     let inputs = seeds("capture_crypto");
-    let mut modes = [false; 32];
+    let mut modes = [false; 64];
     for input in inputs.values() {
         assert!(
             input.len() >= 4,
             "crypto seed cannot return before its oracle"
         );
-        modes[usize::from(input[0] & 31)] = true;
+        modes[usize::from(input[0] & 63)] = true;
         crypto_harness::exercise(input);
     }
     assert!(modes.into_iter().all(|seen| seen));

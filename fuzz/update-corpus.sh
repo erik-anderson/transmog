@@ -60,7 +60,7 @@ publish_target() {
         "$destination" "$(find "$destination" -maxdepth 1 -type f | wc -l)"
 }
 
-targets="${FUZZ_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames capture_reader capture_crypto}"
+targets="${FUZZ_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames sse_stream capture_reader capture_crypto}"
 selected_targets=()
 for target in $targets; do
     case "$target" in
@@ -78,6 +78,9 @@ for target in $targets; do
             ;;
         websocket_frames)
             evolve_target websocket_frames 8192
+            ;;
+        sse_stream)
+            evolve_target sse_stream 8192
             ;;
         capture_reader)
             evolve_target capture_reader 65537

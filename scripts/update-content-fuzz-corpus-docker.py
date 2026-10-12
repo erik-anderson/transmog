@@ -5,7 +5,7 @@ from repo_tools import command, main_guard
 
 
 def main():
-    targets = ('content_encoding', 'decode_stream', 'codec_roundtrip', 'content_pipeline', 'websocket_frames', 'capture_reader', 'capture_crypto')
+    targets = ('content_encoding', 'decode_stream', 'codec_roundtrip', 'content_pipeline', 'websocket_frames', 'sse_stream', 'capture_reader', 'capture_crypto')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=100000)
     parser.add_argument("--target", nargs="+", choices=targets, default=list(targets))
