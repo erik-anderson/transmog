@@ -101,7 +101,7 @@ pub use product_state::{
 pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
-    ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
+    LinkedResponseBody, ResponseBodyFileInfo, ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
@@ -867,6 +867,14 @@ impl Application {
         input: ImportResponseAsset,
     ) -> Result<ResponseAsset, AppError> {
         self.response_assets.import_file(input)
+    }
+
+    /// Checks a selected response file without reading its entire body.
+    ///
+    /// # Errors
+    /// Rejects missing, unreadable or oversized files.
+    pub fn response_body_file_info(&self,path:&std::path::Path,reference:Option<&str>)->Result<ResponseBodyFileInfo,AppError> {
+        self.response_assets.body_file_info(path,reference)
     }
 
     /// Copies a complete retained response boundary into durable asset storage.

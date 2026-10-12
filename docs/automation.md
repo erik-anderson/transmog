@@ -128,11 +128,16 @@ inferred from sample URLs.
 
 Saved response status, content type, ordered headers and text remain editable
 after the original Traffic entry disappears. Body replacement from a file also
-supports binary responses. Content-Length always reflects the final encoded
+supports binary responses. Serve response body from file copies files up to
+25 MB on save; larger files retain their absolute path and read current bytes for
+each request. File mode disables text editing and offers Clear file choice.
+Missing files retain their rule and path across restart, fail the matched request
+without falling through to the origin, and explain recovery beside the rule.
+Content-Length always reflects the final encoded
 body bytes. Compressed edits rebuild Content-Encoding from the applied stack;
 identity edits and replacement files remove it. Pasted framing and encoding
 fields cannot override these choices in the editor. Response edits create an
-immutable asset revision; earlier revisions and captured evidence remain
+immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor
 starts at twelve lines. The open Response section groups status, content type,
 ten-line editable headers and neutral original-response context; rule usage is

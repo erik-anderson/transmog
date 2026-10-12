@@ -8,7 +8,7 @@ import type { MatchEditor } from '../match-editor/match-editor.js';
 import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
+import type { ResponseBodyFileInfo, MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
 import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, editableCharacterEncoding, encodeEditedText, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
@@ -41,6 +41,10 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable matcherTestBusy=false;
   @observable matchExamples:MatchExample[]=[];
   @observable responseBodyFile='';
+  @observable responseBodyFileDetails='';
+  @observable responseBodyFileError='';
+  @observable fileChoiceBusy=false;
+  private bodyFileTouched=false;
   @observable existingResponse=false;
   @observable ruleUsageText='';
   @observable requestHeadersOpen=false;
@@ -153,7 +157,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   viewChanged(): void { if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();} }
   refreshUsageSoon():void {
     if(this.usageTimer!==undefined)return;
-    this.usageTimer=window.setTimeout(()=>{this.usageTimer=undefined;if(this.view==='automation')void invoke<AutomationStatus>('automation_status').then(status=>{if(this.isConnected)this.renderAutomation(status);}).catch(()=>undefined);},500);
+    this.usageTimer=window.setTimeout(()=>{this.usageTimer=undefined;if(this.view==='automation')void invoke<AutomationStatus>('automation_status').then(status=>{if(this.isConnected){this.renderAutomation(status);void this.refreshResponseFile();}}).catch(()=>undefined);},500);
   }
   private currentMatcher(data:FormData,existing?:AutomationRule):AutomationRule['matcher'] {
     const selectedMethod=String(data.get('method')??'GET');const method=(selectedMethod==='CUSTOM'?String(data.get('customMethod')??''):selectedMethod).toUpperCase();
@@ -342,12 +346,34 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   removeMatchExample(url:string,method?:string):void {this.draftDirty=true;this.matchExamples=this.matchExamples.filter(example=>example.url!==url || (method!==undefined && example.method!==method));void this.testMatcher();}
   async chooseResponseBody():Promise<void> {
-    if(this.savingAutoResponse)return;
+    if(this.savingAutoResponse || this.fileChoiceBusy)return;
     const revision=this.editorRevision;
-    const path=await invoke<string|null>('pick_response_body');
-    if(path && revision===this.editorRevision){this.draftDirty=true;this.responseBodyPath=path;this.responseBodyFile=path.split(/[\\/]/).pop()??'Selected file';}
+    this.fileChoiceBusy=true;
+    try {
+      const path=await invoke<string|null>('pick_response_body');
+      if(!path || revision!==this.editorRevision || !this.isConnected)return;
+      const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:null});
+      if(revision!==this.editorRevision || !this.isConnected)return;
+      this.draftDirty=true;this.bodyFileTouched=true;this.setResponseFile(info);
+    }catch(error:unknown){if(revision===this.editorRevision)this.autoResponseError=describeError(error);}
+    finally{if(revision===this.editorRevision)this.fileChoiceBusy=false;}
   }
-  clearResponseBodyFile():void {this.draftDirty=true;this.responseBodyPath=null;this.responseBodyFile='';}
+  private setResponseFile(info:ResponseBodyFileInfo):void {
+    this.responseBodyPath=info.path;this.responseBodyFile=info.path;
+    this.responseBodyFileDetails=info.linked?'Read directly for each request. External edits affect future responses.':'Contents will be copied when you save (up to 25 MB). External edits will not affect the saved response.';
+    this.responseBodyFileError=info.error??'';
+  }
+  private async refreshResponseFile():Promise<void> {
+    const path=this.responseBodyPath,revision=this.editorRevision;if(!path)return;
+    try {
+      const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:this.bodyFileTouched?null:this.savedResponse?.asset.linkedBody?`${this.savedResponse.asset.id}@${this.savedResponse.asset.revision}`:null});
+      if(revision===this.editorRevision && path===this.responseBodyPath)this.responseBodyFileError=info.error??'';
+    }catch(error:unknown){if(revision===this.editorRevision && path===this.responseBodyPath)this.responseBodyFileError=describeError(error);}
+  }
+  clearResponseBodyFile():void {
+    this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
+    if(this.savedResponse?.asset.linkedBody){this.bodyReadOnly=false;this.bodyStatusText='Enter a replacement text body, or choose another file. Text uses UTF-8.';}
+  }
   private editableHeaders(asset:Pick<ResponseAsset,'headers'>):string {
     this.protectedResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
     for(const field of asset.headers??[]) {
@@ -366,6 +392,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.draftDirty=false;this.batchReviewHidden=true;this.retainAdvancedMatcher=true;this.advancedMatcherText='';this.ruleDiagnosticText='';this.ruleSupersededBy='';this.customMethodHidden=true;
     this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
+    this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;
     this.savedHeaderText='';this.protectedResponseHeaders=[];
     this.capturedDraft=null;
     this.capturedOrigin=null;
@@ -446,7 +473,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       return { ...rule, enabled, order: index + 1, name: rule.displayName ?? 'Auto-response',
         criteria: `${rule.matcher.method ?? 'ANY'} ${rule.matcher.url?.kind==='exact'?rule.matcher.url.value:rule.matcher.url?.kind==='pattern'?rule.matcher.url.value.address:rule.matcher.url?.kind==='regex'?rule.matcher.url.value.pattern:'any URL'}${headers === 0 ? '' : ` · ${headers} header condition${headers === 1 ? '' : 's'}`} · saved response`,
         state: enabled ? status.autoresponsesEnabled===false?'Paused':'Enabled' : 'Disabled', toggleLabel: enabled ? 'Disable' : 'Enable', first: index === 0, last: index === rules.length - 1,
-        selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1',shadowedName:earlier?.displayName??earlier?.id??'',shadowedBy:diagnostic?.supersededBy??'',diagnostic:diagnostic?diagnostic.duplicateResponse?'Duplicate':'Shadowed':'',responseText:asset?`${asset.status} · ${formatBytes(asset.bodyBytes)}`:'Saved response'};
+        selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1',shadowedName:earlier?.displayName??earlier?.id??'',shadowedBy:diagnostic?.supersededBy??'',diagnostic:diagnostic?diagnostic.duplicateResponse?'Duplicate':'Shadowed':'',responseText:asset?.linkedBody?`${asset.status} · File`:asset?`${asset.status} · ${formatBytes(asset.bodyBytes)}`:'Saved response'};
     });
     this.renderRuleSelection();const selected=this.rules.find(rule=>rule.id===this.editingAutoResponseId);
     this.ruleSupersededBy=selected?.shadowedBy??'';this.ruleDiagnosticText=selected?.shadowedBy?`${selected.enabled===false?'If enabled, this':'This'} rule is always superseded by “${selected.shadowedName}”, which has equivalent matching conditions${selected.diagnostic==='Duplicate'?' and the same response':''}.`:'';
@@ -682,14 +709,14 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   async saveAutoResponse(event: Event): Promise<void> {
     event.preventDefault();
-    if (this.savingAutoResponse || this.changingAutoResponse) return;
+    if (this.savingAutoResponse || this.changingAutoResponse || this.fileChoiceBusy) return;
     if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return;}
     if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return;}
     const data = new FormData(this.autoResponseForm);
     const source = this.autoResponseSourceState;
     if (source === null) return;
     const editingId = this.editingAutoResponseId;
-    const replaceBody = this.autoResponseEditBody.checked;
+    const replaceBody = this.autoResponseEditBody.checked && !this.responseBodyPath;
     const preserveEncoding = this.autoResponsePreserveEncoding.checked;
     this.savingAutoResponse = true;
     this.autoResponseError = ''; this.requestHeadersError = ''; this.responseHeadersError = '';
@@ -712,9 +739,9 @@ export class AutomationWorkspace extends WorkspaceElement {
         assetReference = source.assetReference;
         const saved=this.savedResponse;
         if(!saved)throw new Error('Wait for the saved response to load before saving.');
-        const bodyChanged=this.autoResponseBody.value!==saved.display || (!preserveEncoding && saved.contentCodings.length>0 && saved.textEncoding!==null);
-        if(bodyChanged || this.responseBodyPath || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
-          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?encodeEditedText(this.autoResponseBody.value,saved.textEncoding):null,bodyPath:this.responseBodyPath,preserveContentEncoding:preserveEncoding}});
+        const bodyChanged=this.autoResponseBody.value!==saved.display || (this.bodyFileTouched && !this.responseBodyPath) || (!preserveEncoding && saved.contentCodings.length>0 && saved.textEncoding!==null);
+        if(bodyChanged || this.bodyFileTouched || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
+          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?encodeEditedText(this.autoResponseBody.value,saved.textEncoding??(saved.asset.linkedBody?'utf-8':null)):null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,preserveContentEncoding:preserveEncoding}});
           assetReference=`${asset.id}@${asset.revision}`;
         }
       } else {
@@ -728,6 +755,7 @@ export class AutomationWorkspace extends WorkspaceElement {
                 exchangeId: source.sessionId,
                 boundary: source.boundary,
                 decodedBody: editedBody,
+                bodyPath: this.responseBodyPath,
                 preserveContentEncoding: preserveEncoding,
               },
             })
@@ -741,8 +769,8 @@ export class AutomationWorkspace extends WorkspaceElement {
                 mediaType: optionalText(data.get('mediaType')),
               },
             });
-        if(source.kind==='captured' && (this.responseBodyPath || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==asset.status || String(data.get('mediaType')??'')!==(asset.mediaType??''))) {
-          asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference:`${asset.id}@${asset.revision}`,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:null,bodyPath:this.responseBodyPath,preserveContentEncoding:preserveEncoding}});
+        if(source.kind==='captured' && (String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==asset.status || String(data.get('mediaType')??'')!==(asset.mediaType??''))) {
+          asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference:`${asset.id}@${asset.revision}`,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:null,bodyPath:null,preserveContentEncoding:preserveEncoding}});
         }
         assetReference = `${asset.id}@${asset.revision}`;
       }
@@ -880,6 +908,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.autoResponseMediaType.value = asset.mediaType ?? '';
       this.responseReadOnly=false;this.responseHeadersHidden=false;this.bodyHidden=false;
       this.autoResponseBody.value=inspection.display;this.bodyReadOnly=inspection.textEncoding===null;
+      if(asset.linkedBody){this.setResponseFile({path:asset.linkedBody.path,bytes:asset.bodyBytes,linked:true,error:null});void this.refreshResponseFile();}
       this.bodyStatusText=inspection.explanation;this.savedHeaderText=this.editableHeaders(asset);
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
       this.encodingOptionsHidden=inspection.contentCodings.length===0;this.preserveEncodingDisabled=inspection.textEncoding===null;

@@ -718,10 +718,15 @@ async fn create_autoresponse_batch(
 #[tauri::command]
 async fn pick_response_body() -> Option<String> {
     rfd::AsyncFileDialog::new()
-        .set_title("Choose replacement response body")
+        .set_title("Serve response body from file")
         .pick_file()
         .await
         .map(|file| file.path().to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn response_body_file_info(path:String,reference:Option<String>,state:State<'_,DesktopState>)->Result<transmog_app::ResponseBodyFileInfo,AppError> {
+    state.application.response_body_file_info(std::path::Path::new(&path),reference.as_deref())
 }
 
 #[tauri::command]
@@ -2050,6 +2055,7 @@ pub fn run() {
                 edit_response_asset,
                 create_autoresponse_batch,
                 pick_response_body,
+                response_body_file_info,
                 crate::file_dialogs::pick_capture_path,
                 crate::file_dialogs::pick_support_path,
                 create_response_asset,

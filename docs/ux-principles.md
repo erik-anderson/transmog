@@ -92,6 +92,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   those states differ. Saving must not silently activate a feature. A global
   auto-response pause changes hook participation while preserving each rule's
   enabled state.
+- File response sources explain whether bytes are copied on save (up to 25 MB)
+  or read directly per request. Keep linked paths visible, preserve missing-file
+  configurations, and retain text drafts when clearing a pending file choice.
 - Reject stale asynchronous results. A late preview, validation, or response
   must not overwrite newer edits, restore old selection, or switch the user
   away from work in progress. Prevent duplicate submissions while an action

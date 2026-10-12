@@ -374,7 +374,9 @@ pub enum AutomationResponse {
 
 /// Product-owned response asset resolver used by native automation.
 pub trait ResponseAssetResolver: Send + Sync {
-    /// Validates that an exact immutable asset revision is complete and servable.
+    /// Validates a saved response revision or linked-file configuration.
+    /// Linked-file availability is checked when resolving each request so an
+    /// unavailable external file does not erase rules during application startup.
     ///
     /// # Errors
     /// Returns a bounded reason when the reference cannot be activated.

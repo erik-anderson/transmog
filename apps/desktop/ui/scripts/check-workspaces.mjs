@@ -339,15 +339,18 @@ await page.addInitScript((workspace) => {
         case 'inspect_response_asset': {
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
           if(!asset)throw new Error('Saved response missing');
-          return {asset:structuredClone(asset),display:asset.display??'saved body',textEncoding:'utf-8',contentCodings:[],explanation:'Edits create a new saved response revision.'};
+          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:'utf-8',contentCodings:asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
         }
         case 'edit_response_asset': {
           const source=state.assets.find(asset=>asset.id+'@'+asset.revision===args.input.assetReference);
           const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
           const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder().decode(new Uint8Array(args.input.decodedBody)):source.display};
+          if(args.input.bodyPath){asset.linkedBody=(state.bodyFileBytes??100)>25000000?{path:args.input.bodyPath,originalContentCodings:[]}:null;asset.display=asset.linkedBody?'':'file body';asset.bodyBytes=state.bodyFileBytes??100;}
+          else if(args.input.decodedBody!==null){asset.linkedBody=null;}
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
+        case 'response_body_file_info': if(state.bodyFileError)throw new Error('Response file is missing or unreadable. Restore access or choose another file.');return {path:args.path,bytes:state.bodyFileBytes??100,linked:(state.bodyFileBytes??100)>25000000,error:null};
         case 'clear_traffic': {const ids=state.sessions.map(row=>row.id);state.dismissedIds=[...ids];return {ids,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};}
         case 'remove_traffic_entries': {
           const dismissed=new Set(state.dismissedIds??[]);const changed=[];
@@ -1133,6 +1136,30 @@ try {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid+1);
   assert.deepEqual(await page.evaluate(()=>{const asset=globalThis.__workspaceFixture.assets.find(asset=>asset.id+'@'+asset.revision===globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Authored response').request.responseAsset);return asset.headers.map(header=>new TextDecoder().decode(new Uint8Array(header.name)));}),['X-Fixture']);
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
+
+  const originalFileDraft=await autoField('body').inputValue();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFile='C:/fixtures/small.txt';globalThis.__workspaceFixture.bodyFileBytes=25000000;});
+  await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  assert.equal(await autoField('body').isDisabled(),true);
+  await autoEditor.getByText(/Contents will be copied when you save/).waitFor();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-file.png')});
+  await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  assert.equal(await autoField('body').inputValue(),originalFileDraft,'Clearing a pending file lost the inline draft');
+  assert.equal(await autoField('body').isEnabled(),true);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFile='C:/fixtures/current-response.bin';globalThis.__workspaceFixture.bodyFileBytes=25000001;});
+  await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  await autoEditor.getByText(/Read directly for each request/).waitFor();
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.equal(await autoField('body').isDisabled(),true,'Saving a linked rule lost file mode');
+  await autoEditor.getByText('C:/fixtures/current-response.bin',{exact:true}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFileError=true;document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').refreshUsageSoon();});
+  await autoEditor.getByText(/Response file is missing or unreadable/).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFileError=false;document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').refreshUsageSoon();});
+  await autoEditor.getByText(/Response file is missing or unreadable/).waitFor({state:'hidden'});
+  await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  await autoField('body').fill(originalFileDraft);
+  await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
+  assert.equal(await autoField('body').isEnabled(),true);
   const authoredRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
   const authoredRule=page.locator('#rule-'+authoredRuleId);
   await authoredRule.click();await page.locator('.rule-selection-toolbar').getByRole('button',{name:'More',exact:true}).click();await page.getByRole('button',{name:'Move later',exact:true}).click();

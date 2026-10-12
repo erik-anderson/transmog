@@ -6,6 +6,7 @@ import { smokeAbout } from './smoke-about.mjs';
 import { smokeLoopback } from './smoke-loopback.mjs';
 import { smokeUserAgent } from './smoke-user-agent.mjs';
 import { smokeStreams } from './smoke-streams.mjs';
+import { smokeAutoResponseFiles } from './smoke-autoresponses.mjs';
 
 const portArgument = process.argv.findIndex((value) => value === '--port');
 const port = portArgument >= 0 ? process.argv[portArgument + 1] : '9333';
@@ -682,6 +683,7 @@ try {
   }
   result.networkSettings=await smokeNetworkSettings(call,evaluate,screenshotPath);
   result.about=await smokeAbout(call,evaluate,screenshotPath);
+  result.autoResponseFiles=await smokeAutoResponseFiles(call,evaluate,screenshotPath);
   result.loopback=await smokeLoopback(call,evaluate,screenshotPath);
   result.userAgent=await smokeUserAgent(call,evaluate,screenshotPath);
   result.streams=await smokeStreams(call,evaluate,screenshotPath);

@@ -142,6 +142,7 @@ impl Application {
                     exchange_id: source,
                     boundary: "client-response".into(),
                     decoded_body: None,
+                    body_path: None,
                     preserve_content_encoding: true,
                 })
                 .await?;

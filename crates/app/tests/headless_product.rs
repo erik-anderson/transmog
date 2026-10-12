@@ -195,6 +195,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
             exchange_id: changed_detail.id.clone(),
             boundary: "client-response".to_owned(),
             decoded_body: None,
+            body_path: None,
             preserve_content_encoding: true,
         })
         .await

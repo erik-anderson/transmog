@@ -265,7 +265,9 @@ export interface ResponseAsset {
   id: string; revision: number; status: number; bodyBytes: number; sha256: string; mediaType: string | null;
   provenance: {kind: 'authored' | 'imported'} | {kind: 'session'; exchange_id: string; boundary: string};
   headers:Array<{name:number[];value:number[]}>;
+  linkedBody?:{path:string;originalContentCodings:string[]}|null;
 }
+export interface ResponseBodyFileInfo {path:string;bytes:number;linked:boolean;error:string|null;}
 export interface ResponseAssetInspection {asset:ResponseAsset;display:string;textEncoding:string|null;contentCodings:string[];explanation:string;}
 export interface CapturedAutoResponseSource {
   kind: 'captured';

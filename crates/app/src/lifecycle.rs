@@ -890,6 +890,7 @@ mod tests {
             exchange_id: source_id.clone(),
             boundary: "client-response".to_owned(),
             decoded_body: None,
+            body_path: None,
             preserve_content_encoding: true,
         };
         let batch = application

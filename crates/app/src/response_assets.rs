@@ -26,9 +26,35 @@ const MAX_ASSET_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_AUTHORED_BYTES: usize = 16 * 1024 * 1024;
 const BUFFERED_RESPONSE_BYTES: u64 = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
+const COPY_FILE_BYTES: u64 = 25_000_000;
 
 /// Complete ordered response headers for local auto-response authoring.
 pub type ResponseAssetHeaders = HeaderBlock;
+
+/// A response which reads the current external file for every request.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinkedResponseBody {
+    /// Absolute external path, retained even when the file is unavailable.
+    pub path: PathBuf,
+    /// Compression stack from the response used as the replacement's source.
+    #[serde(default)]
+    pub original_content_codings: Vec<String>,
+}
+
+/// Readable selected file and the save behavior chosen by its unencoded size.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseBodyFileInfo {
+    /// Absolute selected path.
+    pub path: PathBuf,
+    /// Current byte length before compression.
+    pub bytes: u64,
+    /// Files over 25 MB are read directly instead of copied on save.
+    pub linked: bool,
+    /// Last serving failure, retained until a subsequent response succeeds.
+    pub error: Option<String>,
+}
 
 /// Origin of a complete reusable response asset.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -59,14 +85,17 @@ pub struct ResponseAsset {
     pub status: u16,
     /// Ordered headers after hop-by-hop and stale entity metadata repair.
     pub headers: HeaderBlock,
-    /// Exact body byte length.
+    /// Exact stored length, or the external file size when the link was saved.
     pub body_bytes: u64,
-    /// SHA-256 of the exact stored body.
+    /// SHA-256 of stored bytes; empty for a live external file.
     pub sha256: String,
     /// Declared media type when available.
     pub media_type: Option<String>,
     /// Creation provenance.
     pub provenance: ResponseAssetProvenance,
+    /// External body configuration; absent for durable copied bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_body: Option<LinkedResponseBody>,
 }
 
 impl ResponseAsset {
@@ -127,6 +156,9 @@ pub struct SessionResponseAsset {
     /// Optional decoded replacement body edited by the user.
     #[serde(default)]
     pub decoded_body: Option<Vec<u8>>,
+    /// Optional selected decoded file body, replacing the retained source bytes.
+    #[serde(default)]
+    pub body_path: Option<PathBuf>,
     /// Reapply the source response's content-coding stack after an edit.
     #[serde(default = "default_true")]
     pub preserve_content_encoding: bool,
@@ -189,6 +221,7 @@ pub struct ResponseAssetStore {
     root: Option<Arc<PathBuf>>,
     assets: Arc<RwLock<BTreeMap<String, ResponseAsset>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
+    file_errors: Arc<Mutex<BTreeMap<String, String>>>,
 }
 
 impl ResponseAssetStore {
@@ -205,6 +238,7 @@ impl ResponseAssetStore {
             root: root.map(Arc::new),
             assets: Arc::new(RwLock::new(assets)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(generation)),
+            file_errors: Arc::new(Mutex::new(BTreeMap::new())),
         })
     }
 
@@ -252,6 +286,13 @@ impl ResponseAssetStore {
         let asset = self.get(reference)?;
         let content_codings = asset_codings(&asset.headers);
         let mut result=ResponseAssetInspection {asset:asset.clone(),display:String::new(),text_encoding:None,content_codings:content_codings.clone(),explanation:"Binary or unsupported text. Headers and status remain editable; replace the body from a file if needed.".into()};
+        if let Some(linked) = &asset.linked_body {
+            result
+                .content_codings
+                .clone_from(&linked.original_content_codings);
+            result.explanation="Response body is read directly from the linked file. Clear the file choice to author text, or choose another file.".into();
+            return Ok(result);
+        }
         if asset.body_bytes > MAX_AUTHORED_BYTES as u64 {
             result.explanation =
                 "Body exceeds the 16 MiB text editor limit. Status and headers remain editable."
@@ -300,25 +341,20 @@ impl ResponseAssetStore {
 
     pub(crate) async fn edit(&self, input: ResponseAssetEdit) -> Result<ResponseAsset, AppError> {
         let source = self.get(&input.asset_reference)?;
-        let codings = asset_codings(&source.headers);
+        let codings = source.linked_body.as_ref().map_or_else(
+            || asset_codings(&source.headers),
+            |linked| linked.original_content_codings.clone(),
+        );
         let mut headers = input.headers;
         headers.remove_all("content-encoding");
         if input.body_path.is_some() && input.decoded_body.is_some() {
             return Err(invalid("Choose either a replacement file or edited text."));
         }
-        let replacement_file = if let Some(path) = &input.body_path {
-            let file =
-                File::open(path).map_err(|_| invalid("Replacement body file is unavailable."))?;
-            if !file
-                .metadata()
-                .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_ASSET_BYTES)
-            {
-                return Err(invalid("Replacement file exceeds one GiB."));
-            }
-            Some(file)
-        } else {
-            None
-        };
+        let replacement_file = input
+            .body_path
+            .as_deref()
+            .map(open_selected_file)
+            .transpose()?;
         let encoded = if let Some(decoded) = input.decoded_body {
             if decoded.len() > MAX_AUTHORED_BYTES {
                 return Err(invalid("Edited body exceeds 16 MiB."));
@@ -352,15 +388,26 @@ impl ResponseAssetStore {
             .unwrap_or(source.revision)
             .checked_add(1)
             .ok_or_else(|| invalid("Saved response revision is exhausted."))?;
-        if let Some(file) = replacement_file {
-            return self.create_from_reader(
+        if let Some((file, info)) = replacement_file {
+            let mut replacement = source.clone();
+            replacement.revision = revision;
+            replacement.status = input.status;
+            replacement.headers = headers;
+            replacement.media_type = input.media_type;
+            return self.create_file_revision(replacement, file, info, codings);
+        }
+        if encoded.is_none()
+            && let Some(linked) = source.linked_body.clone()
+        {
+            return self.create_linked(
                 source.id,
                 revision,
                 input.status,
                 &headers,
                 input.media_type,
                 source.provenance,
-                file,
+                linked,
+                source.body_bytes,
             );
         }
         if let Some(body) = encoded {
@@ -385,6 +432,39 @@ impl ResponseAssetStore {
                 reader,
             )
         }
+    }
+
+    fn create_file_revision(
+        &self,
+        asset: ResponseAsset,
+        file: File,
+        info: ResponseBodyFileInfo,
+        codings: Vec<String>,
+    ) -> Result<ResponseAsset, AppError> {
+        if info.linked {
+            return self.create_linked(
+                asset.id,
+                asset.revision,
+                asset.status,
+                &asset.headers,
+                asset.media_type,
+                asset.provenance,
+                LinkedResponseBody {
+                    path: info.path,
+                    original_content_codings: codings,
+                },
+                info.bytes,
+            );
+        }
+        self.create_from_reader(
+            asset.id,
+            asset.revision,
+            asset.status,
+            &asset.headers,
+            asset.media_type,
+            asset.provenance,
+            ExactFileReader::new(file, info.bytes),
+        )
     }
 
     pub(crate) fn discard_created(&self, references: &[String]) -> Result<(), AppError> {
@@ -449,26 +529,53 @@ impl ResponseAssetStore {
     /// # Errors
     /// Returns validation, collision, file, quota, or persistence failures.
     pub fn import_file(&self, input: ImportResponseAsset) -> Result<ResponseAsset, AppError> {
-        let metadata = std::fs::metadata(&input.body_path)
-            .map_err(|_| invalid("response asset import file is unavailable"))?;
-        if !metadata.is_file() || metadata.len() > MAX_ASSET_BYTES {
-            return Err(AppError::new(
-                ErrorCategory::Limit,
-                "response asset import exceeds the one GiB limit",
-                false,
-            ));
+        let (file, info) = open_selected_file(&input.body_path)?;
+        let mut headers = input.headers;
+        headers.remove_all("content-encoding");
+        if info.linked {
+            return self.create_linked(
+                input.id,
+                input.revision,
+                input.status,
+                &headers,
+                input.media_type,
+                ResponseAssetProvenance::Imported,
+                LinkedResponseBody {
+                    path: info.path,
+                    original_content_codings: Vec::new(),
+                },
+                info.bytes,
+            );
         }
-        let file = File::open(&input.body_path)
-            .map_err(|_| invalid("response asset import file is unreadable"))?;
         self.create_from_reader(
             input.id,
             input.revision,
             input.status,
-            &input.headers,
+            &headers,
             input.media_type,
             ResponseAssetProvenance::Imported,
-            file,
+            ExactFileReader::new(file, info.bytes),
         )
+    }
+
+    /// Reads selected-file availability without loading its body into memory.
+    ///
+    /// # Errors
+    /// Rejects missing, unreadable, non-regular or oversized files.
+    pub fn body_file_info(
+        &self,
+        path: &Path,
+        reference: Option<&str>,
+    ) -> Result<ResponseBodyFileInfo, AppError> {
+        let (_, mut info) = open_selected_file(path)?;
+        info.error = reference.and_then(|key| {
+            self.file_errors
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(key)
+                .cloned()
+        });
+        Ok(info)
     }
 
     /// Copies one exact complete retained body under an eviction lease.
@@ -506,6 +613,38 @@ impl ResponseAssetStore {
             exchange_id: input.exchange_id,
             boundary: input.boundary,
         };
+        if let Some(path) = input.body_path {
+            if encoded_body_override.is_some() {
+                return Err(invalid("Choose a replacement file or edited text."));
+            }
+            let (file, info) = open_selected_file(&path)?;
+            let mut headers = headers.clone();
+            headers.remove_all("content-encoding");
+            if info.linked {
+                return self.create_linked(
+                    input.id,
+                    input.revision,
+                    status,
+                    &headers,
+                    media_type,
+                    provenance,
+                    LinkedResponseBody {
+                        path: info.path,
+                        original_content_codings: metadata.content_codings,
+                    },
+                    info.bytes,
+                );
+            }
+            return self.create_from_reader(
+                input.id,
+                input.revision,
+                status,
+                &headers,
+                media_type,
+                provenance,
+                ExactFileReader::new(file, info.bytes),
+            );
+        }
         match encoded_body_override {
             Some(body) => self.create_from_reader(
                 input.id,
@@ -598,13 +737,77 @@ impl ResponseAssetStore {
             sha256,
             media_type,
             provenance,
+            linked_body: None,
         };
+        self.persist_asset(asset)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_linked(
+        &self,
+        id: String,
+        revision: u64,
+        status: u16,
+        headers: &HeaderBlock,
+        media_type: Option<String>,
+        provenance: ResponseAssetProvenance,
+        linked: LinkedResponseBody,
+        bytes: u64,
+    ) -> Result<ResponseAsset, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        validate_identity(&id, revision)?;
+        if !(200..=599).contains(&status)
+            || headers.iter().count() > 256
+            || headers
+                .iter()
+                .map(|f| f.name().len() + f.value().len())
+                .sum::<usize>()
+                > 64 * 1024
+        {
+            return Err(invalid(
+                "Response status or headers exceed the editor limits.",
+            ));
+        }
+        if !linked.path.is_absolute() {
+            return Err(invalid("Linked response file needs an absolute path."));
+        }
+        if self
+            .assets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&format!("{id}@{revision}"))
+        {
+            return Err(invalid("Saved response revision already exists."));
+        }
+        let mut headers = repair_headers(headers, bytes, media_type.as_deref())?;
+        headers.remove_all("content-encoding");
+        self.persist_asset(ResponseAsset {
+            id,
+            revision,
+            status,
+            headers,
+            body_bytes: bytes,
+            sha256: String::new(),
+            media_type,
+            provenance,
+            linked_body: Some(linked),
+        })
+    }
+
+    fn persist_asset(&self, asset: ResponseAsset) -> Result<ResponseAsset, AppError> {
+        let root = self
+            .root
+            .as_deref()
+            .ok_or_else(|| unavailable("Saved response storage is unavailable."))?;
         let mut next = self
             .assets
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        next.insert(key, asset.clone());
+        next.insert(asset.asset_ref(), asset.clone());
         let generation = self
             .generation
             .load(std::sync::atomic::Ordering::Acquire)
@@ -657,6 +860,9 @@ impl ResponseAssetResolver for ResponseAssetStore {
             .get(asset_id)
             .cloned()
             .ok_or_else(|| "response asset revision is unavailable".to_owned())?;
+        if asset.linked_body.is_some() {
+            return Ok(());
+        }
         let root = self
             .root
             .as_deref()
@@ -678,6 +884,16 @@ impl ResponseAssetResolver for ResponseAssetStore {
             .get(asset_id)
             .cloned()
             .ok_or_else(|| "response asset revision is unavailable".to_owned())?;
+        if let Some(linked) = &asset.linked_body {
+            let result = self.resolve_linked(&asset, linked);
+            if let Err(message) = &result {
+                self.file_errors
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(asset.asset_ref(), message.clone());
+            }
+            return result;
+        }
         let root = self
             .root
             .as_deref()
@@ -722,6 +938,112 @@ impl ResponseAssetResolver for ResponseAssetStore {
     }
 }
 
+impl ResponseAssetStore {
+    fn resolve_linked(
+        &self,
+        asset: &ResponseAsset,
+        linked: &LinkedResponseBody,
+    ) -> Result<AutomationResponse, String> {
+        let (file, info) = open_selected_file(&linked.path).map_err(|error| error.message)?;
+        let expected = info.bytes;
+        let mut headers = repair_headers(&asset.headers, expected, asset.media_type.as_deref())
+            .map_err(|error| error.message)?;
+        headers.remove_all("content-encoding");
+        let head = ResponseHead {
+            status: asset.status,
+            headers,
+            source_version: HttpLegVersion::Http1,
+        };
+        let (sender, body) =
+            BodyStream::channel(NonZeroUsize::new(8).expect("file stream capacity is nonzero"));
+        let errors = self.file_errors.clone();
+        let reference = asset.asset_ref();
+        std::thread::Builder::new()
+            .name("transmog-linked-response".into())
+            .spawn(move || {
+                let result = stream_file_handle(file, expected, &sender);
+                if let Err(error) = result {
+                    let message = error.to_string();
+                    if !message.contains("consumer closed") {
+                        errors
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .insert(reference, message);
+                    }
+                    let _ = sender.blocking_send(Err(error));
+                } else {
+                    errors
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&reference);
+                }
+            })
+            .map_err(|_| "Response file stream could not start. Try again.".to_owned())?;
+        Ok(AutomationResponse::Streaming(LocalStreamingResponse {
+            head,
+            body,
+            body_length: Some(expected),
+        }))
+    }
+}
+
+fn open_selected_file(path: &Path) -> Result<(File, ResponseBodyFileInfo), AppError> {
+    let file = File::open(path).map_err(|_| {
+        unavailable(
+            "Response file is missing or unreadable. Restore access or choose another file.",
+        )
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| unavailable("Response file metadata could not be read."))?;
+    if !metadata.is_file() || metadata.len() > MAX_ASSET_BYTES {
+        return Err(invalid(
+            "Choose a regular response file no larger than one GiB.",
+        ));
+    }
+    let path = std::path::absolute(path).map_err(|_| invalid("Response file path is invalid."))?;
+    Ok((
+        file,
+        ResponseBodyFileInfo {
+            path,
+            bytes: metadata.len(),
+            linked: metadata.len() > COPY_FILE_BYTES,
+            error: None,
+        },
+    ))
+}
+
+struct ExactFileReader {
+    file: File,
+    expected: u64,
+    read: u64,
+}
+impl ExactFileReader {
+    fn new(file: File, expected: u64) -> Self {
+        Self {
+            file,
+            expected,
+            read: 0,
+        }
+    }
+}
+impl Read for ExactFileReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let read = self.file.read(buffer)?;
+        self.read += read as u64;
+        if self.read > self.expected || (read == 0 && self.read != self.expected) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Response file changed while being copied.",
+            ));
+        }
+        Ok(read)
+    }
+}
+
 impl ScriptResponseAssetResolver for ResponseAssetStore {
     fn validate(&self, asset_ref: &str) -> Result<(), String> {
         ResponseAssetResolver::validate(self, asset_ref)
@@ -740,40 +1062,46 @@ impl ScriptResponseAssetResolver for ResponseAssetStore {
 }
 
 fn stream_file(path: PathBuf, expected: u64, sender: &transmog_core::BodyStreamSender) {
-    let result = (|| -> Result<(), BodyStreamError> {
-        let mut file = File::open(path)
-            .map_err(|_| BodyStreamError::Failed("response asset body open failed".to_owned()))?;
-        let mut total = 0_u64;
-        let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
-        loop {
-            let read = file.read(&mut buffer).map_err(|_| {
-                BodyStreamError::Failed("response asset body read failed".to_owned())
-            })?;
-            if read == 0 {
-                break;
-            }
-            total = total.checked_add(read as u64).ok_or_else(|| {
-                BodyStreamError::Failed("response asset length overflow".to_owned())
-            })?;
-            if total > expected {
-                return Err(BodyStreamError::Failed(
-                    "response asset body grew while streaming".to_owned(),
-                ));
-            }
-            sender
-                .blocking_send(Ok(BodyFrame::Data(Bytes::copy_from_slice(&buffer[..read]))))
-                .map_err(|_| BodyStreamError::Failed("response consumer closed".to_owned()))?;
-        }
-        if total != expected {
-            return Err(BodyStreamError::Failed(
-                "response asset body changed while streaming".to_owned(),
-            ));
-        }
-        Ok(())
-    })();
+    let result = File::open(path)
+        .map_err(|_| BodyStreamError::Failed("response asset body open failed".to_owned()))
+        .and_then(|file| stream_file_handle(file, expected, sender));
     if let Err(error) = result {
         let _ = sender.blocking_send(Err(error));
     }
+}
+
+fn stream_file_handle(
+    mut file: File,
+    expected: u64,
+    sender: &transmog_core::BodyStreamSender,
+) -> Result<(), BodyStreamError> {
+    let mut total = 0_u64;
+    let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| BodyStreamError::Failed("response asset body read failed".to_owned()))?;
+        if read == 0 {
+            break;
+        }
+        total = total
+            .checked_add(read as u64)
+            .ok_or_else(|| BodyStreamError::Failed("response asset length overflow".to_owned()))?;
+        if total > expected {
+            return Err(BodyStreamError::Failed(
+                "response asset body grew while streaming".to_owned(),
+            ));
+        }
+        sender
+            .blocking_send(Ok(BodyFrame::Data(Bytes::copy_from_slice(&buffer[..read]))))
+            .map_err(|_| BodyStreamError::Failed("response consumer closed".to_owned()))?;
+    }
+    if total != expected {
+        return Err(BodyStreamError::Failed(
+            "response asset body changed while streaming".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_identity(id: &str, revision: u64) -> Result<(), AppError> {
@@ -960,8 +1288,12 @@ fn load_index(root: &Path) -> Result<(u64, BTreeMap<String, ResponseAsset>), App
     let mut assets = BTreeMap::new();
     for asset in document.assets {
         validate_identity(&asset.id, asset.revision)?;
-        if std::fs::metadata(body_path(root, &asset.sha256))
-            .is_ok_and(|metadata| metadata.is_file() && metadata.len() == asset.body_bytes)
+        if asset
+            .linked_body
+            .as_ref()
+            .is_some_and(|linked| linked.path.is_absolute())
+            || std::fs::metadata(body_path(root, &asset.sha256))
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() == asset.body_bytes)
         {
             assets.insert(asset.asset_ref(), asset);
         }
@@ -1025,6 +1357,72 @@ mod tests {
     use crate::{BodyStoreConfig, RetentionMode};
 
     use super::*;
+
+    #[tokio::test]
+    async fn file_cutoff_copies_small_files_and_keeps_large_links_across_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        for (id, size) in [("copied", COPY_FILE_BYTES), ("linked", COPY_FILE_BYTES + 1)] {
+            let path = root.path().join(format!("{id}.input"));
+            File::create(&path).unwrap().set_len(size).unwrap();
+            let asset = store
+                .import_file(ImportResponseAsset {
+                    id: id.into(),
+                    revision: 1,
+                    status: 200,
+                    headers: HeaderBlock::new(),
+                    body_path: path.clone(),
+                    media_type: Some("application/octet-stream".into()),
+                })
+                .unwrap();
+            assert_eq!(asset.linked_body.is_some(), size > COPY_FILE_BYTES);
+            std::fs::write(&path, b"external edit").unwrap();
+            let (headers, body) = returned_body(&store, &asset).await;
+            if asset.linked_body.is_some() {
+                assert_eq!(body, b"external edit");
+                assert_eq!(headers.values("content-length").next(), Some(&b"13"[..]));
+                std::fs::remove_file(&path).unwrap();
+                let restarted = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+                assert!(
+                    restarted
+                        .get(&asset.asset_ref())
+                        .unwrap()
+                        .linked_body
+                        .is_some()
+                );
+                assert!(ResponseAssetResolver::validate(&restarted, &asset.asset_ref()).is_ok());
+                assert!(ResponseAssetResolver::resolve(&restarted, &asset.asset_ref()).is_err());
+                assert!(
+                    restarted
+                        .inspect(&asset.asset_ref())
+                        .await
+                        .unwrap()
+                        .asset
+                        .linked_body
+                        .is_some()
+                );
+                std::fs::write(&path, b"restored").unwrap();
+                assert_eq!(returned_body(&restarted, &asset).await.1, b"restored");
+            } else {
+                assert_eq!(body.len() as u64, size);
+                assert!(body.iter().all(|byte| *byte == 0));
+            }
+        }
+    }
+
+    #[test]
+    fn replacement_file_readers_reject_growth_and_truncation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("body");
+        std::fs::write(&path, b"original").unwrap();
+        let file = File::open(&path).unwrap();
+        let mut reader = ExactFileReader::new(file, 8);
+        std::fs::write(&path, b"longer content").unwrap();
+        assert!(reader.read_to_end(&mut Vec::new()).is_err());
+        std::fs::write(&path, b"short").unwrap();
+        let mut reader = ExactFileReader::new(File::open(&path).unwrap(), 8);
+        assert!(reader.read_to_end(&mut Vec::new()).is_err());
+    }
 
     fn root() -> PathBuf {
         std::env::temp_dir().join(format!("transmog-assets-{}", random_hex().unwrap()))
@@ -1092,7 +1490,9 @@ mod tests {
             head.headers.values("content-length").collect::<Vec<_>>(),
             vec![expected.as_bytes()]
         );
-        assert_eq!(asset.body_bytes, u64::try_from(body.len()).unwrap());
+        if asset.linked_body.is_none() {
+            assert_eq!(asset.body_bytes, u64::try_from(body.len()).unwrap());
+        }
         (head.headers, body)
     }
 
@@ -1382,6 +1782,7 @@ mod tests {
                     exchange_id: format!("{:032x}", 17),
                     boundary: "client-response".to_owned(),
                     decoded_body: None,
+                    body_path: None,
                     preserve_content_encoding: true,
                 },
                 response.status,
