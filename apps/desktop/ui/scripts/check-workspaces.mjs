@@ -1466,7 +1466,15 @@ try {
   const preferences=page.locator('settings-workspace');
   const advancedNetwork=preferences.locator('.preferences-form .connection-advanced');
   assert.equal(await advancedNetwork.getAttribute('open'),null,'Advanced settings were expanded by default');
+  assert.equal(await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).isVisible(),true,'HTTPS decryption is hidden in advanced settings');
   await advancedNetwork.locator('summary').click();
+  assert.equal(await preferences.getByLabel('Allow remote computers to connect',{exact:true}).isChecked(),false);
+  assert.equal(await preferences.getByLabel('Reuse server connections',{exact:true}).isChecked(),true);
+  assert.equal(await preferences.getByLabel('Proxy port',{exact:true}).isVisible(),false);
+  await preferences.getByLabel('Allow remote computers to connect',{exact:true}).check();
+  await preferences.getByLabel('Reuse server connections',{exact:true}).uncheck();
+  await preferences.getByLabel('Use a specific proxy port',{exact:true}).check();
+  await preferences.getByLabel('Proxy port',{exact:true}).fill('8123');
   assert.equal(await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).isChecked(),true);
   assert.equal(await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).isChecked(),true);
   for(const name of ['HTTP/1.1','HTTP/2','HTTP/3'])assert.equal(await advancedNetwork.getByLabel(name,{exact:true}).isChecked(),true);
@@ -1477,6 +1485,9 @@ try {
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   const networkSaved=await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences);
+  assert.equal(networkSaved.allowRemoteClients,true);
+  assert.equal(networkSaved.proxyPort,8123);
+  assert.equal(networkSaved.reuseServerConnections,false);
   assert.equal(networkSaved.isolateOutboundConnections,false);
   assert.deepEqual(networkSaved.allowedOutboundProtocols,{http1:true,http2:false,http3:false});
   assert.equal(networkSaved.configureSystemProxy,false,'Saving preferences enabled host routing');

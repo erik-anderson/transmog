@@ -116,6 +116,10 @@ impl std::fmt::Debug for HyperUpgradeResponse {
 }
 
 impl HyperOriginClient {
+    /// Enables or disables physical connection sharing for subsequent requests.
+    pub fn set_server_connection_reuse(&self, enabled: bool) {
+        self.protocols.set_reuse_connections(enabled);
+    }
     /// Installs authentication in new pools for an immutable application caller.
     /// # Errors
     /// Returns a TLS connector construction failure.
@@ -153,11 +157,12 @@ impl HyperOriginClient {
         uri: &http::Uri,
         mode: HyperEgressMode,
     ) -> Result<OriginClient, HyperOriginError> {
-        let reuse = !matches!(uri.scheme_str(), Some("https" | "wss"))
-            || self.factory.permits_client_certificate_reuse(
-                uri.host().unwrap_or("").trim_matches(['[', ']']),
-                uri.port_u16().unwrap_or(443),
-            );
+        let reuse = self.protocols.reuse_connections()
+            && (!matches!(uri.scheme_str(), Some("https" | "wss"))
+                || self.factory.permits_client_certificate_reuse(
+                    uri.host().unwrap_or("").trim_matches(['[', ']']),
+                    uri.port_u16().unwrap_or(443),
+                ));
         if !reuse {
             let fresh = Self::build_pools(
                 &self.factory,

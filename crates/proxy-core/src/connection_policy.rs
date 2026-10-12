@@ -43,7 +43,9 @@ impl AllowedHttpProtocols {
     }
 }
 
-/// Live connection-admission policy. Existing pooled connections bypass this check.
+const REUSE_CONNECTIONS: u8 = 1 << 3;
+
+/// Live connection-admission and reuse policy shared by origin transports.
 #[derive(Clone, Debug)]
 pub struct OutboundProtocolPolicy(Arc<AtomicU8>);
 
@@ -56,7 +58,7 @@ impl Default for OutboundProtocolPolicy {
 impl OutboundProtocolPolicy {
     /// Creates one policy shared by every caller partition and trust generation.
     pub fn new(allowed: AllowedHttpProtocols) -> Self {
-        Self(Arc::new(AtomicU8::new(allowed.bits())))
+        Self(Arc::new(AtomicU8::new(allowed.bits() | REUSE_CONNECTIONS)))
     }
     /// Takes a consistent snapshot at connection admission.
     pub fn snapshot(&self) -> AllowedHttpProtocols {
@@ -67,9 +69,25 @@ impl OutboundProtocolPolicy {
             http3: bits & 4 != 0,
         }
     }
+    /// Whether subsequent requests may share physical origin connections.
+    pub fn reuse_connections(&self) -> bool {
+        self.0.load(Ordering::Acquire) & REUSE_CONNECTIONS != 0
+    }
+    /// Changes reuse for subsequent requests while admitted work finishes normally.
+    pub fn set_reuse_connections(&self, enabled: bool) {
+        if enabled {
+            self.0.fetch_or(REUSE_CONNECTIONS, Ordering::AcqRel);
+        } else {
+            self.0.fetch_and(!REUSE_CONNECTIONS, Ordering::AcqRel);
+        }
+    }
     /// Changes admission for new connections without closing existing ones.
     pub fn set(&self, allowed: AllowedHttpProtocols) {
-        self.0.store(allowed.bits(), Ordering::Release);
+        let _ = self
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                Some((current & REUSE_CONNECTIONS) | allowed.bits())
+            });
     }
 }
 
@@ -128,6 +146,30 @@ impl NetworkIsolationPolicy for CallerNetworkIsolation {
 mod tests {
     use super::*;
     use crate::{ConnectionId, SessionId, SessionMetadata, StreamId, Target};
+
+    #[test]
+    fn protocol_edits_and_clones_preserve_connection_reuse_choice() {
+        let policy = OutboundProtocolPolicy::default();
+        let clone = policy.clone();
+        policy.set_reuse_connections(false);
+        clone.set(AllowedHttpProtocols {
+            http1: false,
+            http2: true,
+            http3: false,
+        });
+        assert!(!policy.reuse_connections());
+        assert_eq!(
+            policy.snapshot(),
+            AllowedHttpProtocols {
+                http1: false,
+                http2: true,
+                http3: false
+            }
+        );
+        clone.set_reuse_connections(true);
+        assert!(policy.reuse_connections());
+        assert!(!policy.snapshot().http1);
+    }
 
     fn metadata(
         pid: Option<u32>,

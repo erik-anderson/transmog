@@ -435,6 +435,7 @@ impl Application {
             composer: composer::ComposerManager::with_protocols(
                 config.replay_executor,
                 initial_state.preferences.allowed_outbound_protocols,
+                initial_state.preferences.reuse_server_connections,
             ),
             product_state,
             diagnostics,
@@ -485,6 +486,11 @@ impl Application {
         Ok(policy)
     }
 
+    /// Updates connection reuse in built-in Composer transports.
+    pub fn set_replay_server_connection_reuse(&self, enabled: bool) {
+        self.composer.set_reuse_server_connections(enabled);
+    }
+
     /// Applies the owning desktop's protocol policy to this window's replay
     /// executor without replacing its independent workspace preferences.
     /// Existing connections remain usable until close.
@@ -530,6 +536,8 @@ impl Application {
         let result = self.product_state.save(state);
         if let Ok(state) = &result {
             self.composer
+                .set_reuse_server_connections(state.preferences.reuse_server_connections);
+            self.composer
                 .set_outbound_protocols(state.preferences.allowed_outbound_protocols);
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
@@ -539,6 +547,7 @@ impl Application {
             );
             if let Some(control) = self.service.proxy_control() {
                 control.set_outbound_protocols(state.preferences.allowed_outbound_protocols);
+                control.set_server_connection_reuse(state.preferences.reuse_server_connections);
                 control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
             }
         }

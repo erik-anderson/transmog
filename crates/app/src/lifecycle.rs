@@ -197,6 +197,7 @@ pub(crate) async fn start_proxy(
     let config = ProxyConfig {
         decrypt_https: preferences.decrypt_https,
         isolate_outbound_connections: preferences.isolate_outbound_connections,
+        reuse_server_connections: preferences.reuse_server_connections,
         allowed_outbound_protocols: preferences.allowed_outbound_protocols,
         listener: ListenerConfig {
             listen_addr: request.listen,

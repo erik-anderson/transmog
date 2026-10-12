@@ -49,11 +49,12 @@ impl Drop for StreamSlot {
 
 impl Pool {
     fn lease(&self, client: &HyperOriginClient, uri: &http::Uri) -> Lease {
-        let reuse = uri.scheme_str() != Some("https")
-            || client.factory.permits_client_certificate_reuse(
-                uri.host().unwrap_or("").trim_matches(['[', ']']),
-                uri.port_u16().unwrap_or(443),
-            );
+        let reuse = client.protocols.reuse_connections()
+            && (uri.scheme_str() != Some("https")
+                || client.factory.permits_client_certificate_reuse(
+                    uri.host().unwrap_or("").trim_matches(['[', ']']),
+                    uri.port_u16().unwrap_or(443),
+                ));
         if !reuse {
             return Arc::new(tokio::sync::Mutex::new(None));
         }

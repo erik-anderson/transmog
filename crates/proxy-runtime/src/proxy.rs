@@ -107,6 +107,8 @@ pub struct ProxyConfig {
     pub allowed_outbound_protocols: AllowedHttpProtocols,
     /// Isolate outbound sockets by caller process/source IP and downstream H2 session.
     pub isolate_outbound_connections: bool,
+    /// Permit subsequent requests to share origin connections.
+    pub reuse_server_connections: bool,
     /// Listener exposure policy.
     pub listener: crate::ListenerConfig,
     /// Origin protocol selection policy.
@@ -126,6 +128,7 @@ impl Default for ProxyConfig {
         Self {
             listener: crate::ListenerConfig::default(),
             isolate_outbound_connections: true,
+            reuse_server_connections: true,
             decrypt_https: true,
             allowed_outbound_protocols: AllowedHttpProtocols::default(),
             route_policy: RoutePolicy::Auto,
@@ -388,6 +391,10 @@ impl ProxyControl {
     pub fn set_outbound_protocols(&self, allowed: AllowedHttpProtocols) {
         self.state.outbound_protocols.set(allowed);
     }
+    /// Changes origin connection reuse for subsequent requests without aborting active work.
+    pub fn set_server_connection_reuse(&self, enabled: bool) {
+        self.state.outbound_protocols.set_reuse_connections(enabled);
+    }
     /// Changes caller isolation for subsequent exchanges, without aborting admitted work.
     pub fn set_outbound_isolation(&self, enabled: bool) {
         self.state
@@ -545,6 +552,7 @@ impl ProxyServer {
             return Err(ProxyRuntimeError::InvalidConfiguration);
         }
         let outbound_protocols = OutboundProtocolPolicy::new(config.allowed_outbound_protocols);
+        outbound_protocols.set_reuse_connections(config.reuse_server_connections);
         let upstream = Arc::new(UpstreamGeneration::new(
             trust,
             config.h3,

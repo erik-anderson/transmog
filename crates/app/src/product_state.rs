@@ -60,7 +60,17 @@ pub enum ThemePreference {
 /// Versioned non-sensitive product preferences.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)] // Independent persisted user choices.
 pub struct ProductPreferences {
+    /// Explicitly allow desktop proxy connections from other computers.
+    #[serde(default)]
+    pub allow_remote_clients: bool,
+    /// Desired desktop listener port; None retains automatic ephemeral selection.
+    #[serde(default)]
+    pub proxy_port: Option<u16>,
+    /// Permit pooling and sharing origin connections between requests.
+    #[serde(default = "enabled_by_default")]
+    pub reuse_server_connections: bool,
     /// Public host authorization only; private keys and transient answers are never persisted.
     #[serde(default)]
     pub client_certificate_policy: transmog_core::client_authentication::ClientCertificatePolicy,
@@ -86,6 +96,9 @@ impl Default for ProductPreferences {
         Self {
             client_certificate_policy:
                 transmog_core::client_authentication::ClientCertificatePolicy::default(),
+            allow_remote_clients: false,
+            proxy_port: None,
+            reuse_server_connections: true,
             decrypt_https: true,
             isolate_outbound_connections: true,
             allowed_outbound_protocols:
@@ -322,6 +335,13 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
+    if state.preferences.proxy_port == Some(0) {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Proxy port must be between 1 and 65535, or automatic.",
+            false,
+        ));
+    }
     if !state.preferences.client_certificate_policy.valid() {
         return Err(invalid(
             "Client certificate rules require an exact host, a valid port and a certificate selector for automatic selection",
@@ -380,7 +400,7 @@ fn load_generations(prefix: &Path) -> (ProductState, u64, Option<String>) {
                 state,
                 next,
                 &corrupt,
-                "newest product state was corrupt; recovered a prior valid generation with client certificate rules disabled",
+                "newest product state was corrupt; recovered a prior valid generation with remote access and client certificate rules disabled",
             );
         }
         corrupt.push(path);
@@ -406,6 +426,7 @@ fn recover_state(
 ) -> (ProductState, u64, Option<String>) {
     // The missing latest state might have revoked disclosure. Persist the safe
     // recovery before removing evidence of that uncertainty from later loads.
+    state.preferences.allow_remote_clients = false;
     state.preferences.client_certificate_policy.default =
         transmog_core::client_authentication::ClientCertificateDefault::NoCertificate;
     for rule in &mut state.preferences.client_certificate_policy.rules {
@@ -544,17 +565,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn listener_and_pool_preferences_survive_restart_and_reject_zero_port() {
+        let path = prefix("listener-pool");
+        cleanup(&path);
+        let (store, _) = ProductStateManager::load(Some(path.clone()));
+        let mut state = store.snapshot();
+        state.preferences.allow_remote_clients = true;
+        state.preferences.proxy_port = Some(65535);
+        state.preferences.reuse_server_connections = false;
+        let saved = store.save(state.clone()).unwrap();
+        assert_eq!(
+            ProductStateManager::load(Some(path.clone())).0.snapshot(),
+            saved
+        );
+        state.preferences.proxy_port = Some(0);
+        assert!(store.save(state).is_err());
+        assert_eq!(store.snapshot(), saved);
+        cleanup(&path);
+    }
+
+    #[test]
     fn existing_preferences_gain_safe_network_defaults_without_losing_user_choices() {
         let mut value = serde_json::to_value(ProductState::default()).unwrap();
         let preferences = value["preferences"].as_object_mut().unwrap();
         preferences.remove("isolateOutboundConnections");
         preferences.remove("decryptHttps");
+        preferences.remove("allowRemoteClients");
+        preferences.remove("proxyPort");
+        preferences.remove("reuseServerConnections");
         preferences.remove("allowedOutboundProtocols");
         preferences.remove("clientCertificatePolicy");
         preferences.insert("configureSystemProxy".into(), serde_json::json!(false));
         let restored: ProductState = serde_json::from_value(value).unwrap();
         assert!(restored.preferences.isolate_outbound_connections);
         assert!(restored.preferences.decrypt_https);
+        assert!(!restored.preferences.allow_remote_clients);
+        assert_eq!(restored.preferences.proxy_port, None);
+        assert!(restored.preferences.reuse_server_connections);
         assert_eq!(
             restored.preferences.allowed_outbound_protocols,
             transmog_core::connection_policy::AllowedHttpProtocols::default()
@@ -594,6 +641,7 @@ mod tests {
         store.save_workspace(workspace).unwrap();
         let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_none());
+        assert!(!reloaded.snapshot().preferences.allow_remote_clients);
         assert_eq!(
             reloaded.snapshot().preferences.client_certificate_policy,
             policy
@@ -650,6 +698,7 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let mut current = ProductState::default();
         current.window.width = 900;
+        current.preferences.allow_remote_clients = true;
         current.preferences.client_certificate_policy = transmog_core::client_authentication::ClientCertificatePolicy {
             default: transmog_core::client_authentication::ClientCertificateDefault::Prompt,
             rules: vec![transmog_core::client_authentication::ClientCertificateRule { id: "recovered".into(), enabled: true, host: "localhost".into(), port: 443,
@@ -665,6 +714,7 @@ mod tests {
         let (store, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_some());
         assert_eq!(store.snapshot().window.width, 900);
+        assert!(!store.snapshot().preferences.allow_remote_clients);
         assert_eq!(store.snapshot().schema_version, CURRENT_SCHEMA);
         assert_eq!(
             store
@@ -682,6 +732,7 @@ mod tests {
         );
         let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_none());
+        assert!(!reloaded.snapshot().preferences.allow_remote_clients);
         assert_eq!(
             reloaded.snapshot().preferences.client_certificate_policy,
             store.snapshot().preferences.client_certificate_policy

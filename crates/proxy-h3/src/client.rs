@@ -267,9 +267,10 @@ impl H3OriginClient {
 
     fn pool_key(&self, host: String, origin_port: u16, peer_port: u16) -> PoolKey {
         static NEXT_SCOPE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let scope = if self
-            .tls
-            .permits_client_certificate_reuse(&host, origin_port)
+        let scope = if self.protocols.reuse_connections()
+            && self
+                .tls
+                .permits_client_certificate_reuse(&host, origin_port)
         {
             0
         } else {
@@ -2694,9 +2695,63 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn disabled_reuse_gives_sequential_and_concurrent_h3_requests_distinct_connections() {
+        let ca = ProxyCa::generate("Dedicated H3 connections", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) =
+            spawn_origin_with_requests(leaf, "127.0.0.1".parse().unwrap(), 4).await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 41)
+                .unwrap(),
+        );
+        let client = H3OriginClient::new(
+            UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
+            H3TransportLimits::default(),
+        );
+        client.protocols.set_reuse_connections(false);
+        let samples = (0..4)
+            .map(|_| PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now()))
+            .collect::<Vec<_>>();
+        for sample in &samples[..2] {
+            let result = client
+                .clone()
+                .with_performance(Some(sample.clone()))
+                .execute(h3_request(origin, "/proof"), origin.port(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(result.response.head.status, 200);
+        }
+        let left = client.clone().with_performance(Some(samples[2].clone()));
+        let right = client.clone().with_performance(Some(samples[3].clone()));
+        let (left, right) = tokio::join!(
+            left.execute(h3_request(origin, "/proof"), origin.port(), 1024),
+            right.execute(h3_request(origin, "/proof"), origin.port(), 1024)
+        );
+        assert_eq!(left.unwrap().response.head.status, 200);
+        assert_eq!(right.unwrap().response.head.status, 200);
+        let connections = samples
+            .iter()
+            .map(|sample| sample.snapshot().transports[0].connection_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(connections.len(), 4);
+        assert!(client.pool.lock().await.is_empty());
+        server.finish().await;
+    }
+
     async fn spawn_origin(
         leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
+    ) -> (SocketAddr, TestOrigin) {
+        spawn_origin_with_requests(leaf, bind_ip, 1).await
+    }
+
+    async fn spawn_origin_with_requests(
+        leaf: transmog_tls::IssuedLeaf,
+        bind_ip: std::net::IpAddr,
+        requests: usize,
     ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
@@ -2722,7 +2777,7 @@ mod tests {
         let local = socket.local_addr().unwrap();
         let task_socket = Arc::clone(&socket);
         let task = tokio::spawn(async move {
-            run_origin(task_socket, local, config).await;
+            run_origin(task_socket, local, config, requests).await;
         });
         (local, TestOrigin { socket, task })
     }
@@ -3170,13 +3225,17 @@ mod tests {
         http3.send_body(connection, stream_id, body, true).unwrap();
     }
 
-    async fn run_origin(socket: Arc<UdpSocket>, local: SocketAddr, mut config: quiche::Config) {
-        let mut connection = None;
+    async fn run_origin(
+        socket: Arc<UdpSocket>,
+        local: SocketAddr,
+        mut config: quiche::Config,
+        requests: usize,
+    ) {
+        let mut peers = HashMap::new();
         let h3_config = quiche::h3::Config::new().unwrap();
-        let mut h3_connection = None;
         let mut recv_buffer = vec![0_u8; MAX_UDP_PACKET_SIZE];
         let mut send_buffer = vec![0_u8; MAX_DATAGRAM_SIZE];
-        let mut response_sent = false;
+        let mut response_sent = 0;
 
         loop {
             let (read, from) = timeout(
@@ -3186,7 +3245,7 @@ mod tests {
             .await
             .expect("H3 client stalled")
             .unwrap();
-            if connection.is_none() {
+            let (connection, h3_connection) = peers.entry(from).or_insert_with(|| {
                 let header =
                     quiche::Header::from_slice(&mut recv_buffer[..read], quiche::MAX_CONN_ID_LEN)
                         .unwrap();
@@ -3194,17 +3253,18 @@ mod tests {
                 let mut source_id = [0_u8; quiche::MAX_CONN_ID_LEN];
                 rand_bytes(&mut source_id).unwrap();
                 let source_id = quiche::ConnectionId::from_ref(&source_id);
-                connection =
-                    Some(quiche::accept(&source_id, None, local, from, &mut config).unwrap());
-            }
-            let connection = connection.as_mut().unwrap();
+                (
+                    quiche::accept(&source_id, None, local, from, &mut config).unwrap(),
+                    None,
+                )
+            });
             let info = quiche::RecvInfo { from, to: local };
             match connection.recv(&mut recv_buffer[..read], info) {
                 Ok(_) | Err(quiche::Error::Done) => {}
                 Err(error) => panic!("H3 server recv failed: {error}"),
             }
             if connection.is_established() && h3_connection.is_none() {
-                h3_connection =
+                *h3_connection =
                     Some(quiche::h3::Connection::with_transport(connection, &h3_config).unwrap());
             }
             if let Some(http3) = h3_connection.as_mut() {
@@ -3224,7 +3284,7 @@ mod tests {
                             http3
                                 .send_body(connection, stream_id, b"h3-ok", true)
                                 .unwrap();
-                            response_sent = true;
+                            response_sent += 1;
                         }
                         Ok((stream_id, quiche::h3::Event::Data)) => loop {
                             match http3.recv_body(connection, stream_id, &mut recv_buffer) {
@@ -3251,7 +3311,7 @@ mod tests {
                     Err(error) => panic!("H3 server send failed: {error}"),
                 }
             }
-            if response_sent {
+            if response_sent >= requests {
                 return;
             }
         }

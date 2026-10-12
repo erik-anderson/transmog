@@ -148,6 +148,10 @@ pub trait ReplayExecutor: Send + Sync {
     ) -> Option<Arc<dyn ReplayExecutor>> {
         None
     }
+    /// Updates pooling policy for subsequent built-in replay requests.
+    /// Custom executors may keep their own connection policy.
+    fn set_reuse_server_connections(&self, _enabled: bool) {}
+
     /// Updates admission for newly created outbound connections. Executors that
     /// expose their own routing policy may keep the default no-op implementation.
     /// Existing connections continue serving requests until they close.

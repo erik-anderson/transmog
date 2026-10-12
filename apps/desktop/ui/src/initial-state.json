@@ -70,6 +70,7 @@
   "errorMessage": "",
   "proxyReady": false,
   "decryptHttps": true,
+  "customPortEnabled": false,
   "noticeVisible": false,
   "noticeTitleText": "Action required",
   "noticeMessageText": "",

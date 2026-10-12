@@ -24,7 +24,7 @@ pub(super) struct WindowWorkspaces {
     pending: Mutex<HashMap<String, Vec<PathBuf>>>,
 }
 impl WindowWorkspaces {
-    pub fn set_outbound_protocols(&self, allowed: transmog_app::AllowedHttpProtocols) {
+    pub fn set_outbound_protocols(&self, allowed: transmog_app::AllowedHttpProtocols, reuse: bool) {
         for viewer in self
             .viewers
             .lock()
@@ -32,6 +32,7 @@ impl WindowWorkspaces {
             .values()
         {
             viewer.application.set_replay_outbound_protocols(allowed);
+            viewer.application.set_replay_server_connection_reuse(reuse);
         }
     }
     pub fn application(&self, main: &Application, label: &str) -> Result<Application, AppError> {
@@ -364,11 +365,14 @@ mod tests {
             acknowledge_non_idempotent: false,
             acknowledge_credentials: false,
         };
-        workspaces.set_outbound_protocols(AllowedHttpProtocols {
-            http1: false,
-            http2: false,
-            http3: false,
-        });
+        workspaces.set_outbound_protocols(
+            AllowedHttpProtocols {
+                http1: false,
+                http2: false,
+                http3: false,
+            },
+            true,
+        );
         for (application, original) in &applications {
             assert!(application.execute_composer(input.clone()).await.is_err());
             assert_eq!(&application.product_state(), original);
@@ -393,7 +397,7 @@ mod tests {
                     .unwrap();
             }
         });
-        workspaces.set_outbound_protocols(AllowedHttpProtocols::default());
+        workspaces.set_outbound_protocols(AllowedHttpProtocols::default(), true);
         for (application, original) in applications {
             assert_eq!(
                 application

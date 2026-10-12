@@ -179,7 +179,7 @@ export interface TrafficSearchResult {id:string;operationId:string;ids:string[];
 export interface TrafficSearchProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {
   schemaVersion: number;
-  preferences: { clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
+  preferences: { clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; allowRemoteClients:boolean; proxyPort:number|null; reuseServerConnections:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
   privacy: { maxLiveEntries: number | null; bufferLimit: {mode: 'automatic'} | {mode: 'custom'; bytes: number} | {mode: 'unlimited'}; retainRequestBodies: boolean; requestBodyLimit: number | null; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;

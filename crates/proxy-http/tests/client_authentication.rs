@@ -12,6 +12,36 @@ use transmog_tls::{
     client_prompts::{ClientCertificateAnswer, ClientCertificateBroker},
 };
 #[tokio::test]
+async fn disabling_pooling_uses_distinct_sequential_and_concurrent_h1_and_h2_connections() {
+    for h2 in [false, true] {
+        let fixture = Fixture::new();
+        let origin = origin(&fixture, h2, false, Duration::from_secs(5)).await;
+        let resolver = Arc::new(
+            PolicyClientAuthenticationResolver::new(
+                automatic(origin.port),
+                fixture.source.clone(),
+                None,
+            )
+            .unwrap(),
+        );
+        let client = fixture.client(resolver, "process:1");
+        assert_eq!(execute(&client, origin.port, h2).await, "1:true");
+        assert_eq!(execute(&client, origin.port, h2).await, "1:true");
+        client.set_server_connection_reuse(false);
+        assert_eq!(execute(&client, origin.port, h2).await, "2:true");
+        assert_eq!(execute(&client, origin.port, h2).await, "3:true");
+        let (left, right) = tokio::join!(
+            execute(&client, origin.port, h2),
+            execute(&client, origin.port, h2)
+        );
+        assert_ne!(left, right);
+        assert_eq!(origin.count.load(Ordering::SeqCst), 5);
+        client.set_server_connection_reuse(true);
+        assert_eq!(execute(&client, origin.port, h2).await, "1:true");
+    }
+}
+
+#[tokio::test]
 async fn authentication_reuses_only_authorized_caller_epoch_and_never_resumes_tls() {
     for h2 in [false, true] {
         let fixture = Fixture::new();

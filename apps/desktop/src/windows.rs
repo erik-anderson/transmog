@@ -380,9 +380,10 @@ async fn save_product_state(
 ) -> Result<ProductState, AppError> {
     let _certificate_operation = state.certificate_operation.lock().await;
     let saved = state.application.save_product_state(product_state)?;
-    state
-        .workspaces
-        .set_outbound_protocols(saved.preferences.allowed_outbound_protocols);
+    state.workspaces.set_outbound_protocols(
+        saved.preferences.allowed_outbound_protocols,
+        saved.preferences.reuse_server_connections,
+    );
     Ok(saved)
 }
 
@@ -753,14 +754,20 @@ async fn start_proxy(
 }
 
 async fn start_proxy_locked(
-    request: ProxyStartRequest,
+    mut request: ProxyStartRequest,
     state: &DesktopState,
 ) -> Result<AppStatus, String> {
-    let configure_system_proxy = state
-        .application
-        .product_state()
-        .preferences
-        .configure_system_proxy;
+    let preferences = state.application.product_state().preferences;
+    request.listen = std::net::SocketAddr::from((
+        if preferences.allow_remote_clients {
+            [0, 0, 0, 0]
+        } else {
+            [127, 0, 0, 1]
+        },
+        preferences.proxy_port.unwrap_or(0),
+    ));
+    request.allow_remote_clients = preferences.allow_remote_clients;
+    let configure_system_proxy = preferences.configure_system_proxy;
     validate_proxy_start(state, configure_system_proxy)?;
     if state.application.product_state().preferences.decrypt_https {
         transmog_app::protect_ca_private_key(

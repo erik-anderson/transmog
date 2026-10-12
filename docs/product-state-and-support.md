@@ -14,8 +14,9 @@ own HTTPS trust when needed. The ordinary Settings flow keeps system routing
 enabled. With HTTPS decryption enabled, both modes validate and protect CA files.
 Both always block pending host restoration.
 
-Advanced network settings contains the enabled-default caller-process isolation
-toggle, allowed outbound protocols and HTTPS decryption choice. Isolation falls
+Preferences starts with HTTPS decryption in its main Network group. Advanced
+network settings contains remote access, an optional persistent proxy port,
+connection reuse, caller-process isolation and allowed outbound protocols. Isolation falls
 back to source IP and also separates downstream HTTP/2 sessions. Protocol changes
 apply to new origin connections, including Composer in already-open capture
 viewers; established connections continue serving requests until they close.
@@ -137,3 +138,14 @@ and save a `.tmcap` trace instead.
 versions, licenses, copyright notices and vendored native library notices. The
 notices ship with the app and are available offline. Builds require version-pinned
 license snapshots when published dependencies omit their license files.
+
+Desktop proxy access defaults to loopback only. Remote computers require an explicit
+persisted opt-in. The proxy port defaults to automatic selection; an authored
+port from 1 through 65535 is retained and an occupied port produces an actionable
+start failure. Address and port changes apply to the next fresh proxy start.
+Windows routes through loopback even when the listener accepts remote clients.
+
+Server connection reuse is enabled by default. Turning it off gives subsequent
+requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
+capture viewers. Active requests and streams finish normally. Keep HTTPS
+decryption visible at the top of Preferences, above the advanced disclosure.

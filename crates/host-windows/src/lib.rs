@@ -147,6 +147,19 @@ impl WindowsProxyIntegration {
 
 impl HostIntegration for WindowsProxyIntegration {
     fn apply(&self, endpoint: SocketAddr) -> Result<HostRestoreToken, HostIntegrationError> {
+        // Wildcard listeners still route this computer through its loopback interface.
+        let endpoint = if endpoint.ip().is_unspecified() {
+            SocketAddr::new(
+                if endpoint.is_ipv4() {
+                    IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+                } else {
+                    IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+                },
+                endpoint.port(),
+            )
+        } else {
+            endpoint
+        };
         if !endpoint.ip().is_loopback() {
             return Err(host_error("system proxy endpoint must be loopback"));
         }
@@ -609,6 +622,30 @@ mod tests {
         });
         let integration = WindowsProxyIntegration::new(backend.clone(), &path);
         (backend, integration, path)
+    }
+
+    #[test]
+    fn wildcard_listener_routes_windows_through_loopback_and_restores() {
+        for (label, endpoint, expected) in [
+            (
+                "wildcard-v4",
+                "0.0.0.0:8123",
+                "http=127.0.0.1:8123;https=127.0.0.1:8123",
+            ),
+            (
+                "wildcard-v6",
+                "[::]:8123",
+                "http=[::1]:8123;https=[::1]:8123",
+            ),
+        ] {
+            let (backend, integration, path) = adapter(label);
+            let prior = backend.read().unwrap();
+            let token = integration.apply(endpoint.parse().unwrap()).unwrap();
+            assert_eq!(backend.read().unwrap().server.as_deref(), Some(expected));
+            integration.restore(&token).unwrap();
+            assert_eq!(backend.read().unwrap(), prior);
+            assert!(!path.exists());
+        }
     }
 
     #[test]

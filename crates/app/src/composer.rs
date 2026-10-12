@@ -159,10 +159,17 @@ impl ComposerManager {
     pub(crate) fn with_protocols(
         executor: Option<Arc<dyn ReplayExecutor>>,
         allowed: transmog_core::connection_policy::AllowedHttpProtocols,
+        reuse: bool,
     ) -> Self {
         let manager = Self::new(executor);
         manager.set_outbound_protocols(allowed);
+        manager.set_reuse_server_connections(reuse);
         manager
+    }
+    pub(crate) fn set_reuse_server_connections(&self, enabled: bool) {
+        if let Some(executor) = &self.executor {
+            executor.set_reuse_server_connections(enabled);
+        }
     }
     pub(crate) fn set_outbound_protocols(
         &self,
@@ -583,6 +590,9 @@ impl ReplayExecutor for SystemReplayExecutor {
             .h3
             .map(|client| client.with_performance(Some(recorder)));
         Some(Arc::new(executor))
+    }
+    fn set_reuse_server_connections(&self, enabled: bool) {
+        self.protocols.set_reuse_connections(enabled);
     }
     fn set_outbound_protocols(
         &self,

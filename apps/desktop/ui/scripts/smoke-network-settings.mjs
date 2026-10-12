@@ -16,8 +16,10 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     const disclosure=settings.querySelector('.preferences-form .connection-advanced');
     globalThis.__networkSettingsProbe.open=disclosure.open;
     if(disclosure.open)throw new Error('Advanced network settings opened by default');
+    if(settings.settingsForm.elements.namedItem('decryptHttps').closest('details'))throw new Error('HTTPS decryption remains advanced');
+    if(original.preferences.allowRemoteClients||original.preferences.proxyPort!==null||!original.preferences.reuseServerConnections)throw new Error('Unsafe network defaults');
     disclosure.open=true;
-    for(const name of ['decryptHttps','isolateOutbound','outboundHttp1','outboundHttp2','outboundHttp3']) {
+    for(const name of ['decryptHttps','isolateOutbound','outboundHttp1','outboundHttp2','outboundHttp3','reuseServerConnections']) {
       const input=settings.settingsForm.elements.namedItem(name);
       if(!input.checked)throw new Error(name+' was not enabled by default');
       input.scrollIntoView({block:'center'});input.focus();
@@ -34,10 +36,22 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(status.lifecycle!=='running'||status.hostRestorePending)throw new Error('Opaque mode could not start without certificate setup: '+settings.proxyText);
     const after=await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
     if(after.ownedCaSha256!==bootstrap.ownedCaSha256||after.caFilesExist!==bootstrap.caFilesExist||after.ownedCaTrusted!==bootstrap.ownedCaTrusted)throw new Error('Opaque mode changed certificate files or trust');
+    if(!status.listener.startsWith('127.0.0.1:'))throw new Error('Default listener is remotely accessible');
+    await settings.stopProxy();
+    const port=Number(status.listener.split(':').at(-1));
+    const form=settings.settingsForm;
+    form.elements.namedItem('allowRemoteClients').checked=true;
+    form.elements.namedItem('customProxyPort').checked=true;settings.updateProxyPortMode();settings.$flushUpdates();
+    form.elements.namedItem('proxyPort').value=String(port);
+    await settings.saveSettings(new Event('submit',{cancelable:true}));
+    await settings.startProxy();
+    const remote=await window.__TAURI_INTERNALS__.invoke('app_status');
+    if(remote.listener!=='0.0.0.0:'+port)throw new Error('Remote opt-in or desired port was not applied: '+settings.proxyText);
+    if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.reuseServerConnections)throw new Error('Pooling choice was not saved');
     await settings.stopProxy();
     if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Opaque proxy did not stop');
     settings.$flushUpdates();disclosure.scrollIntoView({block:'start'});
-    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true};
+    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true};
   })()`);
     if(screenshotPath) {
       await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));

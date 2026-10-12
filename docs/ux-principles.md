@@ -289,6 +289,9 @@ authorization. Recovery from an uncertain latest preference generation disables
 recovered certificate rules until the user reviews and re-enables them.
 That disabled state survives subsequent launches and interrupted recovery.
 
+Recovery from uncertain preference generations turns remote access off until
+the user explicitly enables it again.
+
 An actual verified server CertificateRequest can create a blocked-connection
 indicator. Keep selection nonmodal and preserve work in other panes. Show the
 host, owner, public certificate subject/issuer, expiration and fingerprint.
@@ -423,3 +426,14 @@ File recording chooses a destination before stopping live capture. Switching wai
 for active requests to drain and offers cancellation while waiting. Label the
 content choice **Headers only** or **Headers and bodies**; recording writes new
 traffic to the file without adding it to Traffic.
+
+Desktop proxy access defaults to loopback only. Remote computers require an explicit
+persisted opt-in. The proxy port defaults to automatic selection; an authored
+port from 1 through 65535 is retained and an occupied port produces an actionable
+start failure. Address and port changes apply to the next fresh proxy start.
+Windows routes through loopback even when the listener accepts remote clients.
+
+Server connection reuse is enabled by default. Turning it off gives subsequent
+requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
+capture viewers. Active requests and streams finish normally. Keep HTTPS
+decryption visible at the top of Preferences, above the advanced disclosure.
