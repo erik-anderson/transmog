@@ -187,6 +187,8 @@
   "responseBodyFileDetails": "",
   "responseBodyFileError": "",
   "fileChoiceBusy": false,
+  "compressionType": "",
+  "compressionUnavailableText": "",
   "existingResponse": false,
   "ruleUsageText": "",
   "requestHeadersOpen": false,

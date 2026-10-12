@@ -135,7 +135,10 @@ Missing files retain their rule and path across restart, fail the matched reques
 without falling through to the origin, and explain recovery beside the rule.
 Content-Length always reflects the final encoded
 body bytes. Compressed edits rebuild Content-Encoding from the applied stack;
-identity edits and replacement files remove it. Pasted framing and encoding
+identity edits remove it. Apply original compression type names the original
+stack and applies it to text and binary replacement files. Copied files store
+encoded bytes; linked files stream encoding with bounded backpressure and
+unknown encoded length, without reusing a stale Content-Length. Pasted framing and encoding
 fields cannot override these choices in the editor. Response edits create an
 immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor

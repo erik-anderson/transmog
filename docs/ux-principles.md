@@ -95,6 +95,8 @@ its actual effect on the user's task. For a short per-change workflow, follow
 - File response sources explain whether bytes are copied on save (up to 25 MB)
   or read directly per request. Keep linked paths visible, preserve missing-file
   configurations, and retain text drafts when clearing a pending file choice.
+  Compression choices name the original type and apply consistently to edited
+  text and replacement files, including linked files and binary bodies.
 - Reject stale asynchronous results. A late preview, validation, or response
   must not overwrite newer edits, restore old selection, or switch the user
   away from work in progress. Prevent duplicate submissions while an action

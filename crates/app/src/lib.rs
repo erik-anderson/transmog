@@ -937,14 +937,16 @@ impl Application {
         } else {
             None
         };
-        self.response_assets.create_from_session(
-            body_store,
-            input,
-            head.status,
-            &head.headers,
-            metadata.media_type,
-            encoded_body_override,
-        )
+        self.response_assets
+            .create_from_session(
+                body_store,
+                input,
+                head.status,
+                &head.headers,
+                metadata.media_type,
+                encoded_body_override,
+            )
+            .await
     }
 
     /// Returns a bounded point-in-time lifecycle read model.

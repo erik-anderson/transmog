@@ -1102,11 +1102,11 @@ mod tests {
         let (head, body) = request(
             restarted.status().listener.unwrap(),
             &url,
-            replacement_body.len(),
+            usize::try_from(replacement.body_bytes).unwrap(),
         )
         .await;
-        assert_eq!(body, replacement_body);
-        assert!(!head.to_ascii_lowercase().contains("content-encoding:"));
+        assert_eq!(crate::inspector::decode_content(&["gzip".into(),"br".into()],body.clone()).await.unwrap(),replacement_body);
+        assert!(head.to_ascii_lowercase().contains("content-encoding: gzip, br"));
         assert!(
             head.to_ascii_lowercase()
                 .contains(&format!("content-length: {}\r\n", body.len()))

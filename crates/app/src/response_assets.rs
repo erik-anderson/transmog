@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{File, OpenOptions},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
@@ -11,6 +11,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use transmog_automation::{AutomationResponse, ResponseAssetResolver};
+use transmog_content::{ContentCodingStack, ContentEncoder, ContentLimits};
 use transmog_core::{
     BodyFrame, BodyStream, BodyStreamError, CanonicalResponse, HeaderBlock, HeaderField,
     HttpLegVersion, LocalStreamingResponse, ResponseHead, intercept::ExchangeId,
@@ -40,6 +41,9 @@ pub struct LinkedResponseBody {
     /// Compression stack from the response used as the replacement's source.
     #[serde(default)]
     pub original_content_codings: Vec<String>,
+    /// Apply the retained compression stack to current file bytes.
+    #[serde(default)]
+    pub apply_original_compression: bool,
 }
 
 /// Readable selected file and the save behavior chosen by its unencoded size.
@@ -379,26 +383,27 @@ impl ResponseAssetStore {
             }
         }
         headers.remove_all("content-type");
-        let revision = self
-            .list()
-            .iter()
-            .filter(|asset| asset.id == source.id)
-            .map(|asset| asset.revision)
-            .max()
-            .unwrap_or(source.revision)
-            .checked_add(1)
-            .ok_or_else(|| invalid("Saved response revision is exhausted."))?;
+        let revision = self.next_revision(&source)?;
         if let Some((file, info)) = replacement_file {
             let mut replacement = source.clone();
             replacement.revision = revision;
             replacement.status = input.status;
             replacement.headers = headers;
             replacement.media_type = input.media_type;
-            return self.create_file_revision(replacement, file, info, codings);
+            return self
+                .create_file_revision(
+                    replacement,
+                    file,
+                    info,
+                    codings,
+                    input.preserve_content_encoding,
+                )
+                .await;
         }
         if encoded.is_none()
-            && let Some(linked) = source.linked_body.clone()
+            && let Some(mut linked) = source.linked_body.clone()
         {
+            linked.apply_original_compression = input.preserve_content_encoding;
             return self.create_linked(
                 source.id,
                 revision,
@@ -434,12 +439,24 @@ impl ResponseAssetStore {
         }
     }
 
-    fn create_file_revision(
+    fn next_revision(&self, source: &ResponseAsset) -> Result<u64, AppError> {
+        self.list()
+            .iter()
+            .filter(|asset| asset.id == source.id)
+            .map(|asset| asset.revision)
+            .max()
+            .unwrap_or(source.revision)
+            .checked_add(1)
+            .ok_or_else(|| invalid("Saved response revision is exhausted."))
+    }
+
+    async fn create_file_revision(
         &self,
         asset: ResponseAsset,
         file: File,
         info: ResponseBodyFileInfo,
         codings: Vec<String>,
+        preserve: bool,
     ) -> Result<ResponseAsset, AppError> {
         if info.linked {
             return self.create_linked(
@@ -452,8 +469,33 @@ impl ResponseAssetStore {
                 LinkedResponseBody {
                     path: info.path,
                     original_content_codings: codings,
+                    apply_original_compression: preserve,
                 },
                 info.bytes,
+            );
+        }
+        if preserve && !codings.is_empty() {
+            let root: PathBuf = self
+                .root
+                .as_deref()
+                .ok_or_else(|| unavailable("Saved response storage is unavailable."))?
+                .clone();
+            let applied = codings.clone();
+            let mut encoded = tokio::task::spawn_blocking(move || {
+                encode_file_temporary(file, info.bytes, &applied, &root)
+            })
+            .await
+            .map_err(|_| unavailable("Response file compression could not complete."))??;
+            let mut headers = asset.headers;
+            set_content_encoding(&mut headers, &codings)?;
+            return self.create_from_reader(
+                asset.id,
+                asset.revision,
+                asset.status,
+                &headers,
+                asset.media_type,
+                asset.provenance,
+                encoded.as_file_mut(),
             );
         }
         self.create_from_reader(
@@ -543,6 +585,7 @@ impl ResponseAssetStore {
                 LinkedResponseBody {
                     path: info.path,
                     original_content_codings: Vec::new(),
+                    apply_original_compression: false,
                 },
                 info.bytes,
             );
@@ -582,7 +625,7 @@ impl ResponseAssetStore {
     ///
     /// # Errors
     /// Incomplete, truncated, lossy, evicted, or disabled boundaries fail.
-    pub fn create_from_session(
+    pub async fn create_from_session(
         &self,
         body_store: &BodyStore,
         input: SessionResponseAsset,
@@ -620,30 +663,26 @@ impl ResponseAssetStore {
             let (file, info) = open_selected_file(&path)?;
             let mut headers = headers.clone();
             headers.remove_all("content-encoding");
-            if info.linked {
-                return self.create_linked(
-                    input.id,
-                    input.revision,
-                    status,
-                    &headers,
-                    media_type,
-                    provenance,
-                    LinkedResponseBody {
-                        path: info.path,
-                        original_content_codings: metadata.content_codings,
-                    },
-                    info.bytes,
-                );
-            }
-            return self.create_from_reader(
-                input.id,
-                input.revision,
+            let asset = ResponseAsset {
+                id: input.id,
+                revision: input.revision,
                 status,
-                &headers,
+                headers,
+                body_bytes: info.bytes,
+                sha256: String::new(),
                 media_type,
                 provenance,
-                ExactFileReader::new(file, info.bytes),
-            );
+                linked_body: None,
+            };
+            return self
+                .create_file_revision(
+                    asset,
+                    file,
+                    info,
+                    metadata.content_codings,
+                    input.preserve_content_encoding,
+                )
+                .await;
         }
         match encoded_body_override {
             Some(body) => self.create_from_reader(
@@ -783,7 +822,14 @@ impl ResponseAssetStore {
             return Err(invalid("Saved response revision already exists."));
         }
         let mut headers = repair_headers(headers, bytes, media_type.as_deref())?;
-        headers.remove_all("content-encoding");
+        let applied = if linked.apply_original_compression {
+            linked.original_content_codings.as_slice()
+        } else {
+            &[]
+        };
+        compression_stack(applied)
+            .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
+        set_content_encoding(&mut headers, applied)?;
         self.persist_asset(ResponseAsset {
             id,
             revision,
@@ -948,7 +994,17 @@ impl ResponseAssetStore {
         let expected = info.bytes;
         let mut headers = repair_headers(&asset.headers, expected, asset.media_type.as_deref())
             .map_err(|error| error.message)?;
-        headers.remove_all("content-encoding");
+        let codings = if linked.apply_original_compression {
+            linked.original_content_codings.clone()
+        } else {
+            Vec::new()
+        };
+        let encoders = content_encoders(&codings)?;
+        let compressed = !encoders.is_empty();
+        set_content_encoding(&mut headers, &codings).map_err(|error| error.message)?;
+        if compressed {
+            headers.remove_all("content-length");
+        }
         let head = ResponseHead {
             status: asset.status,
             headers,
@@ -961,7 +1017,26 @@ impl ResponseAssetStore {
         std::thread::Builder::new()
             .name("transmog-linked-response".into())
             .spawn(move || {
-                let result = stream_file_handle(file, expected, &sender);
+                let result = if compressed {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_| {
+                            BodyStreamError::Failed(
+                                "Response compression worker could not start.".into(),
+                            )
+                        })
+                        .and_then(|runtime| {
+                            runtime.block_on(encode_file_frames(
+                                file,
+                                expected,
+                                encoders,
+                                EncodedSink::Stream(&sender),
+                            ))
+                        })
+                } else {
+                    stream_file_handle(file, expected, &sender)
+                };
                 if let Err(error) = result {
                     let message = error.to_string();
                     if !message.contains("consumer closed") {
@@ -982,9 +1057,152 @@ impl ResponseAssetStore {
         Ok(AutomationResponse::Streaming(LocalStreamingResponse {
             head,
             body,
-            body_length: Some(expected),
+            body_length: if compressed { None } else { Some(expected) },
         }))
     }
+}
+
+fn compression_stack(codings: &[String]) -> Result<ContentCodingStack, String> {
+    let headers = if codings.is_empty() {
+        HeaderBlock::new()
+    } else {
+        HeaderBlock::from_fields(vec![
+            HeaderField::try_new("content-encoding", codings.join(", "))
+                .map_err(|_| "Original compression metadata is invalid.".to_owned())?,
+        ])
+    };
+    ContentCodingStack::from_headers(&headers, ContentLimits::default().max_coding_layers())
+        .map_err(|error| error.to_string())
+}
+
+fn content_encoders(codings: &[String]) -> Result<Vec<ContentEncoder>, String> {
+    let defaults = ContentLimits::default();
+    let bytes = NonZeroUsize::new(usize::try_from(MAX_ASSET_BYTES).expect("file limit fits usize"))
+        .expect("asset limit is nonzero");
+    let limits = ContentLimits::new(
+        bytes,
+        bytes,
+        bytes,
+        defaults.max_decoder_window_bytes(),
+        defaults.max_expansion_ratio(),
+        defaults.expansion_slack_bytes(),
+        defaults.max_coding_layers(),
+    );
+    compression_stack(codings)?
+        .encode_order()
+        .map(|coding| ContentEncoder::new(coding, limits).map_err(|error| error.to_string()))
+        .collect()
+}
+
+enum EncodedSink<'a> {
+    File(&'a mut File),
+    Stream(&'a transmog_core::BodyStreamSender),
+}
+impl EncodedSink<'_> {
+    async fn write(&mut self, frames: Vec<BodyFrame>) -> Result<(), BodyStreamError> {
+        for frame in frames {
+            match self {
+                Self::File(file) => {
+                    if let BodyFrame::Data(bytes) = frame {
+                        file.write_all(&bytes).map_err(|_| {
+                            BodyStreamError::Failed(
+                                "Compressed response file could not be written.".into(),
+                            )
+                        })?;
+                    }
+                }
+                Self::Stream(sender) => sender
+                    .send(Ok(frame))
+                    .await
+                    .map_err(|_| BodyStreamError::Failed("response consumer closed".into()))?,
+            }
+        }
+        Ok(())
+    }
+}
+
+async fn encode_chain(
+    encoders: &mut [ContentEncoder],
+    mut frames: Vec<BodyFrame>,
+) -> Result<Vec<BodyFrame>, BodyStreamError> {
+    for encoder in encoders {
+        let mut next = Vec::new();
+        for frame in frames {
+            next.extend(
+                encoder
+                    .on_frame(frame)
+                    .await
+                    .map_err(|error| BodyStreamError::Failed(error.to_string()))?,
+            );
+        }
+        frames = next;
+    }
+    Ok(frames)
+}
+
+async fn encode_file_frames(
+    file: File,
+    expected: u64,
+    mut encoders: Vec<ContentEncoder>,
+    mut sink: EncodedSink<'_>,
+) -> Result<(), BodyStreamError> {
+    let mut reader = ExactFileReader::new(file, expected);
+    let mut buffer = vec![0; STREAM_CHUNK_BYTES];
+    loop {
+        let read=reader.read(&mut buffer).map_err(|_|BodyStreamError::Failed("Response file changed or became unreadable while serving. Try again or choose another file.".into()))?;
+        if read == 0 {
+            break;
+        }
+        if let EncodedSink::Stream(sender) = &sink
+            && sender.is_closed()
+        {
+            return Err(BodyStreamError::Failed("response consumer closed".into()));
+        }
+        let frames = encode_chain(
+            &mut encoders,
+            vec![BodyFrame::Data(Bytes::copy_from_slice(&buffer[..read]))],
+        )
+        .await?;
+        sink.write(frames).await?;
+    }
+    for index in 0..encoders.len() {
+        let frames = encoders[index]
+            .finish()
+            .await
+            .map_err(|error| BodyStreamError::Failed(error.to_string()))?;
+        let frames = encode_chain(&mut encoders[index + 1..], frames).await?;
+        sink.write(frames).await?;
+    }
+    Ok(())
+}
+
+fn encode_file_temporary(
+    file: File,
+    expected: u64,
+    codings: &[String],
+    root: &Path,
+) -> Result<tempfile::NamedTempFile, AppError> {
+    let mut output = tempfile::NamedTempFile::new_in(root)
+        .map_err(|_| unavailable("Response compression temporary file is unavailable."))?;
+    let encoders = content_encoders(codings)
+        .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| unavailable("Response compression worker could not start."))?;
+    runtime
+        .block_on(encode_file_frames(
+            file,
+            expected,
+            encoders,
+            EncodedSink::File(output.as_file_mut()),
+        ))
+        .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
+    output
+        .as_file_mut()
+        .rewind()
+        .map_err(|_| unavailable("Compressed response could not be read."))?;
+    Ok(output)
 }
 
 fn open_selected_file(path: &Path) -> Result<(File, ResponseBodyFileInfo), AppError> {
@@ -1359,6 +1577,144 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn compressed_file_replacement_is_independent_of_the_text_edit_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        let source = store
+            .create_authored(AuthoredResponseAsset {
+                id: "large-compression".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("content-encoding", "gzip").unwrap(),
+                ]),
+                body: crate::inspector::encode_content(&["gzip".into()], b"source".to_vec())
+                    .await
+                    .unwrap(),
+                media_type: Some("application/octet-stream".into()),
+            })
+            .unwrap();
+        let path = root.path().join("large.input");
+        let payload = vec![0x5a; MAX_AUTHORED_BYTES + 1];
+        std::fs::write(&path, &payload).unwrap();
+        let asset = store
+            .edit(ResponseAssetEdit {
+                asset_reference: source.asset_ref(),
+                status: 200,
+                headers: HeaderBlock::new(),
+                media_type: source.media_type,
+                decoded_body: None,
+                body_path: Some(path),
+                preserve_content_encoding: true,
+            })
+            .await
+            .unwrap();
+        assert!(asset.linked_body.is_none());
+        let (_, body) = returned_body(&store, &asset).await;
+        let defaults = ContentLimits::default();
+        let bytes = NonZeroUsize::new(32 * 1024 * 1024).unwrap();
+        let limits = ContentLimits::new(
+            bytes,
+            bytes,
+            bytes,
+            defaults.max_decoder_window_bytes(),
+            NonZeroUsize::new(10000).unwrap(),
+            defaults.expansion_slack_bytes(),
+            defaults.max_coding_layers(),
+        );
+        let mut decoder =
+            transmog_content::ContentDecoder::new(transmog_content::ContentCoding::Gzip, limits)
+                .unwrap();
+        let mut frames = decoder
+            .on_frame(BodyFrame::Data(Bytes::from(body)))
+            .await
+            .unwrap();
+        frames.extend(decoder.finish().await.unwrap());
+        let restored = frames
+            .into_iter()
+            .filter_map(|frame| {
+                if let BodyFrame::Data(bytes) = frame {
+                    Some(bytes)
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(restored, payload);
+    }
+
+    #[tokio::test]
+    async fn binary_replacement_files_apply_every_original_compression_stack() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        let payload = (0..32768)
+            .map(|index| u8::try_from(index % 256).unwrap())
+            .collect::<Vec<_>>();
+        for (index, codings) in [
+            vec!["gzip"],
+            vec!["br"],
+            vec!["zstd"],
+            vec!["deflate"],
+            vec!["gzip", "br"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let codings = codings.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let source = store
+                .create_authored(AuthoredResponseAsset {
+                    id: format!("compression-{index}"),
+                    revision: 1,
+                    status: 200,
+                    headers: HeaderBlock::from_fields(vec![
+                        HeaderField::try_new("content-encoding", codings.join(", ")).unwrap(),
+                    ]),
+                    body: crate::inspector::encode_content(&codings, b"source".to_vec())
+                        .await
+                        .unwrap(),
+                    media_type: Some("application/octet-stream".into()),
+                })
+                .unwrap();
+            for linked in [false, true] {
+                let path = root.path().join(format!("replacement-{index}-{linked}"));
+                if linked {
+                    File::create(&path)
+                        .unwrap()
+                        .set_len(COPY_FILE_BYTES + 1)
+                        .unwrap();
+                } else {
+                    std::fs::write(&path, &payload).unwrap();
+                }
+                let asset = store
+                    .edit(ResponseAssetEdit {
+                        asset_reference: source.asset_ref(),
+                        status: 200,
+                        headers: stale_entity_headers(),
+                        media_type: source.media_type.clone(),
+                        decoded_body: None,
+                        body_path: Some(path.clone()),
+                        preserve_content_encoding: true,
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(asset.linked_body.is_some(), linked);
+                if linked {
+                    std::fs::write(&path, &payload).unwrap();
+                }
+                let (headers, encoded) = returned_body(&store, &asset).await;
+                assert_eq!(asset_codings(&headers), codings);
+                assert_eq!(
+                    crate::inspector::decode_content(&codings, encoded)
+                        .await
+                        .unwrap(),
+                    payload
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn file_cutoff_copies_small_files_and_keeps_large_links_across_restart() {
         let root = tempfile::tempdir().unwrap();
         let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
@@ -1486,10 +1842,16 @@ mod tests {
             }
         }
         let expected = body.len().to_string();
-        assert_eq!(
-            head.headers.values("content-length").collect::<Vec<_>>(),
-            vec![expected.as_bytes()]
-        );
+        if asset.linked_body.as_ref().is_some_and(|linked| {
+            linked.apply_original_compression && !linked.original_content_codings.is_empty()
+        }) {
+            assert!(head.headers.values("content-length").next().is_none());
+        } else {
+            assert_eq!(
+                head.headers.values("content-length").collect::<Vec<_>>(),
+                vec![expected.as_bytes()]
+            );
+        }
         if asset.linked_body.is_none() {
             assert_eq!(asset.body_bytes, u64::try_from(body.len()).unwrap());
         }
@@ -1628,7 +1990,7 @@ mod tests {
                 media_type: None,
                 decoded_body: None,
                 body_path: Some(file),
-                preserve_content_encoding: true,
+                preserve_content_encoding: false,
             })
             .await
             .unwrap();
@@ -1790,6 +2152,7 @@ mod tests {
                 None,
                 None,
             )
+            .await
             .unwrap();
         assert_eq!(asset.body_bytes, 0);
         assert_eq!(

@@ -73,7 +73,7 @@
           <div  class="captured-response-options wide-field" ?hidden="{{capturedOptionsHidden}}">
             <label><input w-ref="{autoResponseEditBody}" ?disabled="{{editBodyDisabled}}" name="editBody" type="checkbox" @change="{updateAutoResponseBodyEditState()}"> Edit response body</label>
           </div>
-          <label class="wide-field" ?hidden="{{encodingOptionsHidden}}"><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Keep original compression</label>
+          <label class="wide-field" ?hidden="{{encodingOptionsHidden}}"><input w-ref="{autoResponsePreserveEncoding}" ?disabled="{{preserveEncodingDisabled}}" name="preserveEncoding" type="checkbox" checked> Apply original compression type ({{compressionType}})<small ?hidden="{{!compressionUnavailableText}}">{{compressionUnavailableText}}</small></label>
           <div class="actions wide-field"><button type="button" class="secondary compact-button" @click="{chooseResponseBody()}" ?disabled="{{fileChoiceBusy || savingAutoResponse || loadingSavedResponse}}">Serve response body from file…</button></div>
           <div class="auto-response-editor-actions wide-field">
             <output class="field-error" aria-live="polite" ?hidden="{{!autoResponseError}}">{{autoResponseError}}</output>

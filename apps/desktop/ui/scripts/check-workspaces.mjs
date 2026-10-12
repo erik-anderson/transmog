@@ -339,7 +339,7 @@ await page.addInitScript((workspace) => {
         case 'inspect_response_asset': {
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
           if(!asset)throw new Error('Saved response missing');
-          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:'utf-8',contentCodings:asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
+          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:state.assetTextEncoding===null?null:'utf-8',contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
         }
         case 'edit_response_asset': {
           const source=state.assets.find(asset=>asset.id+'@'+asset.revision===args.input.assetReference);
@@ -1137,6 +1137,22 @@ try {
   assert.deepEqual(await page.evaluate(()=>{const asset=globalThis.__workspaceFixture.assets.find(asset=>asset.id+'@'+asset.revision===globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Authored response').request.responseAsset);return asset.headers.map(header=>new TextDecoder().decode(new Uint8Array(header.name)));}),['X-Fixture']);
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
 
+
+  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['gzip','br'];s.assetTextEncoding=null;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
+  await autoEditor.getByText('Apply original compression type (gzip, Brotli)',{exact:false}).waitFor();
+  assert.equal(await autoField('preserveEncoding').isDisabled(),true);
+  await page.evaluate(()=>globalThis.__workspaceFixture.bodyFile='C:/fixtures/binary.bin');
+  await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  assert.equal(await autoField('preserveEncoding').isEnabled(),true,'Binary file replacement cannot apply original compression');
+  await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['compress'];const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
+  await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  assert.equal(await autoField('preserveEncoding').isChecked(),false,'Unsupported compression traps replacement in an unusable checked state');
+  assert.equal(await autoField('preserveEncoding').isDisabled(),true);
+  await autoEditor.getByText(/Original compression is unsupported/).waitFor();
+
+  await autoEditor.getByRole('button',{name:'Clear file choice',exact:true}).click();
+  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;delete s.assetCodings;delete s.assetTextEncoding;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
   const originalFileDraft=await autoField('body').inputValue();
   await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFile='C:/fixtures/small.txt';globalThis.__workspaceFixture.bodyFileBytes=25000000;});
   await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();

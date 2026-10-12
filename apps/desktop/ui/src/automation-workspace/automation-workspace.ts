@@ -44,6 +44,8 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable responseBodyFileDetails='';
   @observable responseBodyFileError='';
   @observable fileChoiceBusy=false;
+  @observable compressionType='';
+  @observable compressionUnavailableText='';
   private bodyFileTouched=false;
   @observable existingResponse=false;
   @observable ruleUsageText='';
@@ -362,6 +364,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.responseBodyPath=info.path;this.responseBodyFile=info.path;
     this.responseBodyFileDetails=info.linked?'Read directly for each request. External edits affect future responses.':'Contents will be copied when you save (up to 25 MB). External edits will not affect the saved response.';
     this.responseBodyFileError=info.error??'';
+    this.updateCompressionChoice();
   }
   private async refreshResponseFile():Promise<void> {
     const path=this.responseBodyPath,revision=this.editorRevision;if(!path)return;
@@ -373,6 +376,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   clearResponseBodyFile():void {
     this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
     if(this.savedResponse?.asset.linkedBody){this.bodyReadOnly=false;this.bodyStatusText='Enter a replacement text body, or choose another file. Text uses UTF-8.';}
+    this.updateCompressionChoice();
   }
   private editableHeaders(asset:Pick<ResponseAsset,'headers'>):string {
     this.protectedResponseHeaders=[];const lines:string[]=[];const decoder=new TextDecoder('utf-8',{fatal:true});
@@ -393,6 +397,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
     this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;
+    this.compressionType='';
+    this.compressionUnavailableText='';
     this.savedHeaderText='';this.protectedResponseHeaders=[];
     this.capturedDraft=null;
     this.capturedOrigin=null;
@@ -699,12 +705,23 @@ export class AutomationWorkspace extends WorkspaceElement {
     if (!editable) this.autoResponseEditBody.checked = false;
     this.editBodyDisabled = !editable;
     this.bodyReadOnly = !this.autoResponseEditBody.checked;
-    this.preserveEncodingDisabled = !this.autoResponseEditBody.checked
-      || source?.kind !== 'captured'
-      || source.contentCodings.length === 0;
+    this.updateCompressionChoice();
     if (editable) this.bodyStatusText = this.autoResponseEditBody.checked
       ? `Edited text will replace the captured body using ${source.textEncoding}.`
       : `Read-only preview. Enable editing to replace the body; text uses ${source.textEncoding}.`;
+  }
+
+  private updateCompressionChoice():void {
+    const source=this.autoResponseSourceState;
+    const codings=source?.kind==='captured'?source.contentCodings:this.savedResponse?.contentCodings??[];
+    const labels:Record<string,string>={'gzip':'gzip','x-gzip':'gzip','br':'Brotli','deflate':'deflate','zstd':'zstd'};
+    this.compressionType=codings.map(coding=>labels[coding]??coding).join(', ');
+    this.encodingOptionsHidden=codings.length===0;
+    const editable=source?.kind==='captured'?this.autoResponseEditBody.checked:!this.bodyReadOnly;
+    const unsupported=codings.some(coding=>!labels[coding]);
+    this.compressionUnavailableText=unsupported?'Original compression is unsupported. Replacement bodies will be served without compression.':'';
+    if(unsupported && (this.responseBodyPath || editable))this.autoResponsePreserveEncoding.checked=false;
+    this.preserveEncodingDisabled=codings.length===0 || unsupported || (!this.responseBodyPath && !editable);
   }
 
   async saveAutoResponse(event: Event): Promise<void> {
@@ -740,7 +757,8 @@ export class AutomationWorkspace extends WorkspaceElement {
         const saved=this.savedResponse;
         if(!saved)throw new Error('Wait for the saved response to load before saving.');
         const bodyChanged=this.autoResponseBody.value!==saved.display || (this.bodyFileTouched && !this.responseBodyPath) || (!preserveEncoding && saved.contentCodings.length>0 && saved.textEncoding!==null);
-        if(bodyChanged || this.bodyFileTouched || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
+        const compressionChanged=Boolean(saved.asset.linkedBody) && Boolean(saved.asset.linkedBody?.applyOriginalCompression)!==preserveEncoding;
+        if(bodyChanged || this.bodyFileTouched || compressionChanged || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
           const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?encodeEditedText(this.autoResponseBody.value,saved.textEncoding??(saved.asset.linkedBody?'utf-8':null)):null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,preserveContentEncoding:preserveEncoding}});
           assetReference=`${asset.id}@${asset.revision}`;
         }
@@ -912,7 +930,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.bodyStatusText=inspection.explanation;this.savedHeaderText=this.editableHeaders(asset);
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
       this.encodingOptionsHidden=inspection.contentCodings.length===0;this.preserveEncodingDisabled=inspection.textEncoding===null;
-      this.autoResponsePreserveEncoding.checked=true;
+      this.autoResponsePreserveEncoding.checked=asset.linkedBody?Boolean(asset.linkedBody.applyOriginalCompression):true;
+      this.updateCompressionChoice();
       if(this.automationStatus)this.renderRuleUsage(this.automationStatus);
       this.responseFieldsHidden = false;
       if (asset.provenance.kind === 'session') {
