@@ -1,0 +1,33 @@
+loopback-exemptions {display:contents;}
+.loopback-dialog {box-sizing:border-box;margin:auto;width:min(88rem,calc(100vw - 2rem));height:min(44rem,calc(100dvh - 2rem));max-height:calc(100dvh - 2rem);padding:1rem;border:1px solid var(--line-strong);border-radius:.45rem;background:var(--panel);color:var(--text);font-size:.8125rem;overflow:auto;}
+.loopback-dialog[open] {display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr) auto;gap:.65rem;}
+.loopback-dialog::backdrop {background:rgb(0 0 0 / .3);}
+.loopback-dialog header {display:flex;justify-content:space-between;align-items:baseline;gap:.75rem;}
+.loopback-dialog h2 {margin:0;font-size:1rem;}
+.loopback-dialog p {margin:0;line-height:1.4;}
+.loopback-toolbar {display:flex;align-items:end;flex-wrap:wrap;gap:.5rem;}
+.loopback-toolbar label {display:grid;gap:.3rem;flex:1 1 18rem;min-width:0;}
+.loopback-toolbar input {box-sizing:border-box;width:100%;}
+.loopback-feedback {display:grid;gap:.35rem;}
+.loopback-dialog .field-help,.loopback-feedback>p:first-child {color:var(--muted);}
+.loopback-dialog .field-error {color:var(--danger);}
+.loopback-table-scroll {min-height:4rem;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);padding:.25rem;}
+.loopback-table {border-collapse:separate;border-spacing:0;table-layout:fixed;width:115rem;min-width:100%;font-size:.75rem;}
+.loopback-table th,.loopback-table td {box-sizing:border-box;padding:.4rem .5rem;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;overflow-wrap:anywhere;}
+.loopback-table th {position:sticky;top:-.25rem;z-index:1;background:var(--panel-subtle);font-weight:600;}
+.loopback-table th:first-child {width:4rem;}
+.loopback-table th:nth-child(2) {width:8rem;}
+.loopback-table th:nth-child(3) {width:13rem;}
+.loopback-table th:nth-child(4) {width:20rem;}
+.loopback-table th:nth-child(5),.loopback-table th:nth-child(6) {width:20rem;}
+.loopback-table th:nth-child(7) {width:17rem;}
+.loopback-table th:nth-child(8) {width:22rem;}
+.loopback-table th button {font:inherit;color:inherit;background:transparent;border:0;border-radius:0;padding:.15rem 0;text-align:left;}
+.loopback-table th[aria-sort="ascending"] button::after {content:' ↑';}
+.loopback-table th[aria-sort="descending"] button::after {content:' ↓';}
+.loopback-table tr[data-selected] td {background:var(--accent-soft);}
+.loopback-table tr:focus-visible {outline:2px solid var(--focus);outline-offset:-2px;}
+.loopback-users {white-space:pre-wrap;}
+.loopback-sid {font-family:var(--font-mono,monospace);font-size:.6875rem;}
+.loopback-dialog footer {padding-top:.25rem;}
+@media (forced-colors:active) {.loopback-table tr[data-selected] td {color:HighlightText;background:Highlight;}.loopback-table tr:focus-visible {outline-color:Highlight;}.loopback-dialog {border-color:CanvasText;}}

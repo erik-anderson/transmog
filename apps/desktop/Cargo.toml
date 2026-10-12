@@ -35,6 +35,8 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+windows-registry = "=0.6.1"
+sha2.workspace = true
 boring = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 http = { workspace = true, optional = true }

@@ -447,3 +447,11 @@ choice immediately, independently of ordinary settings and the thirty-day remind
 Turning it off prevents startup network checks; manual checks remain available.
 The installer offers the same choice and preserves it on updates and silent
 installs unless the user explicitly changes it.
+
+AppContainer loopback exemptions are managed in a modal from Connection.
+Keep installed metadata, users and existing Windows exemption status together;
+group repeated per-user records by AppContainer SID. Selection is independent of
+exemption status, supports the app's checkbox/range/keyboard conventions, and
+discloses selected rows hidden by a filter. Keep bulk actions outside the table's
+scroller. Preserve unselected Windows exemptions. Closing the dialog during an
+operation keeps monitoring its result; completion cannot reopen it or move focus.

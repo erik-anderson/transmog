@@ -960,5 +960,16 @@
   "detailsTimingsSelected": "true",
   "detailsConnectionSelected": "false",
   "detailsCertificatesSelected": "false",
-  "detailsSourceSelected": "false"
+  "detailsSourceSelected": "false",
+  "loopbackBusy": false,
+  "loopbackCurrent": false,
+  "loopbackStatus": "",
+  "loopbackError": "",
+  "loopbackQuery": "",
+  "loopbackSelected": 0,
+  "loopbackSelectionText": "0 selected",
+  "loopbackCountText": "",
+  "loopbackSort": "displayName",
+  "loopbackDirection": "ascending",
+  "loopbackSortStates": {"displayName":"ascending","description":"none","package":"none","name":"none","sid":"none","users":"none","exempt":"none"}
 }

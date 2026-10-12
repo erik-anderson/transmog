@@ -51,12 +51,15 @@ proxy stuck in **Stopping** or prevent a new run.
 **Start proxy** expedites that idle-connection cleanup before binding a new run;
 it does not wait for the grace period to expire.
 
-**Settings → Preferences → Advanced network settings** offers HTTPS decryption,
-caller-process connection isolation and allowed outbound HTTP protocols. Isolation
-and protocol changes do not restart the proxy; existing protocol connections remain
-usable until they close. Decryption changes apply on the next start. Turning it off
-requires no interception certificate setup and presents opaque CONNECT destination
-and transport evidence in Traffic.
+**Settings → Preferences → Network** starts with **Decrypt HTTPS traffic**.
+Turning it off applies on the next proxy start, requires no interception
+certificate setup, and presents opaque CONNECT destination and transport evidence
+in Traffic. **Advanced network settings** contains remote-client access (off by
+default), an optional saved proxy port, server connection reuse, caller-process
+isolation and allowed outbound HTTP protocols. With no saved port, each start
+chooses an available port. Turning reuse off gives later requests dedicated
+server connections. Saving connection choices preserves active requests and
+streams and does not restart the proxy.
 
 ## Live traffic and saved viewers
 
@@ -155,3 +158,19 @@ choice immediately, independently of ordinary settings and the thirty-day remind
 Turning it off prevents startup network checks; manual checks remain available.
 The installer offers the same choice and preserves it on updates and silent
 installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.
+
+Settings → Connection → **Manage loopback exemptions…** lists Windows
+AppContainers with their display name, description, package, AppContainer name,
+SID and users. Filter or sort the inventory, then use checkboxes, Ctrl-click,
+Shift-click or keyboard range selection. **Exempt selected** allows those apps
+to connect to a proxy on this computer; **Remove exemptions** reverses the
+selection. Windows requests administrator approval. Canceling approval changes
+nothing; failed or completed operations refresh the authoritative Windows state.
+Saved exemptions with unavailable installed metadata remain visible for removal.
+
+Exemptions persist in Windows until explicitly removed. Transmog preserves
+unselected exemptions and their attributes rather than replacing them with the
+current selection. This follows the
+[NetworkIsolation configuration contract](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nf-netfw-networkisolationsetappcontainerconfig).
+The verification script `scripts/test-loopback.ps1` exercises change planning
+with fixture SIDs and only reads the real system inventory.

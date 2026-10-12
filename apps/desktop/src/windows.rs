@@ -81,6 +81,7 @@ struct DesktopState {
     host: Arc<WindowsProxyIntegration>,
     owned_certificate: OwnedCertificateRegistry,
     certificate_operation: Arc<tokio::sync::Mutex<()>>,
+    loopback_operation: Arc<tokio::sync::Mutex<()>>,
     ca_certificate_path: PathBuf,
     ca_private_key_path: PathBuf,
     diagnostics_path: PathBuf,
@@ -99,6 +100,30 @@ fn open_product_website() -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|_| "Windows could not open the default browser.".to_owned())
+}
+
+#[tauri::command]
+async fn app_containers() -> Result<Vec<crate::loopback::AppContainer>, String> {
+    tauri::async_runtime::spawn_blocking(crate::loopback::enumerate)
+        .await
+        .map_err(|_| "AppContainer enumeration could not complete.".to_owned())?
+}
+
+#[tauri::command]
+async fn set_loopback_exemptions(
+    change: crate::loopback::ExemptionChange,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<crate::loopback::AppContainer>, String> {
+    let _operation = state
+        .loopback_operation
+        .try_lock()
+        .map_err(|_| "Another loopback exemption change is in progress.".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || crate::loopback::request_change(&change))
+        .await
+        .map_err(|_| {
+            "The exemption change could not complete. Refresh to inspect the current state."
+                .to_owned()
+        })?
 }
 
 #[tauri::command]
@@ -1928,6 +1953,7 @@ pub fn run() {
             host: Arc::clone(&host),
             owned_certificate,
             certificate_operation: Arc::new(tokio::sync::Mutex::new(())),
+            loopback_operation: Arc::new(tokio::sync::Mutex::new(())),
             ca_certificate_path,
             ca_private_key_path,
             diagnostics_path,
@@ -2030,6 +2056,8 @@ pub fn run() {
                 open_product_website,
                 check_updates,
                 set_automatic_update_checks,
+                app_containers,
+                set_loopback_exemptions,
                 download_update,
                 cancel_update,
                 remind_update,
@@ -2244,6 +2272,9 @@ fn exit_for_maintenance_if_requested() {
 }
 
 fn maintenance_exit_code() -> Option<i32> {
+    if let Some(code) = crate::loopback::maintenance_exit_code() {
+        return Some(code);
+    }
     if let Some(code) = crate::update_policy::preference_maintenance_exit_code() {
         return Some(code);
     }

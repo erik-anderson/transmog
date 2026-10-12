@@ -14,6 +14,9 @@ mod update_policy;
 #[cfg(windows)]
 mod updates;
 
+#[cfg(windows)]
+mod loopback;
+
 /// Starts the Windows desktop shell.
 #[cfg(windows)]
 pub use windows::run;

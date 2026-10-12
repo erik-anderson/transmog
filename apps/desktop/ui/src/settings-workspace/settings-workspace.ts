@@ -1,5 +1,7 @@
 import initialState from '../initial-state.json';
 import '../client-certificate-settings/client-certificate-settings.js';
+import '../loopback-exemptions/loopback-exemptions.js';
+import type {LoopbackExemptions} from '../loopback-exemptions/loopback-exemptions.js';
 import type {AppUpdates} from '../app-updates/app-updates.js';
 import type {ClientCertificateSettings} from '../client-certificate-settings/client-certificate-settings.js';
 import { attr, observable } from '@microsoft/webui-framework';
@@ -11,6 +13,8 @@ import { describeError } from '../utilities.js';
 export class SettingsWorkspace extends WorkspaceElement {
   clientCertificates!:ClientCertificateSettings;
   aboutUpdates!:AppUpdates;
+  loopbackManager!:LoopbackExemptions;
+  openLoopback(event:Event):void {void this.loopbackManager.open(event);}
   async openWebsite(event:Event):Promise<void> {
     event.preventDefault();
     try {await invoke('open_product_website');}

@@ -17,6 +17,7 @@ import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
 import { checkUserAgentPresets } from './check-user-agent-presets.mjs';
+import { checkLoopback } from './check-loopback.mjs';
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
@@ -87,6 +88,18 @@ await page.addInitScript((workspace) => {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'open_product_website': return;
+        case 'app_containers': {
+          if(state.loopbackReadError)throw new Error('Fixture Windows Firewall unavailable');
+          if(state.deferLoopbackRead){state.loopbackReadPending=true;await new Promise(resolve=>state.finishLoopbackRead=resolve);state.deferLoopbackRead=false;}
+          return structuredClone(state.appContainers??[]);
+        }
+        case 'set_loopback_exemptions': {
+          state.loopbackChange=structuredClone(args.change);
+          if(state.deferLoopbackChange){state.loopbackChangePending=true;await new Promise(resolve=>state.finishLoopbackChange=resolve);state.deferLoopbackChange=false;}
+          if(state.loopbackChangeError)throw new Error('Windows approval was canceled. No loopback exemptions were changed.');
+          for(const row of state.appContainers)if(args.change.sids.includes(row.sid))row.exempt=args.change.enabled;
+          return structuredClone(state.appContainers);
+        }
         case 'watch_update_close': state.updateCloseChannel = args.channel; return;
         case 'set_automatic_update_checks': if(state.updatePreferenceError)throw new Error('Fixture preferences cannot be saved');state.update.automaticChecksEnabled=args.enabled;return structuredClone(state.update);
         case 'update_status': return structuredClone(state.update);
@@ -439,6 +452,7 @@ try {
   assert.equal(await page.evaluate(() => customElements.get('automation-workspace') !== undefined), false, 'Automation hydrated at startup');
   if(process.env.TRANSMOG_STREAM_ONLY){await checkStreams(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Stream UI checks passed.\n');process.exit(0);}
   const startupRequests = requests.length;
+  if(process.env.TRANSMOG_LOOPBACK_ONLY){await checkLoopback(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Loopback modal checks passed.\n');process.exit(0);}
   assert.equal(await page.locator('.traffic-table tr[data-session-id][draggable]').count(),0,'Traffic rows still advertise cross-tab dragging');
   await view('automation');
   await checkUserAgentOverrides(page,root);
@@ -1893,6 +1907,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.releaseImport();globalThis.__workspaceFixture.deferImport=false;});
   await page.locator('.trace-import-status').getByText('Import canceled. Traffic is unchanged.',{exact:true}).waitFor();
   assert.equal(await page.locator('.operation-error-dialog[open]').count(),0);
+  await checkLoopback(page,root);
   await checkClientCertificates(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();
