@@ -2521,6 +2521,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn save_traffic_as_saz_reads_lazy_websocket_payloads_after_http_completion() {
+        use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("websocket.tmcap");
+        let payload = vec![0xab; 256 * 1024];
+        let records = [
+            CaptureRecordKind::RequestHead {
+                boundary: ExchangeBoundary::ClientRequest,
+                method: "CONNECT".into(),
+                target: "https://example.test/socket".into(),
+                headers: vec![],
+            },
+            CaptureRecordKind::ResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                status: 200,
+                headers: vec![],
+            },
+            CaptureRecordKind::Completed,
+            CaptureRecordKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Open,
+                None,
+            )),
+            CaptureRecordKind::StreamMessage(StreamMessage::new(
+                "server",
+                "binary",
+                payload.clone().into(),
+            )),
+        ];
+        let mut writer =
+            CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default()).unwrap();
+        for (sequence, kind) in records.into_iter().enumerate() {
+            writer
+                .append(&CaptureRecord {
+                    exchange_id: 1,
+                    sequence: sequence as u64 + 1,
+                    kind,
+                })
+                .unwrap();
+        }
+        writer.seal().unwrap();
+        drop(writer);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(source, "websocket"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        for format in [
+            crate::TraceSaveFormat::SazStrict,
+            crate::TraceSaveFormat::SazExtended,
+        ] {
+            let destination = root.path().join("websocket.saz");
+            let saved = workspace
+                .save_traffic_trace(
+                    destination.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        ..crate::TraceSaveOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(saved.entries, 1);
+            let mut archive = zip::ZipArchive::new(File::open(destination).unwrap()).unwrap();
+            let mut messages = Vec::new();
+            std::io::Read::read_to_end(&mut archive.by_name("raw/1_w.txt").unwrap(), &mut messages)
+                .unwrap();
+            assert!(messages.starts_with(b"\r\nResponse-Length: 262154\r\nID: 1\r\n"));
+            assert!(messages.ends_with(&[payload.as_slice(), b"\r\n"].concat()));
+        }
+    }
+
+    #[tokio::test]
     async fn save_traffic_as_saz_round_trips_and_preserves_encryption_and_sources() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source.saz");

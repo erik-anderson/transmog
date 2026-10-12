@@ -75,6 +75,10 @@ whole-session retention. Headers only omits
 payloads and SSE field content. No compatibility support is provided for earlier
 experimental layouts.
 
-HAR and SAZ export HTTP evidence but omit WebSocket messages and parsed SSE events.
-The Save dialog and exported entry comments disclose that limitation. Use TMCap to
-preserve stream activity.
+SAZ includes retained WebSocket text, binary, ping, pong and close messages in
+Fiddler's conventional `_w.txt` member. Frames are reconstructed from decoded
+messages, without original fragmentation or compression. HTTP/2 extended CONNECT
+handshakes are normalized to HTTP/1.1 upgrades for compatibility. Incomplete or
+unavailable message payloads are omitted and counted in session comments.
+HAR omits stream activity. Parsed SSE events require TMCap; SAZ and HAR retain
+the available HTTP response body. Use TMCap for full stream lifecycle and diagnostics.

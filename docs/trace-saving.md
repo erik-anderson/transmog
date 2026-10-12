@@ -22,7 +22,10 @@ The Save trace dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
 fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
 extended fidelity** to preserve original source associations and additional
 evidence. SAZ supports optional encryption and network context; ZIP member names
-remain visible. SAZ includes every exchange. Missing request or response heads
+remain visible. Both SAZ profiles include retained WebSocket messages for Fiddler,
+with reconstructed frames and normalized HTTP/2 handshakes. TMCap preserves full
+stream lifecycle and parsed SSE events; HAR omits stream activity.
+SAZ includes every exchange. Missing request or response heads
 use clearly labeled compatibility placeholders: Fiddler can show the explanation
 in session comments and message headers; an uncaptured response uses a labeled 599
 status, or 502 for a recorded DNS, TCP or TLS setup failure, and, when

@@ -213,6 +213,8 @@ search results, excluding entries removed from Traffic. Save native traces as
 `.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
 Offer SAZ compatibility and extended-fidelity choices alongside TMCap and HAR in
 Save trace. Extended SAZ preserves original source associations. SAZ includes
+retained WebSocket messages with explicitly disclosed framing normalization;
+TMCap preserves full stream evidence, including parsed SSE events. SAZ includes
 exchanges missing a request or response head using clearly labeled
 compatibility placeholders, with an explanation in Fiddler session comments and
 message headers. Missing responses use a labeled 599 status, or 502 for a recorded

@@ -7194,6 +7194,7 @@ dependencies = [
  "time",
  "transmog-capture",
  "transmog-core",
+ "transmog-websocket",
  "zip",
 ]
 

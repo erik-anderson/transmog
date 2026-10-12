@@ -3,7 +3,8 @@
 //! Bounded Session Archive Zip import and export adapters.
 //!
 //! Strict mode emits only the conventional OPC content-types member, an explicit
-//! `raw/` directory, and three `raw/<id>_{c,s,m}` files per HTTP exchange.
+//! `raw/` directory, three `raw/<id>_{c,s,m}` files per HTTP exchange, and
+//! `raw/<id>_w.txt` frame lists for established WebSocket connections.
 //! Missing heads use labeled compatibility placeholders without altering evidence.
 //! The native format remains authoritative because SAZ cannot represent every
 //! proxy boundary or hook effect.
@@ -28,6 +29,9 @@ mod connections;
 mod evidence;
 mod import;
 mod metadata;
+mod websocket;
+#[cfg(test)]
+mod websocket_tests;
 pub use evidence::{FailureEvidence, SessionEvidence};
 pub use import::{
     ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
@@ -68,7 +72,7 @@ impl Default for SazLimits {
         Self {
             max_sessions: 1_000_000,
             max_body_bytes_per_direction: 256 * 1024 * 1024,
-            max_entries: 3_000_003,
+            max_entries: 4_000_003,
         }
     }
 }
@@ -256,6 +260,14 @@ impl<W: Write + Seek> SazExporter<W> {
             )?;
             report.sessions += 1;
             report.entries += 3;
+            if websocket::established(session) {
+                if report.entries >= self.limits.max_entries {
+                    return Err(SazError::EntryLimitExceeded);
+                }
+                writer.start_file(format!("raw/{session_id}_w.txt"), options)?;
+                websocket::write_messages(&mut writer, &session.websocket_messages)?;
+                report.entries += 1;
+            }
             if let Some(exchange_id) = exchange_id {
                 if self.mode == SazMode::Extended {
                     report.entries += evidence::write_session(
@@ -309,7 +321,9 @@ impl<W: Write + Seek> SazExporter<W> {
 #[derive(Default)]
 #[allow(clippy::struct_excessive_bools)] // Independent stream, body completeness and loss evidence.
 struct Session {
-    stream: bool,
+    stream: Option<transmog_core::stream::StreamProtocol>,
+    websocket_messages: Vec<transmog_core::stream::StreamMessage>,
+    websocket_omitted: usize,
     kind: SessionKind,
     evidence: SessionEvidence,
     started_unix_nanos: Option<u128>,
@@ -391,8 +405,20 @@ fn collect_sessions(
         }
         let session = sessions.entry(record.exchange_id).or_default();
         match &record.kind {
-            CaptureRecordKind::StreamState(_) | CaptureRecordKind::StreamMessage(_) => {
-                session.stream = true;
+            CaptureRecordKind::StreamState(state) => {
+                session.stream = Some(state.protocol);
+            }
+            CaptureRecordKind::StreamMessage(message) => {
+                if matches!(message.kind.as_str(), "event" | "heartbeat" | "fields")
+                    || session.stream == Some(transmog_core::stream::StreamProtocol::Sse)
+                {
+                    session.stream = Some(transmog_core::stream::StreamProtocol::Sse);
+                } else {
+                    session
+                        .stream
+                        .get_or_insert(transmog_core::stream::StreamProtocol::WebSocket);
+                    session.websocket_messages.push(message.clone());
+                }
             }
             CaptureRecordKind::ExchangeStarted {
                 client_addr,
@@ -512,6 +538,7 @@ fn collect_sessions(
         }
     }
     for session in sessions.values_mut() {
+        websocket::validate(session)?;
         if let (Some(head), Some(representation)) =
             (&mut session.request, &session.request_representation)
         {
@@ -803,6 +830,7 @@ fn connection_reason(session: &Session) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)] // Keep paired head normalization and completeness metadata together.
 fn write_http_session<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     id: usize,
@@ -833,6 +861,8 @@ fn write_http_session<W: Write + Seek>(
         ],
     };
     let request = session.request.as_ref().unwrap_or(&placeholder_request);
+    let websocket_request = websocket::request(session, request);
+    let request = websocket_request.as_ref().unwrap_or(request);
     let request_incomplete = session.request_body_incomplete
         || session.loss
         || !body_finished(
@@ -876,8 +906,12 @@ fn write_http_session<W: Write + Seek>(
     let response = session.response.as_ref().unwrap_or(&placeholder_response);
     let opaque_response = connections::opaque_response(session, response);
     let response = opaque_response.as_ref().unwrap_or(response);
+    let websocket_response = websocket::response(session, response);
+    let response = websocket_response.as_ref().unwrap_or(response);
     let reason = if session.response.is_none() {
         diagnostic.1
+    } else if websocket_response.is_some() {
+        "Switching Protocols"
     } else if session.kind == SessionKind::ConnectionContext {
         connection_reason(session)
     } else if session

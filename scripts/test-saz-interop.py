@@ -1,4 +1,4 @@
-"""Verify SAZ encryption with an independent native 7-Zip reader/writer."""
+"""Verify SAZ encryption with 7-Zip and inspect interoperability fixtures."""
 import argparse
 from datetime import datetime
 import hashlib
@@ -88,13 +88,13 @@ def main():
     # Retain each run's independent-reader evidence for inspection.
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=artifacts))
     env["TRANSMOG_SAZ_INTEROP_DIR"] = str(directory)
-    for case in ("encrypted_saz_round_trips_and_produces_interop_fixtures", "classic_metadata_required_dates_preserve_unavailable_and_original_times"):
+    for case in ("encrypted_saz_round_trips_and_produces_interop_fixtures", "classic_metadata_required_dates_preserve_unavailable_and_original_times", "websocket_saz_exports_frames_in_both_profiles_and_encrypted_archives"):
         command(["cargo", "test", "--locked", "-p", "transmog-saz", case], env=env)
     verify_metadata(directory)
     if os.name == "nt":
         # Keep the additional .NET XmlConvert compatibility check on Windows.
         command(["pwsh", "-NoProfile", "-File", ROOT / "scripts/test-saz-metadata.ps1", "-FixtureDirectory", directory], env=env)
-    for profile in ("strict", "extended"):
+    for profile in ("strict", "extended", "websocket-h1-strict", "websocket-h1-extended", "websocket-h2-strict", "websocket-h2-extended"):
         encrypted = directory / (profile + "-encrypted.saz")
         command([tool, "t", encrypted, "-pTransmog-interop-password"], env=env)
         decoded, reference = directory / (profile + "-decoded"), directory / (profile + "-reference")

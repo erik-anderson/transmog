@@ -10,13 +10,34 @@ The strict exporter follows the documented Fiddler archive structure:
 - an explicit `raw/` ZIP directory entry;
 - `raw/<number>_c.txt` containing the raw client-view HTTP request;
 - `raw/<number>_s.txt` containing the raw client-view HTTP response;
-- `raw/<number>_m.xml` containing conventional session metadata.
+- `raw/<number>_m.xml` containing conventional session metadata;
+- `raw/<number>_w.txt` containing the WebSocket frame list, when established.
 
 This structure is described by Telerik's
 [Fiddler Archives documentation](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 The ZIP implementation writes Deflate-compressed entries with ZIP64-capable
 file options. The selected `zip` crate enables only its existing `flate2`
 backend and its AES support. Additional compression codecs remain disabled.
+
+Both export profiles include complete retained WebSocket text, binary, ping,
+pong and close messages. The `_w.txt` member uses Fiddler's length-delimited
+envelopes, directional `Request-Length`/`Response-Length`, sequential IDs, message
+flags and timestamps followed by RFC 6455 frames. Session metadata sets
+`IsWebSocketTunnel` (`0x40000`). These file members use the same encryption option
+as the HTTP members.
+
+Captured decoded messages become individual uncompressed final frames. Client
+frames use a zero masking key only in the archive; no archive bytes are sent to
+peers. Compression negotiation is removed from exported handshake headers, and
+HTTP/2 extended CONNECT becomes a labeled HTTP/1.1 GET/101 upgrade. Original
+header fields remain in extended evidence. `DoneRead` is the local observation
+time; unavailable send times use the unset DateTime sentinel. Session comments
+and namespaced flags explain these normalizations and count omitted incomplete
+or unavailable observations. Message payloads are streamed into the ZIP member,
+without a separate history or per-message cap. This does not reconstruct original
+fragmentation, compression or remote delivery times. Parsed SSE events and full
+stream lifecycle/diagnostics remain TMCap evidence; retained SSE HTTP body bytes
+are still exported normally.
 
 The import adapter accepts stored and Deflate-compressed ZIP/ZIP64 archives.
 It bounds compressed input, central-directory size and counts before the ZIP

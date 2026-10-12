@@ -38,7 +38,7 @@ fn xml(value: &str) -> String {
         .replace('\n', "&#10;")
         .replace('\t', "&#9;")
 }
-fn timestamp(millis: u64) -> Option<String> {
+pub(crate) fn timestamp(millis: u64) -> Option<String> {
     let nanos = i128::from(millis) * 1_000_000;
     let value = time::OffsetDateTime::from_unix_timestamp_nanos(nanos).ok()?;
     Some(format!(
@@ -203,15 +203,41 @@ pub(crate) fn render(
             ),
         );
     }
-    if session.stream {
-        let note = "WebSocket messages and parsed SSE events are omitted from this SAZ export. Save TMCap to retain stream activity.";
+    if session.stream.is_some() || crate::websocket::established(session) {
+        let note = if crate::websocket::established(session) {
+            if let Some(request) = &session.request {
+                flags.insert(
+                    "x-transmog-websocket-original-method",
+                    request.method.clone(),
+                );
+            }
+            if let Some(response) = &session.response {
+                flags.insert(
+                    "x-transmog-websocket-original-status",
+                    response.status.to_string(),
+                );
+            }
+            flags.insert("x-transmog-websocket-framing", "Decoded messages reconstructed as uncompressed frames with archive-only zero client masks. Original fragmentation and compression are not retained. DoneRead is the local observation time; send times are unavailable.".into());
+            flags.insert(
+                "x-transmog-websocket-omitted",
+                session.websocket_omitted.to_string(),
+            );
+            format!(
+                "WebSocket messages are included. Framing and any HTTP/2 handshake are normalized for SAZ. {} incomplete or unavailable observations were omitted; save TMCap for full stream evidence.",
+                session.websocket_omitted
+            )
+        } else if session.stream == Some(transmog_core::stream::StreamProtocol::Sse) {
+            "Parsed SSE events are omitted; retained HTTP response bytes are included. Save TMCap for parsed stream activity.".into()
+        } else {
+            "The WebSocket handshake did not establish a captured connection.".into()
+        };
         flags
             .entry("ui-comments")
             .and_modify(|value| {
                 value.push(' ');
-                value.push_str(note);
+                value.push_str(&note);
             })
-            .or_insert_with(|| note.into());
+            .or_insert(note);
     }
     flags.insert(
         "x-transmog-terminal",
@@ -336,10 +362,12 @@ pub(crate) fn render(
             xml(value)
         );
     }
-    let connect = session
-        .request
-        .as_ref()
-        .is_some_and(|request| request.method == "CONNECT");
+    let websocket = crate::websocket::established(session);
+    let connect = !websocket
+        && session
+            .request
+            .as_ref()
+            .is_some_and(|request| request.method == "CONNECT");
     let https = !connect
         && session
             .request
@@ -347,6 +375,7 @@ pub(crate) fn render(
             .is_some_and(|request| request.target.starts_with("https://"));
     let bit_flags = u32::from(https)
         | 0x400
+        | if websocket { 0x40000 } else { 0 }
         | if (session.kind == crate::SessionKind::ConnectionContext
             && session
                 .response
