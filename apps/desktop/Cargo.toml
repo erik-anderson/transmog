@@ -53,7 +53,14 @@ rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.1", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.4.5"
 tauri-plugin-updater = { version = "=2.13.2", default-features = false, features = ["rustls-tls", "system-proxy"] }
+# Configure the updater's existing client without introducing another TLS stack.
+reqwest = { version = "=0.13.5", default-features = false }
 transmog-host-windows = { version = "=0.1.3", path = "../../crates/host-windows" }
+
+[target.'cfg(windows)'.dev-dependencies]
+tauri = { version = "=2.12.1", default-features = false, features = ["test"] }
+transmog-automation = { version = "=0.1.3", path = "../../crates/proxy-automation" }
+transmog-core = { version = "=0.1.3", path = "../../crates/proxy-core" }
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.1", features = [] }

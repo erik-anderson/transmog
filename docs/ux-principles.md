@@ -89,6 +89,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   Update consent specifies when installation happens. Resolve unsaved drafts and
   finish capture/proxy/host cleanup before installation can close the app. A
   thirty-day reminder pauses automatic prompts across subsequent releases.
+  Update checks and downloads use the running proxy and its ordinary capture
+  policy, so the app's own requests can be inspected alongside other traffic.
+  Resolve the active route for each operation, including downloads after a check.
 
 - Keep selection, scroll position, and drafts stable across live updates and
   workspace changes. Allocate one editor for the selected item rather than an

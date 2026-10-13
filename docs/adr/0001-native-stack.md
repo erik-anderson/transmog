@@ -28,8 +28,11 @@ Certificate evidence never reads or serializes private keys.
 
 The Windows desktop updater uses the supported Tauri updater SDK's HTTPS client
 and platform trust to retrieve signed GitHub release assets. Its Rustls dependency
-chain is confined to the desktop-owned updater edge. It never supplies a TLS
-context to proxy, replay, interception, or HTTP/3 resources. Cargo-deny permits
+chain is confined to the desktop-owned updater and its existing Reqwest client,
+which the desktop configures to use its active proxy and public interception root.
+The crypto graph gate allows that exact client package on the desktop edge only.
+This client never supplies a TLS context to proxy, replay, interception, or
+HTTP/3 resources. Cargo-deny permits
 only the named updater wrappers, and the crypto graph gate rejects every other
 production path to those TLS crates. This exception keeps standard signed updates
 available without maintaining a fork of the updater's transport and installer.

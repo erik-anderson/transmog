@@ -9,6 +9,23 @@ FORBIDDEN = {"openssl", "openssl-sys", "native-tls", "rustls", "rustls-webpki", 
 def check_graph(metadata, target):
     packages = {p["id"]: p for p in metadata["packages"]}
     nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
+    # The desktop configures the SDK's existing reqwest client. Exempt only that
+    # exact package instance; a second version or any other consumer is checked.
+    updater_clients = {}
+    for key, node in nodes.items():
+        if packages[key]["name"] != "transmog-desktop":
+            continue
+        clients = updater_clients[key] = set()
+        for dep in node["deps"]:
+            if packages[dep["pkg"]]["name"] == "tauri-plugin-updater" and any(
+                kind["kind"] in (None, "normal") for kind in dep["dep_kinds"]
+            ):
+                clients.update(
+                    client["pkg"] for client in nodes[dep["pkg"]]["deps"]
+                    if packages[client["pkg"]]["name"] == "reqwest" and any(
+                        kind["kind"] in (None, "normal") for kind in client["dep_kinds"]
+                    )
+                )
     normal = set()
     queue = list(metadata["workspace_members"])
     while queue:
@@ -17,7 +34,10 @@ def check_graph(metadata, target):
             continue
         normal.add(key)
         for dependency in nodes[key]["deps"]:
-            if packages[key]["name"] == "transmog-desktop" and packages[dependency["pkg"]]["name"] == "tauri-plugin-updater":
+            if packages[key]["name"] == "transmog-desktop" and (
+                packages[dependency["pkg"]]["name"] == "tauri-plugin-updater"
+                or dependency["pkg"] in updater_clients.get(key, set())
+            ):
                 continue
             if any(kind["kind"] in (None, "normal") for kind in dependency["dep_kinds"]):
                 queue.append(dependency["pkg"])

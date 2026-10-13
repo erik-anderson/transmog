@@ -145,9 +145,12 @@ fn set_automatic_update_checks(
 async fn check_updates(
     app: tauri::AppHandle,
     manual: bool,
+    state: State<'_, DesktopState>,
     updates: State<'_, Arc<crate::updates::UpdateCoordinator>>,
 ) -> Result<crate::updates::UpdateStatus, String> {
-    updates.check(&app, manual).await
+    updates
+        .check(&app, &state.application, &state.ca_certificate_path, manual)
+        .await
 }
 
 #[tauri::command]

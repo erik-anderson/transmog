@@ -72,6 +72,30 @@ class CryptoGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
             checker.check_graph(graph, "fixture")
 
+    def test_desktop_client_exception_requires_the_updaters_exact_package(self):
+        checker = load("check-crypto-graph")
+        graph = self.graph()
+        def edge(name):
+            return {"pkg": name, "dep_kinds": [{"kind": None}]}
+        graph["packages"].append({"id": "reqwest", "name": "reqwest", "version": "1"})
+        graph["resolve"]["nodes"].append({"id": "reqwest", "deps": [edge("rustls")]})
+        graph["resolve"]["nodes"][0]["deps"].append(edge("reqwest"))
+        graph["resolve"]["nodes"][1]["deps"] = [edge("reqwest")]
+        checker.check_graph(graph, "fixture")
+        graph["workspace_members"].append("reqwest")
+        with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
+            checker.check_graph(graph, "fixture")
+        graph["workspace_members"].pop()
+        graph["packages"].append({"id": "reqwest-2", "name": "reqwest", "version": "2"})
+        graph["resolve"]["nodes"].append({"id": "reqwest-2", "deps": [edge("rustls")]})
+        graph["resolve"]["nodes"][0]["deps"].append(edge("reqwest-2"))
+        with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
+            checker.check_graph(graph, "fixture")
+        graph["packages"].append({"id": "updater-2", "name": "tauri-plugin-updater", "version": "2"})
+        graph["resolve"]["nodes"].append({"id": "updater-2", "deps": [edge("reqwest-2")]})
+        with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
+            checker.check_graph(graph, "fixture")
+
 
 class SupplyChainTests(unittest.TestCase):
     def test_nested_scoped_production_packages_and_notice_order(self):

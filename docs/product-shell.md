@@ -18,6 +18,14 @@ check, release notes and manual Check for updates. About also contains the
 transmog.net website link and Credits with complete dependency license texts.
 Offline startup stays quiet; a manual check reports a useful failure.
 
+While the proxy is running, update checks and installer downloads use its active
+listener and follow the usual capture and recording settings. With HTTPS
+decryption enabled, their requests, redirects and responses appear in Traffic;
+with decryption disabled, Traffic shows the HTTPS tunnels. Each operation uses
+the current proxy state, including when it changes after a check. The updater
+trusts the app's public interception root while routing through it and continues
+to verify HTTPS certificates and installer signatures.
+
 Downloads show progress and can be cancelled. Installation follows signature and
 version verification, draft resolution, capture sealing, proxy shutdown, and
 Windows host restoration. Close saved traffic viewer windows before installing

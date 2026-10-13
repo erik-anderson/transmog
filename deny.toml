@@ -54,7 +54,7 @@ deny = [
     # The supported Tauri updater owns an isolated HTTPS client. The crypto graph
     # gate separately forbids these paths from every other production root.
     { name = "tauri-plugin-updater", wrappers = ["transmog-desktop"] },
-    { name = "reqwest", wrappers = ["tauri-plugin-updater"] },
+    { name = "reqwest", wrappers = ["tauri-plugin-updater", "transmog-desktop"] },
     { name = "hyper-rustls", wrappers = ["reqwest"] },
     { name = "tokio-rustls", wrappers = ["reqwest", "hyper-rustls"] },
     { name = "rustls-platform-verifier", wrappers = ["reqwest"] },

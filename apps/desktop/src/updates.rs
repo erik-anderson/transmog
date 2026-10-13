@@ -1,7 +1,9 @@
 //! Native update checks, verified staging, and session-scoped installation consent.
 
 use std::{
-    path::PathBuf,
+    io::Read as _,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -12,10 +14,12 @@ use std::{
 use serde::Serialize;
 use tauri::{AppHandle, ipc::Channel};
 use tauri_plugin_updater::{Update, UpdaterExt};
+use transmog_app::{AppLifecycle, AppStatus, Application};
 
 use crate::update_policy::ReminderStore;
 
 const MAX_INSTALLER_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_CA_CERTIFICATE_BYTES: u64 = 1024 * 1024;
 const STABLE_UPDATE_FEED: &str =
     "https://github.com/erik-anderson/transmog/releases/latest/download/latest.json";
 const CANARY_UPDATE_FEED: &str =
@@ -47,6 +51,74 @@ fn available_message(channel: &str) -> String {
 
 fn current_message(channel: &str) -> String {
     format!("You’re up to date with {} updates.", update_track(channel))
+}
+
+fn active_proxy(status: &AppStatus) -> Option<tauri::Url> {
+    if status.lifecycle != AppLifecycle::Running {
+        return None;
+    }
+    let mut address: SocketAddr = status.listener.as_ref()?.parse().ok()?;
+    if address.ip().is_unspecified() {
+        address.set_ip(if address.is_ipv4() {
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        } else {
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
+        });
+    }
+    format!("http://{address}").parse().ok()
+}
+
+fn update_client(
+    client: reqwest::ClientBuilder,
+    application: &Application,
+    ca_certificate_path: &Path,
+) -> reqwest::ClientBuilder {
+    let Some(proxy) = active_proxy(&application.status()) else {
+        // Retain normal system proxy discovery while Transmog is stopped.
+        return client;
+    };
+    let proxy =
+        reqwest::Proxy::all(proxy.as_str()).expect("socket address produces a valid proxy URL");
+    let client = client.no_proxy().proxy(proxy);
+    // Trust only this app's public interception root in addition to system roots.
+    // Manual client routing can decrypt HTTPS without installing that root in Windows.
+    let certificate = (|| {
+        let mut pem = Vec::new();
+        std::fs::File::open(ca_certificate_path)
+            .ok()?
+            .take(MAX_CA_CERTIFICATE_BYTES + 1)
+            .read_to_end(&mut pem)
+            .ok()?;
+        if pem.len() as u64 > MAX_CA_CERTIFICATE_BYTES {
+            return None;
+        }
+        reqwest::Certificate::from_pem(&pem).ok()
+    })();
+    if let Some(certificate) = certificate {
+        client.tls_certs_merge([certificate])
+    } else {
+        client
+    }
+}
+
+fn update_checker<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    application: &Application,
+    ca_certificate_path: &Path,
+    endpoint: tauri::Url,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    let application = application.clone();
+    let ca_certificate_path = ca_certificate_path.to_owned();
+    app.updater_builder()
+        .target("windows-x86_64-nsis")
+        .endpoints(vec![endpoint])
+        .map_err(|_| "The update feed could not be configured.".to_owned())?
+        .timeout(Duration::from_secs(20))
+        // The updater retains this callback for downloads. Sample the live route
+        // for each operation instead of retaining a listener from the last check.
+        .configure_client(move |client| update_client(client, &application, &ca_certificate_path))
+        .build()
+        .map_err(|_| "The update checker could not initialize.".to_owned())
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -157,6 +229,8 @@ impl UpdateCoordinator {
     pub(crate) async fn check(
         &self,
         app: &AppHandle,
+        application: &Application,
+        ca_certificate_path: &Path,
         manual: bool,
     ) -> Result<UpdateStatus, String> {
         let _operation = self
@@ -192,14 +266,10 @@ impl UpdateCoordinator {
             // Canary builds use their own rolling feed; every other build follows
             // GitHub's stable Latest release feed.
             let endpoint = update_feed(release["channel"].as_str().unwrap_or("Release"));
-            let updater = app.updater_builder()
-                .target("windows-x86_64-nsis")
-                .endpoints(vec![endpoint
-                    .parse()
-                    .map_err(|_| "The update feed URL is invalid.".to_owned())?])
-                .map_err(|_| "The update feed could not be configured.".to_owned())?
-                .timeout(Duration::from_secs(20))
-                .build().map_err(|_| "The update checker could not initialize.".to_owned())?;
+            let updater = update_checker(
+                app, application, ca_certificate_path,
+                endpoint.parse().map_err(|_| "The update feed URL is invalid.".to_owned())?,
+            )?;
             updater.check().await.map_err(|_| "The update check could not reach GitHub or read the release manifest. Try again later.".to_owned())
         }.await;
         let mut inner = self.inner.lock().unwrap();
@@ -423,7 +493,6 @@ fn valid_download(version: &str, url: &str) -> bool {
 
 /// Read-only release qualification mode; no `WebView`, proxy, host, or installer is started.
 pub(crate) fn artifact_verification_exit_code() -> Option<i32> {
-    use std::io::Read as _;
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments
         .first()
@@ -472,6 +541,10 @@ pub(crate) fn artifact_verification_exit_code() -> Option<i32> {
 }
 
 #[cfg(test)]
+#[path = "update_traffic_tests.rs"]
+mod traffic_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -507,6 +580,7 @@ mod tests {
         coordinator.set_automatic_checks(false).unwrap();
         {
             let mut inner = coordinator.inner.lock().unwrap();
+            inner.status.channel = "Release".into();
             inner.status.message = "Automatic update checking is off.".into();
             inner.status.suppressed = true;
         }
