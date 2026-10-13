@@ -5,8 +5,8 @@ use boring::{
     hash::MessageDigest,
     pkey::{Id, PKey, Private},
     ssl::{
-        SslAcceptor, SslConnector, SslContext, SslContextBuilder, SslMethod, SslSignatureAlgorithm,
-        SslStream, SslVersion,
+        ExtensionType, SslAcceptor, SslConnector, SslContext, SslContextBuilder, SslMethod,
+        SslSignatureAlgorithm, SslStream, SslVersion,
     },
     x509::{
         X509, X509NameBuilder,
@@ -17,7 +17,7 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use transmog_tls::{
@@ -225,6 +225,50 @@ fn hello_extensions(written: &[u8]) -> BTreeMap<u16, Vec<u8>> {
     extensions
 }
 
+fn signature_algorithms(extension: &[u8]) -> Vec<u16> {
+    assert_eq!(usize::from(u16_be(extension)), extension.len() - 2);
+    assert_eq!(extension.len() % 2, 0);
+    extension[2..].chunks_exact(2).map(u16_be).collect()
+}
+
+fn is_grease(value: u16) -> bool {
+    value & 0x0f0f == 0x0a0a && value >> 8 == value & 0xff
+}
+
+#[test]
+fn production_tcp_signature_grease_preserves_real_algorithms_and_handshakes() {
+    let ca = ProxyCa::generate("Signature GREASE TCP root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        let mut baseline = factory(&ca)
+            .hyper_connector_builder(b"\x02h2\x08http/1.1")
+            .unwrap();
+        transmog_tls_native::set_signature_algorithm_grease(&mut baseline, false);
+        let acceptor = || {
+            DownstreamTlsContextFactory::new(DownstreamTlsPolicy {
+                minimum_version: version,
+                maximum_version: version,
+            })
+            .acceptor(&leaf)
+            .unwrap()
+        };
+        let (tls, _) = handshake(acceptor(), &baseline.build());
+        let expected = signature_algorithms(&hello_extensions(&tls.get_ref().written)[&13]);
+        assert!(expected.iter().all(|&value| !is_grease(value)));
+        let connector = factory(&ca).hyper_connector().unwrap();
+        for _ in 0..3 {
+            let (tls, _) = handshake(acceptor(), &connector);
+            assert_eq!(tls.ssl().version2(), Some(version));
+            assert!(tls.ssl().verify_result().is_ok());
+            let advertised = signature_algorithms(&hello_extensions(&tls.get_ref().written)[&13]);
+            assert!(is_grease(advertised[0]));
+            assert_eq!(&advertised[1..], expected);
+        }
+    }
+}
+
 #[test]
 fn boringssl_supports_chromium_hybrid_exchange_and_initial_shares() {
     let ca = ProxyCa::generate("PQC fixture root", 2).unwrap();
@@ -383,6 +427,49 @@ fn quic_config(tls: SslContextBuilder) -> quiche::Config {
     config.set_initial_max_stream_data_bidi_remote(65536);
     config.set_initial_max_streams_bidi(8);
     config
+}
+
+#[test]
+fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() {
+    let ca = ProxyCa::generate("Signature GREASE QUIC root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let mut expected = Vec::new();
+    for enabled in [false, true] {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let recorder = observed.clone();
+        let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        server.set_curves_list(GROUPS).unwrap();
+        server.set_select_certificate_callback(move |hello| {
+            let algorithms = signature_algorithms(
+                hello
+                    .get_extension(ExtensionType::SIGNATURE_ALGORITHMS)
+                    .unwrap(),
+            );
+            recorder.lock().unwrap().push(algorithms);
+            Ok(())
+        });
+        let mut client = factory(&ca).quiche_context_builder().unwrap();
+        if !enabled {
+            transmog_tls_native::set_signature_algorithm_grease(&mut client, false);
+        }
+        let (mut client, _) = quic_handshake(quic_config(client), quic_config(server));
+        assert_eq!(client.as_mut().curve(), Some(HYBRID_GROUP));
+        assert!(client.as_mut().verify_result().is_ok());
+        let observed = observed.lock().unwrap();
+        assert_eq!(observed.len(), 1);
+        let advertised = &observed[0];
+        if enabled {
+            assert!(is_grease(advertised[0]));
+            assert_eq!(&advertised[1..], expected);
+        } else {
+            assert!(advertised.iter().all(|&value| !is_grease(value)));
+            expected.clone_from(advertised);
+        }
+    }
 }
 
 fn quic_handshake(

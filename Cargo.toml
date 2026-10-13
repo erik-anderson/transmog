@@ -93,6 +93,14 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Netw
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
 zstd = { version = "=0.14.0", default-features = false }
 
+[patch.crates-io]
+# Unreleased BoringSSL update supplies signature-algorithm GREASE. Keep the
+# entire family on one immutable revision, including quiche's transitive TLS.
+boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
+boring-sys = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
+hyper-boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
+tokio-boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

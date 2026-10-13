@@ -7,6 +7,12 @@ SDK, but it demonstrates foreign-language ownership, bounded result transfer,
 system trust, bounded origin connection racing, and an allowed-protocol policy
 with HTTP/1.1 and HTTP/2 selected through ALPN plus an explicit HTTP/3 attempt.
 
+The examples in this repository share its pinned BoringSSL dependency graph.
+An independent Cargo workspace embedding Transmog must also copy the temporary
+four-crate `[patch.crates-io]` section from the repository's root `Cargo.toml`.
+It supplies the unreleased signature-algorithm GREASE API; patches in a
+dependency's manifest are not inherited. See [dependency policy](dependencies.md).
+
 The [`embedded` example](../crates/proxy-runtime/examples/embedded.rs) constructs
 the proxy without CLI modules or global state. It supplies an interceptor that
 modifies decoded request and response bytes, bounded observer, route selector,

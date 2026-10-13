@@ -520,8 +520,7 @@ dependencies = [
 [[package]]
 name = "boring"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47bf58283ad1560da95ab8dcbb6c71e18a89df30e6011e3582ddf755abe55c4a"
+source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
 dependencies = [
  "bitflags 2.13.2",
  "boring-sys",
@@ -533,8 +532,7 @@ dependencies = [
 [[package]]
 name = "boring-sys"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6993efa9d9f0ebf3b0c02c8e868cfe37d0854cd021d51204480a91ce23d6e444"
+source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
 dependencies = [
  "bindgen 0.72.1",
  "cmake",
@@ -2532,8 +2530,7 @@ dependencies = [
 [[package]]
 name = "hyper-boring"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6bcdd3b929826e4379afd7b5a5a7187223e40a64721087a28c514a8dda585d4"
+source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
 dependencies = [
  "antidote",
  "boring",
@@ -6569,8 +6566,7 @@ dependencies = [
 [[package]]
 name = "tokio-boring"
 version = "5.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80b0cb8797d5f375289c1d478929ac08f98c535d6d000dcd01de05ad703782cd"
+source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
 dependencies = [
  "boring",
  "boring-sys",

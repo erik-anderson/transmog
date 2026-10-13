@@ -405,7 +405,7 @@ cargo deny check
 python ./scripts/check-crypto-graph.py
 ```
 
-The normal dependency graph must contain exactly one `boring` and one
-`boring-sys` version and no second production TLS implementation. Platform
-certificate enumeration packages are permitted only as sources of DER bytes;
-BoringSSL performs all path and endpoint verification.
+The normal dependency graph must contain exactly one package identity, including
+source and version, for each of `boring` and `boring-sys`, and no second production
+TLS implementation. Platform certificate enumeration packages are permitted only
+as sources of DER bytes; BoringSSL performs all path and endpoint verification.

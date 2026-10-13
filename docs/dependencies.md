@@ -27,16 +27,28 @@ Happy Eyeballs policy. Hyper performs the TCP race; the quiche adapter races
 complete, verified QUIC/TLS handshakes. See
 [origin connection racing](networking.md).
 
+The BoringSSL crate family is temporarily patched to one immutable upstream Git
+revision for the unreleased signature-algorithm GREASE API. The patch applies to
+all four crates, including quiche's transitive dependencies. The exact revision
+lives in the workspace manifest and lockfile; remove the patch when a published
+release provides the same native API. Dependency policy permits only this Git
+repository, and ordinary registry dependencies remain required elsewhere.
+Cargo applies patches only at the consumer's workspace root, so independent
+embedding workspaces must repeat the same four patch entries. The repository's
+Rust and .NET examples already use the patched root workspace.
+
 `transmog-tls-native` contains the narrow native boundary for client certificate
-requests and alternate server credentials omitted by the safe wrapper. It owns
-native references and selected public-chain evidence using that same BoringSSL
-instance. Algorithm and trust policy remain in `transmog-tls`; see the
+requests, alternate server credentials and signature-algorithm GREASE omitted by
+the safe wrapper. It owns native references and selected public-chain evidence
+using that same BoringSSL instance. Algorithm and trust policy remain in
+`transmog-tls`; see the
 [certificate model](certificate-model.md#post-quantum-tls-algorithms).
 
 Transmog deliberately rejects a second production TLS implementation. The
 dependency policy bans OpenSSL, native-tls, rustls, and webpki data-plane
-crates, while the crypto-graph check verifies exactly one `boring` and
-`boring-sys` version in the normal dependency graph. See
+crates, while the crypto-graph check verifies exactly one package identity,
+including source and version, for each of `boring` and `boring-sys` in the normal
+dependency graph. See
 [`deny.toml`](../deny.toml) and
 [`check-crypto-graph.py`](../scripts/check-crypto-graph.py).
 

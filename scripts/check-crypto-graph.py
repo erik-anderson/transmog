@@ -46,9 +46,11 @@ def check_graph(metadata, target):
     if forbidden:
         raise RuntimeError(f"Forbidden production TLS crates on {target}: {', '.join(forbidden)}")
     for name in ("boring", "boring-sys"):
-        versions = {p["version"] for p in selected if p["name"] == name}
-        if len(versions) != 1:
-            raise RuntimeError(f"Expected one {name} version on {target}; found {sorted(versions)}")
+        # Cargo package IDs distinguish registry, Git revisions and local paths,
+        # even when separate TLS stacks report the same version.
+        identities = {p["id"] for p in selected if p["name"] == name}
+        if len(identities) != 1:
+            raise RuntimeError(f"Expected one {name} package on {target}; found {sorted(identities)}")
 
 
 def main():

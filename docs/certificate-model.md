@@ -41,6 +41,12 @@ Each TLS leg negotiates independently. An origin's algorithm does not force the
 client-facing leg to use the same algorithm, and downstream support does not
 change upstream certificate verification. TLS 1.2 retains classical behavior.
 
+Upstream TCP and QUIC ClientHellos prepend a reserved GREASE signature scheme
+to the existing real verification preferences. BoringSSL selects the placeholder
+for each handshake; peers ignore it and negotiate an existing real algorithm.
+Signature-algorithm GREASE is a separate native setting from ordinary GREASE,
+and does not change the server's CertificateRequest algorithm list.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all

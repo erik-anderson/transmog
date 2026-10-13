@@ -1,4 +1,4 @@
-//! Safe native boundary for `BoringSSL` certificate requests and server credentials.
+//! Safe native boundary for `BoringSSL` certificate hooks and `ClientHello` configuration.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod credentials;
@@ -20,6 +20,16 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{Arc, OnceLock},
 };
+
+/// Configures a reserved GREASE entry in outgoing `ClientHello` signature algorithms.
+///
+/// This is independent of ordinary GREASE and does not change the real signature
+/// preferences or add GREASE to server `CertificateRequest` messages.
+pub fn set_signature_algorithm_grease(context: &mut SslContextBuilder, enabled: bool) {
+    // SAFETY: the exclusively borrowed context is live. The setter stores one
+    // boolean synchronously and neither retains a borrowed pointer nor fails.
+    unsafe { boring_sys::SSL_CTX_set_grease_sigalgs_enabled(context.as_ptr(), i32::from(enabled)) };
+}
 
 /// Owned constraints from the current server's actual certificate request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

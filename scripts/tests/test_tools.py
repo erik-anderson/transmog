@@ -72,6 +72,39 @@ class CryptoGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
             checker.check_graph(graph, "fixture")
 
+    def test_same_version_tls_copies_are_distinct_only_in_the_production_graph(self):
+        checker = load("check-crypto-graph")
+        registry = "registry+https://github.com/rust-lang/crates.io-index"
+        git = "git+https://github.com/cloudflare/boring?rev="
+        sources = [(registry, git + "1" * 40), (git + "1" * 40, git + "2" * 40)]
+        for name in ("boring", "boring-sys"):
+            for first_source, second_source in sources:
+                for kind in (None, "dev", "build"):
+                    with self.subTest(name=name, sources=(first_source, second_source), kind=kind):
+                        graph = self.graph()
+                        original = next(p for p in graph["packages"] if p["name"] == name)
+                        original.update(version="5.2.0", source=first_source)
+                        first_id = f"{first_source}#{name}@5.2.0"
+                        second_id = f"{second_source}#{name}@5.2.0"
+                        original["id"] = first_id
+                        for node in graph["resolve"]["nodes"]:
+                            if node["id"] == name:
+                                node["id"] = first_id
+                            for dependency in node["deps"]:
+                                if dependency["pkg"] == name:
+                                    dependency["pkg"] = first_id
+                        graph["packages"].append(dict(original, id=second_id, source=second_source))
+                        graph["resolve"]["nodes"].append({"id": second_id, "deps": []})
+                        graph["resolve"]["nodes"][0]["deps"].append({
+                            "pkg": second_id, "dep_kinds": [{"kind": kind}]})
+                        if kind is None:
+                            with self.assertRaisesRegex(RuntimeError, f"Expected one {name} package") as error:
+                                checker.check_graph(graph, "fixture")
+                            self.assertIn(first_id, str(error.exception))
+                            self.assertIn(second_id, str(error.exception))
+                        else:
+                            checker.check_graph(graph, "fixture")
+
     def test_desktop_client_exception_requires_the_updaters_exact_package(self):
         checker = load("check-crypto-graph")
         graph = self.graph()
