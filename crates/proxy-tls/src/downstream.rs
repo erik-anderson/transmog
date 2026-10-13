@@ -42,6 +42,17 @@ impl DownstreamTlsContextFactory {
     /// Returns [`DownstreamTlsError`] when the certificate/key pair or TLS
     /// policy cannot be installed in a `BoringSSL` context.
     pub fn acceptor(&self, leaf: &IssuedLeaf) -> Result<SslAcceptor, DownstreamTlsError> {
+        self.acceptor_captured(leaf, None)
+    }
+
+    /// Creates an acceptor collecting public handshake facts before native state is released.
+    /// # Errors
+    /// Returns an error when the certificate, TLS policy or evidence callback cannot be installed.
+    pub fn acceptor_captured(
+        &self,
+        leaf: &IssuedLeaf,
+        capture: Option<&crate::TlsCapture>,
+    ) -> Result<SslAcceptor, DownstreamTlsError> {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
@@ -49,6 +60,9 @@ impl DownstreamTlsContextFactory {
         builder.set_certificate(&leaf.certificate)?;
         builder.set_private_key(&leaf.private_key)?;
         builder.check_private_key()?;
+        if let Some(capture) = capture {
+            capture.attach_context(&mut builder)?;
+        }
         builder.set_alpn_select_callback(|_, offered| {
             select_next_proto(DOWNSTREAM_ALPN, offered).ok_or(AlpnError::NOACK)
         });

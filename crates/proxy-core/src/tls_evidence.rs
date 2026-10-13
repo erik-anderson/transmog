@@ -59,7 +59,7 @@ pub struct TlsEvidence {
     pub verification: Option<VerificationResult>,
     /// Recorded verification or negotiation explanations without key material.
     pub errors: Vec<String>,
-    /// Original summary-only TLS fields from formats which omitted certificate DER.
+    /// Public negotiated facts and original summary-only TLS fields from imported formats.
     #[serde(default)]
     pub details: BTreeMap<String, String>,
 }

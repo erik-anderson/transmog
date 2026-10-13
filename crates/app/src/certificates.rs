@@ -262,6 +262,9 @@ impl Application {
                 connection
                     .fields
                     .extend(tls.details.iter().map(|(label, value)| field(label, value)));
+                if !tls.details.contains_key("Key exchange") {
+                    connection.fields.push(field("Key exchange", "Unavailable"));
+                }
                 connection.errors.clone_from(&tls.errors);
                 for (chain, references) in [
                     (&tls.server_chain, &mut connection.server_chain),
@@ -503,6 +506,7 @@ mod tests {
                     .collect::<Vec<_>>()
             );
             assert_eq!(connection.client_chain, connection.server_chain);
+            assert!(connection.fields.iter().any(|field| field.label == "Key exchange" && field.value == "Unavailable"));
             assert!(connection.errors[0].contains("not trusted"));
             assert!(
                 connection

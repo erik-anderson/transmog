@@ -3,7 +3,7 @@ use boring::{
     error::ErrorStack,
     ex_data::Index,
     hash::MessageDigest,
-    ssl::{Ssl, SslContext, SslContextBuilder, SslRef},
+    ssl::{Ssl, SslContext, SslContextBuilder, SslInfoCallbackMode, SslRef},
     x509::{X509Ref, X509StoreContext, X509StoreContextRef},
 };
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,6 +58,7 @@ impl TlsCapture {
                 .collect()
         });
         context.set_ex_data(context_index()?, self.clone());
+        configure_completion(context);
         Ok(())
     }
     /// Returns immutable recorded evidence; DER remains shared and public-only.
@@ -153,6 +154,50 @@ impl TlsCapture {
     /// `server` is true for the browser-facing proxy acceptor.
     pub fn completed(&self, ssl: &SslRef, server: bool) {
         let mut data = self.data();
+        if ssl.is_init_finished() {
+            if let Some(group) = ssl.curve() {
+                insert_detail(
+                    &mut data,
+                    "Negotiated group",
+                    ssl.curve_name().unwrap_or("Unknown"),
+                );
+                insert_detail(&mut data, "Negotiated group ID", &format!("0x{group:04x}"));
+                let exchange = match group {
+                    0x11ec => "Hybrid post-quantum key exchange",
+                    23..=25 | 29 => "Classical key exchange",
+                    _ => "Unclassified key exchange",
+                };
+                insert_detail(&mut data, "Key exchange", exchange);
+            }
+            // The local signature is available only at HANDSHAKE_DONE. A later
+            // completed() call must preserve the value collected by the callback.
+            for (name, algorithm) in [
+                ("Local handshake signature", ssl.signature_algorithm_used()),
+                ("Peer handshake signature", ssl.peer_signature_algorithm()),
+            ] {
+                if let Some(algorithm) = algorithm {
+                    insert_detail(&mut data, name, &algorithm.to_string());
+                }
+            }
+            insert_detail(
+                &mut data,
+                "Session resumed",
+                if ssl.session_reused() { "Yes" } else { "No" },
+            );
+            insert_detail(
+                &mut data,
+                "HelloRetryRequest",
+                if ssl.used_hello_retry_request() {
+                    "Yes"
+                } else {
+                    "No"
+                },
+            );
+            insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
+            if let Some(cipher) = ssl.current_cipher() {
+                insert_detail(&mut data, "Negotiated cipher", cipher.name());
+            }
+        }
         let mut local = Vec::new();
         if let Some(certificate) = ssl.certificate() {
             collect_certificate(&mut local, certificate);
@@ -196,14 +241,21 @@ impl TlsCapture {
     }
 }
 
-pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
-    let Ok(index) = X509StoreContext::ssl_idx() else {
-        return;
-    };
-    let Some(ssl) = context.ex_data(index) else {
-        return;
-    };
-    let capture = ssl_index()
+// Both Hyper's per-SSL data and quiche's per-connection context use this hook.
+// Reading public facts here also preserves signatures before BoringSSL releases
+// handshake-only state, and never installs a verification override.
+pub(crate) fn configure_completion(context: &mut SslContextBuilder) {
+    context.set_info_callback(|ssl, mode, _| {
+        if mode == SslInfoCallbackMode::HANDSHAKE_DONE
+            && let Some(capture) = capture_for(ssl)
+        {
+            capture.completed(ssl, ssl.is_server());
+        }
+    });
+}
+
+fn capture_for(ssl: &SslRef) -> Option<TlsCapture> {
+    ssl_index()
         .ok()
         .and_then(|index| ssl.ex_data(index))
         .or_else(|| {
@@ -211,7 +263,17 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
                 .ok()
                 .and_then(|index| ssl.ssl_context().ex_data(index))
         })
-        .cloned();
+        .cloned()
+}
+
+pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
+    let Ok(index) = X509StoreContext::ssl_idx() else {
+        return;
+    };
+    let Some(ssl) = context.ex_data(index) else {
+        return;
+    };
+    let capture = capture_for(ssl);
     let Some(capture) = capture else {
         return;
     };

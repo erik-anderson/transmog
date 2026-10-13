@@ -22,6 +22,15 @@ fn evidence() -> PerformanceEvidence {
                 offered_alpn: vec!["h2".into(), "http/1.1".into()],
                 trust_source: Some("recorded trust snapshot".into()),
                 trust_generation: Some(123),
+                details: std::collections::BTreeMap::from([
+                    ("Negotiated group".into(), "X25519MLKEM768".into()),
+                    ("Negotiated group ID".into(), "0x11ec".into()),
+                    (
+                        "Key exchange".into(),
+                        "Hybrid post-quantum key exchange".into(),
+                    ),
+                    ("Peer handshake signature".into(), "mldsa44".into()),
+                ]),
                 ..Default::default()
             }),
             ..Default::default()

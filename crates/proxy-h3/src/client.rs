@@ -802,7 +802,12 @@ impl H3ConnectionDriver {
                 },
             );
         }
-        self.capture.verified();
+        self.capture.completed(self.connection.as_mut(), false);
+        self.transport.cipher = self
+            .connection
+            .as_mut()
+            .current_cipher()
+            .map(|cipher| cipher.name().into());
         self.transport.tls = Some(self.capture.snapshot());
         Ok(self)
     }

@@ -22,7 +22,7 @@ use std::{
 };
 use transmog_tls::{
     DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, PemTrustSource, ProxyCa,
-    TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
+    TlsCapture, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
 };
 
 const HYBRID_GROUP: u16 = 0x11ec;
@@ -135,6 +135,14 @@ fn handshake(
     acceptor: SslAcceptor,
     connector: &SslConnector,
 ) -> (SslStream<RecordingStream>, Option<u16>) {
+    handshake_captured(acceptor, connector, None)
+}
+
+fn handshake_captured(
+    acceptor: SslAcceptor,
+    connector: &SslConnector,
+    capture: Option<&TlsCapture>,
+) -> (SslStream<RecordingStream>, Option<u16>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
@@ -148,19 +156,30 @@ fn handshake(
     });
     let tcp = TcpStream::connect(address).unwrap();
     socket(&tcp);
-    let mut tls = connector
-        .connect(
-            "localhost",
-            RecordingStream {
-                socket: tcp,
-                written: Vec::new(),
-            },
-        )
+    let mut ssl = connector
+        .configure()
+        .unwrap()
+        .into_ssl("localhost")
         .unwrap();
+    if let Some(capture) = capture {
+        capture.attach_ssl(&mut ssl).unwrap();
+    }
+    let mut tls = SslStream::new(
+        ssl,
+        RecordingStream {
+            socket: tcp,
+            written: Vec::new(),
+        },
+    )
+    .unwrap();
+    tls.connect().unwrap();
     tls.write_all(&[7]).unwrap();
     let mut byte = [0];
     tls.read_exact(&mut byte).unwrap();
     assert_eq!(byte, [7]);
+    if let Some(capture) = capture {
+        capture.completed(tls.ssl(), false);
+    }
     (tls, server.join().unwrap())
 }
 
@@ -271,12 +290,32 @@ fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
         ("X25519:P-256:P-384", 29),
         ("P-256", 23),
     ] {
-        let (tls, group) = handshake(
+        let capture = factory(&ca).capture(Some("localhost".into()), vec![]);
+        let (tls, group) = handshake_captured(
             acceptor(&leaf.certificate, &leaf.private_key, groups),
             &connector,
+            Some(&capture),
         );
         assert_eq!(tls.ssl().curve(), Some(expected));
         assert_eq!(group, Some(expected));
+        let evidence = capture.snapshot();
+        assert_eq!(
+            evidence.details["Negotiated group ID"],
+            format!("0x{expected:04x}")
+        );
+        assert_eq!(
+            evidence.details["Key exchange"],
+            if expected == HYBRID_GROUP {
+                "Hybrid post-quantum key exchange"
+            } else {
+                "Classical key exchange"
+            }
+        );
+        assert_eq!(
+            evidence.details["Peer handshake signature"],
+            "ecdsa_secp256r1_sha256"
+        );
+        assert!(evidence.valid());
     }
     let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy {
         maximum_version: SslVersion::TLS1_2,
@@ -299,9 +338,22 @@ fn production_downstream_prefers_hybrid_and_accepts_classical_clients() {
     for (groups, expected) in [(GROUPS, HYBRID_GROUP), ("X25519:P-256:P-384", 29)] {
         let mut client = connector(&ca);
         client.set_curves_list(groups).unwrap();
-        let (tls, group) = handshake(factory.acceptor(&leaf).unwrap(), &client.build());
+        let capture = TlsCapture::new(transmog_core::TlsEvidence::default());
+        let (tls, group) = handshake(
+            factory.acceptor_captured(&leaf, Some(&capture)).unwrap(),
+            &client.build(),
+        );
         assert_eq!(tls.ssl().curve(), Some(expected));
         assert_eq!(group, Some(expected));
+        let evidence = capture.snapshot();
+        assert_eq!(
+            evidence.details["Negotiated group ID"],
+            format!("0x{expected:04x}")
+        );
+        assert_eq!(
+            evidence.details["Local handshake signature"],
+            "ecdsa_secp256r1_sha256"
+        );
     }
     let mut client = connector(&ca);
     client
@@ -401,11 +453,21 @@ fn production_quic_context_negotiates_hybrid_and_classical_origins() {
         server.set_certificate(&leaf.certificate).unwrap();
         server.set_private_key(&leaf.private_key).unwrap();
         server.set_curves_list(groups).unwrap();
-        let (mut client, mut server) = quic_handshake(
-            quic_config(factory(&ca).quiche_context_builder().unwrap()),
-            quic_config(server),
-        );
+        let factory = factory(&ca);
+        let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+        let mut client_context = factory.quiche_context_builder().unwrap();
+        capture.attach_context(&mut client_context).unwrap();
+        let (mut client, mut server) =
+            quic_handshake(quic_config(client_context), quic_config(server));
         assert_eq!(client.as_mut().curve(), Some(expected));
         assert_eq!(server.as_mut().curve(), Some(expected));
+        assert_eq!(
+            capture.snapshot().details["Negotiated group ID"],
+            format!("0x{expected:04x}")
+        );
+        assert_eq!(
+            capture.snapshot().details["Peer handshake signature"],
+            "ecdsa_secp256r1_sha256"
+        );
     }
 }

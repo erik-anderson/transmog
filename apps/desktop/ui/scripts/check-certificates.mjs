@@ -10,9 +10,28 @@ export async function checkCertificates(page, root) {
     certificates.push({sha256:createHash('sha256').update(certificate.raw).digest('hex'),subject:certificate.subject,fields:[{label:'Subject',value:certificate.subject},{label:'Issuer',value:certificate.issuer},{label:'SHA-256',value:createHash('sha256').update(certificate.raw).digest('hex')}],pem,derBase64:certificate.raw.toString('base64'),unavailable:''});
   }
   const inspection={certificates,connections:[{id:'upstream:failed',title:'Transmog → server',fields:[{label:'Recorded verification',value:'Rejected (code 20, depth 1)'},{label:'Offered cipher suites',value:'ECDHE-ECDSA-AES128-GCM-SHA256'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[certificates[0].sha256],errors:['Certificate issuer was not trusted by the recorded snapshot']},{id:'client:browser',title:'Client → Transmog',fields:[{label:'Recorded verification',value:'Not recorded or verification was not reached'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]}]};
+  inspection.connections[0].fields.push({label:'Key exchange',value:'Unavailable'});
+  inspection.connections[1].fields.push({label:'Key exchange',value:'Hybrid post-quantum key exchange'},{label:'Negotiated group',value:'X25519MLKEM768'},{label:'Negotiated group ID',value:'0x11ec'},{label:'Local handshake signature',value:'mldsa44'});
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
   const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   const dialog=page.locator('.details-dialog[open]');
+  await page.getByRole('tab',{name:'Connection',exact:true}).click();
+  await dialog.getByText('Unavailable',{exact:true}).waitFor();
+  const connection=dialog.getByRole('combobox',{name:'Certificate connection'});
+  await connection.selectOption('client:browser');
+  await dialog.getByText('Hybrid post-quantum key exchange',{exact:true}).waitFor();
+  await dialog.getByText('X25519MLKEM768',{exact:true}).waitFor();
+  await dialog.getByText('mldsa44',{exact:true}).waitFor();
+  await page.setViewportSize({width:1440,height:900});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/pqc-connection-wide.png')});
+  await page.setViewportSize({width:800,height:600});
+  await dialog.getByText('mldsa44',{exact:true}).scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/pqc-connection-compact.png')});
+  await connection.focus();await page.keyboard.press('ArrowUp');
+  await dialog.getByText('Unavailable',{exact:true}).waitFor();
+  assert.equal(await dialog.getByText('Hybrid post-quantum key exchange',{exact:true}).count(),0,'Client PQC evidence leaked into the origin connection');
+  await page.setViewportSize({width:1280,height:800});
+  await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   await dialog.getByText(inspection.connections[0].errors[0],{exact:true}).waitFor();
   await dialog.getByText('Client authentication certificate chain',{exact:true}).waitFor();
   await dialog.locator('.certificate-chain').first().getByRole('button').nth(1).click();
