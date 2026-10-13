@@ -283,6 +283,52 @@ on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
 violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
 test-only and must not be set for production launches.
 
+## Container validation requirements
+
+The Docker-backed gates require Python 3.11 or newer on the host, an accessible
+Docker engine, and permission to build images, create named volumes and bind-mount
+the checkout. On Windows, run Docker Desktop with its WSL2 backend in Linux
+container mode. The PQC Chrome gate requires `linux/amd64` containers. A separate
+host installation of Rust, Node, Chrome or Linux build tools is not needed for
+that gate; its image supplies them.
+
+| Gate | Container requirements |
+| --- | --- |
+| Linux workspace and fuzzing | The tool image built from [`fuzz/Dockerfile`](../fuzz/Dockerfile) supplies the repository Rust toolchains, Python, Clang/LLVM, CMake, Ninja, NASM and native development headers. Ordinary Linux validation clears the fuzz-only sanitizer flags. |
+| PQC browser verification | [`e2e/pqc/Dockerfile`](../e2e/pqc/Dockerfile) extends the tool image with Node.js 24 and npm, the locked Playwright packages, available stable Chrome and its system libraries, and NSS `certutil` from `libnss3-tools`. Chrome's version is recorded rather than pinned or rejected. |
+| Live PQC through the CLI | The browser image also supplies D-Bus and GNOME Keyring. The runner starts a private D-Bus session and unlocks a temporary Secret Service so the production CLI can protect its interception CA key. No desktop session or host keyring is required. |
+
+Initial image builds need network access to the container registries, Debian
+package repositories, npm, the browser download service and any uncached Cargo
+dependencies. Subsequent runs reuse images and Cargo volumes. Only the explicit
+`--live-url` option sends validation traffic to a public site; the ordinary
+browser cases use loopback fixtures.
+
+The runners mount source read-only and reuse
+`transmog-linux-cargo-registry` and `transmog-linux-target` for Cargo downloads
+and native build output. These volumes survive container cleanup and need space
+for the Rust and C/C++ artifacts. The PQC runner writes public reports under
+`.local/pqc-browser-verified`; temporary private keys, captures, NSS databases
+and browser profiles stay inside the disposable container. It does not install
+roots or configure proxies on the host.
+
+Run the trust and optional live gates with:
+
+```powershell
+python ./scripts/test-pqc-browser-docker.py
+python ./scripts/test-pqc-browser-docker.py --live-url https://pq.cloudflareresearch.com/
+```
+
+Use `--refresh-browser` when a cached image needs the available Chrome release.
+See [PQC verification](testing.md#post-quantum-tls) for assertions and reports.
+
+For a custom container, Playwright requires Node.js 20 or newer; the provided
+image uses Node.js 24. A distribution's older Node package can install npm
+dependencies yet fail when Playwright starts. **Interception CA key protection
+is unavailable** means the CLI cannot reach an unlocked Secret Service in its
+D-Bus session. Supply that service and keep the CLI in the same session; the
+application deliberately refuses an unprotected-key fallback.
+
 ## Linux
 
 Install Rust 1.97.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard

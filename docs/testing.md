@@ -132,6 +132,43 @@ public root, and uses that root's SPKI allowance in an isolated test browser.
 It does not install trust or change host proxy settings. Results are ignored
 run evidence at `.local/pqc-browser/results.json`.
 
+To exercise Chrome's ordinary certificate validation, use the isolated Linux
+container gate. See [container requirements](building.md#container-validation-requirements)
+for Docker, browser runtime and Secret Service prerequisites:
+
+```powershell
+python ./scripts/test-pqc-browser-docker.py
+```
+
+This gate installs the available stable Chrome without a version requirement
+and trusts each ephemeral fixture root in a temporary NSS database. It uses no
+certificate-error override, verifies the same six algorithm cases, and requires
+Chrome to reject a wrong hostname and an untrusted root. Neither Windows trust
+nor host proxy settings change. The public report is written to
+`.local/pqc-browser-verified/results.json`. On Linux with Chrome and `certutil`
+already installed, `test-pqc-browser.py --channel chrome --trust nss` runs the
+same checks directly. Add `--refresh-browser` to rebuild a cached browser image
+with the available Chrome release; the report records the version actually used.
+
+An opt-in live site check validates real browser-to-proxy and proxy-to-origin
+connections through the production CLI, with certificate verification enabled
+on both legs:
+
+```powershell
+python ./scripts/test-pqc-browser-docker.py --live-url https://pq.cloudflareresearch.com/
+```
+
+The live check records a native capture, reads its connection evidence, and
+requires X25519MLKEM768 (`0x11ec`) on both legs over an H2 origin route. It saves
+only public negotiation facts to `.local/pqc-browser-verified/live-results.json`;
+temporary private keys, browser profiles and captures are removed with the
+container. A temporary Secret Service protects the CLI root key using the
+production key-protection path. A live endpoint qualifies deployed hybrid key
+exchange, while the
+controlled fixtures qualify ML-DSA authentication, fallback and rejection cases.
+Network or endpoint changes can fail this opt-in gate without implying a local
+regression.
+
 When Chromium changes its PQ algorithm set, update the
 [shared policy](../crates/proxy-tls/src/algorithms.rs), credential variants and
 wire/interoperability expectations together. Requalify the existing BoringSSL

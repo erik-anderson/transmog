@@ -12,14 +12,19 @@ use transmog_tls::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments.len() != 3 {
-        return Err("expected PUBLIC_CA_PATH SIGNATURE GROUP_POLICY".into());
+    if !(3..=4).contains(&arguments.len()) {
+        return Err("expected PUBLIC_CA_PATH SIGNATURE GROUP_POLICY [wrong-host]".into());
     }
     let ca = ProxyCa::generate("Transmog ephemeral PQC browser fixture", 1)?;
     std::fs::write(&arguments[0], ca.certificate_pem()?)?;
     let resolver = CachedMitmCertificateResolver::new(ca, 1, 1)?;
+    let name = match arguments.get(3).map(String::as_str) {
+        None => "localhost",
+        Some("wrong-host") => "wrong-host.test",
+        _ => return Err("unsupported fixture certificate case".into()),
+    };
     let mut leaves =
-        resolver.resolve_credentials(&EndpointIdentity::parse("localhost")?, SystemTime::now())?;
+        resolver.resolve_credentials(&EndpointIdentity::parse(name)?, SystemTime::now())?;
     let index = match arguments[1].as_str() {
         "automatic" => None,
         "mldsa44" => Some(0),
@@ -44,22 +49,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     socket.set_read_timeout(Some(Duration::from_secs(10)))?;
     socket.set_write_timeout(Some(Duration::from_secs(10)))?;
     let mut ssl = boring::ssl::Ssl::new(acceptor.context())?;
-    // Include the fixture root on the legacy path too, so Chrome's narrowly
-    // scoped test-root SPKI allowance can identify it without OS trust changes.
-    for issuer in &leaves
-        .last()
-        .ok_or("missing fixture credential")?
-        .issuer_chain
-    {
-        ssl.add_chain_cert(issuer)?;
-    }
     match arguments[2].as_str() {
         "hybrid" => {}
         "classical" => ssl.set_curves_list("X25519:P-256:P-384")?,
         _ => return Err("unsupported fixture group policy".into()),
     }
     let mut tls = boring::ssl::SslStream::new(ssl, socket)?;
-    tls.accept()?;
+    if let Err(error) = tls.accept() {
+        println!("TLS_REJECTED={error}");
+        return Ok(());
+    }
     let mut request = [0; 8192];
     let mut count = 0;
     while !request[..count]
