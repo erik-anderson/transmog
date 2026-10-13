@@ -13,6 +13,10 @@ its actual effect on the user's task. For a short per-change workflow, follow
 
 ## Organize around the task
 
+- Upstream TLS and HTTP offers follow Chrome's behavior by default. Offer
+  overrides belong in advanced settings; keep the ordinary capture path direct
+  and retain the actual negotiated protocol and algorithms in connection evidence.
+
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is
   secondary. Group distinct tasks into a few clearly named workspace tabs.

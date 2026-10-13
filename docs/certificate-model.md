@@ -35,14 +35,14 @@ are the upstream references when that set changes.
 | Purpose | Supported post-quantum algorithms | Compatibility |
 | --- | --- | --- |
 | TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), combining X25519 and ML-KEM-768 | Preferred ahead of X25519, P-256 and P-384. The initial ClientHello carries hybrid and X25519 shares; classical peers negotiate a shared classical group. |
-| TLS 1.3 authentication | ML-DSA-44, ML-DSA-65 and ML-DSA-87 (`0x0904`–`0x0906`) | Upstream verification advertises all three, retaining the existing classical signature preferences. Downstream credential selection uses a compatible ML-DSA key or the ECDSA P-256 fallback. |
+| TLS 1.3 authentication | ML-DSA-44, ML-DSA-65 and ML-DSA-87 (`0x0904`–`0x0906`) | Upstream verification advertises all three followed by Chromium's classical signature preferences, excluding RSA/SHA-1. Downstream credential selection uses a compatible ML-DSA key or the ECDSA P-256 fallback. |
 
 Each TLS leg negotiates independently. An origin's algorithm does not force the
 client-facing leg to use the same algorithm, and downstream support does not
 change upstream certificate verification. TLS 1.2 retains classical behavior.
 
 Upstream TCP and QUIC ClientHellos prepend a reserved GREASE signature scheme
-to the existing real verification preferences. BoringSSL selects the placeholder
+to Chromium's real verification preferences. BoringSSL selects the placeholder
 for each handshake; peers ignore it and negotiate an existing real algorithm.
 Signature-algorithm GREASE is a separate native setting from ordinary GREASE,
 and does not change the server's CertificateRequest algorithm list.
@@ -71,9 +71,11 @@ when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
 exercises extension handling and matches Chromium's ECH GREASE behavior; it
 does not encrypt the server name or implement real ECH configuration discovery.
 
-The default TLS 1.2 cipher list follows Chromium's ECDHE/AEAD order: ECDSA and
-RSA AES-128-GCM, ECDSA and RSA AES-256-GCM, then ECDSA and RSA
-ChaCha20-Poly1305. CBC and static-RSA suites remain outside the default policy.
+The default TLS 1.2 cipher list uses Chromium's expression
+`ALL:!aPSK:!ECDSA+SHA1:!3DES`, including its CBC and static-RSA compatibility
+suites after the ECDHE/AEAD suites. RSA/SHA-1 server handshake signatures are
+excluded, matching Chromium's separate signature policy. Matching Chrome's
+offer is the product default; advanced offer overrides may be added later.
 Embedding applications can still supply an explicit cipher list.
 
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256

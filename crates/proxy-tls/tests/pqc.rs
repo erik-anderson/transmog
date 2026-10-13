@@ -32,6 +32,10 @@ use transmog_tls::{
 
 const HYBRID_GROUP: u16 = 0x11ec;
 const GROUPS: &str = "X25519MLKEM768:X25519:P-256:P-384";
+// Real schemes observed in Chrome's signature_algorithms extension.
+const CHROMIUM_SIGNATURE_ALGORITHMS: [u16; 11] = [
+    0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
+];
 const ML_DSA: [(i32, SslSignatureAlgorithm); 3] = [
     (
         boring_sys::EVP_PKEY_ML_DSA_44,
@@ -68,8 +72,12 @@ fn leaf_for_key(ca: &ProxyCa, key: PKey<Private>) -> (X509, PKey<Private>) {
         .unwrap();
     cert.set_not_after(&Asn1Time::days_from_now(1).unwrap())
         .unwrap();
-    cert.append_extension(&KeyUsage::new().digital_signature().build().unwrap())
-        .unwrap();
+    let mut key_usage = KeyUsage::new();
+    key_usage.digital_signature();
+    if key.id() == Id::RSA {
+        key_usage.key_encipherment();
+    }
+    cert.append_extension(&key_usage.build().unwrap()).unwrap();
     cert.append_extension(
         &ExtendedKeyUsage::new()
             .server_auth()
@@ -390,6 +398,7 @@ fn production_tcp_signature_grease_preserves_real_algorithms_and_handshakes() {
         };
         let (tls, _) = handshake(acceptor(), &baseline.build());
         let expected = signature_algorithms(&hello_extensions(&tls.get_ref().written)[&13]);
+        assert_eq!(expected, CHROMIUM_SIGNATURE_ALGORITHMS);
         assert!(expected.iter().all(|&value| !is_grease(value)));
         let connector = factory(&ca).hyper_connector().unwrap();
         for _ in 0..3 {
@@ -641,7 +650,7 @@ fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
 }
 
 #[test]
-fn production_tls12_offers_chromium_aead_order_and_negotiates_chacha() {
+fn production_tls12_offers_chromium_order_and_negotiates_each_suite() {
     let ca = ProxyCa::generate("ChaCha upstream root", 2).unwrap();
     let leaf = ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
@@ -657,6 +666,24 @@ fn production_tls12_offers_chromium_aead_order_and_negotiates_chacha() {
             "ECDHE-ECDSA-CHACHA20-POLY1305",
         ),
         (&rsa_certificate, &rsa_key, "ECDHE-RSA-CHACHA20-POLY1305"),
+        (
+            &leaf.certificate,
+            &leaf.private_key,
+            "ECDHE-ECDSA-AES128-GCM-SHA256",
+        ),
+        (
+            &leaf.certificate,
+            &leaf.private_key,
+            "ECDHE-ECDSA-AES256-GCM-SHA384",
+        ),
+        (&rsa_certificate, &rsa_key, "ECDHE-RSA-AES128-GCM-SHA256"),
+        (&rsa_certificate, &rsa_key, "ECDHE-RSA-AES256-GCM-SHA384"),
+        (&rsa_certificate, &rsa_key, "ECDHE-RSA-AES128-SHA"),
+        (&rsa_certificate, &rsa_key, "ECDHE-RSA-AES256-SHA"),
+        (&rsa_certificate, &rsa_key, "AES128-GCM-SHA256"),
+        (&rsa_certificate, &rsa_key, "AES256-GCM-SHA384"),
+        (&rsa_certificate, &rsa_key, "AES128-SHA"),
+        (&rsa_certificate, &rsa_key, "AES256-SHA"),
     ] {
         let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
         server.set_certificate(certificate).unwrap();
@@ -675,7 +702,13 @@ fn production_tls12_offers_chromium_aead_order_and_negotiates_chacha() {
             .into_iter()
             .filter(|cipher| !is_grease(*cipher) && !matches!(*cipher, 0x1301..=0x1303))
             .collect();
-        assert_eq!(tls12, [0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8]);
+        assert_eq!(
+            tls12,
+            [
+                0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8, 0xc013, 0xc014, 0x009c, 0x009d,
+                0x002f, 0x0035
+            ]
+        );
     }
 }
 
@@ -790,6 +823,7 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
             assert_eq!(&advertised[1..], expected);
         } else {
             assert!(advertised.iter().all(|&value| !is_grease(value)));
+            assert_eq!(advertised, CHROMIUM_SIGNATURE_ALGORITHMS);
             expected = advertised;
         }
     }

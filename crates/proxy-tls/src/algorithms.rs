@@ -14,8 +14,8 @@ pub(crate) fn configure_key_exchange(context: &mut SslContextBuilder) -> Result<
 }
 
 pub(crate) fn configure_authentication(context: &mut SslContextBuilder) -> Result<(), ErrorStack> {
-    // Chromium's PQ verification preferences, followed by the existing
-    // BoringSSL classical list so this change preserves origin compatibility.
+    // Match Chromium's real verification preferences, including its exclusion
+    // of SHA-1 server handshake signatures.
     context.set_verify_algorithm_prefs(&[
         SslSignatureAlgorithm::ML_DSA_44,
         SslSignatureAlgorithm::ML_DSA_65,
@@ -28,6 +28,5 @@ pub(crate) fn configure_authentication(context: &mut SslContextBuilder) -> Resul
         SslSignatureAlgorithm::RSA_PKCS1_SHA384,
         SslSignatureAlgorithm::RSA_PSS_RSAE_SHA512,
         SslSignatureAlgorithm::RSA_PKCS1_SHA512,
-        SslSignatureAlgorithm::RSA_PKCS1_SHA1,
     ])
 }
