@@ -350,14 +350,18 @@ pwsh ./scripts/package-windows.ps1 `
 
 ## Desktop update feed
 
-The desktop checks GitHub's latest stable release after the window is ready.
-`latest.json` identifies the NSIS installer and its updater signature. The signed
+The desktop checks its channel's feed after the window is ready. Stable and Beta
+builds use GitHub's latest stable release. Canary builds use the rolling `canary`
+release at `/releases/download/canary/latest.json`, so Stable publications do not
+move Canary users onto the Stable track. `latest.json` identifies the NSIS installer
+and its updater signature. The signed
 release pipeline creates these assets from the final Authenticode-signed bytes,
 binds the semantic version into the signature, and qualifies the signature against
 the public key embedded in the installed app. Drafts and prereleases are excluded
-from automatic updates. Publication and Beta-to-Stable promotion refresh GitHub's
-Latest pointer to the highest stable version with update assets, so an older-major
-hotfix cannot displace the current stable feed.
+from the stable feed. Publication and Beta-to-Stable promotion refresh GitHub's
+Latest pointer to the highest stable version with update assets. The release
+maintenance workflow also refreshes the rolling Canary manifest to the highest
+published Canary version; Beta prereleases are excluded from that feed.
 
 Before the first signed update, configure `TRANSMOG_UPDATER_PRIVATE_KEY` in the
 protected `release-signing` GitHub environment. The matching local key is kept in

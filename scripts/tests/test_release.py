@@ -78,6 +78,38 @@ class ReleaseDecisions(unittest.TestCase):
             module.synchronize("fixture/repository", api)
             self.assertEqual(mutations, [] if latest_id == 10 else [("https://api.github.com/repos/fixture/repository/releases/10", {"make_latest": "true"})])
 
+    def test_canary_feed_selects_highest_canary_and_keeps_beta_out(self):
+        module = load("sync-canary-update-feed")
+        base = "https://api.github.com/repos/fixture/repository"
+        updates = {"0.2.0": b'{"version":"0.2.0"}', "0.2.1": b'{"version":"0.2.1"}'}
+        manifest = lambda version, release_type: json.dumps({"Version": version, "ReleaseType": release_type,
+                                                              "Commit": ("a" if version == "0.2.0" else "b") * 40}).encode()
+        releases = [
+            dict(tag_name="v0.2.0", id=20, prerelease=True, assets=[dict(name="release-manifest.json", id=200), dict(name="latest.json", id=201)]),
+            dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)]),
+            dict(tag_name="v9.0.0", id=90, prerelease=True, assets=[dict(name="release-manifest.json", id=900), dict(name="latest.json", id=901)]),
+        ]
+        mutations, uploads = [], []
+        def api(url, **kwargs):
+            if url == base + "/releases?per_page=100&page=1": return releases
+            if url.endswith("page=2"): return []
+            if url.endswith("/releases/tags/canary"): return None
+            if url.endswith("/releases/assets/200"): return manifest("0.2.0", "Canary")
+            if url.endswith("/releases/assets/201"): return updates["0.2.0"]
+            if url.endswith("/releases/assets/210"): return manifest("0.2.1", "Canary")
+            if url.endswith("/releases/assets/211"): return updates["0.2.1"]
+            if url.endswith("/releases/assets/900"): return manifest("9.0.0", "Beta")
+            if kwargs.get("method") == "POST" and url.endswith("/git/refs"):
+                mutations.append((url, kwargs["data"]))
+                return {}
+            if kwargs.get("method") == "POST" and url.endswith("/releases"):
+                mutations.append((url, kwargs["data"]))
+                return {"upload_url": "https://uploads.github.com/feed{?name}", "assets": []}
+            self.fail(f"Unexpected fixture request: {url}")
+        module.synchronize("fixture/repository", api, lambda url, name, payload: uploads.append((url, name, payload)))
+        self.assertEqual(mutations[0][1]["sha"], "b" * 40)
+        self.assertEqual(uploads, [("https://uploads.github.com/feed", "latest.json", updates["0.2.1"])])
+
 
 def fixture(root):
     for name in ("apps/desktop/src", "apps/desktop/ui", "fuzz/src"):

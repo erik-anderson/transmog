@@ -16,6 +16,18 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use crate::update_policy::ReminderStore;
 
 const MAX_INSTALLER_BYTES: u64 = 512 * 1024 * 1024;
+const STABLE_UPDATE_FEED: &str =
+    "https://github.com/erik-anderson/transmog/releases/latest/download/latest.json";
+const CANARY_UPDATE_FEED: &str =
+    "https://github.com/erik-anderson/transmog/releases/download/canary/latest.json";
+
+fn update_feed(channel: &str) -> &'static str {
+    if channel == "Canary" {
+        CANARY_UPDATE_FEED
+    } else {
+        STABLE_UPDATE_FEED
+    }
+}
 
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,9 +107,9 @@ impl UpdateCoordinator {
                 "idle"
             };
             let message = if inner.candidate.is_some() {
-                "A new stable release is available."
+                "A new release is available."
             } else if inner.status.last_checked_unix_ms > 0 {
-                "You’re up to date with the stable release."
+                "You’re up to date."
             } else {
                 "Updates have not been checked yet."
             };
@@ -149,11 +161,21 @@ impl UpdateCoordinator {
             }
             inner.status.phase = "checking";
             inner.status.suppressed = false;
-            "Checking for a stable release…".clone_into(&mut inner.status.message);
+            "Checking for an update…".clone_into(&mut inner.status.message);
         }
         let result = async {
+            let release: serde_json::Value =
+                serde_json::from_str(include_str!("../../../release-version.json"))
+                    .expect("release metadata");
+            // Canary builds use their own rolling feed; every other build follows
+            // GitHub's stable Latest release feed.
+            let endpoint = update_feed(release["channel"].as_str().unwrap_or("Release"));
             let updater = app.updater_builder()
                 .target("windows-x86_64-nsis")
+                .endpoints(vec![endpoint
+                    .parse()
+                    .map_err(|_| "The update feed URL is invalid.".to_owned())?])
+                .map_err(|_| "The update feed could not be configured.".to_owned())?
                 .timeout(Duration::from_secs(20))
                 .build().map_err(|_| "The update checker could not initialize.".to_owned())?;
             updater.check().await.map_err(|_| "The update check could not reach GitHub or read the release manifest. Try again later.".to_owned())
@@ -185,7 +207,7 @@ impl UpdateCoordinator {
                     .chars()
                     .take(8_192)
                     .collect();
-                "A new stable release is available.".clone_into(&mut inner.status.message);
+                "A new release is available.".clone_into(&mut inner.status.message);
                 inner.candidate = Some(update);
                 Ok(inner.status.clone())
             }
@@ -194,7 +216,7 @@ impl UpdateCoordinator {
                 inner.status.phase = "idle";
                 inner.status.version = None;
                 inner.status.notes.clear();
-                "You’re up to date with the stable release.".clone_into(&mut inner.status.message);
+                "You’re up to date.".clone_into(&mut inner.status.message);
                 inner.candidate = None;
                 Ok(inner.status.clone())
             }
@@ -432,6 +454,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn installed_channel_selects_the_matching_update_track() {
+        assert_eq!(update_feed("Canary"), CANARY_UPDATE_FEED);
+        assert_eq!(update_feed("Release"), STABLE_UPDATE_FEED);
+        assert_eq!(update_feed("unknown"), STABLE_UPDATE_FEED);
+    }
+
+    #[test]
     fn reenabling_after_a_suppressed_check_restores_accurate_status() {
         let root = tempfile::tempdir().unwrap();
         let coordinator = UpdateCoordinator::new(root.path().to_owned());
@@ -453,7 +482,7 @@ mod tests {
         }
         assert_eq!(
             coordinator.set_automatic_checks(true).unwrap().message,
-            "You’re up to date with the stable release."
+            "You’re up to date."
         );
     }
 
