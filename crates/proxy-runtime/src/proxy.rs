@@ -1099,17 +1099,19 @@ impl ProxyState {
 
         let certificate_began = self.clock.instant();
         let identity = EndpointIdentity::parse(authority.host())?;
-        let leaf = self
+        let leaves = self
             .certificates
-            .resolve(&identity, self.clock.system_time())?;
-        validate_resolved_leaf(&identity, &leaf)?;
+            .resolve_credentials(&identity, self.clock.system_time())?;
+        for leaf in &leaves {
+            validate_resolved_leaf(&identity, leaf)?;
+        }
         let public_tls = transmog_tls::TlsCapture::new(transmog_core::TlsEvidence {
             server_name: Some(authority.host().to_owned()),
             ..transmog_core::TlsEvidence::default()
         });
         let acceptor = self
             .downstream_tls
-            .acceptor_captured(&leaf, Some(&public_tls))?;
+            .acceptor_credentials_captured(&leaves, Some(&public_tls))?;
         let certificate_done = self.clock.instant();
         let tls_began = self.clock.instant();
         let tls = timeout(
@@ -1122,7 +1124,7 @@ impl ProxyState {
         normalize_connect_identity(authority.host(), tls.ssl().servername(NameType::HOST_NAME))?;
         let negotiated_h2 = tls.ssl().selected_alpn_protocol() == Some(b"h2");
         public_tls.completed(tls.ssl(), true);
-        public_tls.server_issuers(leaf.issuer_chain.iter().map(std::ops::Deref::deref));
+        public_tls.server_credential_issuers(&leaves);
         let tls_observation = Arc::new(ClientTlsObservation {
             evidence: public_tls.snapshot(),
             began: tls_began,

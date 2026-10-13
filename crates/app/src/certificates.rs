@@ -118,10 +118,15 @@ fn certificate_view(certificate: &PublicCertificate) -> CertificateView {
             boring::pkey::Id::ED25519 => "Ed25519",
             _ => "Other",
         };
-        view.fields.push(field(
-            "Public key",
-            format!("{algorithm} · {} bits", key.bits()),
-        ));
+        let description = transmog_tls::MlDsaVariant::for_key(&key).map_or_else(
+            || format!("{algorithm} · {} bits", key.bits()),
+            |variant| match variant {
+                transmog_tls::MlDsaVariant::MlDsa44 => "ML-DSA-44".into(),
+                transmog_tls::MlDsaVariant::MlDsa65 => "ML-DSA-65".into(),
+                transmog_tls::MlDsaVariant::MlDsa87 => "ML-DSA-87".into(),
+            },
+        );
+        view.fields.push(field("Public key", description));
     }
     if let Ok(serial) = parsed
         .serial_number()
@@ -506,7 +511,12 @@ mod tests {
                     .collect::<Vec<_>>()
             );
             assert_eq!(connection.client_chain, connection.server_chain);
-            assert!(connection.fields.iter().any(|field| field.label == "Key exchange" && field.value == "Unavailable"));
+            assert!(
+                connection
+                    .fields
+                    .iter()
+                    .any(|field| field.label == "Key exchange" && field.value == "Unavailable")
+            );
             assert!(connection.errors[0].contains("not trusted"));
             assert!(
                 connection
@@ -533,6 +543,34 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn ml_dsa_public_keys_have_parameter_set_names() {
+        let ca = ProxyCa::generate("ML-DSA viewer root", 2).unwrap();
+        for (variant, expected) in [
+            (transmog_tls::MlDsaVariant::MlDsa44, "ML-DSA-44"),
+            (transmog_tls::MlDsaVariant::MlDsa65, "ML-DSA-65"),
+            (transmog_tls::MlDsaVariant::MlDsa87, "ML-DSA-87"),
+        ] {
+            let leaf = ca
+                .issue_with_algorithm(
+                    EndpointIdentity::parse("localhost").unwrap(),
+                    1,
+                    transmog_tls::LeafKeyAlgorithm::MlDsa(variant),
+                )
+                .unwrap();
+            let certificate = PublicCertificate {
+                der: leaf.certificate.to_der().unwrap().into(),
+                ..PublicCertificate::default()
+            };
+            let view = certificate_view(&certificate);
+            assert!(
+                view.fields
+                    .iter()
+                    .any(|field| field.label == "Public key" && field.value == expected)
+            );
+        }
+    }
+
     #[test]
     fn public_certificate_definitions_reject_private_keys_trailing_data_and_wrong_digest() {
         let root = tempfile::tempdir().unwrap();

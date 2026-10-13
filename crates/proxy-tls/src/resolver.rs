@@ -7,7 +7,10 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{EndpointIdentity, IssuedLeaf, LeafCache, LeafCacheError, ProxyCa};
+use crate::{
+    EndpointIdentity, IssuedLeaf, LeafCache, LeafCacheError, LeafKeyAlgorithm, MlDsaVariant,
+    ProxyCa,
+};
 
 /// Resolves certificate material for one validated downstream identity.
 ///
@@ -27,6 +30,18 @@ pub trait DownstreamCertificateResolver: Send + Sync {
         identity: &EndpointIdentity,
         now: SystemTime,
     ) -> Result<IssuedLeaf, CertificateResolverError>;
+
+    /// Resolves alternatives in decreasing preference order for one exact identity.
+    /// Existing providers retain their single-credential behavior by default.
+    /// # Errors
+    /// Returns the same redacted resolution failures as [`Self::resolve`].
+    fn resolve_credentials(
+        &self,
+        identity: &EndpointIdentity,
+        now: SystemTime,
+    ) -> Result<Vec<IssuedLeaf>, CertificateResolverError> {
+        self.resolve(identity, now).map(|leaf| vec![leaf])
+    }
 }
 
 /// Bounded MITM certificate resolver backed by [`LeafCache`].
@@ -70,6 +85,27 @@ impl DownstreamCertificateResolver for CachedMitmCertificateResolver {
         self.cache()?
             .get_or_issue(identity.clone(), now)
             .map_err(CertificateResolverError::from)
+    }
+
+    fn resolve_credentials(
+        &self,
+        identity: &EndpointIdentity,
+        now: SystemTime,
+    ) -> Result<Vec<IssuedLeaf>, CertificateResolverError> {
+        let mut cache = self.cache()?;
+        [
+            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa44),
+            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa65),
+            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa87),
+            LeafKeyAlgorithm::EcdsaP256,
+        ]
+        .into_iter()
+        .map(|algorithm| {
+            cache
+                .get_or_issue_with_algorithm(identity.clone(), now, algorithm)
+                .map_err(CertificateResolverError::from)
+        })
+        .collect()
     }
 }
 

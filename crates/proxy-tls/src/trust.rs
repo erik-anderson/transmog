@@ -408,6 +408,7 @@ impl UpstreamTlsContextFactory {
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         crate::algorithms::configure_key_exchange(builder)?;
+        crate::algorithms::configure_authentication(builder)?;
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {
             builder.set_certificate(&authentication.certificate)?;

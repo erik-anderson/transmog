@@ -1,4 +1,6 @@
-use boring::ssl::{AlpnError, SslAcceptor, SslMethod, SslVersion, select_next_proto};
+use boring::ssl::{
+    AlpnError, SslAcceptor, SslAcceptorBuilder, SslMethod, SslVersion, select_next_proto,
+};
 use thiserror::Error;
 
 use crate::IssuedLeaf;
@@ -53,26 +55,65 @@ impl DownstreamTlsContextFactory {
         leaf: &IssuedLeaf,
         capture: Option<&crate::TlsCapture>,
     ) -> Result<SslAcceptor, DownstreamTlsError> {
+        let mut builder = self.builder(capture)?;
+        builder.set_certificate(&leaf.certificate)?;
+        builder.set_private_key(&leaf.private_key)?;
+        builder.check_private_key()?;
+        Ok(builder.build())
+    }
+
+    /// Offers ordered alternatives; `BoringSSL` selects only a peer-compatible credential.
+    /// # Errors
+    /// Returns an error for empty/mismatched identities or invalid credential material.
+    pub fn acceptor_credentials_captured(
+        &self,
+        leaves: &[IssuedLeaf],
+        capture: Option<&crate::TlsCapture>,
+    ) -> Result<SslAcceptor, DownstreamTlsError> {
+        let fallback = leaves
+            .last()
+            .ok_or(DownstreamTlsError::InvalidCredentials)?;
+        if leaves.iter().any(|leaf| leaf.identity != fallback.identity) {
+            return Err(DownstreamTlsError::InvalidCredentials);
+        }
+        let mut builder = self.builder(capture)?;
+        // The legacy credential is always last in BoringSSL's selection list.
+        builder.set_certificate(&fallback.certificate)?;
+        builder.set_private_key(&fallback.private_key)?;
+        builder.check_private_key()?;
+        for leaf in &leaves[..leaves.len() - 1] {
+            let chain: Vec<_> = std::iter::once(leaf.certificate.clone())
+                .chain(leaf.issuer_chain.iter().cloned())
+                .collect();
+            transmog_tls_native::add_server_credential(&mut builder, &chain, &leaf.private_key)?;
+        }
+        Ok(builder.build())
+    }
+
+    fn builder(
+        self,
+        capture: Option<&crate::TlsCapture>,
+    ) -> Result<SslAcceptorBuilder, DownstreamTlsError> {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         crate::algorithms::configure_key_exchange(&mut builder)?;
-        builder.set_certificate(&leaf.certificate)?;
-        builder.set_private_key(&leaf.private_key)?;
-        builder.check_private_key()?;
         if let Some(capture) = capture {
             capture.attach_context(&mut builder)?;
         }
         builder.set_alpn_select_callback(|_, offered| {
             select_next_proto(DOWNSTREAM_ALPN, offered).ok_or(AlpnError::NOACK)
         });
-        Ok(builder.build())
+        Ok(builder)
     }
 }
 
 /// Browser-facing TLS context construction failure.
 #[derive(Debug, Error)]
 pub enum DownstreamTlsError {
+    /// No credentials, or credentials for different target identities, were supplied.
+    #[error("downstream TLS credentials must cover one nonempty identity set")]
+    InvalidCredentials,
     /// `BoringSSL` rejected the policy or issued leaf.
     #[error("BoringSSL downstream TLS context failed: {0}")]
     Boring(#[from] boring::error::ErrorStack),

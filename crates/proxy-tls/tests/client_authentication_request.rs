@@ -168,6 +168,14 @@ fn client_identity_with_usage(
     let key =
         PKey::from_ec_key(EcKey::generate(&EcGroup::from_curve_name(curve).unwrap()).unwrap())
             .unwrap();
+    client_identity_with_key(ca, expired, key, key_usage)
+}
+fn client_identity_with_key(
+    ca: &ProxyCa,
+    expired: bool,
+    key: PKey<Private>,
+    key_usage: Option<boring::x509::X509Extension>,
+) -> (X509, PKey<Private>) {
     let ca_key = PKey::private_key_from_pem(&ca.private_key_pem_pkcs8().unwrap()).unwrap();
     let mut name = X509NameBuilder::new().unwrap();
     name.append_entry_by_text("CN", "Test client identity")
@@ -199,6 +207,111 @@ fn client_identity_with_usage(
         .unwrap();
     cert.sign(&ca_key, MessageDigest::sha256()).unwrap();
     (cert.build(), key)
+}
+
+struct MlDsaSigningKey {
+    key: PKey<Private>,
+    algorithms: [u16; 1],
+    signatures: AtomicUsize,
+}
+impl ClientSigningKey for MlDsaSigningKey {
+    fn algorithms(&self) -> &[u16] {
+        &self.algorithms
+    }
+    fn available(&self) -> bool {
+        true
+    }
+    fn sign(&self, algorithm: u16, input: &[u8]) -> Result<Vec<u8>, String> {
+        assert_eq!(algorithm, self.algorithms[0]);
+        self.signatures.fetch_add(1, Ordering::SeqCst);
+        boring::sign::Signer::new_without_digest(&self.key)
+            .and_then(|mut signer| signer.sign_oneshot_to_vec(input))
+            .map_err(|_| "ML-DSA fixture signing failed".into())
+    }
+}
+
+#[tokio::test]
+async fn ml_dsa_client_credentials_require_exact_scheme_and_tls13_and_sign_real_requests() {
+    use transmog_tls::MlDsaVariant;
+    for variant in [
+        MlDsaVariant::MlDsa44,
+        MlDsaVariant::MlDsa65,
+        MlDsaVariant::MlDsa87,
+    ] {
+        let ca = ProxyCa::generate("ML-DSA client root", 2).unwrap();
+        let (cert, key) = client_identity_with_key(
+            &ca,
+            false,
+            variant.generate_key().unwrap(),
+            Some(KeyUsage::new().digital_signature().build().unwrap()),
+        );
+        let expected = cert.to_der().unwrap();
+        let algorithm = variant.signature_algorithm();
+        let key = Arc::new(MlDsaSigningKey {
+            key,
+            algorithms: [variant.signature_scheme()],
+            signatures: AtomicUsize::new(0),
+        });
+        let identity = Arc::new(ClientCredential {
+            id: "ml-dsa-client".into(),
+            chain: vec![cert, ca.certificate().clone()],
+            key: key.clone(),
+        });
+        let mut request = CertificateRequest {
+            tls_version: Some(SslVersion::TLS1_3),
+            signature_algorithms: vec![variant.signature_scheme()],
+            ..CertificateRequest::default()
+        };
+        assert!(identity.compatible(&request));
+        request.tls_version = Some(SslVersion::TLS1_2);
+        assert!(!identity.compatible(&request));
+        request.tls_version = Some(SslVersion::TLS1_3);
+        request.signature_algorithms = vec![0x0403];
+        assert!(!identity.compatible(&request));
+        for other in [
+            MlDsaVariant::MlDsa44,
+            MlDsaVariant::MlDsa65,
+            MlDsaVariant::MlDsa87,
+        ] {
+            if other != variant {
+                request.signature_algorithms = vec![other.signature_scheme()];
+                assert!(!identity.compatible(&request));
+            }
+        }
+        let (address, server) = server_with_constraints(
+            &ca,
+            SslVersion::TLS1_3,
+            SslVerifyMode::PEER | SslVerifyMode::FAIL_IF_NO_PEER_CERT,
+            1,
+            Some(&[algorithm]),
+        );
+        let resolver = resolver(Box::pin(async move {
+            ClientAuthenticationDecision::Certificate(identity)
+        }));
+        let attempt = attempt(resolver.clone(), address.port());
+        let connector = factory(&ca).hyper_connector().unwrap();
+        let mut ssl = connector
+            .configure()
+            .unwrap()
+            .into_ssl("localhost")
+            .unwrap();
+        attempt.attach_ssl(&mut ssl).unwrap();
+        let tcp = TcpStream::connect(address).await.unwrap();
+        let mut tls = tokio::time::timeout(
+            Duration::from_secs(5),
+            attempt.drive(tokio_boring::SslStreamBuilder::new(ssl, tcp).connect()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tls.write_all(&[1]).await.unwrap();
+        let mut response = [0; 7];
+        tls.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"private");
+        assert_eq!(server.join().unwrap().unwrap().to_der().unwrap(), expected);
+        assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(key.signatures.load(Ordering::SeqCst), 1);
+    }
 }
 
 fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {

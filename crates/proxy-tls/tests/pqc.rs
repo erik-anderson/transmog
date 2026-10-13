@@ -21,7 +21,8 @@ use std::{
     time::Duration,
 };
 use transmog_tls::{
-    DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, PemTrustSource, ProxyCa,
+    CachedMitmCertificateResolver, DownstreamCertificateResolver, DownstreamTlsContextFactory,
+    DownstreamTlsPolicy, EndpointIdentity, LeafKeyAlgorithm, MlDsaVariant, PemTrustSource, ProxyCa,
     TlsCapture, TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
 };
 
@@ -470,4 +471,147 @@ fn production_quic_context_negotiates_hybrid_and_classical_origins() {
             "ecdsa_secp256r1_sha256"
         );
     }
+}
+
+#[test]
+fn production_upstream_verifies_all_ml_dsa_variants_over_tcp_and_quic() {
+    let ca = ProxyCa::generate("ML-DSA production root", 2).unwrap();
+    let factory = factory(&ca);
+    for variant in [
+        MlDsaVariant::MlDsa44,
+        MlDsaVariant::MlDsa65,
+        MlDsaVariant::MlDsa87,
+    ] {
+        let leaf = ca
+            .issue_with_algorithm(
+                EndpointIdentity::parse("localhost").unwrap(),
+                1,
+                LeafKeyAlgorithm::MlDsa(variant),
+            )
+            .unwrap();
+        let capture = factory.capture(Some("localhost".into()), vec![]);
+        let (tls, _) = handshake_captured(
+            acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
+            &factory.hyper_connector().unwrap(),
+            Some(&capture),
+        );
+        assert_eq!(
+            tls.ssl().peer_signature_algorithm(),
+            Some(variant.signature_algorithm())
+        );
+        assert_eq!(
+            capture.snapshot().details["Peer handshake signature"],
+            variant.signature_algorithm().to_string()
+        );
+
+        let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        server.set_curves_list(GROUPS).unwrap();
+        let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+        let mut context = factory.quiche_context_builder().unwrap();
+        capture.attach_context(&mut context).unwrap();
+        let (mut client, _) = quic_handshake(quic_config(context), quic_config(server));
+        assert_eq!(
+            client.as_mut().peer_signature_algorithm(),
+            Some(variant.signature_algorithm())
+        );
+        assert_eq!(
+            capture.snapshot().details["Peer handshake signature"],
+            variant.signature_algorithm().to_string()
+        );
+    }
+}
+
+#[test]
+fn production_downstream_selects_each_ml_dsa_variant_and_classical_fallback() {
+    let ca = ProxyCa::generate("ML-DSA downstream root", 2).unwrap();
+    let identity = EndpointIdentity::parse("localhost").unwrap();
+    let resolver = CachedMitmCertificateResolver::new(ca.clone(), 1, 1).unwrap();
+    let leaves = resolver
+        .resolve_credentials(&identity, std::time::SystemTime::now())
+        .unwrap();
+    assert_eq!(leaves.len(), 4);
+    let cached = resolver
+        .resolve_credentials(&identity, std::time::SystemTime::now())
+        .unwrap();
+    for (leaf, cached) in leaves.iter().zip(&cached) {
+        assert_eq!(
+            leaf.certificate.to_der().unwrap(),
+            cached.certificate.to_der().unwrap()
+        );
+        assert!(
+            leaf.certificate
+                .verify(&ca.certificate().public_key().unwrap())
+                .unwrap()
+        );
+    }
+    let factory = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default());
+    for (index, scheme) in [
+        SslSignatureAlgorithm::ML_DSA_44,
+        SslSignatureAlgorithm::ML_DSA_65,
+        SslSignatureAlgorithm::ML_DSA_87,
+        SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let capture = TlsCapture::new(transmog_core::TlsEvidence::default());
+        let mut client = connector(&ca);
+        client.set_verify_algorithm_prefs(&[scheme]).unwrap();
+        let (tls, _) = handshake(
+            factory
+                .acceptor_credentials_captured(&leaves, Some(&capture))
+                .unwrap(),
+            &client.build(),
+        );
+        assert_eq!(tls.ssl().peer_signature_algorithm(), Some(scheme));
+        assert_eq!(
+            tls.ssl().peer_certificate().unwrap().to_der().unwrap(),
+            leaves[index].certificate.to_der().unwrap()
+        );
+        assert_eq!(
+            capture.snapshot().details["Local handshake signature"],
+            scheme.to_string()
+        );
+        assert_eq!(
+            capture.snapshot().server_chain[0].der.as_ref(),
+            leaves[index].certificate.to_der().unwrap()
+        );
+    }
+    // The same credentials retain TLS 1.2 interoperability, with its classical leaf.
+    let mut client = connector(&ca);
+    client
+        .set_min_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+    client
+        .set_max_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+    let (tls, _) = handshake(
+        factory
+            .acceptor_credentials_captured(&leaves, None)
+            .unwrap(),
+        &client.build(),
+    );
+    assert_eq!(
+        tls.ssl().peer_certificate().unwrap().to_der().unwrap(),
+        leaves[3].certificate.to_der().unwrap()
+    );
+    // Invalid native credentials must fail during context construction.
+    let mut invalid = leaves.clone();
+    invalid[0].private_key = leaves[1].private_key.clone();
+    assert!(
+        factory
+            .acceptor_credentials_captured(&invalid, None)
+            .is_err()
+    );
+    assert!(factory.acceptor_credentials_captured(&[], None).is_err());
+    invalid[0] = ca
+        .issue(EndpointIdentity::parse("other.test").unwrap(), 1)
+        .unwrap();
+    assert!(
+        factory
+            .acceptor_credentials_captured(&invalid, None)
+            .is_err()
+    );
 }

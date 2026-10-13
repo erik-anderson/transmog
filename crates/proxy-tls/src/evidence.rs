@@ -110,6 +110,22 @@ impl TlsCapture {
             collect_certificate(&mut data.server_chain, certificate);
         }
     }
+    /// Retains the public issuer path belonging to the credential actually selected.
+    /// Alternative credentials must never append their unrelated issuer paths.
+    pub fn server_credential_issuers(&self, leaves: &[crate::IssuedLeaf]) {
+        let mut data = self.data();
+        if let Some(selected) = data.server_chain.first()
+            && let Some(leaf) = leaves.iter().find(|leaf| {
+                leaf.certificate
+                    .to_der()
+                    .is_ok_and(|der| der.as_slice() == selected.der.as_ref())
+            })
+        {
+            for certificate in &leaf.issuer_chain {
+                collect_certificate(&mut data.server_chain, certificate);
+            }
+        }
+    }
     /// Adds a known public client authentication path, without reading its key.
     /// Context owners supply issuer certificates because Boring's chain getter
     /// panics for an empty chain. Completion keeps the local leaf first.
@@ -199,7 +215,11 @@ impl TlsCapture {
             }
         }
         let mut local = Vec::new();
-        if let Some(certificate) = ssl.certificate() {
+        if let Some(chain) = transmog_tls_native::selected_credential_chain(ssl) {
+            for certificate in &chain {
+                collect_certificate(&mut local, certificate);
+            }
+        } else if let Some(certificate) = ssl.certificate() {
             collect_certificate(&mut local, certificate);
         }
         // Boring's extra_chain_certs() asserts when an empty context returns a

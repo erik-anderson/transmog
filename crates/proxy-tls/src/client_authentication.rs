@@ -182,6 +182,12 @@ fn key_supports_algorithm(key: &PKeyRef<Public>, version: SslVersion, algorithm:
                     }))
         }
         0x0807 => key.id() == Id::ED25519,
+        0x0904..=0x0906 => {
+            version == SslVersion::TLS1_3
+                && transmog_tls_native::MlDsaVariant::for_key(key).is_some_and(|variant| {
+                    variant.signature_algorithm() == SslSignatureAlgorithm::from(algorithm)
+                })
+        }
         _ => false,
     }
 }

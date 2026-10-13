@@ -21,6 +21,17 @@ use boring::{
     },
 };
 use thiserror::Error;
+pub use transmog_tls_native::MlDsaVariant;
+
+/// In-memory leaf signing key; the interception issuer remains independent.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum LeafKeyAlgorithm {
+    /// ECDSA P-256 for classical clients and TLS 1.2.
+    #[default]
+    EcdsaP256,
+    /// One of Chromium's ML-DSA TLS 1.3 signature schemes.
+    MlDsa(MlDsaVariant),
+}
 
 /// Certificate identity selected from CONNECT authority and downstream SNI.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -245,10 +256,25 @@ impl ProxyCa {
         identity: EndpointIdentity,
         validity_days: u32,
     ) -> Result<IssuedLeaf, ProxyCaError> {
+        self.issue_with_algorithm(identity, validity_days, LeafKeyAlgorithm::EcdsaP256)
+    }
+
+    /// Issues a leaf with an explicit signing key type under this unchanged issuer.
+    /// # Errors
+    /// Returns a configuration, key-generation or certificate issuance failure.
+    pub fn issue_with_algorithm(
+        &self,
+        identity: EndpointIdentity,
+        validity_days: u32,
+        algorithm: LeafKeyAlgorithm,
+    ) -> Result<IssuedLeaf, ProxyCaError> {
         if validity_days == 0 || validity_days > 30 {
             return Err(ProxyCaError::InvalidConfiguration);
         }
-        let private_key = generate_p256_key()?;
+        let private_key = match algorithm {
+            LeafKeyAlgorithm::EcdsaP256 => generate_p256_key()?,
+            LeafKeyAlgorithm::MlDsa(variant) => variant.generate_key()?,
+        };
         let mut name = X509NameBuilder::new()?;
         name.append_entry_by_text("O", "Transmog intercepted origin")?;
         name.append_entry_by_text("CN", &identity.as_text())?;
@@ -326,7 +352,7 @@ pub struct LeafCache {
     ca: ProxyCa,
     capacity: usize,
     validity_days: u32,
-    entries: HashMap<EndpointIdentity, IssuedLeaf>,
+    entries: HashMap<EndpointIdentity, HashMap<LeafKeyAlgorithm, IssuedLeaf>>,
     order: VecDeque<EndpointIdentity>,
 }
 
@@ -360,22 +386,45 @@ impl LeafCache {
         identity: EndpointIdentity,
         now: SystemTime,
     ) -> Result<IssuedLeaf, LeafCacheError> {
+        self.get_or_issue_with_algorithm(identity, now, LeafKeyAlgorithm::EcdsaP256)
+    }
+
+    /// Caches separate key types per identity, with at most four leaves per host.
+    /// # Errors
+    /// Returns the leaf issuance failure without removing any existing credential.
+    pub fn get_or_issue_with_algorithm(
+        &mut self,
+        identity: EndpointIdentity,
+        now: SystemTime,
+        algorithm: LeafKeyAlgorithm,
+    ) -> Result<IssuedLeaf, LeafCacheError> {
         self.remove_expired(now);
-        if let Some(existing) = self.entries.get(&identity) {
+        if let Some(existing) = self
+            .entries
+            .get(&identity)
+            .and_then(|leaves| leaves.get(&algorithm))
+        {
             return Ok(existing.clone());
         }
-        while self.entries.len() >= self.capacity {
+        let issued =
+            self.ca
+                .issue_with_algorithm(identity.clone(), self.validity_days, algorithm)?;
+        while !self.entries.contains_key(&identity) && self.entries.len() >= self.capacity {
             if let Some(oldest) = self.order.pop_front() {
                 self.entries.remove(&oldest);
             }
         }
-        let issued = self.ca.issue(identity.clone(), self.validity_days)?;
-        self.entries.insert(identity.clone(), issued.clone());
-        self.order.push_back(identity);
+        if !self.entries.contains_key(&identity) {
+            self.order.push_back(identity.clone());
+        }
+        self.entries
+            .entry(identity)
+            .or_default()
+            .insert(algorithm, issued.clone());
         Ok(issued)
     }
 
-    /// Number of currently cached leaves.
+    /// Number of currently cached identities, each with at most four key types.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -386,7 +435,10 @@ impl LeafCache {
     }
 
     fn remove_expired(&mut self, now: SystemTime) {
-        self.entries.retain(|_, leaf| leaf.expires_at > now);
+        self.entries.retain(|_, leaves| {
+            leaves.retain(|_, leaf| leaf.expires_at > now);
+            !leaves.is_empty()
+        });
         self.order
             .retain(|identity| self.entries.contains_key(identity));
     }

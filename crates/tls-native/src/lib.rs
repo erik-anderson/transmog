@@ -1,6 +1,9 @@
 //! Narrow safe bridge to the pinned `BoringSSL` client `CertificateRequest` hook.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod credentials;
+pub use credentials::{MlDsaVariant, add_server_credential, selected_credential_chain};
+
 use boring::{
     error::ErrorStack,
     ex_data::Index,

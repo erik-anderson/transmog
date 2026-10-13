@@ -24,6 +24,7 @@ transmog-client-certificates = { version = "=0.1.3", path = "../client-certifica
 
 [dev-dependencies]
 boring-sys.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tokio-boring.workspace = true
 quiche.workspace = true

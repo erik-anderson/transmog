@@ -18,8 +18,8 @@ mod trust;
 pub mod windows_client_certificates;
 
 pub use ca::{
-    EndpointIdentity, IdentityError, IssuedLeaf, LeafCache, LeafCacheError, ProxyCa, ProxyCaError,
-    normalize_connect_identity,
+    EndpointIdentity, IdentityError, IssuedLeaf, LeafCache, LeafCacheError, LeafKeyAlgorithm,
+    MlDsaVariant, ProxyCa, ProxyCaError, normalize_connect_identity,
 };
 pub use downstream::{DownstreamTlsContextFactory, DownstreamTlsError, DownstreamTlsPolicy};
 pub use evidence::TlsCapture;
