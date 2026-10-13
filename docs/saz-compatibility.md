@@ -99,6 +99,17 @@ directional byte counts describe the latest recorded snapshot. EndTime is omitte
 when no tunnel-end event was recorded, rather than using an HTTP exchange's end
 as a physical socket-close time.
 
+Both profiles preserve negotiated exchange groups and IDs, local and peer
+handshake signatures, original authentication/session-group facts on resumption,
+resumption status and HelloRetryRequest in `x-transmog-client-tls-*` and
+`x-transmog-server-tls-*` SessionFlags. Their readable CONNECT summaries include
+the same facts for each physical leg. Import restores the recorded values without
+inferring an algorithm from a certificate, cipher or preference. TLS 1.2 resumed
+sessions retain their original group and explicitly report no fresh exchange.
+Older archives without these fields continue to show unavailable algorithm
+evidence. Complete public DER and additional connection evidence remain part of
+the Extended profile and native TMCap.
+
 Captured opaque CONNECT exchanges retain their original request headers and body
 bytes. Successful responses use `200 Connection Established` and Transmog-labeled
 headers describing the tunnel, recorded peer and physical byte totals when known.

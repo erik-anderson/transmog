@@ -6,7 +6,7 @@ import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 interface Field { label:string; value:string; }
 interface Certificate { sha256:string; subject:string; fields:Field[]; pem:string; derBase64:string; unavailable:string; }
 interface Connection { id:string; title:string; fields:Field[]; serverChain:string[]; clientChain:string[]; errors:string[]; }
-interface Inspection { connections:Connection[]; certificates:Certificate[]; }
+interface Inspection { defaultConnectionId?:string; connections:Connection[]; certificates:Certificate[]; }
 interface ChainRow { id:string; label:string; selected:boolean; }
 
 export class CertificateInspector extends WebUIElement {
@@ -41,7 +41,9 @@ export class CertificateInspector extends WebUIElement {
       const inspection=await invoke<Inspection>('inspect_certificates',{id});
       if(generation!==this.generation||!this.isConnected)return;
       this.inspection=inspection;this.certificateConnections=inspection.connections.map(connection=>({id:connection.id,title:connection.title,selected:false}));
-      this.selectConnection(inspection.connections.find(connection=>connection.title==='Transmog → server')?.id??inspection.connections[0]?.id??'');
+      const preferred=inspection.connections.find(connection=>connection.id===inspection.defaultConnectionId)
+        ??inspection.connections.find(connection=>connection.title==='Transmog → server')??inspection.connections[0];
+      this.selectConnection(preferred?.id??'');
       this.certificateStatus='';
     }catch(error){if(generation===this.generation)this.certificateStatus=describeError(error);}
     finally{if(generation===this.generation)this.certificateBusy=false;}

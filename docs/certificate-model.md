@@ -88,6 +88,18 @@ missing algorithm evidence show **Unavailable**, with no inference from the
 certificate key or cipher name. See [testing](testing.md#post-quantum-tls) and
 the [handshake benchmark](performance.md#post-quantum-tls-handshakes).
 
+Both SAZ profiles retain each leg's exchange group, handshake signatures and
+resumption facts in conventional SessionFlag metadata and readable connection
+summaries. Transmog restores those recorded facts on import. Extended SAZ and
+TMCap also preserve the complete public certificate paths and richer connection
+evidence; compatibility SAZ does not include the public DER definitions.
+
+The inspector defaults to the latest successful upstream connection, with the
+latest upstream attempt as fallback when none succeeded. Selector labels include
+the role, outcome and connection identity so failed attempts remain distinct.
+When the same certificate fingerprint appears more than once, an available
+complete certificate takes precedence over an earlier fingerprint-only reference.
+
 ## Interception root lifecycle
 
 The proxy CA is generated or loaded independently and is never added to the

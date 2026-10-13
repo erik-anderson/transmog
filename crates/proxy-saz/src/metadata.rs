@@ -151,6 +151,7 @@ pub(crate) fn render(
         let _ = write!(attributes, " {name}=\"{}\"", xml(value));
     }
     let mut flags = BTreeMap::new();
+    let mut negotiation_flags = BTreeMap::new();
     if let Some(failure) = &session.evidence.failure {
         flags.insert("x-transmog-failure-category", failure.category.clone());
         flags.insert("x-transmog-failure-message", failure.message.clone());
@@ -304,6 +305,20 @@ pub(crate) fn render(
                     flags.insert(name, value.clone());
                 }
             }
+            if let Some(prefix) = crate::tls::flag_prefix(leg) {
+                if let Some(tls) = &transport.tls {
+                    for (label, suffix) in crate::tls::NEGOTIATION_FIELDS {
+                        if let Some(value) = tls.details.get(label) {
+                            negotiation_flags.insert(format!("{prefix}{suffix}"), value.clone());
+                        }
+                    }
+                }
+                if let Some(resumed) = transport.tls_resumed {
+                    negotiation_flags
+                        .entry(format!("{prefix}session-resumed"))
+                        .or_insert_with(|| if resumed { "Yes" } else { "No" }.into());
+                }
+            }
             if let Some(name) = transport
                 .tls
                 .as_ref()
@@ -355,7 +370,11 @@ pub(crate) fn render(
         flags.insert("log-drop-response-body", "true".into());
     }
     let mut rendered_flags = String::new();
-    for (name, value) in &flags {
+    for (name, value) in flags.iter().map(|(name, value)| (*name, value)).chain(
+        negotiation_flags
+            .iter()
+            .map(|(name, value)| (name.as_str(), value)),
+    ) {
         let _ = write!(
             rendered_flags,
             "<SessionFlag N=\"{name}\" V=\"{}\"/>",

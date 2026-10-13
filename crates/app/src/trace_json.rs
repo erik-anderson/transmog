@@ -932,7 +932,7 @@ mod tests {
         let view = app.inspect_certificates(&id).unwrap();
         assert_eq!(view.certificates.len(), 2);
         let connection = &view.connections[0];
-        assert_eq!(connection.title, "Browser → server");
+        assert!(connection.title.starts_with("Browser → server · "));
         assert_eq!(connection.server_chain.len(), 2);
         assert!(connection.client_chain.is_empty());
         assert!(

@@ -42,4 +42,45 @@ export async function smokeCertificates(viewer, traffic, source, nativeFixture, 
   assert.ok(await viewer.evaluate(`(()=>{const active=${traffic}.getRootNode().activeElement;return active===${traffic}.detailsButton;})()`));
   await viewer.call('Emulation.clearDeviceMetricsOverride');
   await viewer.evaluate(`(async()=>{await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(id)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
+  await smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain,performance,screenshot);
+}
+
+async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain,performance,screenshot) {
+  const connected=structuredClone(performance.transports[0]);
+  Object.assign(connected,{connectionId:'native-origin',outcome:'connected',tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256'});
+  Object.assign(connected.tls,{verification:'Verified',errors:[],details:{'Key exchange':'Hybrid post-quantum key exchange','Negotiated group':'X25519MLKEM768','Negotiated group ID':'0x11ec','Peer handshake signature':'ecdsa_secp256r1_sha256','Session resumed':'No'}});
+  const client=structuredClone(connected);Object.assign(client,{leg:'client',connectionId:'native-client'});
+  client.tls.details={'Key exchange':'Classical key exchange','Negotiated group':'X25519','Negotiated group ID':'0x001d','Local handshake signature':'ecdsa_secp256r1_sha256'};
+  const sample={...performance,transports:[performance.transports[0],connected,client]};
+  const records=[...chain.map(definition=>({exchange_id:0,kind:'public-certificate',payload:definition})),{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://localhost/native-fallback',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'performance',payload:sample},{kind:'completed',payload:null}];
+  const path=join(dirname(source),'fallback-fixture.tmcap');await writeFile(path,nativeFixture(records,106));
+  await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(path)})`);
+  const wait=async expression=>{const deadline=Date.now()+10000;while(!await viewer.evaluate(expression)){if(Date.now()>deadline)throw new Error('Native fallback viewer did not reach '+expression);await new Promise(resolve=>setTimeout(resolve,50));}};
+  await wait(`!${traffic}.importingTrace && ${traffic}.sessions.some(row=>row.path==='/native-fallback')`);
+  const id=await viewer.evaluate(`(async()=>{const workspace=${traffic},row=workspace.sessions.find(row=>row.path==='/native-fallback');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
+  const context=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_certificates',{id:${JSON.stringify(id)}})`);
+  assert.equal(context.defaultConnectionId,'upstream:native-origin');
+  assert.equal(new Set(context.connections.map(connection=>connection.title)).size,3);
+  await viewer.evaluate(`${traffic}.showTimings()`);
+  const dialog=`${traffic}.timingDialog`,component=`${traffic}.certificateInspector`;
+  await wait(`${dialog}.open && !${traffic}.timingBusy`);
+  await viewer.evaluate(`${dialog}.querySelector('#details-tab-connection').click()`);
+  await wait(`!${component}.certificateBusy && ${component}.querySelector('select').value==='upstream:native-origin' && ${component}.textContent.includes('X25519MLKEM768')`);
+  assert.equal(await viewer.evaluate(`${component}.textContent.includes('Certificate issuer was not trusted')`),false);
+  for(const [width,height,label] of [[1440,900,'wide'],[800,600,'compact']]) {
+    await viewer.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    assert.ok(await viewer.evaluate(`(()=>{const group=Array.from(${component}.querySelectorAll('dd')).find(node=>node.textContent==='X25519MLKEM768');group.scrollIntoView({block:'nearest'});const rect=group.getBoundingClientRect();return rect.height>0&&rect.top>=0&&rect.bottom<=innerHeight;})()`));
+    assert.ok(await viewer.evaluate(`(()=>{const button=Array.from(${dialog}.querySelectorAll('footer button')).find(button=>button.textContent==='Close'),rect=button.getBoundingClientRect();return rect.bottom<=innerHeight&&button.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===button;})()`));
+    if(screenshot)await writeFile(screenshot.replace('.png',`-fallback-${label}.png`),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  }
+  await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='upstream:native-certificate';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await wait(`${component}.textContent.includes('Certificate issuer was not trusted')`);
+  assert.equal(await viewer.evaluate(`${component}.textContent.includes('X25519MLKEM768')`),false);
+  await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='client:native-client';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await wait(`${component}.textContent.includes('Classical key exchange')`);
+  assert.equal(await viewer.evaluate(`${component}.textContent.includes('X25519MLKEM768')`),false);
+  await viewer.evaluate(`${traffic}.closeTimings()`);
+  await viewer.call('Emulation.clearDeviceMetricsOverride');
+  await viewer.evaluate(`(async()=>{await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(id)}],restore:false});await ${traffic}.refreshSessions(undefined,true);})()`);
+  process.stdout.write('Native fallback selection, distinct attempts and per-leg PQC context verified.\n');
 }

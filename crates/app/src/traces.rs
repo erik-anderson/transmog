@@ -777,15 +777,19 @@ fn import_saz(
         let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), ended);
         if evidence.is_none() {
             for (leg, prefix) in [("client", "https-client-"), ("upstream", "https-server-")] {
-                let details = session
-                    .metadata
-                    .flags
-                    .iter()
-                    .filter(|(key, _)| key.to_ascii_lowercase().starts_with(prefix))
-                    .filter(|(key, value)| key.len() <= 256 && value.len() <= 4096)
-                    .take(64)
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect::<BTreeMap<_, _>>();
+                let mut details =
+                    transmog_saz::tls_negotiation_details(&session.metadata.flags, leg);
+                // Preserve conventional summaries after the canonical negotiated facts,
+                // so unrelated imported flags cannot crowd them out of the bounded map.
+                for (key, value) in &session.metadata.flags {
+                    if details.len() < 64
+                        && key.to_ascii_lowercase().starts_with(prefix)
+                        && key.len() <= 256
+                        && value.len() <= 4096
+                    {
+                        details.insert(key.clone(), value.clone());
+                    }
+                }
                 let outcome = session
                     .metadata
                     .flags
@@ -812,13 +816,28 @@ fn import_saz(
                             .flatten()
                     });
                 if !details.is_empty() || outcome.is_some() {
-                    let value = |suffix: &str| {
-                        details
+                    // Read primary properties independently of the capped annotation
+                    // map. Extra diagnostics must not displace protocol, cipher or SNI.
+                    let value = |suffix: &str, limit: usize| {
+                        let name = format!("{prefix}{suffix}");
+                        let mut values = session
+                            .metadata
+                            .flags
                             .iter()
-                            .find(|(key, _)| key.eq_ignore_ascii_case(&format!("{prefix}{suffix}")))
-                            .map(|(_, value)| value.clone())
+                            .filter(|(key, _)| key.eq_ignore_ascii_case(&name))
+                            .map(|(_, value)| value);
+                        let value = values.next()?;
+                        (value.len() <= limit && values.all(|other| other == value))
+                            .then(|| value.clone())
                     };
-                    let server_name = value("sni");
+                    let negotiated = |label: &str, suffix: &str| {
+                        details
+                            .get(label)
+                            .filter(|value| value.len() <= 512)
+                            .cloned()
+                            .or_else(|| value(suffix, 512))
+                    };
+                    let server_name = value("sni", 1024);
                     snapshot.performance.transports.push(
                         transmog_core::performance::TransportObservation {
                             leg: leg.into(),
@@ -864,8 +883,13 @@ fn import_saz(
                                         .and_then(|value| value.replace(',', "").parse().ok())
                                 })
                                 .flatten(),
-                            tls_version: value("protocol"),
-                            cipher: value("cipher"),
+                            tls_version: negotiated("Negotiated TLS version", "protocol"),
+                            cipher: negotiated("Negotiated cipher", "cipher"),
+                            tls_resumed: match details.get("Session resumed").map(String::as_str) {
+                                Some("Yes") => Some(true),
+                                Some("No") => Some(false),
+                                _ => None,
+                            },
                             tls: (!details.is_empty()).then(|| transmog_core::TlsEvidence {
                                 server_name,
                                 details,

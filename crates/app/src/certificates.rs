@@ -53,6 +53,8 @@ pub struct CertificateConnection {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateInspection {
+    /// Preferred current upstream connection, with failed attempts retained for inspection.
+    pub default_connection_id: String,
     /// Connections corresponding to the request.
     pub connections: Vec<CertificateConnection>,
     /// Each public certificate appears once, including shared roots.
@@ -282,11 +284,60 @@ impl Application {
                         }
                         certificates
                             .entry(certificate.sha256.clone())
+                            .and_modify(|view: &mut CertificateView| {
+                                if view.der_base64.is_empty() && !certificate.der.is_empty() {
+                                    let complete = certificate_view(certificate);
+                                    if !complete.der_base64.is_empty() {
+                                        *view = complete;
+                                    }
+                                }
+                            })
                             .or_insert_with(|| certificate_view(certificate));
                     }
                 }
             }
             connections.push(connection);
+        }
+        let preferred = detail
+            .performance
+            .transports
+            .iter()
+            .rev()
+            .find(|transport| {
+                transport.leg == "upstream"
+                    && transport.outcome == transmog_core::performance::TransportOutcome::Connected
+            })
+            .or_else(|| {
+                detail
+                    .performance
+                    .transports
+                    .iter()
+                    .rev()
+                    .find(|transport| transport.leg == "upstream")
+            });
+        let default_connection_id = preferred.map_or_else(
+            || {
+                connections
+                    .first()
+                    .map_or_else(|| "unavailable".into(), |connection| connection.id.clone())
+            },
+            |transport| format!("{}:{}", transport.leg, transport.connection_id),
+        );
+        for (connection, transport) in connections.iter_mut().zip(&detail.performance.transports) {
+            let outcome = match transport.outcome {
+                transmog_core::performance::TransportOutcome::Connected => "Connected",
+                transmog_core::performance::TransportOutcome::TlsFailed => "TLS failed",
+                transmog_core::performance::TransportOutcome::TcpFailed => "TCP failed",
+                transmog_core::performance::TransportOutcome::DnsFailed => "DNS failed",
+                transmog_core::performance::TransportOutcome::PolicyRejected => {
+                    "Rejected by policy"
+                }
+                transmog_core::performance::TransportOutcome::Unavailable => "Outcome unavailable",
+            };
+            connection.title = format!(
+                "{} · {outcome} · {}",
+                connection.title, transport.connection_id
+            );
         }
         if connections.is_empty() {
             connections.push(CertificateConnection {
@@ -299,6 +350,7 @@ impl Application {
             });
         }
         Ok(CertificateInspection {
+            default_connection_id,
             connections,
             certificates: certificates.into_values().collect(),
         })

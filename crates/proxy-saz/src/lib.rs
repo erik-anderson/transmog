@@ -29,6 +29,7 @@ mod connections;
 mod evidence;
 mod import;
 mod metadata;
+mod tls;
 mod websocket;
 #[cfg(test)]
 mod websocket_tests;
@@ -37,6 +38,7 @@ pub use import::{
     ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
     SazIndex, SazIssue,
 };
+pub use tls::tls_negotiation_details;
 
 const CONTENT_TYPES: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>",

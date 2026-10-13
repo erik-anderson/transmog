@@ -552,9 +552,28 @@ fn describe(text: &mut String, transport: &TransportObservation) {
             let _ = writeln!(text, "{name}: {value} (shared connection total)\r");
         }
     }
+    if transport
+        .tls
+        .as_ref()
+        .is_none_or(|tls| !tls.details.contains_key("Session resumed"))
+        && let Some(resumed) = transport.tls_resumed
+    {
+        let _ = writeln!(
+            text,
+            "Session resumed: {}\r",
+            if resumed { "Yes" } else { "No" }
+        );
+    }
     if let Some(tls) = &transport.tls {
         if let Some(name) = &tls.server_name {
             let _ = writeln!(text, "Server name: {name}\r");
+        }
+        for (label, _) in crate::tls::NEGOTIATION_FIELDS {
+            if let Some(value) = tls.details.get(label) {
+                // Imported text cannot forge another diagnostic line or heading.
+                let value = value.replace('\r', "\\r").replace('\n', "\\n");
+                let _ = writeln!(text, "{label}: {value}\r");
+            }
         }
         for (name, values) in [
             (
@@ -640,6 +659,30 @@ fn certificate_summary(text: &mut String, certificate: &transmog_core::PublicCer
 pub(crate) mod tests {
     use super::*;
     use transmog_core::TlsEvidence;
+
+    #[test]
+    fn negotiation_values_cannot_inject_summary_lines() {
+        let mut sample = evidence();
+        sample.transports[0].tls.as_mut().unwrap().details.insert(
+            "Negotiated group".into(),
+            "X25519\r\nInjected verification".into(),
+        );
+        let mut text = String::new();
+        super::describe(&mut text, &sample.transports[0]);
+        assert!(text.contains("Negotiated group: X25519\\r\\nInjected verification"));
+        assert!(!text.contains("\r\nInjected verification"));
+    }
+
+    #[test]
+    fn typed_resumption_is_reported_without_extended_tls_evidence() {
+        let mut transport = evidence().transports.remove(0);
+        transport.tls = None;
+        transport.tls_resumed = Some(true);
+        let mut text = String::new();
+        super::describe(&mut text, &transport);
+        assert!(text.contains("Session resumed: Yes\r\n"));
+        assert!(!text.contains("Negotiated group"));
+    }
 
     pub(crate) fn evidence() -> transmog_core::performance::PerformanceEvidence {
         transmog_core::performance::PerformanceEvidence {

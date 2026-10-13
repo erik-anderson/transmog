@@ -415,6 +415,10 @@ verification and negotiation failures together. Label fingerprints or imported
 summaries whose certificate bytes were omitted. Recorded trust belongs to the
 original connection; opening the viewer must not imply verification against the
 current computer's trust or expose private keys or session secrets.
+Prefer complete public bytes when another reference to the same fingerprint
+contains them. Default to the latest successful upstream connection, then the
+latest failed attempt when none succeeded. Include the role, outcome and identity
+in the selector so attempts can be distinguished before selecting them.
 
 Show negotiated exchange groups and handshake signatures for each physical
 connection's own leg. Do not infer a missing algorithm from a certificate key,
