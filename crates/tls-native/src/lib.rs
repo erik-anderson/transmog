@@ -1,7 +1,9 @@
 //! Safe native boundary for `BoringSSL` certificate hooks and `ClientHello` configuration.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod application_settings;
 mod credentials;
+pub use application_settings::{configure_h2_application_settings, peer_application_settings};
 pub use credentials::{MlDsaVariant, add_server_credential, selected_credential_chain};
 
 use boring::{

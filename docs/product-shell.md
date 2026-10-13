@@ -67,7 +67,7 @@ in Traffic. **Profile** defaults to **Chromium 154**, based on the Chromium
 the saved recipe to new requests. **Customize** creates an editable copy of the
 built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
 compatibility ciphers, hybrid key exchange and connection reuse. **More handshake
-options** contains GREASE, extension order, ECH GREASE and certificate compression.
+options** contains HTTP/2 ALPS, GREASE, extension order, ECH GREASE and certificate compression.
 ECH GREASE sends a dummy extension and does not encrypt the server name.
 
 **Save only** preserves the active recipe; **Save and use** activates the saved
@@ -79,7 +79,10 @@ TLS 1.3. Clearing all HTTP protocols blocks new outbound requests.
 Profiles govern connections made by Transmog and Composer; opaque CONNECT
 tunnels use the original client's protocol and handshake.
 Built-in recipes keep their qualified version, and **Profile details** identifies
-the remaining ALPS and Trust Anchor ID gaps.
+the remaining Trust Anchor ID gap and the intentional Client Hints limitation.
+HTTP/2 ALPS is enabled in the Chromium recipe and separately editable in custom
+profiles. It applies server settings without generating or forwarding
+connection-level requests for Client Hints; see [HTTP/2 ALPS](http2-alps.md).
 
 **Advanced network settings** contains remote-client access (off by default),
 an optional saved proxy port, caller-process isolation and client certificates.

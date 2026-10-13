@@ -33,6 +33,13 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(profiles.networkBusy)throw new Error('Network profiles are unavailable');
     profiles.customize();
     const profileForm=profiles.networkForm;
+    if(!original.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('Chromium ALPS default is disabled');
+    const alps=profileForm.elements.namedItem('http2Alps');
+    profiles.querySelector('.profile-handshake').open=true;
+    alps.scrollIntoView({block:'center'});alps.focus();
+    const alpsBox=alps.getBoundingClientRect();
+    if(alps.getRootNode().activeElement!==alps||alps.getRootNode().elementFromPoint(alpsBox.x+alpsBox.width/2,alpsBox.y+alpsBox.height/2)!==alps)throw new Error('ALPS profile control is not reachable');
+    alps.checked=false;
     profileForm.elements.namedItem('name').value='Native diagnostic profile';
     for(const name of ['http2','http3','reuseConnections'])profileForm.elements.namedItem(name).checked=false;
     profiles.edit(new Event('change',{bubbles:true}));
@@ -43,6 +50,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(profiles.networkError)throw new Error(profiles.networkError);
     await settings.saveSettings(new Event('submit',{cancelable:true}));
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
+    if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
     if(saved.preferences.decryptHttps||saved.preferences.isolateOutboundConnections||saved.preferences.configureSystemProxy||JSON.stringify(saved.preferences.allowedOutboundProtocols)!==JSON.stringify({http1:true,http2:false,http3:false}))throw new Error('Network settings did not persist');
     await settings.startProxy();
     const status=await window.__TAURI_INTERNALS__.invoke('app_status');
@@ -69,12 +77,12 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(bodyState.privacy.requestBodyLimit!==1500000||bodySelect.value!=='custom'||form.elements.namedItem('customRequestBodyLimit').value!=='1.5')throw new Error('Custom body limit did not survive reload');
     if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Opaque proxy did not stop');
     settings.$flushUpdates();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
-    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true};
+    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true,alpsProfileControl:true};
   })()`);
     if(screenshotPath) {
       await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
       await call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
-      await evaluate(`(()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');profiles.customize();const input=profiles.networkForm.elements.namedItem('http3');input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile protocol control is covered');})()`);
+      await evaluate(`(()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');profiles.customize();profiles.querySelector('.profile-handshake').open=true;const input=profiles.networkForm.elements.namedItem('http2Alps');input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile ALPS control is covered');})()`);
       await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     }
     return result;

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 7;
+const CURRENT_SCHEMA: u32 = 8;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -398,6 +398,10 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         );
         state.schema_version = CURRENT_SCHEMA;
     }
+    if state.schema_version == 7 {
+        state.preferences.network_profiles.migrate_alps()?;
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -555,10 +559,10 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    if schema != u64::from(CURRENT_SCHEMA) && schema != 6 {
+    if schema != u64::from(CURRENT_SCHEMA) && schema != 6 && schema != 7 {
         return Err(());
     }
-    if schema == u64::from(CURRENT_SCHEMA)
+    if schema >= 7
         && value
             .get("preferences")
             .and_then(|preferences| preferences.get("networkProfiles"))
@@ -660,6 +664,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn schema_seven_alps_migration_preserves_custom_profiles_and_activates_the_builtin_revision() {
+        let mut previous = ProductState {
+            schema_version: 7,
+            ..Default::default()
+        };
+        previous
+            .preferences
+            .network_profiles
+            .active_profile
+            .revision = 1;
+        previous
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .http2_alps = false;
+        let mut custom = previous.preferences.network_profiles.active_profile.clone();
+        custom.id = "custom-diagnostic".into();
+        custom.name = "Diagnostic".into();
+        previous
+            .preferences
+            .network_profiles
+            .custom_profiles
+            .push(custom.clone());
+        let mut value = serde_json::to_value(previous.clone()).unwrap();
+        let profiles = &mut value["preferences"]["networkProfiles"];
+        profiles["activeProfile"]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("http2Alps");
+        profiles["customProfiles"][0]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("http2Alps");
+        let migrated = validate(serde_json::from_value(value).unwrap()).unwrap();
+        assert_eq!(migrated.schema_version, CURRENT_SCHEMA);
+        assert_eq!(
+            migrated.preferences.network_profiles.active_profile,
+            crate::NetworkProfileSnapshot::default()
+        );
+        assert_eq!(
+            migrated.preferences.network_profiles.custom_profiles,
+            [custom.clone()]
+        );
+        assert_eq!(migrated.preferences.network_profiles.revision, 2);
+        previous.preferences.network_profiles.active_profile = custom;
+        let migrated = validate(previous).unwrap();
+        assert!(
+            !migrated
+                .preferences
+                .network_profiles
+                .active_profile
+                .settings
+                .http2_alps
+        );
+        assert_eq!(
+            migrated.preferences.network_profiles.active_profile,
+            migrated.preferences.network_profiles.custom_profiles[0]
+        );
+    }
+
+    #[test]
     fn listener_and_pool_preferences_survive_restart_and_reject_zero_port() {
         let path = prefix("listener-pool");
         cleanup(&path);
@@ -698,7 +764,7 @@ mod tests {
         .unwrap();
         let (store, warning) = ProductStateManager::load(Some(path.clone()));
         assert!(warning.is_none());
-        assert_eq!(store.snapshot().schema_version, 7);
+        assert_eq!(store.snapshot().schema_version, CURRENT_SCHEMA);
         let migrated = store.snapshot().preferences.network_profiles;
         assert_eq!(migrated.active_profile.name, "Current settings");
         assert!(!migrated.active_profile.settings.protocols.http2);
@@ -1082,7 +1148,7 @@ fn legacy_network_choices_migrate_and_independent_profile_writes_survive_stale_s
     legacy.preferences.allowed_outbound_protocols.http3 = false;
     legacy.preferences.reuse_server_connections = false;
     let migrated = validate(legacy).unwrap();
-    assert_eq!(migrated.schema_version, 7);
+    assert_eq!(migrated.schema_version, CURRENT_SCHEMA);
     assert_eq!(
         migrated.preferences.network_profiles.active_profile.name,
         "Current settings"

@@ -23,6 +23,11 @@ proxy and Composer, including already-open viewers. In-flight requests retain
 their original transports and recorded recipe. Built-in recipes do not silently
 advance when a new browser version is added. TLS 1.2-only profiles cannot enable
 HTTP/3; disabling all HTTP protocols intentionally blocks new work.
+The Chromium 154 recipe revision 2 adds HTTP/2 ALPS. Schema 7 state migrates to
+schema 8: the built-in recipe advances, while existing custom profiles retain
+ALPS disabled. Missing ALPS fields in older capture snapshots mean disabled,
+preserving the offer recorded at the time. See [HTTP/2 ALPS](http2-alps.md) for
+the intentional Client Hints limitation.
 
 Advanced network settings contains remote access, an optional persistent proxy
 port, caller-process isolation and client certificate authorization. Isolation
@@ -48,7 +53,7 @@ settings so a stale workspace snapshot cannot overwrite newer preferences.
 Each save writes and flushes a temporary file, then atomically publishes a new
 numbered generation. Startup validates the newest generation and quarantines
 corrupt state, falling back to a retained valid generation or safe defaults.
-Schema 6 preferences migrate to schema 7: nondefault protocol or reuse choices
+Schema 6 preferences migrate to schema 8: nondefault protocol or reuse choices
 become an active Current settings custom profile. Narrow profile writes merge
 with independent layout, window and certificate policy saves and reject stale
 catalog revisions. Other legacy schemas remain unsupported. Exact fields and validation belong to

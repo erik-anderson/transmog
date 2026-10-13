@@ -309,7 +309,10 @@ async fn connect(
     let mut extras = http::Extensions::new();
     connected.get_extras(&mut extras);
     let observation = extras.get::<ConnectionObservation>().cloned();
-    let (sender, mut connection) = h2::client::handshake(TokioIo::new(io)).await?;
+    let (sender, mut connection) = h2::client::Builder::new()
+        .initial_max_send_streams(0)
+        .handshake(TokioIo::new(io))
+        .await?;
     let mut ping = connection.ping_pong().expect("first ping handle");
     let mut driver = Driver(Some(tokio::spawn(async move {
         let _ = connection.await;

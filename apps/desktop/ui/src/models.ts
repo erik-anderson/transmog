@@ -190,7 +190,7 @@ export interface NetworkProfileSettings {
   protocols:{http1:boolean;http2:boolean;http3:boolean}; reuseConnections:boolean;
   tlsVersions:'tls12-and13'|'tls12-only'|'tls13-only'; compatibilityCiphers:boolean;
   hybridKeyExchange:boolean; grease:'chromium'|'no-signature'|'disabled';
-  randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean;
+  randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean; http2Alps:boolean;
 }
 export interface NetworkProfileSnapshot {
   id:string; name:string; revision:number; baseProfile:string; settings:NetworkProfileSettings;

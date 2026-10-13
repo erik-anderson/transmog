@@ -1,5 +1,6 @@
 //! Hyper-based downstream and upstream HTTP/1.1 and HTTP/2 adapters.
 
+mod alps;
 mod authority;
 mod client;
 mod metrics;

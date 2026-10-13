@@ -208,6 +208,17 @@ impl TlsCapture {
                 },
             );
             insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
+            if ssl.selected_alpn_protocol() == Some(b"h2") {
+                let alps = transmog_tls_native::peer_application_settings(ssl);
+                insert_detail(
+                    &mut data,
+                    "HTTP/2 ALPS",
+                    &alps.map_or_else(
+                        || "Not negotiated".into(),
+                        |settings| format!("Negotiated ({} peer bytes)", settings.len()),
+                    ),
+                );
+            }
             if let Some(cipher) = ssl.current_cipher() {
                 insert_detail(&mut data, "Negotiated cipher", cipher.name());
             }

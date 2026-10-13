@@ -28,6 +28,7 @@ pub use evidence::TlsCapture;
 pub use resolver::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
 };
+pub use transmog_tls_native::{configure_h2_application_settings, peer_application_settings};
 pub use trust::{
     CompositeTrustSource, LoadedTrust, PemTrustSource, SystemTrustSource, TrustError,
     TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,

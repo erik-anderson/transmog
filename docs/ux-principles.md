@@ -19,6 +19,9 @@ its actual effect on the user's task. For a short per-change workflow, follow
   Use profile or Save and use activates it, while Save only preserves the active
   revision. Keep the ordinary capture path direct and retain the effective recipe
   and actual negotiated protocol and algorithms in connection evidence.
+  HTTP/2 ALPS is a separate profile choice. Apply negotiated transport settings,
+  but leave Client Hint values and permissions with the caller; do not fabricate
+  hints or retry a caller's request to satisfy connection-level preferences.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is

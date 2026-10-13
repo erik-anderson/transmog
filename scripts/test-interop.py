@@ -56,6 +56,7 @@ def main():
                     raise RuntimeError(f"Unexpected loopback port binding for {service}: {binding}")
                 env[f"TRANSMOG_{service.upper()}_URL"] = f"http://{binding}/"
             command(["cargo", "test", "--release", "--locked", "-p", "transmog-app", "--test", "headless_product", "--", "--ignored", "--nocapture"], env=env)
+            command(["cargo", "test", "--release", "--locked", "-p", "transmog-http", "--test", "alps", "docker_caddy", "--", "--ignored", "--nocapture"], env=env)
             if not args.skip_dependency_install:
                 command(["npm", "ci"], cwd=project_root, env=env)
             if not args.skip_browser_install:

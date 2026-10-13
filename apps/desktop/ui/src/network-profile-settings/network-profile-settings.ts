@@ -10,7 +10,7 @@ type ChangeFlags=Record<keyof NetworkProfileSettings,boolean>;
 const differenceLabels:Record<keyof NetworkProfileSettings,string>={
   protocols:'HTTP protocols',reuseConnections:'Connection reuse',tlsVersions:'TLS versions',
   compatibilityCiphers:'Compatibility ciphers',hybridKeyExchange:'Key exchange',grease:'GREASE',
-  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',certificateCompression:'Certificate compression'
+  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',certificateCompression:'Certificate compression',http2Alps:'HTTP/2 ALPS'
 };
 
 /** Independent profile saves do not submit or overwrite ordinary preference drafts. */
@@ -120,7 +120,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     (fields.namedItem('name') as HTMLInputElement).value=this.networkDraft.name;
     const s=this.networkDraft.settings;
     for(const key of ['http1','http2','http3'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s.protocols[key];
-    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','certificateCompression'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
+    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','certificateCompression','http2Alps'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
     (fields.namedItem('tlsVersions') as HTMLSelectElement).value=s.tlsVersions;
     (fields.namedItem('grease') as HTMLSelectElement).value=s.grease;
   }
@@ -130,7 +130,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     const s=this.networkDraft.settings;
     const settings:NetworkProfileSettings={...s,protocols:{http1:data.has('http1'),http2:data.has('http2'),http3:data.has('http3')},
       reuseConnections:data.has('reuseConnections'),compatibilityCiphers:data.has('compatibilityCiphers'),hybridKeyExchange:data.has('hybridKeyExchange'),
-      randomizeExtensions:data.has('randomizeExtensions'),echGrease:data.has('echGrease'),certificateCompression:data.has('certificateCompression'),
+      randomizeExtensions:data.has('randomizeExtensions'),echGrease:data.has('echGrease'),certificateCompression:data.has('certificateCompression'),http2Alps:data.has('http2Alps'),
       tlsVersions:String(data.get('tlsVersions')) as NetworkProfileSettings['tlsVersions'],grease:String(data.get('grease')) as NetworkProfileSettings['grease']};
     this.networkDraft={...this.networkDraft,name:String(data.get('name')),settings};
     this.networkDirty=!this.editorSource||JSON.stringify(this.networkDraft)!==JSON.stringify(this.editorSource);

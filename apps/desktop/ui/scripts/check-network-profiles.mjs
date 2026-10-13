@@ -17,6 +17,10 @@ export async function checkNetworkProfiles(page,root) {
   await dialog.waitFor({state:'visible'});
   await dialog.getByLabel('Name',{exact:true}).fill('Debug without H3');
   assert.equal(await dialog.locator('.profile-handshake').getAttribute('open'),null);
+  await dialog.locator('.profile-handshake summary').click();
+  assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
+  await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
+  await dialog.locator('.profile-handshake summary').click();
   await dialog.getByLabel('HTTP/3',{exact:true}).uncheck();
   await dialog.getByLabel('Reuse server connections',{exact:true}).uncheck();
   await dialog.getByRole('button',{name:'Save only',exact:true}).click();
@@ -28,6 +32,7 @@ export async function checkNetworkProfiles(page,root) {
   await panel.getByRole('button',{name:'Use profile',exact:true}).click();await idle();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
   await dialog.getByLabel('Profile TLS versions').selectOption('tls12-only');
   await dialog.getByLabel('HTTP/3',{exact:true}).check();
@@ -38,6 +43,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('HTTP/3',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('Profile TLS versions').inputValue(),'tls12-and13');
   await dialog.locator('.profile-handshake summary').click();
+  assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
   await dialog.getByLabel('Profile GREASE').selectOption('no-signature');
   await dialog.getByLabel('Send a dummy ECH extension',{exact:true}).uncheck();
   assert.match(await dialog.locator('.profile-differences').textContent(),/2 changes/);

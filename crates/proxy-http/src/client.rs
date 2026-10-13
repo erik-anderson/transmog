@@ -353,6 +353,14 @@ impl HyperOriginClient {
         let epoch = factory.client_certificate_generation();
         let admitted = factory.clone().for_client_certificate_epoch(epoch);
         let mut builder = Client::builder(TokioExecutor::new());
+        if factory
+            .network_profile()
+            .is_none_or(|profile| profile.settings.http2_alps)
+        {
+            // Wait for the ALPS bootstrap (or the real initial SETTINGS if the
+            // peer declines ALPS) before encoding an application request.
+            builder.http2_initial_max_send_streams(0);
+        }
         if !reusable {
             builder.pool_max_idle_per_host(0);
         }

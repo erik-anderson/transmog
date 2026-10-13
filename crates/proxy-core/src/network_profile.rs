@@ -56,6 +56,10 @@ pub struct NetworkProfileSettings {
     pub ech_grease: bool,
     /// Accept Brotli-compressed server certificates.
     pub certificate_compression: bool,
+    /// Negotiate HTTP/2 settings in TLS; Client Hint preferences remain with the caller.
+    /// Older capture metadata omitted ALPS because it was not offered.
+    #[serde(default)]
+    pub http2_alps: bool,
 }
 
 impl Default for NetworkProfileSettings {
@@ -70,6 +74,7 @@ impl Default for NetworkProfileSettings {
             randomize_extensions: true,
             ech_grease: true,
             certificate_compression: true,
+            http2_alps: true,
         }
     }
 }
@@ -108,7 +113,7 @@ impl Default for NetworkProfileSnapshot {
         Self {
             id: CHROMIUM_154.into(),
             name: "Chromium 154".into(),
-            revision: 1,
+            revision: 2,
             base_profile: CHROMIUM_154.into(),
             settings: NetworkProfileSettings::default(),
         }
@@ -127,5 +132,25 @@ impl NetworkProfileSnapshot {
             && self.base_profile.len() <= 80
             && self.revision > 0
             && self.settings.validate().is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn older_capture_recipe_does_not_claim_an_alps_offer() {
+        let mut value = serde_json::to_value(NetworkProfileSnapshot::default()).unwrap();
+        value["revision"] = 1.into();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("http2Alps");
+        let historical: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
+        assert!(!historical.settings.http2_alps);
+        assert_eq!(historical.revision, 1);
+        assert!(historical.valid());
+        assert!(NetworkProfileSnapshot::default().settings.http2_alps);
     }
 }

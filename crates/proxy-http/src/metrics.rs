@@ -331,7 +331,7 @@ pub(crate) struct MeasuredHttpsConnector {
     protocols: OutboundProtocolPolicy,
 }
 impl Service<Uri> for MeasuredHttpsConnector {
-    type Response = MaybeHttpsStream<MeasuredTcp>;
+    type Response = crate::alps::AlpsStream<MaybeHttpsStream<MeasuredTcp>>;
     type Error = BoxError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -421,7 +421,13 @@ impl Service<Uri> for MeasuredHttpsConnector {
                     }) as BoxError);
                 }
             }
-            Ok(stream)
+            let prefix = if let MaybeHttpsStream::Https(tls) = &stream {
+                transmog_tls::peer_application_settings(tls.ssl())
+                    .map(crate::alps::bootstrap).transpose()
+                    .map_err(|error| connection_failed(setup.clone(), Box::new(error)))?
+                    .flatten()
+            } else { None };
+            Ok(crate::alps::AlpsStream::new(stream, prefix))
         }))
     }
 }
@@ -501,6 +507,14 @@ pub(crate) fn connector(
             },
         };
         ssl.set_alpn_protos(alpn)?;
+        if allowed.http2
+            && mode != HyperEgressMode::Http1Only
+            && factory
+                .network_profile()
+                .is_none_or(|profile| profile.settings.http2_alps)
+        {
+            transmog_tls::configure_h2_application_settings(ssl, &[])?;
+        }
         let offered_alpn = match alpn {
             b"\x02h2\x08http/1.1" => vec!["h2".into(), "http/1.1".into()],
             b"\x02h2" => vec!["h2".into()],
