@@ -1,4 +1,4 @@
-//! Narrow safe bridge to the pinned `BoringSSL` client `CertificateRequest` hook.
+//! Safe native boundary for `BoringSSL` certificate requests and server credentials.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod credentials;

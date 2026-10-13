@@ -23,6 +23,12 @@ tried in resolver order. TLS, certificate verification, and ALPN run on the
 winning TCP connection. Restricting the allowed HTTP protocol set does not
 disable address-family racing.
 
+Accepted proxy sockets and Hyper origin sockets enable `TCP_NODELAY`. This
+keeps small TLS records and HTTP/2 control messages from waiting for Nagle's
+algorithm and delayed TCP acknowledgements, including flow-control updates
+during large WebSocket transfers. Existing transport deadlines and resource
+bounds still apply.
+
 ## QUIC and HTTP/3
 
 The quiche adapter resolves a bounded candidate list, removes duplicates, and

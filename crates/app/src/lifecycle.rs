@@ -407,7 +407,7 @@ mod tests {
         #[cfg(windows)]
         create_ca(request).await.unwrap();
         #[cfg(not(windows))]
-        {
+        tokio::task::spawn_blocking(move || {
             // Proxy fixtures need no desktop credential service or trust changes.
             let ca = ProxyCa::generate(&request.common_name, request.validity_days).unwrap();
             write_new(&request.certificate_path, &ca.certificate_pem().unwrap()).unwrap();
@@ -416,7 +416,9 @@ mod tests {
                 &ca.private_key_pem_pkcs8().unwrap(),
             )
             .unwrap();
-        }
+        })
+        .await
+        .unwrap();
     }
 
     async fn read_http_head(socket: &mut tokio::net::TcpStream) -> Vec<u8> {

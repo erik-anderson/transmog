@@ -18,7 +18,7 @@ authoritative version records.
 | Asynchronous I/O | `tokio`, `bytes`, `futures-util`, `tower-service` | Sockets, tasks, timers, bounded channels, byte buffers, and service adapters throughout the transport layers. |
 | Canonical HTTP vocabulary | `http`, `http-body`, `http-body-util` | Standard method, URI, header, status, body-frame, and trailer types at adapter boundaries. Transmog converts these to its own validated canonical exchange model before invoking hooks. |
 | HTTP/1.1 and HTTP/2 | `hyper`, `hyper-util` | Downstream HTTP serving and pooled upstream clients, including HTTP/2 multiplexing and TCP Happy Eyeballs. The integration lives in `transmog-http`. |
-| TLS and cryptography | `boring`, `boring-sys`, `tokio-boring`, `hyper-boring` | One BoringSSL family implements upstream TLS verification, downstream interception TLS, certificate issuance, ALPN, and Hyper's TLS transport. BoringSSL is compiled from source as part of the native build. |
+| TLS and cryptography | `boring`, `boring-sys`, `tokio-boring`, `hyper-boring` | One BoringSSL family implements upstream TLS verification, downstream interception TLS, hybrid ML-KEM exchange, ML-DSA handshake authentication, certificate issuance, ALPN, and Hyper's TLS transport. BoringSSL is compiled from source as part of the native build. |
 | Operating-system trust roots | `rustls-native-certs` | Enumerates platform root certificates, which Transmog imports into its BoringSSL trust snapshot. Despite its name, it does **not** put rustls in the production TLS data path. |
 | QUIC and HTTP/3 | `quiche` | Pooled HTTP/3 origin egress, QUIC transport, and Alt-Svc upgrades in `transmog-h3`. The crate is built with `boringssl-boring-crate` so HTTP/3 shares the same BoringSSL bindings and trust policy as HTTP/1.1 and HTTP/2. |
 
@@ -26,6 +26,12 @@ The shared `transmog-network` layer owns bounded DNS candidate ordering and
 Happy Eyeballs policy. Hyper performs the TCP race; the quiche adapter races
 complete, verified QUIC/TLS handshakes. See
 [origin connection racing](networking.md).
+
+`transmog-tls-native` contains the narrow native boundary for client certificate
+requests and alternate server credentials omitted by the safe wrapper. It owns
+native references and selected public-chain evidence using that same BoringSSL
+instance. Algorithm and trust policy remain in `transmog-tls`; see the
+[certificate model](certificate-model.md#post-quantum-tls-algorithms).
 
 Transmog deliberately rejects a second production TLS implementation. The
 dependency policy bans OpenSSL, native-tls, rustls, and webpki data-plane

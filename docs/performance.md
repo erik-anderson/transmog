@@ -1,7 +1,7 @@
 # Performance harness
 
-Transmog keeps deterministic microbenchmarks and one process-level content
-pipeline benchmark in source control. Their purpose is to expose large
+Transmog keeps deterministic microbenchmarks and process-level content and TLS
+handshake benchmarks in source control. Their purpose is to expose large
 regressions in lifecycle overhead, streaming latency, cancellation, and bounded
 memory use. Results vary with hardware, scheduler load, and security software,
 so observed numbers are artifacts, not permanent documentation or release
@@ -56,6 +56,34 @@ The current harness is cross-platform Rust, but process working-set sampling is
 implemented by the Windows runner. A hosted performance workflow is parked
 under `ci/github-actions/` and remains inactive until hosted automation is
 explicitly enabled.
+
+## Post-quantum TLS handshakes
+
+```powershell
+python ./scripts/benchmark-pqc.py --operations 500
+```
+
+The runner builds the release `pqc_benchmark` fixture and compares fresh TLS 1.3
+handshakes across classical, ML-DSA-44/65/87 and automatic credential selection,
+each with classical X25519 or hybrid X25519MLKEM768 exchange. The fixture uses
+the production context factories and validates the negotiated algorithms and
+an application-byte round trip. Keys stay in memory and its root is used only
+by the fixture's verifier.
+
+Each case reports p50/p95 client handshake latency, first ClientHello record
+size including its five-byte TLS record header, process CPU and peak resident
+memory. Latency includes TLS certificate verification but excludes fixture
+construction, TCP connect and application I/O. CPU and memory describe the
+whole fixture process, including construction. Windows reports lifetime CPU;
+Linux reports the last sampled CPU value; unsupported CPU measurements are
+explicitly unavailable. Resident memory is sampled every 5 ms and can miss
+short peaks. These are loopback TLS measurements, not browser page latency or
+QUIC/H3 throughput.
+
+The ignored report at `artifacts/performance/pqc-handshakes.json` records the
+source revision, dirty-tree state, OS and architecture. Compare on an otherwise
+idle host and retain the report with qualification evidence; do not turn one
+machine's timings into a permanent performance threshold.
 
 ## Browser capture scale
 

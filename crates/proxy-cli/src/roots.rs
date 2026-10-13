@@ -664,13 +664,16 @@ fn linux_cleanup_store(
 #[cfg(unix)]
 fn verify_public(path: &Path, hash: &str) -> io::Result<()> {
     use boring::{hash::MessageDigest, x509::X509};
+    use std::fmt::Write as _;
     let certificate = X509::from_pem(&read_bounded(path, 8192)?).map_err(io::Error::other)?;
     let actual = certificate
         .digest(MessageDigest::sha256())
         .map_err(io::Error::other)?
         .iter()
-        .map(|byte| format!("{byte:02X}"))
-        .collect::<String>();
+        .fold(String::with_capacity(64), |mut encoded, byte| {
+            write!(encoded, "{byte:02X}").expect("writing to a String cannot fail");
+            encoded
+        });
     if actual == hash {
         Ok(())
     } else {

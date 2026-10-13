@@ -416,6 +416,13 @@ summaries whose certificate bytes were omitted. Recorded trust belongs to the
 original connection; opening the viewer must not imply verification against the
 current computer's trust or expose private keys or session secrets.
 
+Show negotiated exchange groups and handshake signatures for each physical
+connection's own leg. Do not infer a missing algorithm from a certificate key,
+cipher or configured preference; older captures show Unavailable. Distinguish
+a resumed handshake's current group from its original authentication signature
+and restored certificate chain. Hybrid exchange or ML-DSA authentication alone
+must not produce a claim that the whole trust chain is post-quantum secure.
+
 The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish
 zero from unavailable, shared connection setup from per-request work, and bytes

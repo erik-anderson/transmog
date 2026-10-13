@@ -481,6 +481,7 @@ pub(crate) fn connector(
 ) -> Result<MeasuredHttpsConnector, TrustError> {
     let mut tcp = HttpConnector::new_with_resolver(HappyEyeballsResolver::new(happy));
     tcp.enforce_http(false);
+    tcp.set_nodelay(true);
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.hyper_connector_builder(mode.alpn())?;
     let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;

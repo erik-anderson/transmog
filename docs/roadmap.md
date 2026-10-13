@@ -59,6 +59,14 @@ are checked in.
 - QUIC 0-RTT and connection migration only after replay and identity policy is
   explicit.
 
+## Post-quantum trust
+
+- Evaluate PQ interception issuers and Merkle Tree Certificate support as
+  Chromium's PKI requirements develop. Define trust installation, protected key
+  storage, migration and rollback before changing the existing classical root.
+  Current hybrid exchange and ML-DSA handshake support are documented in the
+  [certificate model](certificate-model.md#post-quantum-tls-algorithms).
+
 ## Control protocol stabilization
 
 Control revision 0 is a same-build, breakable internal contract. It may remain

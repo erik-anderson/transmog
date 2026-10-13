@@ -55,6 +55,8 @@ mod websocket_h2_tests {
                 let mut tasks = tokio::task::JoinSet::new();
                 loop {
                     let (socket, _) = listener.accept().await.unwrap();
+                    // Model HTTP peers without Nagle/delayed-ACK stalls in H2 flow control.
+                    socket.set_nodelay(true).unwrap();
                     count.fetch_add(1, Ordering::Relaxed);
                     let acceptor = acceptor.clone();
                     tasks.spawn(async move {
@@ -146,6 +148,7 @@ mod websocket_h2_tests {
         }
         async fn client(&self, h2: bool) -> Client {
             let mut tcp = TcpStream::connect(self.address).await.unwrap();
+            tcp.set_nodelay(true).unwrap();
             tcp.write_all(
                 format!(
                     "CONNECT localhost:{} HTTP/1.1\r\nHost: localhost:{}\r\n\r\n",
@@ -421,14 +424,26 @@ mod websocket_h2_tests {
             None,
         )
         .unwrap();
+        let mut phase = "writing the frame";
+        let mut received_bytes = 0;
         timeout(Duration::from_secs(4), async {
             io.write_all(&sent).await.unwrap();
+            phase = "reading the echo";
             let mut received = vec![0; expected.len()];
-            io.read_exact(&mut received).await.unwrap();
+            while received_bytes < received.len() {
+                let read = io.read(&mut received[received_bytes..]).await.unwrap();
+                assert_ne!(read, 0, "WebSocket echo ended early");
+                received_bytes += read;
+            }
             assert_eq!(received, expected);
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| {
+            panic!(
+                "WebSocket echo of {} bytes timed out while {phase} ({received_bytes} received)",
+                expected.len()
+            )
+        });
     }
 
     #[tokio::test]

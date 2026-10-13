@@ -22,6 +22,71 @@ new Hyper HTTP/1.1/HTTP/2 and quiche HTTP/3 clients before atomically publishing
 the generation; existing exchanges retain their original clients until they
 finish, so connection pools never mix trust generations.
 
+## Post-quantum TLS algorithms
+
+Transmog follows Chromium's supported post-quantum TLS algorithms without
+pinning a Chromium release. The shared
+[algorithm policy](../crates/proxy-tls/src/algorithms.rs) applies to upstream
+HTTP/1.1, HTTP/2 and HTTP/3 and to downstream interception TLS. Chromium's
+[group policy](https://github.com/chromium/chromium/blob/main/net/ssl/ssl_config_service.cc)
+and [signature preferences](https://github.com/chromium/chromium/blob/main/net/socket/ssl_client_socket_impl.cc)
+are the upstream references when that set changes.
+
+| Purpose | Supported post-quantum algorithms | Compatibility |
+| --- | --- | --- |
+| TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), combining X25519 and ML-KEM-768 | Preferred ahead of X25519, P-256 and P-384. The initial ClientHello carries hybrid and X25519 shares; classical peers negotiate a shared classical group. |
+| TLS 1.3 authentication | ML-DSA-44, ML-DSA-65 and ML-DSA-87 (`0x0904`–`0x0906`) | Upstream verification advertises all three, retaining the existing classical signature preferences. Downstream credential selection uses a compatible ML-DSA key or the ECDSA P-256 fallback. |
+
+Each TLS leg negotiates independently. An origin's algorithm does not force the
+client-facing leg to use the same algorithm, and downstream support does not
+change upstream certificate verification. TLS 1.2 retains classical behavior.
+
+The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
+leaves per validated host. Capacity counts hosts, with at most four key variants
+per host. Expired variants are removed before reuse; host eviction removes all
+of its variants. BoringSSL
+selects a credential from the client's actual offered signature schemes.
+Existing custom resolvers may continue returning one certificate through
+`resolve`; `resolve_credentials` allows ordered alternatives for one identity.
+The standalone `ca issue` command continues to issue P-256 leaves.
+
+Upstream client authentication accepts an ML-DSA credential only for TLS 1.3
+when its exact key variant matches a requested signature scheme. It retains the
+existing issuer, validity, identity, trust-generation and selection checks.
+Native credential registration and callback access stay inside
+[`transmog-tls-native`](../crates/tls-native/src/lib.rs), using the same BoringSSL
+instance as the rest of the TLS stack.
+
+The interception root remains classical. An ML-DSA leaf can sign the TLS
+handshake while its issuer signs the certificate with ECDSA. Hybrid exchange
+and an ML-DSA handshake therefore do not establish a fully post-quantum trust
+chain. Chromium's [post-quantum authentication roadmap](https://www.chromium.org/Home/chromium-security/post-quantum-auth-roadmap/)
+covers additional PKI work; PQ root and Merkle Tree Certificate migration are
+outside the supported model.
+
+## Recorded connection evidence
+
+TLS evidence belongs to a physical connection and its client or upstream leg.
+Successful handshakes record the negotiated group and ID, key-exchange type,
+local and peer handshake signature schemes when available, session resumption,
+HelloRetryRequest, protocol and cipher. Certificate inspection shows the
+credential actually selected by BoringSSL, including its ML-DSA key variant.
+Configured preferences alone never establish a negotiated algorithm.
+
+On resumption, the group describes the new handshake. A retained peer signature
+is labeled **Original peer handshake signature**; the current peer signature is
+**Not sent (session resumed)**. A chain restored from the TLS session is labeled
+`resumed-session` rather than presented on the new connection. Reused HTTP
+requests retain the evidence of their shared physical connection.
+
+Native captures preserve these public facts through compression, encryption and
+random-access loading without a schema change. Older or imported captures with
+missing algorithm evidence show **Unavailable**, with no inference from the
+certificate key or cipher name. See [testing](testing.md#post-quantum-tls) and
+the [handshake benchmark](performance.md#post-quantum-tls-handshakes).
+
+## Interception root lifecycle
+
 The proxy CA is generated or loaded independently and is never added to the
 upstream store. Installing it is an explicit operator action. Test installers
 use the current-user store, record the exact SHA-256 thumbprint, and remove only

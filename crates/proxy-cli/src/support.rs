@@ -34,6 +34,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
     let (redact, request_body_limit) = recording_preferences(arguments, &ledger)?;
+    #[cfg(windows)]
     recover_proxy(&ledger)?;
     if ledger.cleanup_ephemeral(&trust)? > 0 {
         eprintln!(
@@ -105,17 +106,13 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn recover_proxy(ledger: &RootLedger) -> Result<(), Box<dyn Error>> {
-    #[cfg(not(windows))]
-    let _ = ledger;
-    #[cfg(windows)]
-    {
-        let host = transmog_host_windows::WindowsProxyIntegration::system(
-            ledger.directory().join("proxy-recovery.json"),
-        );
-        if host.recover_pending()? {
-            println!("Restored Windows proxy settings from an interrupted CLI capture.");
-        }
+    let host = transmog_host_windows::WindowsProxyIntegration::system(
+        ledger.directory().join("proxy-recovery.json"),
+    );
+    if host.recover_pending()? {
+        println!("Restored Windows proxy settings from an interrupted CLI capture.");
     }
     Ok(())
 }
@@ -363,6 +360,8 @@ async fn start_owned_proxy(
     service: &ApplicationSessionService,
     proxy: ProxyServer,
 ) -> Result<std::net::SocketAddr, Box<dyn Error>> {
+    #[cfg(not(windows))]
+    let _ = (arguments, ledger);
     let endpoint;
     #[cfg(windows)]
     {
@@ -632,6 +631,7 @@ pub(crate) fn cleanup_roots(arguments: &[String]) -> Result<(), Box<dyn Error>> 
         );
     }
     let ledger = RootLedger::open(state_directory()?)?;
+    #[cfg(windows)]
     recover_proxy(&ledger)?;
     let all = arguments.iter().any(|arg| arg == "--include-persistent");
     let mut pending = 0;

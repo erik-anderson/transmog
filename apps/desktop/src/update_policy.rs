@@ -76,6 +76,7 @@ pub(crate) fn automatic_check_permitted(preferences: Reminder, debug: bool, now:
 }
 
 /// Installer-safe preference commands run before GUI or singleton initialization.
+#[cfg(windows)]
 pub(crate) fn preference_maintenance_exit_code() -> Option<i32> {
     let arguments = std::env::args_os()
         .skip(1)

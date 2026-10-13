@@ -967,6 +967,7 @@ async fn serve_explicit_connection(
     stream: TcpStream,
     context: ConnectionContext,
 ) -> Result<(), ProxyRuntimeError> {
+    stream.set_nodelay(true)?;
     let stream = MeteredIo::new_tcp(stream, context.socket_metrics.clone());
     let shutdown = state.final_shutdown.clone();
     let header_read_timeout = state.config.limits.header_read_timeout;

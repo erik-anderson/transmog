@@ -104,6 +104,42 @@ the production AppContainer/Job Object boundary. Containers use ephemeral
 loopback ports; temporary certificates and fixtures are removed in cleanup.
 It does not mutate OS trust, system proxy or durable user state.
 
+## Post-quantum TLS
+
+The ordinary Rust gate exercises real TCP and QUIC handshakes, wire-advertised
+groups and signature schemes, classical fallback and TLS 1.2, ML-DSA client
+authentication, malformed key shares, fragmented TLS I/O, HelloRetryRequest,
+QUIC packet loss and resumed sessions. The full proxy matrix checks independently
+negotiated client/upstream algorithms over H1, H2 and H3 origin routes, including
+connection reuse and the selected certificate. Capture tests preserve the
+negotiated facts through compressed and password-protected files.
+
+To check the downstream algorithm set with an available Chromium browser:
+
+```powershell
+python ./scripts/test-pqc-browser.py
+# Alternatively, use an installed Chrome or Edge without a version requirement.
+python ./scripts/test-pqc-browser.py --channel chrome
+python ./scripts/test-pqc-browser.py --channel msedge
+```
+
+The runner uses Playwright's bundled Chromium by default. It records the actual
+browser version as run evidence; it does not pin or reject a Chromium release.
+It verifies automatic selection, each ML-DSA variant, classical authentication
+with hybrid exchange, and ML-DSA authentication with classical exchange.
+The bounded loopback fixture keeps private keys in memory, writes only its
+public root, and uses that root's SPKI allowance in an isolated test browser.
+It does not install trust or change host proxy settings. Results are ignored
+run evidence at `.local/pqc-browser/results.json`.
+
+When Chromium changes its PQ algorithm set, update the
+[shared policy](../crates/proxy-tls/src/algorithms.rs), credential variants and
+wire/interoperability expectations together. Requalify the existing BoringSSL
+family before considering a dependency change. See the
+[certificate model](certificate-model.md#post-quantum-tls-algorithms) for the
+trust boundary and [performance harness](performance.md#post-quantum-tls-handshakes)
+for measurements.
+
 ## Local Chromium load gate
 
 For repeatable browser scale qualification without public sites, run
