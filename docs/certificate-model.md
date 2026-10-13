@@ -71,6 +71,11 @@ when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
 exercises extension handling and matches Chromium's ECH GREASE behavior; it
 does not encrypt the server name or implement real ECH configuration discovery.
 
+The default TLS 1.2 cipher list follows Chromium's ECDHE/AEAD order: ECDSA and
+RSA AES-128-GCM, ECDSA and RSA AES-256-GCM, then ECDSA and RSA
+ChaCha20-Poly1305. CBC and static-RSA suites remain outside the default policy.
+Embedding applications can still supply an explicit cipher list.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all

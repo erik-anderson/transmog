@@ -261,7 +261,7 @@ impl Default for UpstreamTlsPolicy {
         Self {
             minimum_version: SslVersion::TLS1_2,
             maximum_version: SslVersion::TLS1_3,
-            cipher_list: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+            cipher_list: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
                 .to_owned(),
         }
     }

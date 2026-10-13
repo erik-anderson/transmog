@@ -49,6 +49,10 @@ const ML_DSA: [(i32, SslSignatureAlgorithm); 3] = [
 
 fn ml_dsa_leaf(ca: &ProxyCa, key_type: i32) -> (X509, PKey<Private>) {
     let key = PKey::generate(Id::from_raw(key_type)).unwrap();
+    leaf_for_key(ca, key)
+}
+
+fn leaf_for_key(ca: &ProxyCa, key: PKey<Private>) -> (X509, PKey<Private>) {
     let root_key = PKey::private_key_from_pem(&ca.private_key_pem_pkcs8().unwrap()).unwrap();
     let mut name = X509NameBuilder::new().unwrap();
     name.append_entry_by_text("CN", "localhost").unwrap();
@@ -634,6 +638,45 @@ fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
     let (tls, group) = handshake(acceptor, &connector);
     assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
     assert_eq!(group, Some(29));
+}
+
+#[test]
+fn production_tls12_offers_chromium_aead_order_and_negotiates_chacha() {
+    let ca = ProxyCa::generate("ChaCha upstream root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let (rsa_certificate, rsa_key) = leaf_for_key(
+        &ca,
+        PKey::from_rsa(boring::rsa::Rsa::generate(2048).unwrap()).unwrap(),
+    );
+    for (certificate, key, cipher) in [
+        (
+            &leaf.certificate,
+            &leaf.private_key,
+            "ECDHE-ECDSA-CHACHA20-POLY1305",
+        ),
+        (&rsa_certificate, &rsa_key, "ECDHE-RSA-CHACHA20-POLY1305"),
+    ] {
+        let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+        server.set_certificate(certificate).unwrap();
+        server.set_private_key(key).unwrap();
+        server
+            .set_max_proto_version(Some(SslVersion::TLS1_2))
+            .unwrap();
+        server.set_cipher_list(cipher).unwrap();
+        let (tls, _) = handshake(server.build(), &factory(&ca).hyper_connector().unwrap());
+        assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
+        assert!(tls.ssl().verify_result().is_ok());
+        assert_eq!(tls.ssl().current_cipher().unwrap().name(), cipher);
+        let hello = recorded_hello(&tls.get_ref().written);
+        let tls12: Vec<_> = hello
+            .ciphers
+            .into_iter()
+            .filter(|cipher| !is_grease(*cipher) && !matches!(*cipher, 0x1301..=0x1303))
+            .collect();
+        assert_eq!(tls12, [0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8]);
+    }
 }
 
 #[test]
