@@ -40,6 +40,11 @@
         "installMode": "currentUser",
         "compression": "lzma",
         "startMenuFolder": "Transmog",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "sidebarImage": "windows/installer-sidebar.bmp",
+        "headerImage": "windows/installer-header.bmp",
+        "uninstallerHeaderImage": "windows/installer-header.bmp",
         "installerHooks": "windows/installer-hooks.nsh",
         "languages": [
           "English"

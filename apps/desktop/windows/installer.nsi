@@ -134,6 +134,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MUI_ICON "${INSTALLERICON}"
 !endif
 
+; Artwork is rendered from the SVG logos at 4x the standard NSIS dimensions.
+; FitControl scales these bitmaps to the page controls at the current DPI.
 ; Installer sidebar image
 !if "${SIDEBARIMAGE}" != ""
   !define MUI_WELCOMEFINISHPAGE_BITMAP "${SIDEBARIMAGE}"
@@ -144,6 +146,11 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MUI_HEADERIMAGE
 !else if "${UNINSTALLERHEADERIMAGE}" != ""
   !define MUI_HEADERIMAGE
+!endif
+
+; Keep page titles on the left and the Transmog logo on the right.
+!ifdef MUI_HEADERIMAGE
+  !define MUI_HEADERIMAGE_RIGHT
 !endif
 
 ; Installer header image
