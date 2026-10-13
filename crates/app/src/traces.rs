@@ -2474,6 +2474,12 @@ mod tests {
                 .connections
                 .iter()
                 .flat_map(|connection| &connection.fields)
+                .chain(
+                    inspection
+                        .connections
+                        .iter()
+                        .flat_map(|connection| &connection.diagnostic_fields)
+                )
                 .any(|field| field.label == "HTTPS-CLIENT-CERTIFICATE"
                     && field.value == "Original certificate filename")
         );

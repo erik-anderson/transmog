@@ -428,6 +428,14 @@ signature and restored certificate chain. For TLS 1.2 resumption, label the
 original session group and report that no fresh key exchange occurred.
 Hybrid exchange or ML-DSA authentication alone
 must not produce a claim that the whole trust chain is post-quantum secure.
+Start the connection view with a compact summary of the recorded protocol,
+current exchange group and cipher. Order negotiation details explicitly, placing
+resumption before the original-session facts it qualifies. Keep configured policy,
+trust provenance and additional imported metadata in secondary disclosures.
+Avoid duplicate protocol and cipher rows; surface conflicting observations
+without discarding their original text. Show invisible controls, including NUL,
+as Unicode escapes, noting when display text differs from the original.
+Preserve the original capture values in exports.
 
 The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish

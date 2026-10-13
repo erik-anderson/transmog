@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utilities.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
-interface Field { label:string; value:string; }
+interface Field { label:string; value:string; displayValue?:string; displayNote?:string; }
+interface DisplayField extends Field { id:number; displayValue:string; }
 interface Certificate { sha256:string; subject:string; fields:Field[]; pem:string; derBase64:string; unavailable:string; }
-interface Connection { id:string; title:string; fields:Field[]; serverChain:string[]; clientChain:string[]; errors:string[]; }
+interface Connection { id:string; title:string; summary?:string; fields:Field[]; policyFields?:Field[]; diagnosticFields?:Field[]; serverChain:string[]; clientChain:string[]; errors:string[]; }
 interface Inspection { defaultConnectionId?:string; connections:Connection[]; certificates:Certificate[]; }
 interface ChainRow { id:string; label:string; selected:boolean; }
 
@@ -13,11 +14,14 @@ export class CertificateInspector extends WebUIElement {
   @observable certificateBusy=false;
   @observable certificateStatus='';
   @observable certificateConnections:Array<{id:string;title:string;selected:boolean}>=[];
-  @observable certificateConnectionFields:Field[]=[];
+  @observable certificateConnectionSummary='';
+  @observable certificateConnectionFields:DisplayField[]=[];
+  @observable certificatePolicyFields:DisplayField[]=[];
+  @observable certificateDiagnosticFields:DisplayField[]=[];
   @observable certificateErrors:Array<{id:number;text:string}>=[];
   @observable certificateServerChain:ChainRow[]=[];
   @observable certificateClientChain:ChainRow[]=[];
-  @observable certificateFields:Field[]=[];
+  @observable certificateFields:DisplayField[]=[];
   @observable certificateSubject='Select a certificate';
   @observable certificateUnavailable='';
   @observable certificatePem='';
@@ -34,7 +38,7 @@ export class CertificateInspector extends WebUIElement {
   async inspect(id:string):Promise<void> {
     const generation=++this.generation;
     this.inspection=null;this.connectionId='';this.certificateId='';
-    this.certificateConnections=[];this.certificateConnectionFields=[];this.certificateErrors=[];
+    this.certificateConnections=[];this.certificateConnectionSummary='';this.certificateConnectionFields=[];this.certificatePolicyFields=[];this.certificateDiagnosticFields=[];this.certificateErrors=[];
     this.certificateServerChain=[];this.certificateClientChain=[];this.clearCertificate();
     this.certificateBusy=true;this.certificateStatus='Loading recorded TLS context…';
     try {
@@ -53,21 +57,27 @@ export class CertificateInspector extends WebUIElement {
     this.connectionId=id;
     const connection=this.inspection?.connections.find(connection=>connection.id===id);
     this.certificateConnections=this.certificateConnections.map(connection=>({...connection,selected:connection.id===id}));
-    this.certificateConnectionFields=connection?.fields??[];this.certificateErrors=(connection?.errors??[]).map((text,id)=>({id,text}));
+    this.certificateConnectionSummary=connection?.summary??'';
+    this.certificateConnectionFields=this.displayFields(connection?.fields??[]);
+    this.certificatePolicyFields=this.displayFields(connection?.policyFields??[]);
+    this.certificateDiagnosticFields=this.displayFields(connection?.diagnosticFields??[]);
+    this.certificateErrors=(connection?.errors??[]).map((text,id)=>({id,text}));
     this.selectCertificate(connection?.serverChain[0]??connection?.clientChain[0]??'');
   }
   selectCertificate(id:string):void {
     this.certificateId=id;
     const connection=this.inspection?.connections.find(connection=>connection.id===this.connectionId);
-    const rows=(ids:string[])=>ids.map((id,index)=>({id,label:(index===0?'Leaf · ':'Issuer · ')+(this.inspection?.certificates.find(certificate=>certificate.sha256===id)?.subject??id),selected:id===this.certificateId}));
+    const rows=(ids:string[])=>ids.map((id,index)=>{const certificate=this.inspection?.certificates.find(certificate=>certificate.sha256===id);return {id,label:(index===0?'Leaf · ':'Issuer · ')+(certificate?this.displaySubject(certificate):id),selected:id===this.certificateId};});
     this.certificateServerChain=rows(connection?.serverChain??[]);this.certificateClientChain=rows(connection?.clientChain??[]);
     const certificate=this.inspection?.certificates.find(certificate=>certificate.sha256===id);
     this.clearCertificate();
     if(!certificate)return;
-    this.certificateSubject=certificate.subject;this.certificateFields=certificate.fields;this.certificatePem=certificate.pem;
+    this.certificateSubject=this.displaySubject(certificate);this.certificateFields=this.displayFields(certificate.fields);this.certificatePem=certificate.pem;
     this.certificateUnavailable=certificate.unavailable;this.certificateHasBytes=!!certificate.derBase64;
     this.certificateHex=certificate.derBase64?{key:certificate.sha256,bytesBase64:certificate.derBase64,offset:0,truncated:false}:null;
   }
+  private displayFields(fields:Field[]):DisplayField[] {return fields.map((field,id)=>({...field,id,displayValue:field.displayValue??field.value}));}
+  private displaySubject(certificate:Certificate):string {return certificate.fields.find(field=>field.label==='Subject')?.displayValue??certificate.subject;}
   private clearCertificate():void {
     this.certificateSubject='No public certificate was recorded';this.certificateFields=[];this.certificatePem='';
     this.certificateUnavailable='';this.certificateHex=null;this.certificateHasBytes=false;this.certificateTab='details';

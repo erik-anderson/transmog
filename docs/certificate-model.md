@@ -102,6 +102,13 @@ latest upstream attempt as fallback when none succeeded. Selector labels include
 the role, outcome and connection identity so failed attempts remain distinct.
 When the same certificate fingerprint appears more than once, an available
 complete certificate takes precedence over an earlier fingerprint-only reference.
+Its connection view starts with a recorded protocol/group/cipher summary and an
+ordered negotiation and verification list. Connection policy and trust provenance,
+and additional imported metadata, have separate disclosures. Conflicting recorded
+values produce a warning and retain the alternative in the metadata disclosure.
+The inspector shows invisible controls, including NUL, as Unicode escapes, with
+a note when presentation differs from the recorded text.
+The original values remain unchanged in TMCap and SAZ exports.
 
 ## Interception root lifecycle
 

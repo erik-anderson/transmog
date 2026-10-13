@@ -890,7 +890,7 @@ mod tests {
         assert!(inspection.certificates.is_empty());
         assert!(
             inspection.connections[0]
-                .fields
+                .diagnostic_fields
                 .iter()
                 .any(|field| field.label == "HAR issuer" && field.value == "Recorded issuer")
         );
@@ -937,7 +937,7 @@ mod tests {
         assert!(connection.client_chain.is_empty());
         assert!(
             connection
-                .fields
+                .diagnostic_fields
                 .iter()
                 .any(|field| field.label == "Chromium client certificate count"
                     && field.value == "1")

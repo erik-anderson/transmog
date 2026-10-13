@@ -5,6 +5,7 @@ use boring::x509::{X509, X509NameRef};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use transmog_core::{PublicCertificate, VerificationResult};
+mod context;
 
 /// A readable field derived from recorded public certificate bytes.
 #[derive(Clone, Debug, Serialize)]
@@ -14,6 +15,10 @@ pub struct CertificateField {
     pub label: String,
     /// Original value, without display truncation.
     pub value: String,
+    /// Visible projection of controls; the original remains available in `value`.
+    pub display_value: String,
+    /// Explains any differences between the displayed and original text.
+    pub display_note: String,
 }
 /// One deduplicated public X.509 certificate.
 #[derive(Clone, Debug, Serialize)]
@@ -40,8 +45,14 @@ pub struct CertificateConnection {
     pub id: String,
     /// Identifies the browser-facing or server-facing leg.
     pub title: String,
-    /// Connection, TLS policy and recorded verification properties.
+    /// Ordered negotiation and recorded verification properties.
     pub fields: Vec<CertificateField>,
+    /// Compact summary of recorded protocol, current group and cipher.
+    pub summary: String,
+    /// Connection identity, recorded trust provenance and configured policy.
+    pub policy_fields: Vec<CertificateField>,
+    /// Additional original metadata and conflicting recorded values.
+    pub diagnostic_fields: Vec<CertificateField>,
     /// Server path, leaf first, referencing the shared certificate list.
     pub server_chain: Vec<String>,
     /// Client authentication path, if recorded.
@@ -62,9 +73,21 @@ pub struct CertificateInspection {
 }
 #[allow(clippy::needless_pass_by_value)]
 fn field(label: &str, value: impl ToString) -> CertificateField {
+    let value = value.to_string();
+    let display_value = context::display_text(&value);
+    let value_note = context::display_note(&value);
+    let label_note = context::display_note(label);
     CertificateField {
-        label: label.into(),
-        value: value.to_string(),
+        label: context::display_text(label),
+        display_note: if label_note.is_empty() {
+            value_note
+        } else {
+            format!("Label: {label_note} {value_note}")
+                .trim_end()
+                .to_owned()
+        },
+        value,
+        display_value,
     }
 }
 fn distinguished_name(name: &X509NameRef) -> String {
@@ -180,20 +203,13 @@ impl Application {
         for transport in &detail.performance.transports {
             let mut fields = vec![
                 field("Connection", &transport.connection_id),
-                field("Outcome", format!("{:?}", transport.outcome)),
+                field("Outcome", context::outcome_label(transport.outcome)),
             ];
             if detail.terminal_state == "failed" {
                 fields.push(field("Request result", &detail.terminal));
             }
-            for (label, value) in [
-                ("Peer", &transport.peer),
-                ("TLS version", &transport.tls_version),
-                ("Cipher", &transport.cipher),
-                ("ALPN", &transport.alpn),
-            ] {
-                if let Some(value) = value {
-                    fields.push(field(label, value));
-                }
+            if let Some(peer) = &transport.peer {
+                fields.push(field("Peer", peer));
             }
             let mut connection = CertificateConnection {
                 id: format!("{}:{}", transport.leg, transport.connection_id),
@@ -204,6 +220,9 @@ impl Application {
                 }
                 .into(),
                 fields,
+                summary: String::new(),
+                policy_fields: Vec::new(),
+                diagnostic_fields: Vec::new(),
                 server_chain: Vec::new(),
                 client_chain: Vec::new(),
                 errors: Vec::new(),
@@ -236,12 +255,12 @@ impl Application {
                     ("Recorded trust source", &tls.trust_source),
                 ] {
                     if let Some(value) = value {
-                        connection.fields.push(field(label, value));
+                        connection.policy_fields.push(field(label, value));
                     }
                 }
                 if let Some(generation) = tls.trust_generation {
                     connection
-                        .fields
+                        .policy_fields
                         .push(field("Recorded trust generation", generation));
                 }
                 let verification = match &tls.verification {
@@ -263,16 +282,16 @@ impl Application {
                     ("Offered ALPN", &tls.offered_alpn),
                 ] {
                     if !values.is_empty() {
-                        connection.fields.push(field(label, values.join(", ")));
+                        connection
+                            .policy_fields
+                            .push(field(label, values.join(", ")));
                     }
                 }
-                connection
-                    .fields
-                    .extend(tls.details.iter().map(|(label, value)| field(label, value)));
-                if !tls.details.contains_key("Key exchange") {
-                    connection.fields.push(field("Key exchange", "Unavailable"));
-                }
-                connection.errors.clone_from(&tls.errors);
+                connection.errors = tls
+                    .errors
+                    .iter()
+                    .map(|error| context::display_text(error))
+                    .collect();
                 for (chain, references) in [
                     (&tls.server_chain, &mut connection.server_chain),
                     (&tls.client_chain, &mut connection.client_chain),
@@ -296,6 +315,7 @@ impl Application {
                     }
                 }
             }
+            context::organize(&mut connection, transport);
             connections.push(connection);
         }
         let preferred = detail
@@ -324,19 +344,11 @@ impl Application {
             |transport| format!("{}:{}", transport.leg, transport.connection_id),
         );
         for (connection, transport) in connections.iter_mut().zip(&detail.performance.transports) {
-            let outcome = match transport.outcome {
-                transmog_core::performance::TransportOutcome::Connected => "Connected",
-                transmog_core::performance::TransportOutcome::TlsFailed => "TLS failed",
-                transmog_core::performance::TransportOutcome::TcpFailed => "TCP failed",
-                transmog_core::performance::TransportOutcome::DnsFailed => "DNS failed",
-                transmog_core::performance::TransportOutcome::PolicyRejected => {
-                    "Rejected by policy"
-                }
-                transmog_core::performance::TransportOutcome::Unavailable => "Outcome unavailable",
-            };
+            let outcome = context::outcome_label(transport.outcome);
             connection.title = format!(
                 "{} · {outcome} · {}",
-                connection.title, transport.connection_id
+                connection.title,
+                context::display_text(&transport.connection_id)
             );
         }
         if connections.is_empty() {
@@ -344,6 +356,9 @@ impl Application {
                 id: "unavailable".into(),
                 title: "TLS context unavailable".into(),
                 fields: vec![field("Request result", detail.terminal)],
+                summary: "TLS negotiation unavailable".into(),
+                policy_fields: vec![],
+                diagnostic_fields: vec![],
                 server_chain: vec![],
                 client_chain: vec![],
                 errors: vec![],

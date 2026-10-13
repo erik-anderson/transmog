@@ -304,6 +304,7 @@ fn assert_inspection(
                 connection
                     .fields
                     .iter()
+                    .chain(&connection.diagnostic_fields)
                     .any(|field| &field.label == label && &field.value == value),
                 "{format:?} lost {label} for {}",
                 original.leg

@@ -49,9 +49,12 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   const connected=structuredClone(performance.transports[0]);
   Object.assign(connected,{connectionId:'native-origin',outcome:'connected',tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256'});
   Object.assign(connected.tls,{verification:'Verified',errors:[],details:{'Key exchange':'Hybrid post-quantum key exchange','Negotiated group':'X25519MLKEM768','Negotiated group ID':'0x11ec','Peer handshake signature':'ecdsa_secp256r1_sha256','Session resumed':'No'}});
+  Object.assign(connected.tls.details,{'Negotiated TLS version':'TLSv1.3','Negotiated cipher':'TLS_AES_128_GCM_SHA256','https-server-protocol':'TLSv1.3','https-server-cipher':'TLS_AES_128_GCM_SHA256'});
   const client=structuredClone(connected);Object.assign(client,{leg:'client',connectionId:'native-client'});
   client.tls.details={'Key exchange':'Classical key exchange','Negotiated group':'X25519','Negotiated group ID':'0x001d','Local handshake signature':'ecdsa_secp256r1_sha256'};
-  const sample={...performance,transports:[performance.transports[0],connected,client]};
+  const controls=structuredClone(client);controls.connectionId='native-controls';
+  Object.assign(controls.tls.details,{'Negotiated group':'X25519\0MLKEM768','Key exchange':'Hybrid post-quantum key exchange'});
+  const sample={...performance,transports:[performance.transports[0],connected,client,controls]};
   const records=[...chain.map(definition=>({exchange_id:0,kind:'public-certificate',payload:definition})),{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://localhost/native-fallback',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'performance',payload:sample},{kind:'completed',payload:null}];
   const path=join(dirname(source),'fallback-fixture.tmcap');await writeFile(path,nativeFixture(records,106));
   await viewer.evaluate(`${traffic}.importTrace(${JSON.stringify(path)})`);
@@ -60,7 +63,9 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   const id=await viewer.evaluate(`(async()=>{const workspace=${traffic},row=workspace.sessions.find(row=>row.path==='/native-fallback');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   const context=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_certificates',{id:${JSON.stringify(id)}})`);
   assert.equal(context.defaultConnectionId,'upstream:native-origin');
-  assert.equal(new Set(context.connections.map(connection=>connection.title)).size,3);
+  assert.equal(new Set(context.connections.map(connection=>connection.title)).size,4);
+  const controlField=context.connections.find(connection=>connection.id==='client:native-controls').fields.find(field=>field.label==='Negotiated group');
+  assert.equal(controlField.value,'X25519\0MLKEM768');assert.equal(controlField.displayValue,'X25519\\u{0000}MLKEM768');
   await viewer.evaluate(`${traffic}.showTimings()`);
   const dialog=`${traffic}.timingDialog`,component=`${traffic}.certificateInspector`;
   await wait(`${dialog}.open && !${traffic}.timingBusy`);
@@ -69,6 +74,8 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   assert.equal(await viewer.evaluate(`${component}.textContent.includes('Certificate issuer was not trusted')`),false);
   for(const [width,height,label] of [[1440,900,'wide'],[800,600,'compact']]) {
     await viewer.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    assert.ok(await viewer.evaluate(`(()=>{const summary=${component}.querySelector('.certificate-tls-summary');summary.scrollIntoView({block:'nearest'});const rect=summary.getBoundingClientRect();return summary.textContent.includes('TLSv1.3 · X25519MLKEM768')&&rect.top>=0&&rect.bottom<=innerHeight;})()`));
+    assert.ok(await viewer.evaluate(`(()=>{const policy=Array.from(${component}.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent==='Connection and recorded policy');return policy&&!policy.open;})()`));
     assert.ok(await viewer.evaluate(`(()=>{const group=Array.from(${component}.querySelectorAll('dd')).find(node=>node.textContent==='X25519MLKEM768');group.scrollIntoView({block:'nearest'});const rect=group.getBoundingClientRect();return rect.height>0&&rect.top>=0&&rect.bottom<=innerHeight;})()`));
     assert.ok(await viewer.evaluate(`(()=>{const button=Array.from(${dialog}.querySelectorAll('footer button')).find(button=>button.textContent==='Close'),rect=button.getBoundingClientRect();return rect.bottom<=innerHeight&&button.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===button;})()`));
     if(screenshot)await writeFile(screenshot.replace('.png',`-fallback-${label}.png`),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
@@ -76,6 +83,10 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='upstream:native-certificate';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await wait(`${component}.textContent.includes('Certificate issuer was not trusted')`);
   assert.equal(await viewer.evaluate(`${component}.textContent.includes('X25519MLKEM768')`),false);
+  await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='client:native-controls';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await wait(`${component}.textContent.includes('Invisible characters shown as Unicode escapes.')`);
+  assert.equal(await viewer.evaluate(`${component}.textContent.includes(String.fromCharCode(0))`),false);
+  assert.equal(await viewer.evaluate(`${component}.textContent.includes(String.fromCharCode(92)+'u{0000}')`),true);
   await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='client:native-client';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
   await wait(`${component}.textContent.includes('Classical key exchange')`);
   assert.equal(await viewer.evaluate(`${component}.textContent.includes('X25519MLKEM768')`),false);

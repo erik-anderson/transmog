@@ -16,6 +16,13 @@ export async function checkCertificates(page, root) {
   inspection.defaultConnectionId='upstream:connected';
   inspection.connections[0].title='Transmog → server · TLS failed · failed';
   inspection.connections.push({id:'upstream:connected',title:'Transmog → server · Connected · origin',fields:[{label:'Outcome',value:'Connected'},{label:'Recorded verification',value:'Verified by the original connection'},{label:'Key exchange',value:'Hybrid post-quantum key exchange'},{label:'Negotiated group',value:'X25519MLKEM768'},{label:'Negotiated group ID',value:'0x11ec'},{label:'Peer handshake signature',value:'mldsa65'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]});
+  Object.assign(inspection.connections[3],{
+    summary:'TLSv1.3 · X25519MLKEM768 · TLS_AES_128_GCM_SHA256',
+    fields:[{label:'Outcome',value:'Connected'},{label:'Negotiated TLS version',value:'TLSv1.3'},{label:'Session resumed',value:'No'},{label:'Key exchange',value:'Hybrid post-quantum key exchange'},{label:'Negotiated group',value:'X25519MLKEM768'},{label:'Negotiated group ID',value:'0x11ec'},{label:'Peer handshake signature',value:'mldsa65'},{label:'Negotiated cipher',value:'TLS_AES_128_GCM_SHA256'},{label:'ALPN',value:'h2'},{label:'HelloRetryRequest',value:'No'},{label:'Recorded verification',value:'Verified by the original connection'}],
+    policyFields:[{label:'Connection',value:'origin'},{label:'Peer',value:'127.0.0.1:443'},{label:'Server name',value:'localhost'},{label:'Chain source',value:'verification-path'},{label:'Recorded trust source',value:'Recorded connection trust snapshot'},{label:'Recorded trust generation',value:'42'},{label:'TLS version bounds',value:'TLS1.2, TLS1.3'},{label:'Available cipher suites',value:Array(32).fill('ECDHE-ECDSA-AES128-GCM-SHA256, ECDHE-RSA-AES256-GCM-SHA384').join(', ')},{label:'Offered ALPN',value:'h2, http/1.1'}],
+    diagnosticFields:[{label:'https-server-cipher',value:'TLS_AES_128_GCM_SHA256'},{label:'https-server-protocol',value:'TLSv1.3'},{label:'https-server-sni',value:'localhost'}],
+  });
+  inspection.connections.push({id:'upstream:controls',title:'Recorded server connection · Connected · controls',summary:'TLSv1.3 · X25519\\u{0000}MLKEM768 · TLS_AES_128_GCM_SHA256',fields:[{label:'Negotiated group',value:'X25519\0MLKEM768',displayValue:'X25519\\u{0000}MLKEM768',displayNote:'Invisible characters shown as Unicode escapes.'}],policyFields:[],diagnosticFields:[{label:'Duplicate label',value:'first'},{label:'Duplicate label',value:'second'}],serverChain:[],clientChain:[],errors:[]});
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
   const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   const dialog=page.locator('.details-dialog[open]');
@@ -29,8 +36,29 @@ export async function checkCertificates(page, root) {
   await page.setViewportSize({width:1440,height:900});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/tls-fallback-wide.png')});
   await page.setViewportSize({width:800,height:600});
+  const summary=dialog.getByLabel('Recorded TLS summary',{exact:true});
+  assert.equal(await summary.textContent(),inspection.connections[3].summary);
+  assert.equal(await summary.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.top>=0&&rect.bottom<=innerHeight&&rect.height>0;}),true,'The compact connection view buried its TLS summary');
+  const policy=dialog.locator('details').filter({has:page.getByText('Connection and recorded policy',{exact:true})});
+  const metadata=dialog.locator('details').filter({has:page.getByText('Additional recorded metadata',{exact:true})});
+  assert.equal(await policy.evaluate(node=>node.open),false);
+  assert.equal(await metadata.evaluate(node=>node.open),false);
+  await policy.locator('summary').focus();await page.keyboard.press('Enter');
+  await policy.getByText('Available cipher suites',{exact:true}).waitFor({state:'visible'});
+  await policy.locator('summary').click();
+  await metadata.locator('summary').click();
+  await metadata.getByText('https-server-cipher',{exact:true}).waitFor({state:'visible'});
+  await metadata.locator('summary').click();
   await dialog.getByText('mldsa65',{exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:resolve(root,'../../../target/ui-check/tls-fallback-compact.png')});
+  await connection.selectOption('upstream:failed');
+  await connection.selectOption('upstream:controls');
+  await dialog.locator('dd').filter({hasText:'X25519\\u{0000}MLKEM768'}).waitFor();
+  await dialog.getByText('Invisible characters shown as Unicode escapes.',{exact:true}).waitFor();
+  const rawDetails=dialog.locator('details').filter({has:page.getByText('Additional recorded metadata',{exact:true})});
+  await rawDetails.locator('summary').click();
+  assert.deepEqual(await rawDetails.locator('dd').allTextContents(),['first','second'],'Duplicate raw labels lost a metadata row');
+  assert.equal(await dialog.locator('dd').evaluateAll(nodes=>nodes.some(node=>node.textContent.includes('\0'))),false);
   await connection.selectOption('upstream:failed');
   await dialog.getByText('Unavailable',{exact:true}).waitFor();
   await dialog.getByText(inspection.connections[0].errors[0],{exact:true}).waitFor();
