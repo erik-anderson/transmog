@@ -5541,6 +5541,7 @@ mod tests {
 
     use super::*;
     include!("websocket_h2_tests.rs");
+    include!("pqc_tests.rs");
 
     #[derive(Clone, Copy)]
     struct EditingHandler;
@@ -9325,7 +9326,17 @@ mod tests {
         leaf: transmog_tls::IssuedLeaf,
         bind_ip: std::net::IpAddr,
     ) -> (SocketAddr, TestH3Origin) {
+        spawn_h3_origin_with_groups(leaf, bind_ip, "X25519:P-256:P-384", 1).await
+    }
+
+    async fn spawn_h3_origin_with_groups(
+        leaf: transmog_tls::IssuedLeaf,
+        bind_ip: std::net::IpAddr,
+        groups: &str,
+        responses: usize,
+    ) -> (SocketAddr, TestH3Origin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
+        tls.set_curves_list(groups).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
         tls.check_private_key().unwrap();
@@ -9346,16 +9357,22 @@ mod tests {
         config.set_disable_active_migration(true);
         let socket = Arc::new(UdpSocket::bind((bind_ip, 0)).await.unwrap());
         let local = socket.local_addr().unwrap();
-        let task = tokio::spawn(run_h3_origin(Arc::clone(&socket), local, config));
+        let task = tokio::spawn(run_h3_origin(Arc::clone(&socket), local, config, responses));
         (local, TestH3Origin { socket, task })
     }
 
-    async fn run_h3_origin(socket: Arc<UdpSocket>, local: SocketAddr, mut config: quiche::Config) {
+    async fn run_h3_origin(
+        socket: Arc<UdpSocket>,
+        local: SocketAddr,
+        mut config: quiche::Config,
+        responses: usize,
+    ) {
         let mut connection = None;
         let h3_config = quiche::h3::Config::new().unwrap();
         let mut http3 = None;
         let mut received = vec![0_u8; 65_535];
         let mut outgoing = vec![0_u8; 1_350];
+        let mut sent_responses = 0;
         loop {
             let (read, from) = timeout(Duration::from_secs(3), socket.recv_from(&mut received))
                 .await
@@ -9427,7 +9444,10 @@ mod tests {
                 }
             }
             if response_sent {
-                return;
+                sent_responses += 1;
+                if sent_responses >= responses {
+                    return;
+                }
             }
         }
     }

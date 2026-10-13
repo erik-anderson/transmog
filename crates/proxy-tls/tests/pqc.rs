@@ -111,12 +111,13 @@ struct RecordingStream {
 }
 impl Read for RecordingStream {
     fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        self.socket.read(buffer)
+        let length = buffer.len().min(17);
+        self.socket.read(&mut buffer[..length])
     }
 }
 impl Write for RecordingStream {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        let written = self.socket.write(buffer)?;
+        let written = self.socket.write(&buffer[..buffer.len().min(17)])?;
         self.written.extend_from_slice(&buffer[..written]);
         Ok(written)
     }
@@ -316,6 +317,10 @@ fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
             evidence.details["Peer handshake signature"],
             "ecdsa_secp256r1_sha256"
         );
+        assert_eq!(
+            evidence.details["HelloRetryRequest"],
+            if expected == 23 { "Yes" } else { "No" }
+        );
         assert!(evidence.valid());
     }
     let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy {
@@ -381,8 +386,25 @@ fn quic_config(tls: SslContextBuilder) -> quiche::Config {
 }
 
 fn quic_handshake(
+    client_config: quiche::Config,
+    server_config: quiche::Config,
+) -> (quiche::Connection, quiche::Connection) {
+    quic_handshake_with_loss(client_config, server_config, false)
+}
+
+fn quic_handshake_with_loss(
     mut client_config: quiche::Config,
     mut server_config: quiche::Config,
+    lose_first: bool,
+) -> (quiche::Connection, quiche::Connection) {
+    quic_pair(&mut client_config, &mut server_config, lose_first, None)
+}
+
+fn quic_pair(
+    client_config: &mut quiche::Config,
+    server_config: &mut quiche::Config,
+    lose_first: bool,
+    session: Option<&[u8]>,
 ) -> (quiche::Connection, quiche::Connection) {
     let client_address = "127.0.0.1:10000".parse().unwrap();
     let server_address = "127.0.0.1:10001".parse().unwrap();
@@ -391,20 +413,29 @@ fn quic_handshake(
         &quiche::ConnectionId::from_ref(&[1; 16]),
         client_address,
         server_address,
-        &mut client_config,
+        client_config,
     )
     .unwrap();
+    if let Some(session) = session {
+        client.set_session(session).unwrap();
+    }
     let mut server = quiche::accept(
         &quiche::ConnectionId::from_ref(&[2; 16]),
         None,
         server_address,
         client_address,
-        &mut server_config,
+        server_config,
     )
     .unwrap();
-    let mut packet = vec![0; 65535];
-    for _ in 0..100 {
+    let mut packet = vec![0; 1350];
+    let mut lost = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
         while let Ok((length, info)) = client.send(&mut packet) {
+            if lose_first && !lost {
+                lost = true;
+                continue;
+            }
             server
                 .recv(
                     &mut packet[..length],
@@ -439,8 +470,147 @@ fn quic_handshake(
             "server TLS failure: {:?}",
             server.local_error()
         );
+        if client.timeout().is_some_and(|timeout| timeout.is_zero()) {
+            client.on_timeout();
+        }
+        if server.timeout().is_some_and(|timeout| timeout.is_zero()) {
+            server.on_timeout();
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
     panic!("QUIC handshake failed to establish");
+}
+
+#[test]
+fn resumed_quic_records_the_new_group_and_the_original_signature_separately() {
+    let ca = ProxyCa::generate("Resumed PQC QUIC root", 2).unwrap();
+    let leaf = ca
+        .issue_with_algorithm(
+            EndpointIdentity::parse("localhost").unwrap(),
+            1,
+            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa44),
+        )
+        .unwrap();
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server.set_curves_list(GROUPS).unwrap();
+    server.set_session_id_context(b"pqc-quic-session").unwrap();
+    let mut server = quic_config(server);
+    let factory = factory(&ca);
+    let (first, _) = quic_pair(
+        &mut quic_config(factory.quiche_context_builder().unwrap()),
+        &mut server,
+        false,
+        None,
+    );
+    let ticket = first
+        .session()
+        .expect("the initial connection yielded a ticket")
+        .to_vec();
+    for (groups, expected) in [(GROUPS, "X25519MLKEM768"), ("X25519", "X25519")] {
+        let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+        let mut context = factory.quiche_context_builder().unwrap();
+        context.set_curves_list(groups).unwrap();
+        capture.attach_context(&mut context).unwrap();
+        let (mut client, _) =
+            quic_pair(&mut quic_config(context), &mut server, false, Some(&ticket));
+        assert!(client.as_mut().session_reused());
+        let evidence = capture.snapshot();
+        assert_eq!(evidence.details["Negotiated group"], expected);
+        assert_eq!(
+            evidence.details["Peer handshake signature"],
+            "Not sent (session resumed)"
+        );
+        assert_eq!(
+            evidence.details["Original peer handshake signature"],
+            "mldsa44"
+        );
+        assert_eq!(evidence.chain_source.as_deref(), Some("resumed-session"));
+        assert_eq!(evidence.details["Session resumed"], "Yes");
+    }
+}
+
+#[test]
+fn hybrid_quic_recovers_lost_initial_with_a_large_ml_dsa_certificate() {
+    let ca = ProxyCa::generate("Lossy PQC QUIC root", 2).unwrap();
+    let leaf = ca
+        .issue_with_algorithm(
+            EndpointIdentity::parse("localhost").unwrap(),
+            1,
+            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa87),
+        )
+        .unwrap();
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server.set_curves_list(GROUPS).unwrap();
+    let (mut client, mut server) = quic_handshake_with_loss(
+        quic_config(factory(&ca).quiche_context_builder().unwrap()),
+        quic_config(server),
+        true,
+    );
+    assert_eq!(client.as_mut().curve(), Some(HYBRID_GROUP));
+    assert_eq!(server.as_mut().curve(), Some(HYBRID_GROUP));
+    assert_eq!(
+        client.as_mut().peer_signature_algorithm(),
+        Some(SslSignatureAlgorithm::ML_DSA_87)
+    );
+}
+
+#[test]
+fn malformed_hybrid_key_share_fails_before_application_data() {
+    let ca = ProxyCa::generate("Malformed PQC root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let (tls, _) = handshake(
+        acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
+        &connector(&ca).build(),
+    );
+    let wire = &tls.get_ref().written;
+    let record_length = usize::from(u16_be(&wire[3..]));
+    let mut hello = wire[..5 + record_length].to_vec();
+    let mut cursor = 9 + 34;
+    cursor += 1 + usize::from(hello[cursor]);
+    cursor += 2 + usize::from(u16_be(&hello[cursor..]));
+    cursor += 1 + usize::from(hello[cursor]);
+    cursor += 2;
+    let mut mutated = false;
+    while cursor < hello.len() {
+        let kind = u16_be(&hello[cursor..]);
+        let length = usize::from(u16_be(&hello[cursor + 2..]));
+        cursor += 4;
+        if kind == 51 {
+            assert_eq!(u16_be(&hello[cursor + 2..]), HYBRID_GROUP);
+            // Preserve the record and extension framing but give ML-KEM a zero-length share.
+            hello[cursor + 4..cursor + 6].copy_from_slice(&[0, 0]);
+            mutated = true;
+            break;
+        }
+        cursor += length;
+    }
+    assert!(mutated);
+    let server = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default())
+        .acceptor(&leaf)
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let worker = std::thread::spawn(move || {
+        let (tcp, _) = listener.accept().unwrap();
+        socket(&tcp);
+        assert!(server.accept(tcp).is_err());
+    });
+    let mut client = TcpStream::connect(address).unwrap();
+    socket(&client);
+    client.write_all(&hello).unwrap();
+    let mut alert = [0; 64];
+    let count = client.read(&mut alert).unwrap();
+    assert!(
+        count >= 7 && alert[0] == 21,
+        "Expected an immediate TLS alert"
+    );
+    worker.join().unwrap();
 }
 
 #[test]

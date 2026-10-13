@@ -150,3 +150,149 @@ pub fn add_server_credential(
         Err(ErrorStack::get())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use boring::{
+        asn1::Asn1Time,
+        bn::BigNum,
+        ec::{EcGroup, EcKey},
+        hash::MessageDigest,
+        nid::Nid,
+        ssl::{
+            Ssl, SslAcceptor, SslConnector, SslMethod, SslSessionCacheMode, SslStream, SslVersion,
+        },
+        x509::{
+            X509NameBuilder,
+            extension::{BasicConstraints, SubjectAlternativeName},
+        },
+    };
+    use std::{
+        io::{Read, Write},
+        net::{TcpListener, TcpStream},
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    fn certificate() -> (X509, PKey<Private>) {
+        let key = PKey::from_ec_key(
+            EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "localhost").unwrap();
+        let name = name.build();
+        let mut cert = X509::builder().unwrap();
+        cert.set_version(2).unwrap();
+        cert.set_serial_number(&BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap())
+            .unwrap();
+        cert.set_subject_name(&name).unwrap();
+        cert.set_issuer_name(&name).unwrap();
+        cert.set_pubkey(&key).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        cert.append_extension(&BasicConstraints::new().ca().build().unwrap())
+            .unwrap();
+        let san = SubjectAlternativeName::new()
+            .dns("localhost")
+            .build(&cert.x509v3_context(None, None))
+            .unwrap();
+        cert.append_extension(&san).unwrap();
+        cert.sign(&key, MessageDigest::sha256()).unwrap();
+        (cert.build(), key)
+    }
+
+    #[test]
+    fn resumed_tls13_reports_current_group_and_original_authentication() {
+        let (cert, key) = certificate();
+        let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+        server.set_certificate(&cert).unwrap();
+        server.set_private_key(&key).unwrap();
+        server
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .unwrap();
+        server
+            .set_curves_list("X25519MLKEM768:X25519:P-256:P-384")
+            .unwrap();
+        server.set_session_id_context(b"pqc-resumption").unwrap();
+        let server = server.build();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            for (resumed, group) in [(false, 0x11ec), (true, 0x11ec), (true, 29)] {
+                let (socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                socket
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut tls = server.accept(socket).unwrap();
+                assert_eq!(tls.ssl().session_reused(), resumed);
+                assert_eq!(tls.ssl().curve(), Some(group));
+                tls.write_all(&[7]).unwrap();
+                let mut byte = [0];
+                tls.read_exact(&mut byte).unwrap();
+            }
+        });
+        let sessions = Arc::new(Mutex::new(Vec::new()));
+        let cache = sessions.clone();
+        let mut context = SslConnector::builder(SslMethod::tls()).unwrap();
+        context.cert_store_mut().add_cert(cert).unwrap();
+        context
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .unwrap();
+        context
+            .set_curves_list("X25519MLKEM768:X25519:P-256:P-384")
+            .unwrap();
+        context.set_session_cache_mode(
+            SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL_STORE,
+        );
+        context.set_new_session_callback(move |_, session| {
+            cache.lock().unwrap().push(session);
+        });
+        let context = context.build();
+        for (resumed, group) in [(false, 0x11ec), (true, 0x11ec), (true, 29)] {
+            let mut ssl: Ssl = context.configure().unwrap().into_ssl("localhost").unwrap();
+            if resumed {
+                let sessions = sessions.lock().unwrap();
+                let session = sessions
+                    .last()
+                    .expect("the first connection yielded a ticket");
+                // SAFETY: this session came from the same connector context,
+                // verified hostname, issuer trust and policy immediately above.
+                unsafe {
+                    ssl.set_session(session).unwrap();
+                }
+            }
+            if group == 29 {
+                ssl.set_curves_list("X25519").unwrap();
+            }
+            let socket = TcpStream::connect(address).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut tls = SslStream::new(ssl, socket).unwrap();
+            tls.connect().unwrap();
+            let mut byte = [0];
+            tls.read_exact(&mut byte).unwrap();
+            assert_eq!(byte, [7]);
+            assert_eq!(tls.ssl().session_reused(), resumed);
+            assert_eq!(tls.ssl().curve(), Some(group));
+            // This getter deliberately retains the original session's
+            // CertificateVerify scheme, including on abbreviated handshakes.
+            assert_eq!(
+                tls.ssl().peer_signature_algorithm(),
+                Some(SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256)
+            );
+            tls.write_all(&byte).unwrap();
+        }
+        worker.join().unwrap();
+    }
+}

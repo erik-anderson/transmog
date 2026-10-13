@@ -4,7 +4,7 @@ import http from 'node:http';
 import { isIP } from 'node:net';
 import tls from 'node:tls';
 
-/** Pin the actual proxy leaf after independently validating it against this run's CA. */
+/** Authorize the validated fixture leaf and this run's root for alternate TLS key types. */
 export function proxyCertificateSpki(proxyAddress:string, originUrl:string, caCertificate:string):Promise<string> {
   const origin = new URL(originUrl);
   const hostname = origin.hostname.replace(/^\[|\]$/g,'');
@@ -28,7 +28,8 @@ export function proxyCertificateSpki(proxyAddress:string, originUrl:string, caCe
           if (!certificate) throw new Error('Proxy leaf certificate is missing');
           const publicKey = new X509Certificate(certificate).publicKey.export({type:'spki',format:'der'});
           clearTimeout(timer);
-          resolve(createHash('sha256').update(publicKey).digest('base64'));
+          const rootKey = new X509Certificate(ca).publicKey.export({type:'spki',format:'der'});
+          resolve([publicKey, rootKey].map(key=>createHash('sha256').update(key).digest('base64')).join(','));
           encrypted!.destroy();
         } catch(error) {fail(error as Error);}
       });

@@ -192,7 +192,18 @@ impl TlsCapture {
                 ("Peer handshake signature", ssl.peer_signature_algorithm()),
             ] {
                 if let Some(algorithm) = algorithm {
-                    insert_detail(&mut data, name, &algorithm.to_string());
+                    if name == "Peer handshake signature" && ssl.session_reused() {
+                        // BoringSSL's getter reads SSL_SESSION, so this is the
+                        // original authentication signature, not a new wire message.
+                        insert_detail(
+                            &mut data,
+                            "Original peer handshake signature",
+                            &algorithm.to_string(),
+                        );
+                        insert_detail(&mut data, name, "Not sent (session resumed)");
+                    } else {
+                        insert_detail(&mut data, name, &algorithm.to_string());
+                    }
                 }
             }
             insert_detail(
@@ -243,7 +254,14 @@ impl TlsCapture {
         } else {
             if data.server_chain.is_empty() {
                 data.server_chain = peer;
-                data.chain_source = Some("peer-presented".into());
+                data.chain_source = Some(
+                    if ssl.session_reused() {
+                        "resumed-session"
+                    } else {
+                        "peer-presented"
+                    }
+                    .into(),
+                );
             }
             if !local.is_empty() {
                 for certificate in &data.client_chain {
