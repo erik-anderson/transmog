@@ -22,6 +22,7 @@ mod diagnostics;
 mod export_privacy;
 mod inspector;
 mod lifecycle;
+mod network_profiles;
 mod preview;
 mod product_state;
 mod request_actions;
@@ -46,6 +47,10 @@ mod traces;
 mod version;
 mod workspace;
 
+pub use network_profiles::{
+    CHROMIUM_154, CHROMIUM_REFERENCE_VERSION, NetworkProfileSettings, NetworkProfileSnapshot,
+    NetworkProfiles, TlsGrease, TlsVersions,
+};
 use std::{path::PathBuf, sync::Arc};
 
 pub use artifacts::{
@@ -456,6 +461,21 @@ impl Application {
     /// Returns validated product preferences and window/artifact state.
     pub fn product_state(&self) -> ProductState {
         self.product_state.snapshot()
+    }
+
+    /// Saves custom network profile definitions without changing active transport settings.
+    /// # Errors
+    /// Returns validation, stale revision or persistence failures, preserving the active recipe.
+    pub fn save_network_profile_definitions(
+        &self,
+        expected_revision: u64,
+        profiles: Vec<NetworkProfileSnapshot>,
+    ) -> Result<NetworkProfiles, AppError> {
+        let next = self
+            .product_state
+            .edit_network_profiles(expected_revision, profiles, None)?;
+        self.product_state
+            .save_network_profiles(expected_revision, next)
     }
 
     /// Shared public decision controller, when supported by the desktop host.

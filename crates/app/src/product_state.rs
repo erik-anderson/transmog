@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 6;
+const CURRENT_SCHEMA: u32 = 7;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -62,6 +62,9 @@ pub enum ThemePreference {
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)] // Independent persisted user choices.
 pub struct ProductPreferences {
+    /// Independently saved profile definitions and the explicitly active recipe.
+    #[serde(default)]
+    pub network_profiles: crate::NetworkProfiles,
     /// Explicitly allow desktop proxy connections from other computers.
     #[serde(default)]
     pub allow_remote_clients: bool,
@@ -94,6 +97,7 @@ pub struct ProductPreferences {
 impl Default for ProductPreferences {
     fn default() -> Self {
         Self {
+            network_profiles: crate::NetworkProfiles::default(),
             client_certificate_policy:
                 transmog_core::client_authentication::ClientCertificatePolicy::default(),
             allow_remote_clients: false,
@@ -270,8 +274,23 @@ impl ProductStateManager {
     pub(crate) fn save(&self, state: ProductState) -> Result<ProductState, AppError> {
         let mut inner = self.inner.lock().unwrap();
         // Main settings/window writes must not overwrite independently saved layout.
+        let stale_profiles = state.preferences.network_profiles.revision
+            != inner.state.preferences.network_profiles.revision;
+        let allowed_outbound_protocols = if stale_profiles {
+            inner.state.preferences.allowed_outbound_protocols
+        } else {
+            state.preferences.allowed_outbound_protocols
+        };
+        let reuse_server_connections = if stale_profiles {
+            inner.state.preferences.reuse_server_connections
+        } else {
+            state.preferences.reuse_server_connections
+        };
         let state = validate(ProductState {
             preferences: ProductPreferences {
+                allowed_outbound_protocols,
+                reuse_server_connections,
+                network_profiles: inner.state.preferences.network_profiles.clone(),
                 client_certificate_policy: inner
                     .state
                     .preferences
@@ -311,6 +330,40 @@ impl ProductStateManager {
         Ok(state.preferences.client_certificate_policy)
     }
 
+    pub(crate) fn edit_network_profiles(
+        &self,
+        expected_revision: u64,
+        profiles: Vec<crate::NetworkProfileSnapshot>,
+        use_profile: Option<&str>,
+    ) -> Result<crate::NetworkProfiles, AppError> {
+        self.snapshot().preferences.network_profiles.edited(
+            expected_revision,
+            profiles,
+            use_profile,
+        )
+    }
+
+    pub(crate) fn save_network_profiles(
+        &self,
+        expected_revision: u64,
+        profiles: crate::NetworkProfiles,
+    ) -> Result<crate::NetworkProfiles, AppError> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.state.preferences.network_profiles.revision != expected_revision {
+            return Err(invalid(
+                "Network profiles changed in another window. Reload profiles before saving; your draft is still available.",
+            ));
+        }
+        profiles.validate()?;
+        let mut state = inner.state.clone();
+        state.preferences.allowed_outbound_protocols = profiles.active_profile.settings.protocols;
+        state.preferences.reuse_server_connections =
+            profiles.active_profile.settings.reuse_connections;
+        state.preferences.network_profiles = profiles;
+        self.persist(&mut inner, &state)?;
+        Ok(state.preferences.network_profiles)
+    }
+
     fn persist(&self, inner: &mut Inner, state: &ProductState) -> Result<(), AppError> {
         if let Some(prefix) = &self.prefix {
             write_generation(prefix, inner.next_generation, state)?;
@@ -336,6 +389,13 @@ impl ProductStateManager {
 }
 
 pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError> {
+    if state.schema_version == 6 {
+        state.preferences.network_profiles = crate::NetworkProfiles::migrate(
+            state.preferences.allowed_outbound_protocols,
+            state.preferences.reuse_server_connections,
+        );
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -346,6 +406,7 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
             false,
         ));
     }
+    state.preferences.network_profiles.validate()?;
     if state
         .privacy
         .request_body_limit
@@ -480,7 +541,15 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    if schema != u64::from(CURRENT_SCHEMA) {
+    if schema != u64::from(CURRENT_SCHEMA) && schema != 6 {
+        return Err(());
+    }
+    if schema == u64::from(CURRENT_SCHEMA)
+        && value
+            .get("preferences")
+            .and_then(|preferences| preferences.get("networkProfiles"))
+            .is_none()
+    {
         return Err(());
     }
     let state: ProductState = serde_json::from_value(value).map_err(|_| ())?;
@@ -593,6 +662,52 @@ mod tests {
         state.preferences.proxy_port = Some(0);
         assert!(store.save(state).is_err());
         assert_eq!(store.snapshot(), saved);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn schema_six_without_profiles_loads_and_saves_a_preserved_custom_recipe() {
+        let path = prefix("profile-migration");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut value = serde_json::to_value(ProductState::default()).unwrap();
+        value["schemaVersion"] = serde_json::json!(6);
+        value["preferences"]
+            .as_object_mut()
+            .unwrap()
+            .remove("networkProfiles");
+        value["preferences"]["allowedOutboundProtocols"]["http2"] = serde_json::json!(false);
+        fs::write(
+            generation_path(&path, 1),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+        let (store, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(store.snapshot().schema_version, 7);
+        let migrated = store.snapshot().preferences.network_profiles;
+        assert_eq!(migrated.active_profile.name, "Current settings");
+        assert!(!migrated.active_profile.settings.protocols.http2);
+        let next = store
+            .edit_network_profiles(
+                migrated.revision,
+                migrated.custom_profiles,
+                Some(crate::CHROMIUM_154),
+            )
+            .unwrap();
+        store
+            .save_network_profiles(migrated.revision, next)
+            .unwrap();
+        let (loaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(
+            loaded
+                .snapshot()
+                .preferences
+                .network_profiles
+                .active_profile,
+            crate::NetworkProfileSnapshot::default()
+        );
         cleanup(&path);
     }
 
@@ -943,4 +1058,65 @@ mod tests {
             assert_eq!(store.snapshot().workspace, original);
         }
     }
+}
+#[test]
+fn legacy_network_choices_migrate_and_independent_profile_writes_survive_stale_saves() {
+    let mut legacy = ProductState {
+        schema_version: 6,
+        ..ProductState::default()
+    };
+    legacy.preferences.allowed_outbound_protocols.http3 = false;
+    legacy.preferences.reuse_server_connections = false;
+    let migrated = validate(legacy).unwrap();
+    assert_eq!(migrated.schema_version, 7);
+    assert_eq!(
+        migrated.preferences.network_profiles.active_profile.name,
+        "Current settings"
+    );
+    assert!(
+        !migrated
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .protocols
+            .http3
+    );
+    assert!(
+        !migrated
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .reuse_connections
+    );
+    let store = ProductStateManager::memory(migrated);
+    let stale = store.snapshot();
+    let catalog = &stale.preferences.network_profiles;
+    let next = store
+        .edit_network_profiles(
+            catalog.revision,
+            catalog.custom_profiles.clone(),
+            Some(crate::CHROMIUM_154),
+        )
+        .unwrap();
+    store.save_network_profiles(catalog.revision, next).unwrap();
+    store.save(stale).unwrap();
+    assert!(
+        store
+            .snapshot()
+            .preferences
+            .allowed_outbound_protocols
+            .http3
+    );
+    assert!(store.snapshot().preferences.reuse_server_connections);
+    assert_eq!(
+        store
+            .snapshot()
+            .preferences
+            .network_profiles
+            .active_profile
+            .id,
+        crate::CHROMIUM_154
+    );
 }

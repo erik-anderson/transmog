@@ -13,6 +13,7 @@ mod extensions;
 mod header;
 pub mod intercept;
 mod message;
+pub mod network_profile;
 /// Bounded, immutable, redacted lifecycle observation.
 pub mod observe;
 /// Measured local timings and physical transport facts.
