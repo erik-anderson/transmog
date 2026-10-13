@@ -17,8 +17,9 @@ pub use provider::{
     AtomicRuntimeIdGenerator, RuntimeClock, RuntimeIdGenerator, RuntimeIdKind, SystemRuntimeClock,
 };
 pub use proxy::{
-    ExchangeEvidence, ProxyComponents, ProxyConfig, ProxyControl, ProxyRuntimeError, ProxyServer,
-    RouteAttemptEvidence, WebSocketSessionEvidence, WebSocketSessionOutcome,
+    ExchangeEvidence, PreparedNetworkProfile, ProxyComponents, ProxyConfig, ProxyControl,
+    ProxyRuntimeError, ProxyServer, RouteAttemptEvidence, WebSocketSessionEvidence,
+    WebSocketSessionOutcome,
 };
 pub use transmog_client_identity::{ClientIdentityResolver, SystemClientIdentityResolver};
 pub use transmog_network::{HappyEyeballsConfig, HappyEyeballsConfigError};

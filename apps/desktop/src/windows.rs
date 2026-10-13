@@ -423,16 +423,49 @@ fn close_certificate_test_viewer(
 }
 
 #[tauri::command]
+async fn save_network_profiles(
+    expected_revision: u64,
+    profiles: Vec<transmog_app::NetworkProfileSnapshot>,
+    use_profile: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::NetworkProfiles, AppError> {
+    let _operation = state.certificate_operation.lock().await;
+    let next = state.application.preview_network_profiles(
+        expected_revision,
+        profiles.clone(),
+        use_profile.as_deref(),
+    )?;
+    let viewer_updates = if next.active_profile
+        == state
+            .application
+            .product_state()
+            .preferences
+            .network_profiles
+            .active_profile
+    {
+        Vec::new()
+    } else {
+        state
+            .workspaces
+            .prepare_network_profile(next.active_profile)?
+    };
+    let saved = state
+        .application
+        .save_network_profiles(expected_revision, profiles, use_profile)
+        .await?;
+    for update in viewer_updates {
+        update();
+    }
+    Ok(saved)
+}
+
+#[tauri::command]
 async fn save_product_state(
     product_state: ProductState,
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     let _certificate_operation = state.certificate_operation.lock().await;
     let saved = state.application.save_product_state(product_state)?;
-    state.workspaces.set_outbound_protocols(
-        saved.preferences.allowed_outbound_protocols,
-        saved.preferences.reuse_server_connections,
-    );
     Ok(saved)
 }
 
@@ -2039,6 +2072,7 @@ pub fn run() {
                 decide_client_certificate,
                 save_client_certificate_policy,
                 save_product_state,
+                save_network_profiles,
                 save_workspace_preferences,
                 desktop_bootstrap,
                 record_frontend_diagnostic,

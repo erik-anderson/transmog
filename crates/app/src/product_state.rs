@@ -274,18 +274,20 @@ impl ProductStateManager {
     pub(crate) fn save(&self, state: ProductState) -> Result<ProductState, AppError> {
         let mut inner = self.inner.lock().unwrap();
         // Main settings/window writes must not overwrite independently saved layout.
-        let stale_profiles = state.preferences.network_profiles.revision
-            != inner.state.preferences.network_profiles.revision;
-        let allowed_outbound_protocols = if stale_profiles {
-            inner.state.preferences.allowed_outbound_protocols
-        } else {
-            state.preferences.allowed_outbound_protocols
-        };
-        let reuse_server_connections = if stale_profiles {
-            inner.state.preferences.reuse_server_connections
-        } else {
-            state.preferences.reuse_server_connections
-        };
+        let allowed_outbound_protocols = inner
+            .state
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .protocols;
+        let reuse_server_connections = inner
+            .state
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .reuse_connections;
         let state = validate(ProductState {
             preferences: ProductPreferences {
                 allowed_outbound_protocols,
@@ -407,6 +409,18 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         ));
     }
     state.preferences.network_profiles.validate()?;
+    state.preferences.allowed_outbound_protocols = state
+        .preferences
+        .network_profiles
+        .active_profile
+        .settings
+        .protocols;
+    state.preferences.reuse_server_connections = state
+        .preferences
+        .network_profiles
+        .active_profile
+        .settings
+        .reuse_connections;
     if state
         .privacy
         .request_body_limit

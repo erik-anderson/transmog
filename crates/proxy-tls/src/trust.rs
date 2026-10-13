@@ -273,6 +273,7 @@ impl Default for UpstreamTlsPolicy {
 pub struct UpstreamTlsContextFactory {
     snapshot: Arc<TrustSnapshot>,
     policy: UpstreamTlsPolicy,
+    profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
     client_authentication: Option<Arc<ClientAuthentication>>,
     pub(crate) authentication: Option<Arc<crate::client_connections::AuthenticationScope>>,
 }
@@ -298,9 +299,48 @@ impl UpstreamTlsContextFactory {
         Self {
             snapshot,
             policy,
+            profile: None,
             client_authentication: None,
             authentication: None,
         }
+    }
+
+    /// Resolves an immutable recipe for fresh TCP and QUIC contexts.
+    /// # Errors
+    /// Returns an incompatible protocol/version choice before constructing any transport.
+    pub fn with_network_profile(
+        mut self,
+        profile: transmog_core::network_profile::NetworkProfileSnapshot,
+    ) -> Result<Self, TrustError> {
+        use transmog_core::network_profile::TlsVersions;
+        profile
+            .settings
+            .validate()
+            .map_err(TrustError::NetworkProfile)?;
+        self.policy.minimum_version = match profile.settings.tls_versions {
+            TlsVersions::Tls13Only => SslVersion::TLS1_3,
+            _ => SslVersion::TLS1_2,
+        };
+        self.policy.maximum_version = match profile.settings.tls_versions {
+            TlsVersions::Tls12Only => SslVersion::TLS1_2,
+            _ => SslVersion::TLS1_3,
+        };
+        // Freeze the measured TLS 1.2 offer rather than expanding ALL when the
+        // native library adds suites. TLS 1.3 keeps the measured native defaults.
+        self.policy.cipher_list = if profile.settings.compatibility_ciphers {
+            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-SHA:ECDHE-RSA-AES256-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA:AES256-SHA"
+        } else {
+            "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+        }.into();
+        self.profile = Some(profile);
+        Ok(self)
+    }
+
+    /// Recipe actually bound to contexts from this factory, if managed by profiles.
+    pub fn network_profile(
+        &self,
+    ) -> Option<&transmog_core::network_profile::NetworkProfileSnapshot> {
+        self.profile.as_ref()
     }
 
     /// Configures a client certificate and its ordered public issuer path for
@@ -347,6 +387,7 @@ impl UpstreamTlsContextFactory {
             offered_alpn: alpn,
             trust_generation: Some(self.snapshot.generation()),
             trust_source: Some(self.snapshot.source_description().to_owned()),
+            network_profile: self.profile.clone(),
             ..transmog_core::TlsEvidence::default()
         });
         if let Some(authentication) = &self.client_authentication {
@@ -400,7 +441,13 @@ impl UpstreamTlsContextFactory {
 
     fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
-        crate::client_hello::enable_ech_grease(builder)?;
+        let settings = self.profile.as_ref().map_or_else(
+            transmog_core::network_profile::NetworkProfileSettings::default,
+            |profile| profile.settings.clone(),
+        );
+        if settings.ech_grease {
+            crate::client_hello::enable_ech_grease(builder)?;
+        }
         builder.set_cert_store((*self.snapshot.store).clone());
         builder.set_verify_callback(SslVerifyMode::PEER, |accepted, context| {
             let accepted = verify_peer_identity(accepted, context);
@@ -409,16 +456,27 @@ impl UpstreamTlsContextFactory {
         });
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
-        crate::algorithms::configure_key_exchange(builder)?;
+        if settings.hybrid_key_exchange {
+            crate::algorithms::configure_key_exchange(builder)?;
+        } else {
+            builder.set_curves_list("X25519:P-256:P-384")?;
+        }
         crate::algorithms::configure_authentication(builder)?;
-        builder.set_grease_enabled(true);
-        builder.set_permute_extensions(true);
+        builder.set_grease_enabled(
+            settings.grease != transmog_core::network_profile::TlsGrease::Disabled,
+        );
+        builder.set_permute_extensions(settings.randomize_extensions);
         builder.enable_ocsp_stapling();
         builder.enable_signed_cert_timestamps();
-        builder.add_certificate_compression_algorithm(
-            crate::certificate_compression::BrotliCertificateDecoder,
-        )?;
-        transmog_tls_native::set_signature_algorithm_grease(builder, true);
+        if settings.certificate_compression {
+            builder.add_certificate_compression_algorithm(
+                crate::certificate_compression::BrotliCertificateDecoder,
+            )?;
+        }
+        transmog_tls_native::set_signature_algorithm_grease(
+            builder,
+            settings.grease == transmog_core::network_profile::TlsGrease::Chromium,
+        );
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {
             builder.set_certificate(&authentication.certificate)?;
@@ -464,6 +522,9 @@ fn verify_peer_identity(
 /// Trust loading or `BoringSSL` context failure.
 #[derive(Debug, Error)]
 pub enum TrustError {
+    /// Diagnostic profile combinations rejected before transport changes.
+    #[error("{0}")]
+    NetworkProfile(&'static str),
     /// `BoringSSL` rejected certificate material or policy.
     #[error("BoringSSL trust operation failed: {0}")]
     Boring(#[from] boring::error::ErrorStack),

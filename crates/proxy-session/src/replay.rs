@@ -140,6 +140,16 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
+    /// Prepares an immutable transport recipe; the returned action commits only after persistence.
+    /// Custom executors retain responsibility for their own network stack.
+    /// # Errors
+    /// Returns a construction error without changing any active transports.
+    fn prepare_network_profile(
+        &self,
+        _profile: transmog_core::network_profile::NetworkProfileSnapshot,
+    ) -> Result<Box<dyn FnOnce() + Send>, ReplayExecutionError> {
+        Ok(Box::new(|| {}))
+    }
     /// Binds public connection evidence to one execution while sharing pools.
     /// Providers without native transport observation may retain the default.
     fn with_performance(

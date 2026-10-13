@@ -195,6 +195,7 @@ pub(crate) async fn start_proxy(
         (None, request)
     };
     let config = ProxyConfig {
+        network_profile: Some(preferences.network_profiles.active_profile.clone()),
         decrypt_https: preferences.decrypt_https,
         isolate_outbound_connections: preferences.isolate_outbound_connections,
         reuse_server_connections: preferences.reuse_server_connections,

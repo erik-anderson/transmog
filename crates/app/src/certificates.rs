@@ -263,6 +263,21 @@ impl Application {
                         .policy_fields
                         .push(field("Recorded trust generation", generation));
                 }
+                if let Some(profile) = &tls.network_profile {
+                    connection
+                        .policy_fields
+                        .push(field("Network profile", &profile.name));
+                    connection
+                        .policy_fields
+                        .push(field("Profile revision", profile.revision));
+                    connection
+                        .policy_fields
+                        .push(field("Profile baseline", &profile.base_profile));
+                    connection.policy_fields.push(field(
+                        "Effective network settings",
+                        serde_json::to_string(&profile.settings).unwrap_or_default(),
+                    ));
+                }
                 let verification = match &tls.verification {
                     Some(VerificationResult::Verified) => {
                         "Verified by the original connection".into()

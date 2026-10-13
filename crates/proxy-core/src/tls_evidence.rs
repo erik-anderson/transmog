@@ -37,6 +37,9 @@ impl PublicCertificate {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TlsEvidence {
+    /// Effective recipe when this physical origin connection was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_profile: Option<crate::network_profile::NetworkProfileSnapshot>,
     /// Server name used for the connection, when available.
     pub server_name: Option<String>,
     /// Server certificate chain, leaf first. No private keys or session secrets.
@@ -67,7 +70,13 @@ impl TlsEvidence {
     /// Checks finite shape before accepting saved evidence.
     #[must_use]
     pub fn valid(&self) -> bool {
-        self.server_chain.len() <= 32
+        self.network_profile.as_ref().is_none_or(|profile| {
+            profile.id.len() <= 80
+                && profile.name.chars().count() <= 80
+                && profile.base_profile.len() <= 80
+                && profile.revision > 0
+                && profile.settings.validate().is_ok()
+        }) && self.server_chain.len() <= 32
             && self.client_chain.len() <= 32
             && self
                 .server_chain

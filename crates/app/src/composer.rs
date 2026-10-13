@@ -156,6 +156,19 @@ pub(crate) struct ComposerManager {
 }
 
 impl ComposerManager {
+    pub(crate) fn prepare_network_profile(
+        &self,
+        profile: crate::NetworkProfileSnapshot,
+    ) -> Result<Box<dyn FnOnce() + Send>, AppError> {
+        self.executor.as_ref().map_or_else(
+            || Ok(Box::new(|| {}) as Box<dyn FnOnce() + Send>),
+            |executor| {
+                executor.prepare_network_profile(profile).map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })
+            },
+        )
+    }
     pub(crate) fn with_protocols(
         executor: Option<Arc<dyn ReplayExecutor>>,
         allowed: transmog_core::connection_policy::AllowedHttpProtocols,
@@ -491,29 +504,60 @@ impl ReplayExecutor for FileReplayExecutor {
 #[derive(Clone)]
 pub struct SystemReplayExecutor {
     force_http3: bool,
+    transports: Arc<Mutex<ReplayTransports>>,
+    performance: Option<transmog_core::performance::PerformanceRecorder>,
+    mode: HyperEgressMode,
+}
+
+#[derive(Clone)]
+struct ReplayTransports {
+    factory: UpstreamTlsContextFactory,
     client: HyperOriginClient,
     h3: Option<transmog_h3::H3OriginClient>,
-    mode: HyperEgressMode,
     protocols: transmog_core::connection_policy::OutboundProtocolPolicy,
 }
 
 impl SystemReplayExecutor {
+    fn request_transports(&self) -> (HyperOriginClient, Option<transmog_h3::H3OriginClient>) {
+        let transports = self
+            .transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let client = transports.client.with_performance(self.performance.clone());
+        let allowed = transports.protocols.snapshot();
+        let h3 = transports
+            .h3
+            .map(|h3| h3.with_performance(self.performance.clone()))
+            .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
+        (client, h3)
+    }
+
     /// Shares a certificate controller while keeping Composer's caller/run pool separate.
     /// # Errors
     /// Returns a bounded TLS client construction failure.
     pub fn with_client_certificate_resolver(
-        mut self,
+        self,
         resolver: Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>,
         caller: impl Into<String>,
     ) -> Result<Self, AppError> {
         let caller = caller.into();
-        if let Some(h3) = &mut self.h3 {
+        let mut transports = self
+            .transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        transports.factory = transports
+            .factory
+            .clone()
+            .with_client_certificate_resolver(resolver.clone(), caller.clone());
+        if let Some(h3) = &mut transports.h3 {
             *h3 = h3
                 .clone()
                 .with_client_certificate_resolver(resolver.clone(), caller.clone());
         }
-        self.client = self
+        transports.client = transports
             .client
+            .clone()
             .with_client_certificate_resolver(resolver, caller)
             .map_err(|_| {
                 AppError::new(
@@ -522,6 +566,7 @@ impl SystemReplayExecutor {
                     true,
                 )
             })?;
+        drop(transports);
         Ok(self)
     }
     /// Builds a replay executor from a snapshot of operating-system trust.
@@ -568,37 +613,99 @@ impl SystemReplayExecutor {
         })?;
         Ok(Self {
             force_http3: matches!(route, ProxyRoute::Http3),
-            h3: matches!(route, ProxyRoute::Auto | ProxyRoute::Http3).then(|| {
-                transmog_h3::H3OriginClient::new(factory, transmog_h3::H3TransportLimits::default())
+            performance: None,
+            transports: Arc::new(Mutex::new(ReplayTransports {
+                factory: factory.clone(),
+                h3: matches!(route, ProxyRoute::Auto | ProxyRoute::Http3).then(|| {
+                    transmog_h3::H3OriginClient::new(
+                        factory,
+                        transmog_h3::H3TransportLimits::default(),
+                    )
                     .with_outbound_protocols(protocols.clone())
-            }),
-            client,
+                }),
+                client,
+                protocols,
+            })),
             mode,
-            protocols,
         })
     }
 }
 
 impl ReplayExecutor for SystemReplayExecutor {
+    fn prepare_network_profile(
+        &self,
+        profile: crate::NetworkProfileSnapshot,
+    ) -> Result<Box<dyn FnOnce() + Send>, ReplayExecutionError> {
+        let current = self
+            .transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let protocols = transmog_core::connection_policy::OutboundProtocolPolicy::new(
+            profile.settings.protocols,
+        );
+        protocols.set_reuse_connections(profile.settings.reuse_connections);
+        let factory = current
+            .factory
+            .with_network_profile(profile)
+            .map_err(|error| ReplayExecutionError::new(error.to_string()))?;
+        let client = HyperOriginClient::with_connection_policy(
+            &factory,
+            HappyEyeballsConfig::default(),
+            protocols.clone(),
+        )
+        .map_err(|error| ReplayExecutionError::new(error.to_string()))?;
+        let h3 = current.h3.map(|h3| {
+            h3.with_tls_factory(factory.clone())
+                .with_outbound_protocols(protocols.clone())
+        });
+        let next = ReplayTransports {
+            factory,
+            client,
+            h3,
+            protocols,
+        };
+        let transports = Arc::clone(&self.transports);
+        Ok(Box::new(move || {
+            let old = std::mem::replace(
+                &mut *transports
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+                next,
+            );
+            if let Some(h3) = old.h3
+                && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            {
+                runtime.spawn(async move {
+                    h3.retire_cached_connections().await;
+                });
+            }
+        }))
+    }
     fn with_performance(
         &self,
         recorder: transmog_core::performance::PerformanceRecorder,
     ) -> Option<Arc<dyn ReplayExecutor>> {
         let mut executor = self.clone();
-        executor.client = executor.client.with_performance(Some(recorder.clone()));
-        executor.h3 = executor
-            .h3
-            .map(|client| client.with_performance(Some(recorder)));
+        executor.performance = Some(recorder);
         Some(Arc::new(executor))
     }
     fn set_reuse_server_connections(&self, enabled: bool) {
-        self.protocols.set_reuse_connections(enabled);
+        self.transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .protocols
+            .set_reuse_connections(enabled);
     }
     fn set_outbound_protocols(
         &self,
         allowed: transmog_core::connection_policy::AllowedHttpProtocols,
     ) {
-        self.protocols.set(allowed);
+        self.transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .protocols
+            .set(allowed);
     }
     fn execute_file(
         &self,
@@ -607,12 +714,7 @@ impl ReplayExecutor for SystemReplayExecutor {
         length: u64,
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
-        let client = self.client.clone();
-        let allowed = self.protocols.snapshot();
-        let h3 = self
-            .h3
-            .clone()
-            .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
+        let (client, h3) = self.request_transports();
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
@@ -712,12 +814,7 @@ impl ReplayExecutor for SystemReplayExecutor {
         request: ValidatedReplayRequest,
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
-        let client = self.client.clone();
-        let allowed = self.protocols.snapshot();
-        let h3 = self
-            .h3
-            .clone()
-            .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
+        let (client, h3) = self.request_transports();
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
             if cancellation.is_cancelled() {
@@ -1174,7 +1271,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composer_protocol_preferences_preserve_existing_sockets_and_block_new_ones() {
+    async fn composer_profile_changes_retire_cached_sockets_and_block_new_work() {
         use tokio::{
             io::{AsyncReadExt, AsyncWriteExt},
             net::TcpListener,
@@ -1183,7 +1280,7 @@ mod tests {
         let address = origin.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut socket, _) = origin.accept().await.unwrap();
-            for _ in 0..2 {
+            for _ in 0..1 {
                 let mut head = Vec::new();
                 while !head.ends_with(b"\r\n\r\n") {
                     head.push(socket.read_u8().await.unwrap());
@@ -1223,22 +1320,21 @@ mod tests {
                 .body,
             "ok"
         );
-        let mut state = application.product_state();
-        state.preferences.allowed_outbound_protocols =
-            transmog_core::connection_policy::AllowedHttpProtocols {
-                http1: false,
-                http2: false,
-                http3: false,
-            };
-        application.save_product_state(state).unwrap();
-        assert_eq!(
-            application
-                .execute_composer(input.clone())
-                .await
-                .unwrap()
-                .body,
-            "ok"
-        );
+        let mut profile = crate::NetworkProfileSnapshot {
+            id: "custom-blocked".into(),
+            name: "Blocked".into(),
+            ..Default::default()
+        };
+        profile.settings.protocols = transmog_core::connection_policy::AllowedHttpProtocols {
+            http1: false,
+            http2: false,
+            http3: false,
+        };
+        application
+            .save_network_profiles(1, vec![profile], Some("custom-blocked".into()))
+            .await
+            .unwrap();
+        assert!(application.execute_composer(input.clone()).await.is_err());
         server.await.unwrap();
         let denied_origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let denied = ComposerRequest {

@@ -332,6 +332,10 @@ async fn auto_fallback_replays_the_processed_coded_body_before_response_start() 
         .unwrap();
     proxy
         .state
+        .upstream
+        .read()
+        .await
+        .partitions
         .alt_svc
         .lock()
         .await

@@ -83,6 +83,25 @@ pub struct H3OriginClient {
 }
 
 impl H3OriginClient {
+    /// Replaces TLS and cached sessions while retaining the physical connection limit.
+    #[must_use]
+    pub fn with_tls_factory(mut self, tls: UpstreamTlsContextFactory) -> Self {
+        self.tls = tls;
+        self.pool = Arc::new(Mutex::new(HashMap::new()));
+        self
+    }
+
+    /// Releases idle sessions in a retired generation; admitted streams finish normally.
+    pub async fn retire_cached_connections(&self) {
+        let entries = self
+            .pool
+            .lock()
+            .await
+            .drain()
+            .map(|(_, entry)| entry)
+            .collect();
+        retire_entries(entries).await;
+    }
     /// Shares live admission restrictions while preserving established QUIC sessions.
     #[must_use]
     pub fn with_outbound_protocols(

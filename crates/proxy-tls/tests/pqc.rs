@@ -265,6 +265,122 @@ fn is_grease(value: u16) -> bool {
     value & 0x0f0f == 0x0a0a && value >> 8 == value & 0xff
 }
 
+#[test]
+fn custom_profile_controls_actual_tcp_offers_and_capture_provenance() {
+    use transmog_core::network_profile::{NetworkProfileSnapshot, TlsGrease, TlsVersions};
+    let ca = ProxyCa::generate("Custom profile TLS root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    for versions in [
+        TlsVersions::Tls12And13,
+        TlsVersions::Tls12Only,
+        TlsVersions::Tls13Only,
+    ] {
+        let mut profile = NetworkProfileSnapshot {
+            id: "custom-diagnostic".into(),
+            name: "Diagnostic".into(),
+            ..Default::default()
+        };
+        profile.settings.protocols.http3 = versions != TlsVersions::Tls12Only;
+        profile.settings.tls_versions = versions;
+        profile.settings.compatibility_ciphers = false;
+        profile.settings.hybrid_key_exchange = false;
+        profile.settings.grease = TlsGrease::Disabled;
+        profile.settings.randomize_extensions = false;
+        profile.settings.ech_grease = false;
+        profile.settings.certificate_compression = false;
+        let factory = factory(&ca).with_network_profile(profile.clone()).unwrap();
+        let capture = factory.capture(Some("localhost".into()), vec!["h2".into()]);
+        let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        let (tls, group) = handshake_captured(
+            server.build(),
+            &factory.hyper_connector().unwrap(),
+            Some(&capture),
+        );
+        assert_eq!(group, Some(29));
+        let hello = recorded_hello(&tls.get_ref().written);
+        assert!(hello.ciphers.iter().all(|&cipher| !is_grease(cipher)));
+        assert!(
+            hello
+                .extensions
+                .iter()
+                .all(|(kind, _)| !is_grease(*kind) && ![27, 0xfe0d].contains(kind))
+        );
+        let extensions: BTreeMap<_, _> = hello.extensions.into_iter().collect();
+        assert_eq!(
+            signature_algorithms(&extensions[&13]),
+            CHROMIUM_SIGNATURE_ALGORITHMS
+        );
+        assert_eq!(signature_algorithms(&extensions[&10]), [29, 23, 24]);
+        let tls12: Vec<_> = hello
+            .ciphers
+            .into_iter()
+            .filter(|cipher| !matches!(*cipher, 0x1301..=0x1303))
+            .collect();
+        if versions != TlsVersions::Tls13Only {
+            assert_eq!(tls12, [0xc02b, 0xc02f, 0xc02c, 0xc030, 0xcca9, 0xcca8]);
+        }
+        assert_eq!(
+            tls.ssl().version2(),
+            Some(if versions == TlsVersions::Tls12Only {
+                SslVersion::TLS1_2
+            } else {
+                SslVersion::TLS1_3
+            })
+        );
+        assert_eq!(capture.snapshot().network_profile, Some(profile));
+    }
+}
+
+#[test]
+fn custom_profile_controls_quic_context_before_capture_callback_reinstallation() {
+    use transmog_core::network_profile::{NetworkProfileSnapshot, TlsGrease};
+    let ca = ProxyCa::generate("Custom profile QUIC root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let recorder = observed.clone();
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server.set_select_certificate_callback(move |hello| {
+        let values = [
+            ExtensionType::SIGNATURE_ALGORITHMS,
+            ExtensionType::SUPPORTED_GROUPS,
+            ExtensionType::CERT_COMPRESSION,
+            ExtensionType::ENCRYPTED_CLIENT_HELLO,
+        ]
+        .map(|kind| hello.get_extension(kind).map(<[u8]>::to_vec));
+        recorder.lock().unwrap().push(values);
+        Ok(())
+    });
+    let mut profile = NetworkProfileSnapshot::default();
+    profile.settings.grease = TlsGrease::NoSignature;
+    profile.settings.hybrid_key_exchange = false;
+    profile.settings.ech_grease = false;
+    profile.settings.certificate_compression = false;
+    let factory = factory(&ca).with_network_profile(profile.clone()).unwrap();
+    let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+    let mut client = factory.quiche_context_builder().unwrap();
+    capture.attach_context(&mut client).unwrap();
+    let (mut client, _) = quic_handshake(quic_config(client), quic_config(server));
+    assert_eq!(client.as_mut().curve(), Some(29));
+    let observed = observed.lock().unwrap();
+    assert_eq!(
+        signature_algorithms(observed[0][0].as_ref().unwrap()),
+        CHROMIUM_SIGNATURE_ALGORITHMS
+    );
+    let groups = signature_algorithms(observed[0][1].as_ref().unwrap());
+    assert!(is_grease(groups[0]));
+    assert_eq!(&groups[1..], [29, 23, 24]);
+    assert_eq!(&observed[0][2..], [None, None]);
+    assert_eq!(capture.snapshot().network_profile, Some(profile));
+}
+
 fn assert_ech_grease(extension: &[u8]) {
     assert_eq!(extension[0], 0); // ClientHelloOuter
     assert_eq!(u16_be(&extension[1..]), 1); // HKDF-SHA256

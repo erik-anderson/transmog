@@ -101,6 +101,8 @@ mod connect_tunnel;
 /// Complete configuration for one explicit proxy instance.
 #[derive(Clone, Debug)]
 pub struct ProxyConfig {
+    /// Optional immutable desktop network recipe; embedding callers may retain live policy controls.
+    pub network_profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
     /// Decrypt CONNECT TLS; false forwards opaque destination tunnels without a CA.
     pub decrypt_https: bool,
     /// Protocols admitted for new outbound connections; existing connections are preserved.
@@ -126,6 +128,7 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
+            network_profile: None,
             listener: crate::ListenerConfig::default(),
             isolate_outbound_connections: true,
             reuse_server_connections: true,
@@ -442,22 +445,47 @@ impl ProxyControl {
     /// supplied snapshot generation is newer than the active generation, or
     /// an adapter-construction error if the new policy cannot be installed.
     pub async fn reload_trust(&self, trust: Arc<TrustSnapshot>) -> Result<(), ProxyRuntimeError> {
-        let next = Arc::new(UpstreamGeneration::new(
+        let mut active = self.state.upstream.write().await;
+        let mut next = UpstreamGeneration::new(
             trust,
             self.state.config.h3,
             self.state.config.happy_eyeballs,
             self.state.outbound_protocols.clone(),
             self.state.authentication.clone(),
-        )?);
-        let mut active = self.state.upstream.write().await;
+        )?;
+        if let Some(profile) = active.partitions.tls.network_profile() {
+            next = next.profiled(profile.clone(), Some(&active.h3))?;
+        }
+        let next = Arc::new(next);
         if next.trust_generation <= active.trust_generation {
             return Err(ProxyRuntimeError::TrustGenerationNotMonotonic {
                 active: active.trust_generation,
                 requested: next.trust_generation,
             });
         }
-        *active = next;
+        let old = std::mem::replace(&mut *active, next);
+        drop(active);
+        tokio::spawn(async move {
+            old.h3.retire_cached_connections().await;
+        });
         Ok(())
+    }
+
+    /// Prepares fresh transports while holding the generation lock until commit or rollback.
+    /// # Errors
+    /// Returns a TLS construction error without changing the running proxy.
+    pub async fn prepare_network_profile(
+        &self,
+        profile: transmog_core::network_profile::NetworkProfileSnapshot,
+    ) -> Result<PreparedNetworkProfile<'_>, ProxyRuntimeError> {
+        let active = self.state.upstream.write().await;
+        let next = Arc::new(
+            active
+                .as_ref()
+                .clone()
+                .profiled(profile, Some(&active.h3))?,
+        );
+        Ok(PreparedNetworkProfile { active, next })
     }
 
     /// Returns the generation used by newly routed upstream exchanges.
@@ -468,6 +496,23 @@ impl ProxyControl {
     /// Returns bounded observer delivery counters in registration order.
     pub fn observer_stats(&self) -> Vec<ObserverStats> {
         self.state.observers.stats()
+    }
+}
+
+/// Prepared profile replacement. Dropping it preserves the previous generation.
+pub struct PreparedNetworkProfile<'a> {
+    active: tokio::sync::RwLockWriteGuard<'a, Arc<UpstreamGeneration>>,
+    next: Arc<UpstreamGeneration>,
+}
+impl PreparedNetworkProfile<'_> {
+    /// Installs already validated transports; persistence should succeed before this call.
+    pub fn commit(mut self) {
+        let old = self.active.h3.clone();
+        *self.active = self.next;
+        drop(self.active);
+        tokio::spawn(async move {
+            old.retire_cached_connections().await;
+        });
     }
 }
 
@@ -553,13 +598,17 @@ impl ProxyServer {
         }
         let outbound_protocols = OutboundProtocolPolicy::new(config.allowed_outbound_protocols);
         outbound_protocols.set_reuse_connections(config.reuse_server_connections);
-        let upstream = Arc::new(UpstreamGeneration::new(
+        let mut upstream = UpstreamGeneration::new(
             trust,
             config.h3,
             config.happy_eyeballs,
             outbound_protocols.clone(),
             components.authentication.clone(),
-        )?);
+        )?;
+        if let Some(profile) = &config.network_profile {
+            upstream = upstream.profiled(profile.clone(), None)?;
+        }
+        let upstream = Arc::new(upstream);
         let listener = TcpListener::bind(config.listener.listen_addr).await?;
         let (evidence, _) = broadcast::channel(1_024);
         let (websocket_evidence, _) = broadcast::channel(1_024);
@@ -585,7 +634,6 @@ impl ProxyServer {
             ids: components.ids,
             client_identity_resolver: components.client_identity_resolver,
             upstream: RwLock::new(upstream),
-            alt_svc: Mutex::new(AltSvcCache::new(1_024)),
             config: config.clone(),
             evidence,
             websocket_evidence,
@@ -737,7 +785,6 @@ struct ProxyState {
     ids: Arc<dyn RuntimeIdGenerator>,
     client_identity_resolver: Arc<dyn ClientIdentityResolver>,
     upstream: RwLock<Arc<UpstreamGeneration>>,
-    alt_svc: Mutex<AltSvcCache>,
     config: ProxyConfig,
     evidence: broadcast::Sender<ExchangeEvidence>,
     websocket_evidence: broadcast::Sender<WebSocketSessionEvidence>,
@@ -750,6 +797,7 @@ struct RuntimeExtendedConnect;
 
 #[derive(Clone)]
 struct UpstreamGeneration {
+    pool_generation: u64,
     hyper: HyperOriginClient,
     h3: H3OriginClient,
     trust_generation: u64,
@@ -757,6 +805,7 @@ struct UpstreamGeneration {
 }
 
 struct UpstreamPartitions {
+    alt_svc: Mutex<AltSvcCache>,
     protocols: OutboundProtocolPolicy,
     tls: UpstreamTlsContextFactory,
     happy: HappyEyeballsConfig,
@@ -769,6 +818,7 @@ type ConnectionPoolLease =
 impl UpstreamGeneration {
     fn observed(&self, performance: Option<PerformanceRecorder>) -> Self {
         Self {
+            pool_generation: self.pool_generation,
             hyper: self.hyper.clone().with_performance(performance.clone()),
             h3: self.h3.clone().with_performance(performance),
             trust_generation: self.trust_generation,
@@ -794,16 +844,52 @@ impl UpstreamGeneration {
         let h3 = H3OriginClient::with_happy_eyeballs(tls.clone(), h3_limits, happy_eyeballs)
             .with_outbound_protocols(protocols.clone());
         Ok(Self {
+            pool_generation: next_pool_generation(),
             hyper,
             h3,
             trust_generation: tls.snapshot().generation(),
             partitions: Arc::new(UpstreamPartitions {
+                alt_svc: Mutex::new(AltSvcCache::new(1_024)),
                 protocols,
                 tls,
                 happy: happy_eyeballs,
                 clients: std::sync::Mutex::new(HashMap::new()),
             }),
         })
+    }
+
+    fn profiled(
+        mut self,
+        profile: transmog_core::network_profile::NetworkProfileSnapshot,
+        previous_h3: Option<&H3OriginClient>,
+    ) -> Result<Self, ProxyRuntimeError> {
+        let protocols = OutboundProtocolPolicy::new(profile.settings.protocols);
+        protocols.set_reuse_connections(profile.settings.reuse_connections);
+        let tls = self
+            .partitions
+            .tls
+            .clone()
+            .with_network_profile(profile)
+            .map_err(HyperOriginError::from)?;
+        self.hyper = HyperOriginClient::with_connection_policy(
+            &tls,
+            self.partitions.happy,
+            protocols.clone(),
+        )?;
+        self.h3 = previous_h3
+            .unwrap_or(&self.h3)
+            .clone()
+            .with_tls_factory(tls.clone())
+            .with_outbound_protocols(protocols.clone());
+        self.pool_generation = next_pool_generation();
+        self.partitions = Arc::new(UpstreamPartitions {
+            alt_svc: Mutex::new(AltSvcCache::new(1_024)),
+            protocols,
+            tls,
+            happy: self.partitions.happy,
+            clients: std::sync::Mutex::new(HashMap::new()),
+        });
+        Ok(self)
     }
 
     fn isolated(
@@ -815,7 +901,7 @@ impl UpstreamGeneration {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((generation, previous, client)) = held.as_ref()
-            && *generation == self.trust_generation
+            && *generation == self.pool_generation
             && previous == key
         {
             return Ok(Arc::clone(client));
@@ -835,6 +921,7 @@ impl UpstreamGeneration {
                 client
             } else {
                 let client = Arc::new(Self {
+                    pool_generation: self.pool_generation,
                     hyper: HyperOriginClient::with_connection_policy(
                         &self
                             .partitions
@@ -852,9 +939,14 @@ impl UpstreamGeneration {
                 client
             }
         };
-        *held = Some((self.trust_generation, key.clone(), Arc::clone(&selected)));
+        *held = Some((self.pool_generation, key.clone(), Arc::clone(&selected)));
         Ok(selected)
     }
+}
+
+fn next_pool_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Clone)]
@@ -1481,6 +1573,14 @@ impl ProxyState {
             }
         };
         plan.pool_key.network_isolation = isolation_key;
+        let allowed = upstream.partitions.protocols.snapshot();
+        if plan.pool_key.version_policy == RoutePolicy::Auto
+            && allowed.http3
+            && !allowed.http1
+            && !allowed.http2
+        {
+            plan.pool_key.version_policy = RoutePolicy::Http3Only;
+        }
         observer
             .emit(ObserverEventKind::RouteSelected {
                 policy_id: Arc::clone(&plan.route_id),
@@ -1588,6 +1688,7 @@ impl ProxyState {
 
         if let Some(mode) = self
             .streaming_hyper_mode(
+                &upstream,
                 &request_head,
                 plan.pool_key.version_policy,
                 request.body().size_hint().upper().is_none_or(|bytes| {
@@ -2301,6 +2402,7 @@ impl ProxyState {
 
     async fn streaming_hyper_mode(
         &self,
+        upstream: &UpstreamGeneration,
         request: &RequestHead,
         route_policy: RoutePolicy,
         requires_streaming: bool,
@@ -2314,7 +2416,8 @@ impl ProxyState {
                     host: request.target.host.clone(),
                     port: request.target.port,
                 };
-                let has_h3_alternative = self
+                let has_h3_alternative = upstream
+                    .partitions
                     .alt_svc
                     .lock()
                     .await
@@ -2563,7 +2666,8 @@ impl ProxyState {
             }
         };
         session.egress_version = Some(upstream.head.source_version);
-        self.learn_alt_svc_head(&origin, &upstream.head).await;
+        self.learn_alt_svc_head(&upstream_generation, &origin, &upstream.head)
+            .await;
 
         observe_response_head(&chain, ExchangeBoundary::UpstreamResponse, &upstream.head).await;
         let response_outcome = chain
@@ -2748,7 +2852,7 @@ impl ProxyState {
             }
         };
         session.egress_version = Some(HttpLegVersion::Http3);
-        self.learn_alt_svc_head(&origin, &upstream.response.head)
+        self.learn_alt_svc_head(&upstream_generation, &origin, &upstream.response.head)
             .await;
 
         observe_response_head(
@@ -3533,7 +3637,7 @@ impl ProxyState {
             )
             .await?;
         let protocol = response.head.source_version;
-        self.learn_alt_svc(&origin, &response).await;
+        self.learn_alt_svc(upstream, &origin, &response).await;
         Ok(RoutedResponse {
             response,
             protocol,
@@ -3567,7 +3671,8 @@ impl ProxyState {
                 self.config.limits.max_response_body_bytes,
             )
             .await?;
-        self.learn_alt_svc(&origin, &response.response).await;
+        self.learn_alt_svc(upstream, &origin, &response.response)
+            .await;
         Ok(RoutedResponse {
             response: response.response,
             protocol: HttpLegVersion::Http3,
@@ -3588,7 +3693,8 @@ impl ProxyState {
             host: request.head.target.host.clone(),
             port: request.head.target.port,
         };
-        let alternative = self
+        let alternative = upstream
+            .partitions
             .alt_svc
             .lock()
             .await
@@ -3612,7 +3718,9 @@ impl ProxyState {
                 ) {
                     return Err(h3_error);
                 }
-                self.alt_svc
+                upstream
+                    .partitions
+                    .alt_svc
                     .lock()
                     .await
                     .mark_broken(&origin, self.clock.instant() + Duration::from_secs(30));
@@ -3643,21 +3751,31 @@ impl ProxyState {
         }
     }
 
-    async fn learn_alt_svc(&self, origin: &Origin, response: &CanonicalResponse) {
-        self.learn_alt_svc_head(origin, &response.head).await;
+    async fn learn_alt_svc(
+        &self,
+        upstream: &UpstreamGeneration,
+        origin: &Origin,
+        response: &CanonicalResponse,
+    ) {
+        self.learn_alt_svc_head(upstream, origin, &response.head)
+            .await;
     }
 
-    async fn learn_alt_svc_head(&self, origin: &Origin, response: &ResponseHead) {
+    async fn learn_alt_svc_head(
+        &self,
+        upstream: &UpstreamGeneration,
+        origin: &Origin,
+        response: &ResponseHead,
+    ) {
         for value in response.headers.values("alt-svc") {
             let Ok(value) = std::str::from_utf8(value) else {
                 continue;
             };
-            if let Err(error) =
-                self.alt_svc
-                    .lock()
-                    .await
-                    .observe(origin.clone(), value, self.clock.instant())
-            {
+            if let Err(error) = upstream.partitions.alt_svc.lock().await.observe(
+                origin.clone(),
+                value,
+                self.clock.instant(),
+            ) {
                 debug!(%error, "ignored unsafe or unsupported Alt-Svc advertisement");
             }
         }
@@ -6608,6 +6726,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn profiles_replace_downstream_leases_without_changing_trust_and_rollback_is_inert() {
+        let proxy = ProxyServer::bind(
+            ProxyConfig::default(),
+            ProxyCa::generate("Profile pool test", 2).unwrap(),
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 52).unwrap()),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let control = proxy.control();
+        let lease = Arc::new(StdMutex::new(None));
+        let key = NetworkIsolationKey::new("process:10/h2:1");
+        let old = proxy
+            .state
+            .upstream
+            .read()
+            .await
+            .isolated(&key, &lease)
+            .unwrap();
+        let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+        profile.settings.protocols.http2 = false;
+        profile.settings.reuse_connections = false;
+        drop(
+            control
+                .prepare_network_profile(profile.clone())
+                .await
+                .unwrap(),
+        );
+        let unchanged = proxy
+            .state
+            .upstream
+            .read()
+            .await
+            .isolated(&key, &lease)
+            .unwrap();
+        assert!(Arc::ptr_eq(&old, &unchanged));
+        control
+            .prepare_network_profile(profile.clone())
+            .await
+            .unwrap()
+            .commit();
+        let active = proxy
+            .state
+            .upstream
+            .read()
+            .await
+            .isolated(&key, &lease)
+            .unwrap();
+        assert!(!Arc::ptr_eq(&old, &active));
+        assert_eq!(active.trust_generation, old.trust_generation);
+        assert!(old.partitions.protocols.snapshot().http2);
+        assert!(!active.partitions.protocols.snapshot().http2);
+        assert!(!active.partitions.protocols.reuse_connections());
+        assert_eq!(active.partitions.tls.network_profile(), Some(&profile));
+        control
+            .reload_trust(Arc::new(
+                TrustSnapshot::load(&SystemTrustSource, 53).unwrap(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            proxy
+                .state
+                .upstream
+                .read()
+                .await
+                .partitions
+                .tls
+                .network_profile(),
+            Some(&profile)
+        );
+    }
+
+    #[tokio::test]
     async fn network_isolation_shares_within_callers_and_releases_closed_sessions() {
         let generation = UpstreamGeneration::new(
             Arc::new(TrustSnapshot::load(&SystemTrustSource, 150).unwrap()),
@@ -8889,6 +9081,10 @@ mod tests {
         .unwrap();
         proxy
             .state
+            .upstream
+            .read()
+            .await
+            .partitions
             .alt_svc
             .lock()
             .await
@@ -9004,6 +9200,10 @@ mod tests {
         .unwrap();
         proxy
             .state
+            .upstream
+            .read()
+            .await
+            .partitions
             .alt_svc
             .lock()
             .await

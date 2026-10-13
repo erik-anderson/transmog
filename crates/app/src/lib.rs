@@ -313,6 +313,7 @@ pub struct Application {
     upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
     client_certificates: Option<ClientCertificateManager>,
     certificate_policy_operation: Arc<std::sync::Mutex<()>>,
+    network_profile_operation: Arc<tokio::sync::Mutex<()>>,
     service: ApplicationSessionService,
     runtime_ids: Arc<transmog_runtime::AtomicRuntimeIdGenerator>,
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
@@ -352,6 +353,19 @@ impl Application {
         let (product_state, warning) =
             product_state::ProductStateManager::load(config.product_state_path);
         let initial_state = product_state.snapshot();
+        if let Some(executor) = &config.replay_executor {
+            executor
+                .prepare_network_profile(
+                    initial_state
+                        .preferences
+                        .network_profiles
+                        .active_profile
+                        .clone(),
+                )
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                })?();
+        }
         if let Some(manager) = &config.client_certificates {
             manager.replace_policy(initial_state.preferences.client_certificate_policy.clone())?;
         }
@@ -434,6 +448,7 @@ impl Application {
             upstream_trust: config.upstream_trust,
             client_certificates: config.client_certificates,
             certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
+            network_profile_operation: Arc::new(tokio::sync::Mutex::new(())),
             service: service.clone(),
             runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
@@ -461,6 +476,80 @@ impl Application {
     /// Returns validated product preferences and window/artifact state.
     pub fn product_state(&self) -> ProductState {
         self.product_state.snapshot()
+    }
+
+    /// Prepares this window's Composer transport without changing captured evidence or preferences.
+    /// # Errors
+    /// Returns an adapter construction failure, preserving the current pools.
+    pub fn prepare_replay_network_profile(
+        &self,
+        profile: NetworkProfileSnapshot,
+    ) -> Result<Box<dyn FnOnce() + Send>, AppError> {
+        self.composer.prepare_network_profile(profile)
+    }
+
+    /// Resolves canonical revisions for review and transport preparation without saving.
+    /// # Errors
+    /// Returns invalid or stale profile edits.
+    pub fn preview_network_profiles(
+        &self,
+        expected_revision: u64,
+        profiles: Vec<NetworkProfileSnapshot>,
+        use_profile: Option<&str>,
+    ) -> Result<NetworkProfiles, AppError> {
+        self.product_state
+            .edit_network_profiles(expected_revision, profiles, use_profile)
+    }
+
+    /// Saves definitions and optionally activates a recipe with fresh pools for new work.
+    /// # Errors
+    /// Returns validation, construction or persistence failures without activating partial settings.
+    pub async fn save_network_profiles(
+        &self,
+        expected_revision: u64,
+        profiles: Vec<NetworkProfileSnapshot>,
+        use_profile: Option<String>,
+    ) -> Result<NetworkProfiles, AppError> {
+        let _operation = self.network_profile_operation.lock().await;
+        let next = self.product_state.edit_network_profiles(
+            expected_revision,
+            profiles,
+            use_profile.as_deref(),
+        )?;
+        if next.active_profile
+            == self
+                .product_state
+                .snapshot()
+                .preferences
+                .network_profiles
+                .active_profile
+        {
+            return self
+                .product_state
+                .save_network_profiles(expected_revision, next);
+        }
+        let replay = self.prepare_replay_network_profile(next.active_profile.clone())?;
+        let control = self.service.proxy_control();
+        let runtime = if let Some(control) = &control {
+            Some(
+                control
+                    .prepare_network_profile(next.active_profile.clone())
+                    .await
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                    })?,
+            )
+        } else {
+            None
+        };
+        let saved = self
+            .product_state
+            .save_network_profiles(expected_revision, next)?;
+        replay();
+        if let Some(runtime) = runtime {
+            runtime.commit();
+        }
+        Ok(saved)
     }
 
     /// Saves custom network profile definitions without changing active transport settings.
@@ -556,10 +645,6 @@ impl Application {
         }
         let result = self.product_state.save(state);
         if let Ok(state) = &result {
-            self.composer
-                .set_reuse_server_connections(state.preferences.reuse_server_connections);
-            self.composer
-                .set_outbound_protocols(state.preferences.allowed_outbound_protocols);
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
             self.service.catalog().set_stream_content_retention(
@@ -567,8 +652,6 @@ impl Application {
                 state.privacy.retain_response_bodies,
             );
             if let Some(control) = self.service.proxy_control() {
-                control.set_outbound_protocols(state.preferences.allowed_outbound_protocols);
-                control.set_server_connection_reuse(state.preferences.reuse_server_connections);
                 control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
             }
         }
@@ -1087,6 +1170,7 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
+        let _profile_operation = self.network_profile_operation.lock().await;
         if self.service.resume_drain().await.map_err(AppError::from)? {
             return Ok(self.status());
         }

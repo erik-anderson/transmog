@@ -24,6 +24,22 @@ pub(super) struct WindowWorkspaces {
     pending: Mutex<HashMap<String, Vec<PathBuf>>>,
 }
 impl WindowWorkspaces {
+    pub fn prepare_network_profile(
+        &self,
+        profile: transmog_app::NetworkProfileSnapshot,
+    ) -> Result<Vec<Box<dyn FnOnce() + Send>>, AppError> {
+        self.viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .map(|viewer| {
+                viewer
+                    .application
+                    .prepare_replay_network_profile(profile.clone())
+            })
+            .collect()
+    }
+    #[cfg(test)]
     pub fn set_outbound_protocols(&self, allowed: transmog_app::AllowedHttpProtocols, reuse: bool) {
         for viewer in self
             .viewers
@@ -139,6 +155,9 @@ pub(super) fn create_viewer(
     paths: Vec<PathBuf>,
 ) -> Result<String, AppError> {
     let state = app.state::<DesktopState>();
+    // Creation runs on the setup thread or an owned blocking worker. Serialize
+    // with profile activation so no new viewer starts with a retired recipe.
+    let _profile_operation = state.certificate_operation.blocking_lock();
     let mut viewers = state
         .workspaces
         .viewers
@@ -189,6 +208,14 @@ pub(super) fn create_viewer(
         ..AppConfig::default()
     })?;
     application.save_product_state(state.application.product_state())?;
+    application.prepare_replay_network_profile(
+        state
+            .application
+            .product_state()
+            .preferences
+            .network_profiles
+            .active_profile,
+    )?();
     // These windows all render the trusted application shell. Sharing its
     // browser profile avoids a browser process per viewer; evidence and IPC
     // permissions remain isolated by the window's Rust application instance.

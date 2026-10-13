@@ -261,14 +261,19 @@ async fn application_certificate_commands_drive_live_composer_handshakes_on_ever
         })
         .unwrap();
         if matches!(route, ProxyRoute::Auto) {
-            let mut state = app.product_state();
-            state.preferences.allowed_outbound_protocols =
-                transmog_core::connection_policy::AllowedHttpProtocols {
-                    http1: false,
-                    http2: false,
-                    http3: true,
-                };
-            app.save_product_state(state).unwrap();
+            let mut profile = transmog_app::NetworkProfileSnapshot {
+                id: "custom-h3".into(),
+                name: "H3 only".into(),
+                ..Default::default()
+            };
+            profile.settings.protocols = transmog_core::connection_policy::AllowedHttpProtocols {
+                http1: false,
+                http2: false,
+                http3: true,
+            };
+            app.save_network_profiles(1, vec![profile], Some("custom-h3".into()))
+                .await
+                .unwrap();
         }
         let input = || {
             serde_json::from_value(
