@@ -19,6 +19,11 @@ policy, the single-TLS-family graph and generated supply-chain artifacts. It doe
 not install certificates or modify system proxy settings. Tests define individual
 cases; this guide describes which gates to use instead of copying their inventory.
 
+Before a signed release dispatch, complete
+[local release qualification](windows-release.md#local-release-qualification-before-dispatch).
+It adds the hosted build's browser, Windows certificate, SAZ, optimized CLI,
+PDB, and WebView checks to the portable repository gate.
+
 The Chromium HAR/NetLog import regression uses sanitized, checked-in archives
 and runs in the ordinary Rust suite without a browser or network connection.
 See [browser fixtures](../crates/app/tests/fixtures/browser/README.md) for regeneration.
@@ -51,7 +56,7 @@ npm --prefix apps/desktop/ui run test:workspaces
 
 The viewer gate includes imported metadata, binary Composer replay, independent
 window roles and captured-page isolation. The release soak adds
-`-SoakMinutes 30` to the main-window gate. These probes isolate app data and close
+`-SoakMinutes 3` to the main-window gate. These probes isolate app data and close
 only their owned windows. See [UI guidance](../apps/desktop/ui/AGENTS.md) for
 populated, wide/compact and keyboard review.
 

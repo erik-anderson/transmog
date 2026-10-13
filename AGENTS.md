@@ -9,6 +9,13 @@ dot-source `scripts/dev-env.ps1` in PowerShell. `TRANSMOG_PYTHON` can select an
 explicit interpreter for wrappers. Do not rely on a Windows Store alias that
 cannot execute Python.
 
+Before dispatching a signed release, complete the
+[local release qualification](docs/windows-release.md#local-release-qualification-before-dispatch)
+on the candidate commit. All required checks must pass, including formatting,
+strict Clippy, workspace tests, browser tests and Windows acceptance checks.
+Fix failures and rerun the affected checks before dispatch. Record the tested
+commit and verify that the clean, pushed release source matches it.
+
 Before changing desktop behavior visible to a user, follow
 [the UX quality routine](docs/ux-quality.md) and read
 [the UX design principles](docs/ux-principles.md). This includes UI changes and

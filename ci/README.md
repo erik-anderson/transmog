@@ -16,6 +16,14 @@ version-maintenance workflows set `PYTHONUTF8=1` so Python child output matches
 the tooling's UTF-8 subprocess decoder. Cache fixtures resolve temporary roots
 before containment checks because Windows may supply an 8.3 path alias.
 
+Before dispatch, complete the mandatory
+[local release qualification](../docs/windows-release.md#local-release-qualification-before-dispatch)
+on the clean candidate commit. It matches the build job's formatting, Clippy,
+workspace/browser tests, Windows certificate checks, SAZ interoperability,
+optimized CLI qualification, full-PDB matching, and three-minute WebView soak.
+Record the tested commit, resolve failures, and verify that the pushed source
+matches it.
+
 For each release, set and commit the version with
 `pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch>`,
 push it to the selected branch, then use

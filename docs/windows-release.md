@@ -50,11 +50,102 @@ The public release assets persist beyond the workflow's short-lived artifacts.
 The optimized release profile keeps full debug information and does not strip
 symbols. PDBs are distributed separately from the app installer and CLI executable.
 
+## Local release qualification before dispatch
+
+Run the build job's checks locally before starting **Windows signed release**.
+Use a clean checkout of the committed candidate on Windows, with the pinned Rust
+toolchain, native tools, Node, and Evergreen WebView2 described in
+[building](building.md). Run the desktop probes as a non-elevated user and close
+Transmog first. The client-certificate checks use owned CurrentUser/My fixture
+identities and clean them up afterward. Prepare the pinned policy tool with
+`./scripts/setup-release-validation-tools.ps1` if it is not already available.
+
+From the repository root in PowerShell 7, check versions and formatting first,
+then prepare the same locked dependencies used by the hosted build:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+$env:PYTHONUTF8 = '1'
+python ./scripts/dev-env.py --check
+. ./scripts/dev-env.ps1
+$releaseTestCommit = git rev-parse HEAD
+if (git status --porcelain) { throw 'Qualify a clean, committed release candidate.' }
+python ./scripts/set-release-version.py --check
+cargo fmt --all -- --check
+cargo fetch --locked
+npm ci --prefix apps/desktop/ui
+npm ci --prefix e2e/playwright
+Push-Location e2e/playwright
+try { npx playwright install chromium } finally { Pop-Location }
+python ./scripts/cache-v8.py
+```
+
+Run every pre-signing test and analysis gate. The release safety wrapper includes
+the Python tooling/lifecycle fixtures, publication guards, signing retry checks,
+and hosted WebView policy restoration checks. `python scripts/test.py` covers
+the portable repository gate; the commands below also include the release's
+browser and Windows acceptance checks:
+
+```powershell
+./scripts/test-release-safety.ps1
+npm --prefix apps/desktop/ui run check
+npm --prefix apps/desktop/ui run test:workspaces
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+cargo test --locked -p transmog-tls --test windows_client_certificates -- --ignored
+cargo test --locked -p transmog-runtime -p transmog-app --test client_authentication -- --ignored
+./scripts/test-windows-client-certificate-ui.ps1
+python ./scripts/test-saz-interop.py
+cargo deny check
+cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
+python ./scripts/check-crypto-graph.py
+python ./scripts/generate-supply-chain-artifacts.py
+```
+
+After those checks pass, build the optimized app and helpers once, qualify the
+CLI, check all four matching full PDBs, and run the release's three-minute WebView
+soak. `SkipTests` here follows the complete gate above:
+
+```powershell
+$releaseBuild = & ./scripts/package-windows.ps1 -UnsignedDevelopment -BuildOnly -SkipTests |
+    ForEach-Object {
+        if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ }
+        else { $_ | Out-Host }
+    }
+if (@($releaseBuild).Count -ne 1) { throw 'Expected one optimized build result.' }
+python ./scripts/test-cli-support.py --executable (Join-Path $releaseBuild.BuildDirectory 'transmog-cli.exe') --artifacts ./artifacts/local-release-cli
+. ./scripts/windows-release-symbols.ps1
+foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
+    $pdb = [IO.Path]::GetFileNameWithoutExtension($binary).Replace('-', '_') + '.pdb'
+    Get-WindowsSymbolEvidence -Binary (Join-Path $releaseBuild.BuildDirectory $binary) -Pdb (Join-Path $releaseBuild.BuildDirectory $pdb)
+}
+./scripts/test-windows-desktop.ps1 -ExecutablePath (Join-Path $releaseBuild.BuildDirectory 'transmog.exe') -SkipReleaseBuild -SoakMinutes 3
+if ((git rev-parse HEAD) -cne $releaseTestCommit -or (git status --porcelain)) {
+    throw 'The candidate changed during qualification; review it and rerun affected checks.'
+}
+```
+
+The local probes use environment-based loopback DevTools flags. The hosted
+builder passes `HostedRunnerDevToolsPolicy` for its elevated disposable runners;
+that switch is restricted to GitHub-hosted execution. Keep local test evidence
+under `artifacts/` and record the tested commit. Resolve any failed or unavailable
+required check before dispatch, and rerun checks affected by subsequent source
+changes. Verify that the clean, pushed branch still points to the tested commit.
+
+The hosted build repeats these checks and produces its own source-bound
+artifacts. Azure signing and profile/identity-denial checks, final signed CLI and
+installer qualification, updater-signature verification, provenance attestation,
+and draft publication run afterward with the workflow's configured permissions.
+Their evidence belongs to the hosted candidate; follow the approval and review
+steps below for those stages.
+
 ## Manual GitHub release process
 
-The normal release path is **commit a version → manually build a signed draft →
-review the installer → publish that draft**. Building and publication are separate
-decisions. No push or tag automatically starts a release build.
+The normal release path is **commit a version → qualify locally → manually build
+a signed draft → review the installer → publish that draft**. Building and
+publication are separate decisions. No push or tag automatically starts a release
+build.
 
 1. Choose an unused `major.minor.patch` version, for example `0.1.1`, and run from
    the repository root:
@@ -78,9 +169,11 @@ decisions. No push or tag automatically starts a release build.
    Canary to the product title. Beta and Stable installers use neutral branding,
    so the same reviewed Beta installer can be promoted to Stable without rebuilding.
 
-2. Review the version diff, commit the version changes with the code to release,
-   and push them to `main` (or the approved hotfix branch described below). This
-   commit is the release source. The workflow checks
+2. Review the version diff and commit the version changes with the code to release.
+   Complete [local release qualification](#local-release-qualification-before-dispatch)
+   on that commit, then push it to `main` (or the approved hotfix branch described
+   below). Confirm the pushed source matches the tested commit before dispatch.
+   This commit is the release source. The workflow checks
    committed versions before compilation; the release manifest, installer, and
    SBOM use that version. Changing the draft's title or tag cannot change the
    version embedded in an already-built installer. Published versions, mismatched
