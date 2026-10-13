@@ -11,9 +11,9 @@ repository.workspace = true
 boring.workspace = true
 bytes.workspace = true
 quiche.workspace = true
-transmog-core = { version = "=0.1.3", path = "../proxy-core" }
-transmog-network = { version = "=0.1.3", path = "../network" }
-transmog-tls = { version = "=0.1.3", path = "../proxy-tls" }
+transmog-core = { version = "=0.1.4", path = "../proxy-core" }
+transmog-network = { version = "=0.1.4", path = "../network" }
+transmog-tls = { version = "=0.1.4", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -22,7 +22,7 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
-transmog-http = { version = "=0.1.3", path = "../proxy-http" }
+transmog-http = { version = "=0.1.4", path = "../proxy-http" }
 http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
