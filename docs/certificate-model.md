@@ -73,7 +73,10 @@ HelloRetryRequest, protocol and cipher. Certificate inspection shows the
 credential actually selected by BoringSSL, including its ML-DSA key variant.
 Configured preferences alone never establish a negotiated algorithm.
 
-On resumption, the group describes the new handshake. A retained peer signature
+On TLS 1.3 resumption, the group describes the new handshake. TLS 1.2 resumption
+performs no fresh key exchange; its retained group is labeled **Original session
+group** and **Original session group ID**, with **Not performed (TLS 1.2 session
+resumed)** as the key-exchange status. A retained peer signature
 is labeled **Original peer handshake signature**; the current peer signature is
 **Not sent (session resumed)**. A chain restored from the TLS session is labeled
 `resumed-session` rather than presented on the new connection. Reused HTTP

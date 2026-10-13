@@ -10,7 +10,7 @@ use boring::{
     },
     x509::{
         X509, X509NameBuilder,
-        extension::{ExtendedKeyUsage, KeyUsage, SubjectAlternativeName},
+        extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage, SubjectAlternativeName},
     },
 };
 use std::{
@@ -784,4 +784,79 @@ fn production_downstream_selects_each_ml_dsa_variant_and_classical_fallback() {
             .acceptor_credentials_captured(&invalid, None)
             .is_err()
     );
+}
+
+#[test]
+fn every_downstream_credential_sends_its_intermediate_chain() {
+    let root = ProxyCa::generate("Intermediate chain root", 2).unwrap();
+    let intermediate = ProxyCa::generate("Intermediate chain issuer", 2).unwrap();
+    let key = PKey::private_key_from_pem(&intermediate.private_key_pem_pkcs8().unwrap()).unwrap();
+    let root_key = PKey::private_key_from_pem(&root.private_key_pem_pkcs8().unwrap()).unwrap();
+    let mut certificate = X509::builder().unwrap();
+    certificate.set_version(2).unwrap();
+    certificate
+        .set_serial_number(&BigNum::from_u32(2).unwrap().to_asn1_integer().unwrap())
+        .unwrap();
+    certificate
+        .set_subject_name(intermediate.certificate().subject_name())
+        .unwrap();
+    certificate
+        .set_issuer_name(root.certificate().subject_name())
+        .unwrap();
+    certificate.set_pubkey(&key).unwrap();
+    certificate
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    certificate
+        .set_not_after(&Asn1Time::days_from_now(2).unwrap())
+        .unwrap();
+    certificate
+        .append_extension(&BasicConstraints::new().critical().ca().build().unwrap())
+        .unwrap();
+    certificate
+        .append_extension(&KeyUsage::new().key_cert_sign().crl_sign().build().unwrap())
+        .unwrap();
+    certificate
+        .sign(&root_key, MessageDigest::sha256())
+        .unwrap();
+    let intermediate = ProxyCa::from_pem(
+        &certificate.build().to_pem().unwrap(),
+        &key.private_key_to_pem_pkcs8().unwrap(),
+    )
+    .unwrap();
+    let resolver = CachedMitmCertificateResolver::new(intermediate.clone(), 1, 1).unwrap();
+    let leaves = resolver
+        .resolve_credentials(
+            &EndpointIdentity::parse("localhost").unwrap(),
+            std::time::SystemTime::now(),
+        )
+        .unwrap();
+    let factory = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default());
+    for (index, scheme) in [
+        SslSignatureAlgorithm::ML_DSA_44,
+        SslSignatureAlgorithm::ML_DSA_65,
+        SslSignatureAlgorithm::ML_DSA_87,
+        SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // Only the root is trusted; success requires the server to send the intermediate.
+        for single in [false, true] {
+            let acceptor = if single {
+                factory.acceptor(&leaves[index]).unwrap()
+            } else {
+                factory
+                    .acceptor_credentials_captured(&leaves, None)
+                    .unwrap()
+            };
+            let mut client = connector(&root);
+            client.set_verify_algorithm_prefs(&[scheme]).unwrap();
+            let (tls, _) = handshake(acceptor, &client.build());
+            assert_eq!(tls.ssl().peer_signature_algorithm(), Some(scheme));
+            assert!(tls.ssl().peer_cert_chain().unwrap().iter().any(|cert| {
+                cert.to_der().unwrap() == intermediate.certificate().to_der().unwrap()
+            }));
+        }
+    }
 }

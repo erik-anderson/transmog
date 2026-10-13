@@ -419,8 +419,10 @@ current computer's trust or expose private keys or session secrets.
 Show negotiated exchange groups and handshake signatures for each physical
 connection's own leg. Do not infer a missing algorithm from a certificate key,
 cipher or configured preference; older captures show Unavailable. Distinguish
-a resumed handshake's current group from its original authentication signature
-and restored certificate chain. Hybrid exchange or ML-DSA authentication alone
+a resumed TLS 1.3 handshake's current group from its original authentication
+signature and restored certificate chain. For TLS 1.2 resumption, label the
+original session group and report that no fresh key exchange occurred.
+Hybrid exchange or ML-DSA authentication alone
 must not produce a claim that the whole trust chain is post-quantum secure.
 
 The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.

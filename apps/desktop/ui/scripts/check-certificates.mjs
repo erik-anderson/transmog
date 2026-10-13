@@ -12,6 +12,7 @@ export async function checkCertificates(page, root) {
   const inspection={certificates,connections:[{id:'upstream:failed',title:'Transmog → server',fields:[{label:'Recorded verification',value:'Rejected (code 20, depth 1)'},{label:'Offered cipher suites',value:'ECDHE-ECDSA-AES128-GCM-SHA256'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[certificates[0].sha256],errors:['Certificate issuer was not trusted by the recorded snapshot']},{id:'client:browser',title:'Client → Transmog',fields:[{label:'Recorded verification',value:'Not recorded or verification was not reached'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]}]};
   inspection.connections[0].fields.push({label:'Key exchange',value:'Unavailable'});
   inspection.connections[1].fields.push({label:'Key exchange',value:'Hybrid post-quantum key exchange'},{label:'Negotiated group',value:'X25519MLKEM768'},{label:'Negotiated group ID',value:'0x11ec'},{label:'Local handshake signature',value:'mldsa44'});
+  inspection.connections.push({id:'upstream:resumed',title:'Transmog → server (resumed)',fields:[{label:'Negotiated TLS version',value:'TLSv1.2'},{label:'Session resumed',value:'Yes'},{label:'Key exchange',value:'Not performed (TLS 1.2 session resumed)'},{label:'Original session group',value:'P-256'},{label:'Original session group ID',value:'0x0017'},{label:'Peer handshake signature',value:'Not sent (session resumed)'}],serverChain:certificates.map(certificate=>certificate.sha256),clientChain:[],errors:[]});
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
   const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   const dialog=page.locator('.details-dialog[open]');
@@ -30,6 +31,17 @@ export async function checkCertificates(page, root) {
   await connection.focus();await page.keyboard.press('ArrowUp');
   await dialog.getByText('Unavailable',{exact:true}).waitFor();
   assert.equal(await dialog.getByText('Hybrid post-quantum key exchange',{exact:true}).count(),0,'Client PQC evidence leaked into the origin connection');
+  await connection.selectOption('upstream:resumed');
+  await dialog.getByText('Not performed (TLS 1.2 session resumed)',{exact:true}).waitFor();
+  await dialog.getByText('Original session group',{exact:true}).waitFor();
+  await dialog.getByText('P-256',{exact:true}).waitFor();
+  assert.equal(await dialog.getByText('Negotiated group',{exact:true}).count(),0,'TLS 1.2 resumption claimed a new group');
+  await page.setViewportSize({width:1440,height:900});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/tls12-resumption-wide.png')});
+  await page.setViewportSize({width:800,height:600});
+  await dialog.getByText('Not sent (session resumed)',{exact:true}).scrollIntoViewIfNeeded();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/tls12-resumption-compact.png')});
+  await connection.selectOption('upstream:failed');
   await page.setViewportSize({width:1280,height:800});
   await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   await dialog.getByText(inspection.connections[0].errors[0],{exact:true}).waitFor();

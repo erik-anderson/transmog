@@ -55,11 +55,7 @@ impl DownstreamTlsContextFactory {
         leaf: &IssuedLeaf,
         capture: Option<&crate::TlsCapture>,
     ) -> Result<SslAcceptor, DownstreamTlsError> {
-        let mut builder = self.builder(capture)?;
-        builder.set_certificate(&leaf.certificate)?;
-        builder.set_private_key(&leaf.private_key)?;
-        builder.check_private_key()?;
-        Ok(builder.build())
+        self.acceptor_credentials_captured(std::slice::from_ref(leaf), capture)
     }
 
     /// Offers ordered alternatives; `BoringSSL` selects only a peer-compatible credential.
@@ -81,6 +77,9 @@ impl DownstreamTlsContextFactory {
         builder.set_certificate(&fallback.certificate)?;
         builder.set_private_key(&fallback.private_key)?;
         builder.check_private_key()?;
+        for issuer in &fallback.issuer_chain {
+            builder.add_extra_chain_cert(issuer.clone())?;
+        }
         for leaf in &leaves[..leaves.len() - 1] {
             let chain: Vec<_> = std::iter::once(leaf.certificate.clone())
                 .chain(leaf.issuer_chain.iter().cloned())

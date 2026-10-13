@@ -3,7 +3,7 @@ use boring::{
     error::ErrorStack,
     ex_data::Index,
     hash::MessageDigest,
-    ssl::{Ssl, SslContext, SslContextBuilder, SslInfoCallbackMode, SslRef},
+    ssl::{Ssl, SslContext, SslContextBuilder, SslInfoCallbackMode, SslRef, SslVersion},
     x509::{X509Ref, X509StoreContext, X509StoreContextRef},
 };
 use std::sync::{Arc, Mutex, OnceLock};
@@ -171,20 +171,7 @@ impl TlsCapture {
     pub fn completed(&self, ssl: &SslRef, server: bool) {
         let mut data = self.data();
         if ssl.is_init_finished() {
-            if let Some(group) = ssl.curve() {
-                insert_detail(
-                    &mut data,
-                    "Negotiated group",
-                    ssl.curve_name().unwrap_or("Unknown"),
-                );
-                insert_detail(&mut data, "Negotiated group ID", &format!("0x{group:04x}"));
-                let exchange = match group {
-                    0x11ec => "Hybrid post-quantum key exchange",
-                    23..=25 | 29 => "Classical key exchange",
-                    _ => "Unclassified key exchange",
-                };
-                insert_detail(&mut data, "Key exchange", exchange);
-            }
+            collect_key_exchange(&mut data, ssl);
             // The local signature is available only at HANDSHAKE_DONE. A later
             // completed() call must preserve the value collected by the callback.
             for (name, algorithm) in [
@@ -343,6 +330,37 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
         );
         if data.errors.len() < 16 && !data.errors.contains(&message) {
             data.errors.push(message);
+        }
+    }
+}
+
+fn collect_key_exchange(data: &mut TlsEvidence, ssl: &SslRef) {
+    // TLS 1.2's abbreviated handshake restores the original session group;
+    // it has no new ServerKeyExchange or ClientKeyExchange. TLS 1.3 resumption
+    // in our policy performs a fresh (EC)DHE/KEM exchange instead.
+    let resumed_tls12 = ssl.session_reused() && ssl.version2() == Some(SslVersion::TLS1_2);
+    if resumed_tls12 {
+        insert_detail(
+            data,
+            "Key exchange",
+            "Not performed (TLS 1.2 session resumed)",
+        );
+    }
+    if let Some(group) = ssl.curve() {
+        let (name, id_name) = if resumed_tls12 {
+            ("Original session group", "Original session group ID")
+        } else {
+            ("Negotiated group", "Negotiated group ID")
+        };
+        insert_detail(data, name, ssl.curve_name().unwrap_or("Unknown"));
+        insert_detail(data, id_name, &format!("0x{group:04x}"));
+        let exchange = match group {
+            0x11ec => "Hybrid post-quantum key exchange",
+            23..=25 | 29 => "Classical key exchange",
+            _ => "Unclassified key exchange",
+        };
+        if !resumed_tls12 {
+            insert_detail(data, "Key exchange", exchange);
         }
     }
 }
