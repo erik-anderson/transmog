@@ -8,6 +8,7 @@ mod certificate_compression;
 pub mod client_authentication;
 /// Connection and pool authorization for request-driven client certificates.
 pub mod client_connections;
+mod client_hello;
 /// Bounded nonmodal certificate decisions owned by physical handshakes.
 pub mod client_prompts;
 mod downstream;

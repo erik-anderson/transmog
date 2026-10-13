@@ -253,6 +253,17 @@ fn is_grease(value: u16) -> bool {
     value & 0x0f0f == 0x0a0a && value >> 8 == value & 0xff
 }
 
+fn assert_ech_grease(extension: &[u8]) {
+    assert_eq!(extension[0], 0); // ClientHelloOuter
+    assert_eq!(u16_be(&extension[1..]), 1); // HKDF-SHA256
+    assert!(matches!(u16_be(&extension[3..]), 1 | 3)); // AES-128-GCM or ChaCha20-Poly1305
+    assert_eq!(u16_be(&extension[6..]), 32); // X25519 encapsulated key
+    let payload_length = usize::from(u16_be(&extension[40..]));
+    assert_eq!(extension.len(), 42 + payload_length);
+    assert!((144..=240).contains(&payload_length));
+    assert_eq!((payload_length - 16) % 32, 0);
+}
+
 #[test]
 fn production_tcp_general_grease_preserves_real_preferences() {
     let ca = ProxyCa::generate("General GREASE TCP root", 2).unwrap();
@@ -279,7 +290,12 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             })
             .acceptor(&leaf)
             .unwrap();
-            let (tls, _) = handshake(server, &factory(&ca).hyper_connector().unwrap());
+            let capture = factory(&ca).capture(Some("localhost".into()), vec![]);
+            let (tls, _) = handshake_captured(
+                server,
+                &factory(&ca).hyper_connector().unwrap(),
+                Some(&capture),
+            );
             assert_eq!(tls.ssl().version2(), Some(version));
             assert!(tls.ssl().verify_result().is_ok());
             let hello = recorded_hello(&tls.get_ref().written);
@@ -337,6 +353,8 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             assert_eq!(real[&5], [1, 0, 0, 0, 0]);
             assert!(real[&18].is_empty());
             assert_eq!(real[&27], [2, 0, 2]);
+            assert_ech_grease(&real[&0xfe0d]);
+            assert!(capture.snapshot().valid());
             for kind in [0, 5, 11, 16, 18, 23, 35, 45, 0xff01] {
                 assert_eq!(real[&kind], expected_extensions[&kind]);
             }
@@ -692,6 +710,7 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
                 ExtensionType::STATUS_REQUEST,
                 ExtensionType::CERTIFICATE_TIMESTAMP,
                 ExtensionType::CERT_COMPRESSION,
+                ExtensionType::ENCRYPTED_CLIENT_HELLO,
             ]
             .into_iter()
             .map(|kind| hello.get_extension(kind).unwrap().to_vec())
@@ -700,6 +719,8 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
             Ok(())
         });
         let mut client = factory(&ca).quiche_context_builder().unwrap();
+        let capture = factory(&ca).capture(Some("localhost".into()), vec!["h3".into()]);
+        capture.attach_context(&mut client).unwrap();
         if !enabled {
             transmog_tls_native::set_signature_algorithm_grease(&mut client, false);
         }
@@ -719,6 +740,8 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         assert_eq!(observed[0][4], [1, 0, 0, 0, 0]);
         assert!(observed[0][5].is_empty());
         assert_eq!(observed[0][6], [2, 0, 2]);
+        assert_ech_grease(&observed[0][7]);
+        assert!(capture.snapshot().valid());
         if enabled {
             assert!(is_grease(advertised[0]));
             assert_eq!(&advertised[1..], expected);

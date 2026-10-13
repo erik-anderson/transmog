@@ -271,6 +271,9 @@ impl TlsCapture {
 // handshake-only state, and never installs a verification override.
 pub(crate) fn configure_completion(context: &mut SslContextBuilder) {
     context.set_info_callback(|ssl, mode, _| {
+        if mode == SslInfoCallbackMode::HANDSHAKE_START {
+            crate::client_hello::handshake_started(ssl);
+        }
         if mode == SslInfoCallbackMode::HANDSHAKE_DONE
             && let Some(capture) = capture_for(ssl)
         {

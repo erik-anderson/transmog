@@ -65,6 +65,12 @@ or trailing data, and passes the decoded certificate through the same trust
 and identity verification. Origins may still send an uncompressed certificate.
 Client certificates and downstream certificates remain uncompressed.
 
+The shared upstream contexts enable ECH GREASE before each TCP or QUIC
+handshake. BoringSSL sends a fresh dummy `encrypted_client_hello` extension
+when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
+exercises extension handling and matches Chromium's ECH GREASE behavior; it
+does not encrypt the server name or implement real ECH configuration discovery.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all

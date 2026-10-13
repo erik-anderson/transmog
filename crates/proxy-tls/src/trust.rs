@@ -399,6 +399,7 @@ impl UpstreamTlsContextFactory {
 
     fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
+        crate::client_hello::enable_ech_grease(builder)?;
         builder.set_cert_store((*self.snapshot.store).clone());
         builder.set_verify_callback(SslVerifyMode::PEER, |accepted, context| {
             let accepted = verify_peer_identity(accepted, context);
