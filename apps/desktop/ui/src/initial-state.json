@@ -19,6 +19,7 @@
   "networkDifferences": [],
   "networkChanged": {"protocols":false,"reuseConnections":false,"tlsVersions":false,"compatibilityCiphers":false,"hybridKeyExchange":false,"grease":false,"randomizeExtensions":false,"echGrease":false,"certificateCompression":false},
   "networkBusy": true,
+  "networkLoaded": false,
   "networkError": "", "networkText": "", "networkCustom": false,
   "networkSelectedActive": true, "networkCanUse": false, "networkDirty": false, "networkEditorOpen": false,
   "networkValidation": "", "networkUndoAvailable": false,

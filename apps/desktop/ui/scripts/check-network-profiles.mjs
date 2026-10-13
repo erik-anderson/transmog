@@ -7,6 +7,10 @@ export async function checkNetworkProfiles(page,root) {
   const dialog=panel.locator('dialog');
   const idle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkBusy);
   await idle();
+  const preferences=page.locator('settings-workspace');
+  const ordinaryWrites=await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0);
+  await preferences.getByLabel('Theme',{exact:true}).selectOption('dark');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkForm.parentElement.closest('form')),null,'Profile and ordinary settings forms are nested');
   assert.equal(await selector.inputValue(),'chromium-154');
   assert.equal(await panel.getByRole('button',{name:'Use profile',exact:true}).isEnabled(),false);
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
@@ -84,6 +88,10 @@ export async function checkNetworkProfiles(page,root) {
   await panel.getByRole('button',{name:'Undo deletion',exact:true}).click();await idle();
   await selector.selectOption('chromium-154');
   await page.setViewportSize({width:1280,height:800});
-  // Editing/saving a profile never marks ordinary settings as dirty.
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsDirty),false);
+  // Profile saves preserve ordinary drafts without submitting their preferences.
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0),ordinaryWrites,'Saving a profile submitted ordinary settings');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsDirty),true,'Profile save consumed the ordinary settings draft');
+  assert.equal(await preferences.getByLabel('Theme',{exact:true}).inputValue(),'dark');
+  await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
 }

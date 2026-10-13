@@ -71,7 +71,7 @@ pub struct ProductPreferences {
     /// Desired desktop listener port; None retains automatic ephemeral selection.
     #[serde(default)]
     pub proxy_port: Option<u16>,
-    /// Permit pooling and sharing origin connections between requests.
+    /// Compatibility mirror of the active profile's reuse choice; edit through network profiles.
     #[serde(default = "enabled_by_default")]
     pub reuse_server_connections: bool,
     /// Public host authorization only; private keys and transient answers are never persisted.
@@ -83,7 +83,7 @@ pub struct ProductPreferences {
     /// Partition origin connections by caller PID/source IP and downstream H2 session.
     #[serde(default = "enabled_by_default")]
     pub isolate_outbound_connections: bool,
-    /// Allowed protocols for new origin connections; established connections continue until closed.
+    /// Compatibility mirror of the active profile's allowed protocols; edit through network profiles.
     #[serde(default)]
     pub allowed_outbound_protocols: transmog_core::connection_policy::AllowedHttpProtocols,
     /// Color preference.

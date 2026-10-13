@@ -53,6 +53,8 @@ become an active Current settings custom profile. Narrow profile writes merge
 with independent layout, window and certificate policy saves and reject stale
 catalog revisions. Other legacy schemas remain unsupported. Exact fields and validation belong to
 [the product-state model](../crates/app/src/product_state.rs).
+The legacy protocol and reuse fields are derived mirrors; network changes use
+the narrow profile API rather than whole-state saves.
 
 On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the
 `preferences.<generation>.json` family. Persistence errors remain visible and

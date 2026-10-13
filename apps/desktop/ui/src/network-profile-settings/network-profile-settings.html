@@ -1,15 +1,16 @@
 <template>
 <section class="network-profile" aria-label="Network profile">
   <div class="profile-row">
-    <label>Profile <select w-ref="{networkSelector}" aria-label="Network profile" @change="{choose(e)}" ?disabled="{{networkBusy}}">
+    <label>Profile <select w-ref="{networkSelector}" aria-label="Network profile" @change="{choose(e)}" ?disabled="{{networkBusy || !networkLoaded}}">
       <for each="profile in networkOptions"><option value="{{profile.id}}" ?selected="{{profile.id == networkSelectedId}}">{{profile.name}}</option></for>
       <option value="create" ?disabled="{{networkProfiles.customProfiles.length >= 32}}">Create custom profile…</option>
     </select></label>
-    <button type="button" class="secondary" @click="{customize()}" ?disabled="{{networkBusy}}"><if condition="networkDirty">Resume draft…</if><if condition="!networkDirty">Customize…</if></button>
+    <button type="button" class="secondary" @click="{customize()}" ?disabled="{{networkBusy || !networkLoaded}}"><if condition="networkDirty">Resume draft…</if><if condition="!networkDirty">Customize…</if></button>
     <button type="button" @click="{useProfile()}" ?disabled="{{!networkCanUse}}">Use profile</button>
     <button type="button" class="secondary compact-button" aria-label="Manage network profile" popovertarget="network-profile-menu" ?hidden="{{!networkCustom}}" ?disabled="{{networkBusy}}">⋯</button>
   </div>
-  <p class="field-help">{{networkSummary}} <span>· In use: {{networkActiveName}}</span></p>
+  <p class="field-help" ?hidden="{{!networkLoaded}}">{{networkSummary}} <span>· In use: {{networkActiveName}}</span></p>
+  <p class="field-help" ?hidden="{{networkLoaded}}"><if condition="networkBusy">Loading network profiles…</if><if condition="!networkBusy">Network profile information is unavailable. Reload profiles to try again.</if></p>
   <p class="field-help" ?hidden="{{!networkCanUse}}">Previewing the saved recipe. Choose Use profile to apply it to new requests.</p>
   <div class="profile-menu" id="network-profile-menu" popover w-ref="{networkMenu}">
     <button type="button" @click="{customize()}" ?disabled="{{networkDirty}}">Rename or edit…</button>

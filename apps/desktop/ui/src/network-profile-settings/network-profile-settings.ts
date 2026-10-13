@@ -38,21 +38,21 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   networkForm!:HTMLFormElement;
   networkSelector!:HTMLSelectElement;
   networkMenu!:HTMLElement;
-  private loaded=false;
+  @observable networkLoaded=initialState.networkLoaded;
   private generation=0;
   private editorSource:NetworkProfileSnapshot|null=null;
   private undo:NetworkProfileSnapshot|null=null;
 
   protected hydratedCallback():void {void this.load();}
   async load():Promise<void> {
-    if(this.loaded&&this.networkBusy)return;
+    if(this.networkLoaded&&this.networkBusy)return;
     const generation=++this.generation;this.networkBusy=true;
     try {
       const state=await invoke<ProductState>('product_state');
       if(generation!==this.generation||!this.isConnected)return;
       if(!state.preferences.networkProfiles?.activeProfile)throw new Error('Network profiles could not be loaded. Reload profiles to try again.');
       this.networkProfiles=structuredClone(state.preferences.networkProfiles);
-      this.loaded=true;this.networkError='';
+      this.networkLoaded=true;this.networkError='';
       if(!this.options().some(profile=>profile.id===this.networkSelectedId))this.networkSelectedId=this.networkProfiles.activeProfile.id;
       this.renderPreview();
     } catch(error:unknown) {if(generation===this.generation)this.networkError=describeError(error);}
@@ -73,7 +73,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     this.networkActiveName=this.networkProfiles.activeProfile.name;
     this.networkCustom=selected.id!==chromium.id;
     this.networkSelectedActive=selected.id===this.networkProfiles.activeProfile.id;
-    this.networkCanUse=this.loaded&&!this.networkBusy&&JSON.stringify(selected)!==JSON.stringify(this.networkProfiles.activeProfile);
+    this.networkCanUse=this.networkLoaded&&!this.networkBusy&&JSON.stringify(selected)!==JSON.stringify(this.networkProfiles.activeProfile);
     const s=selected.settings;
     const protocols=[s.protocols.http1?'H1':'',s.protocols.http2?'H2':'',s.protocols.http3?'H3':''].filter(Boolean).join(' / ')||'All HTTP blocked';
     const tls=s.tlsVersions==='tls12-and13'?'TLS 1.2–1.3':s.tlsVersions==='tls12-only'?'TLS 1.2':'TLS 1.3';
@@ -89,7 +89,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   private closeMenu():void {this.networkMenu.hidePopover();}
   customize(copy=false):void {
     this.closeMenu();
-    if(!this.loaded||this.networkBusy)return;
+    if(!this.networkLoaded||this.networkBusy)return;
     if(this.networkDirty) {this.openEditor();return;}
     const source=this.selected();
     const isNew=copy||source.id===chromium.id;
@@ -105,8 +105,9 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     this.openEditor();
   }
   private uniqueName(preferred:string):string {
-    let name=preferred.slice(0,70);let number=2;
-    while(this.options().some(profile=>profile.name.toLowerCase()===name.toLowerCase()))name=preferred.slice(0,70)+' '+number++;
+    const stem=preferred.slice(0,70).replace(/[\uD800-\uDBFF]$/,'');
+    let name=stem;let number=2;
+    while(this.options().some(profile=>profile.name.toLowerCase()===name.toLowerCase()))name=stem+' '+number++;
     return name;
   }
   private openEditor():void {
