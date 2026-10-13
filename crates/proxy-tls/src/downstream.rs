@@ -45,6 +45,7 @@ impl DownstreamTlsContextFactory {
         let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls())?;
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
+        crate::algorithms::configure_key_exchange(&mut builder)?;
         builder.set_certificate(&leaf.certificate)?;
         builder.set_private_key(&leaf.private_key)?;
         builder.check_private_key()?;

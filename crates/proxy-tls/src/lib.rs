@@ -1,5 +1,6 @@
 //! The one BoringSSL-backed trust and certificate implementation used by every protocol.
 
+mod algorithms;
 mod blocking_job;
 mod ca;
 /// Request-driven client identity selection and asynchronous signing.

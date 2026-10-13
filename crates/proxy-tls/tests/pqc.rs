@@ -4,7 +4,10 @@ use boring::{
     bn::BigNum,
     hash::MessageDigest,
     pkey::{Id, PKey, Private},
-    ssl::{SslAcceptor, SslConnector, SslMethod, SslSignatureAlgorithm, SslStream, SslVersion},
+    ssl::{
+        SslAcceptor, SslConnector, SslContext, SslContextBuilder, SslMethod, SslSignatureAlgorithm,
+        SslStream, SslVersion,
+    },
     x509::{
         X509, X509NameBuilder,
         extension::{ExtendedKeyUsage, KeyUsage, SubjectAlternativeName},
@@ -14,9 +17,13 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    sync::Arc,
     time::Duration,
 };
-use transmog_tls::{EndpointIdentity, ProxyCa};
+use transmog_tls::{
+    DownstreamTlsContextFactory, DownstreamTlsPolicy, EndpointIdentity, PemTrustSource, ProxyCa,
+    TrustSnapshot, UpstreamTlsContextFactory, UpstreamTlsPolicy,
+};
 
 const HYBRID_GROUP: u16 = 0x11ec;
 const GROUPS: &str = "X25519MLKEM768:X25519:P-256:P-384";
@@ -240,5 +247,165 @@ fn boringssl_verifies_each_chromium_ml_dsa_signature_scheme() {
         let restored =
             PKey::private_key_from_pem(&key.private_key_to_pem_pkcs8().unwrap()).unwrap();
         assert!(public.public_eq(&restored));
+    }
+}
+
+fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {
+    let source =
+        PemTrustSource::from_pem(&ca.certificate_pem().unwrap(), "PQC fixture root").unwrap();
+    UpstreamTlsContextFactory::new(
+        Arc::new(TrustSnapshot::load(&source, 1).unwrap()),
+        UpstreamTlsPolicy::default(),
+    )
+}
+
+#[test]
+fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
+    let ca = ProxyCa::generate("PQC upstream root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let connector = factory(&ca).hyper_connector().unwrap();
+    for (groups, expected) in [
+        (GROUPS, HYBRID_GROUP),
+        ("X25519:P-256:P-384", 29),
+        ("P-256", 23),
+    ] {
+        let (tls, group) = handshake(
+            acceptor(&leaf.certificate, &leaf.private_key, groups),
+            &connector,
+        );
+        assert_eq!(tls.ssl().curve(), Some(expected));
+        assert_eq!(group, Some(expected));
+    }
+    let acceptor = DownstreamTlsContextFactory::new(DownstreamTlsPolicy {
+        maximum_version: SslVersion::TLS1_2,
+        ..DownstreamTlsPolicy::default()
+    })
+    .acceptor(&leaf)
+    .unwrap();
+    let (tls, group) = handshake(acceptor, &connector);
+    assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
+    assert_eq!(group, Some(29));
+}
+
+#[test]
+fn production_downstream_prefers_hybrid_and_accepts_classical_clients() {
+    let ca = ProxyCa::generate("PQC downstream root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let factory = DownstreamTlsContextFactory::new(DownstreamTlsPolicy::default());
+    for (groups, expected) in [(GROUPS, HYBRID_GROUP), ("X25519:P-256:P-384", 29)] {
+        let mut client = connector(&ca);
+        client.set_curves_list(groups).unwrap();
+        let (tls, group) = handshake(factory.acceptor(&leaf).unwrap(), &client.build());
+        assert_eq!(tls.ssl().curve(), Some(expected));
+        assert_eq!(group, Some(expected));
+    }
+    let mut client = connector(&ca);
+    client
+        .set_min_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+    client
+        .set_max_proto_version(Some(SslVersion::TLS1_2))
+        .unwrap();
+    let (tls, group) = handshake(factory.acceptor(&leaf).unwrap(), &client.build());
+    assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
+    assert_eq!(group, Some(29));
+}
+
+fn quic_config(tls: SslContextBuilder) -> quiche::Config {
+    let mut config =
+        quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, tls).unwrap();
+    config.set_application_protos(&[b"h3"]).unwrap();
+    config.set_max_idle_timeout(5000);
+    config.set_initial_max_data(65536);
+    config.set_initial_max_stream_data_bidi_local(65536);
+    config.set_initial_max_stream_data_bidi_remote(65536);
+    config.set_initial_max_streams_bidi(8);
+    config
+}
+
+fn quic_handshake(
+    mut client_config: quiche::Config,
+    mut server_config: quiche::Config,
+) -> (quiche::Connection, quiche::Connection) {
+    let client_address = "127.0.0.1:10000".parse().unwrap();
+    let server_address = "127.0.0.1:10001".parse().unwrap();
+    let mut client = quiche::connect(
+        Some("localhost"),
+        &quiche::ConnectionId::from_ref(&[1; 16]),
+        client_address,
+        server_address,
+        &mut client_config,
+    )
+    .unwrap();
+    let mut server = quiche::accept(
+        &quiche::ConnectionId::from_ref(&[2; 16]),
+        None,
+        server_address,
+        client_address,
+        &mut server_config,
+    )
+    .unwrap();
+    let mut packet = vec![0; 65535];
+    for _ in 0..100 {
+        while let Ok((length, info)) = client.send(&mut packet) {
+            server
+                .recv(
+                    &mut packet[..length],
+                    quiche::RecvInfo {
+                        from: info.from,
+                        to: info.to,
+                    },
+                )
+                .unwrap();
+        }
+        while let Ok((length, info)) = server.send(&mut packet) {
+            client
+                .recv(
+                    &mut packet[..length],
+                    quiche::RecvInfo {
+                        from: info.from,
+                        to: info.to,
+                    },
+                )
+                .unwrap();
+        }
+        if client.is_established() && server.is_established() {
+            return (client, server);
+        }
+        assert!(
+            !client.is_closed(),
+            "client TLS failure: {:?}",
+            client.local_error()
+        );
+        assert!(
+            !server.is_closed(),
+            "server TLS failure: {:?}",
+            server.local_error()
+        );
+    }
+    panic!("QUIC handshake failed to establish");
+}
+
+#[test]
+fn production_quic_context_negotiates_hybrid_and_classical_origins() {
+    let ca = ProxyCa::generate("PQC QUIC root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    for (groups, expected) in [(GROUPS, HYBRID_GROUP), ("X25519", 29)] {
+        let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        server.set_curves_list(groups).unwrap();
+        let (mut client, mut server) = quic_handshake(
+            quic_config(factory(&ca).quiche_context_builder().unwrap()),
+            quic_config(server),
+        );
+        assert_eq!(client.as_mut().curve(), Some(expected));
+        assert_eq!(server.as_mut().curve(), Some(expected));
     }
 }
