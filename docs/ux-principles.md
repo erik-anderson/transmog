@@ -449,6 +449,14 @@ without discarding their original text. Show invisible controls, including NUL,
 as Unicode escapes, noting when display text differs from the original.
 Preserve the original capture values in exports.
 
+Show ALPS use from the recorded TLS negotiation, independently of the profile's
+configured offer. Distinguish a negotiated empty value, a declined offer and
+unavailable evidence. Keep decoded server settings and Client Hint preferences
+in a secondary disclosure, with the complete original bytes in Hex. Client Hint
+preferences are read-only evidence and do not alter forwarded requests. Preserve
+frame order, duplicate parameters and unknown identifiers; explain malformed
+or shortened display content without discarding its original bytes.
+
 The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.
 Present measured local milestones and overlapping latency phases. Distinguish
 zero from unavailable, shared connection setup from per-request work, and bytes

@@ -6,7 +6,8 @@ import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 interface Field { label:string; value:string; displayValue?:string; displayNote?:string; }
 interface DisplayField extends Field { id:number; displayValue:string; }
 interface Certificate { sha256:string; subject:string; fields:Field[]; pem:string; derBase64:string; unavailable:string; }
-interface Connection { id:string; title:string; summary?:string; fields:Field[]; policyFields?:Field[]; diagnosticFields?:Field[]; serverChain:string[]; clientChain:string[]; errors:string[]; }
+interface AlpsContents { peerBytes:number; fields:Field[]; notes:string[]; payloadBase64:string; }
+interface Connection { id:string; title:string; summary?:string; fields:Field[]; policyFields?:Field[]; diagnosticFields?:Field[]; alps?:AlpsContents|null; serverChain:string[]; clientChain:string[]; errors:string[]; }
 interface Inspection { defaultConnectionId?:string; connections:Connection[]; certificates:Certificate[]; }
 interface ChainRow { id:string; label:string; selected:boolean; }
 
@@ -18,6 +19,12 @@ export class CertificateInspector extends WebUIElement {
   @observable certificateConnectionFields:DisplayField[]=[];
   @observable certificatePolicyFields:DisplayField[]=[];
   @observable certificateDiagnosticFields:DisplayField[]=[];
+  @observable alpsRecorded=false;
+  @observable alpsPeerBytes=0;
+  @observable alpsFields:DisplayField[]=[];
+  @observable alpsNotes:Array<{id:number;text:string}>=[];
+  @observable alpsHex:HexPreview|null=null;
+  @observable alpsHexOpen=false;
   @observable certificateErrors:Array<{id:number;text:string}>=[];
   @observable certificateServerChain:ChainRow[]=[];
   @observable certificateClientChain:ChainRow[]=[];
@@ -39,6 +46,7 @@ export class CertificateInspector extends WebUIElement {
     const generation=++this.generation;
     this.inspection=null;this.connectionId='';this.certificateId='';
     this.certificateConnections=[];this.certificateConnectionSummary='';this.certificateConnectionFields=[];this.certificatePolicyFields=[];this.certificateDiagnosticFields=[];this.certificateErrors=[];
+    this.selectAlps(null);
     this.certificateServerChain=[];this.certificateClientChain=[];this.clearCertificate();
     this.certificateBusy=true;this.certificateStatus='Loading recorded TLS context…';
     try {
@@ -61,9 +69,17 @@ export class CertificateInspector extends WebUIElement {
     this.certificateConnectionFields=this.displayFields(connection?.fields??[]);
     this.certificatePolicyFields=this.displayFields(connection?.policyFields??[]);
     this.certificateDiagnosticFields=this.displayFields(connection?.diagnosticFields??[]);
+    this.selectAlps(connection?.alps??null);
     this.certificateErrors=(connection?.errors??[]).map((text,id)=>({id,text}));
     this.selectCertificate(connection?.serverChain[0]??connection?.clientChain[0]??'');
   }
+  private selectAlps(alps:AlpsContents|null):void {
+    this.alpsRecorded=!!alps;this.alpsPeerBytes=alps?.peerBytes??0;
+    this.alpsFields=this.displayFields(alps?.fields??[]);this.alpsNotes=(alps?.notes??[]).map((text,id)=>({id,text}));
+    this.alpsHex=alps?.payloadBase64?{key:'alps:'+this.connectionId,bytesBase64:alps.payloadBase64,offset:0,truncated:false}:null;
+    this.alpsHexOpen=false;
+  }
+  toggleAlpsHex(event:Event):void {this.alpsHexOpen=(event.currentTarget as HTMLDetailsElement).open;}
   selectCertificate(id:string):void {
     this.certificateId=id;
     const connection=this.inspection?.connections.find(connection=>connection.id===this.connectionId);

@@ -5,7 +5,9 @@ use boring::x509::{X509, X509NameRef};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use transmog_core::{PublicCertificate, VerificationResult};
+mod alps;
 mod context;
+pub use alps::AlpsContents;
 
 /// A readable field derived from recorded public certificate bytes.
 #[derive(Clone, Debug, Serialize)]
@@ -53,6 +55,8 @@ pub struct CertificateConnection {
     pub policy_fields: Vec<CertificateField>,
     /// Additional original metadata and conflicting recorded values.
     pub diagnostic_fields: Vec<CertificateField>,
+    /// Decoded server ALPS and its original bytes, when negotiation was recorded.
+    pub alps: Option<AlpsContents>,
     /// Server path, leaf first, referencing the shared certificate list.
     pub server_chain: Vec<String>,
     /// Client authentication path, if recorded.
@@ -223,6 +227,7 @@ impl Application {
                 summary: String::new(),
                 policy_fields: Vec::new(),
                 diagnostic_fields: Vec::new(),
+                alps: None,
                 server_chain: Vec::new(),
                 client_chain: Vec::new(),
                 errors: Vec::new(),
@@ -374,6 +379,7 @@ impl Application {
                 summary: "TLS negotiation unavailable".into(),
                 policy_fields: vec![],
                 diagnostic_fields: vec![],
+                alps: None,
                 server_chain: vec![],
                 client_chain: vec![],
                 errors: vec![],

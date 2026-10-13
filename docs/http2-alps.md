@@ -22,7 +22,8 @@ existing state machine without maintaining a dependency fork.
 ## Why Client Hint processing is deferred
 
 Servers may include an `ACCEPT_CH` extension frame in their ALPS value.
-Transmog discards these preferences. The proxy cannot reliably route this
+Transmog records these preferences for inspection but does not act on them.
+The proxy cannot reliably route this
 connection-level information back to the caller before its request, and does
 not own the caller's browser state, device values, permissions policy or
 consent. Generating hints itself could misrepresent the caller and change
@@ -43,6 +44,29 @@ flow-control or concurrency limits that the client never applies.
 Previously saved custom profiles retain ALPS disabled. The built-in Chromium
 154 recipe advances to revision 2 to include ALPS; the browser reference stays
 154.0.8037.99. Older captures retain ALPS disabled in their recorded provenance.
+
+## Captured server contents
+
+Traffic → Details → Connection shows **HTTP/2 ALPS** as an observed negotiation
+fact: negotiated with a byte count, not negotiated, or unavailable when it was
+not recorded or the TLS handshake did not reach that point. The configured
+profile's offer is separate from this evidence. An empty negotiated server
+value still means ALPS was used.
+
+**Server ALPS contents** decodes the original server value into ordered H2
+frames, named SETTINGS parameters, and each `ACCEPT_CH` origin and requested
+hint list. The Client Hint lists are read-only and ignored when forwarding.
+Unknown settings retain their numeric identifiers; unknown frame payloads have
+a hex preview. **Original ALPS bytes (Hex)** shows the complete value, including
+frame headers. Malformed payloads retain their bytes and show parse diagnostics.
+The readable view limits large content and explains truncation; Hex remains complete.
+
+Native captures store the server value with the shared physical connection
+context. Both SAZ export profiles preserve it, including encrypted archives;
+strict SAZ uses bounded hex chunks in conventional SessionFlags. Earlier
+captures containing only the status text show that text and explain that
+the original payload was not recorded. Conflicting imported status text remains
+available alongside the typed negotiation evidence.
 
 ## Qualification
 

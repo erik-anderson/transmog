@@ -15,6 +15,10 @@ fn evidence() -> PerformanceEvidence {
             peer: Some("203.0.113.1:443".into()),
             tls_version: Some("TLSv1.3".into()),
             tls: Some(TlsEvidence {
+                http2_alps: Some(transmog_core::Http2AlpsEvidence {
+                    negotiated: true,
+                    peer_settings: vec![0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0].into(),
+                }),
                 server_name: Some("private.example".into()),
                 offered_ciphers: (0..32)
                     .map(|i| format!("TLS_SYNTHETIC_CIPHER_{i:03}"))

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {X509Certificate,createHash} from 'node:crypto';
+import {certificateAlpsFixture} from './certificate-alps-fixture.mjs';
 
 export async function smokeCertificates(viewer, traffic, source, nativeFixture, screenshot) {
   const chain=[];
@@ -46,12 +47,16 @@ export async function smokeCertificates(viewer, traffic, source, nativeFixture, 
 }
 
 async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain,performance,screenshot) {
+  const alpsFixture=certificateAlpsFixture();
   const connected=structuredClone(performance.transports[0]);
   Object.assign(connected,{connectionId:'native-origin',outcome:'connected',tlsVersion:'TLSv1.3',tlsResumed:false,cipher:'TLS_AES_128_GCM_SHA256'});
   Object.assign(connected.tls,{verification:'Verified',errors:[],details:{'Key exchange':'Hybrid post-quantum key exchange','Negotiated group':'X25519MLKEM768','Negotiated group ID':'0x11ec','Peer handshake signature':'ecdsa_secp256r1_sha256','Session resumed':'No'}});
   Object.assign(connected.tls.details,{'Negotiated TLS version':'TLSv1.3','Negotiated cipher':'TLS_AES_128_GCM_SHA256','https-server-protocol':'TLSv1.3','https-server-cipher':'TLS_AES_128_GCM_SHA256'});
+  connected.tls.http2Alps={negotiated:true,peerSettings:alpsFixture.bytes};
+  connected.tls.details['HTTP/2 ALPS']=`Negotiated (${alpsFixture.bytes.length} peer bytes)`;
   const client=structuredClone(connected);Object.assign(client,{leg:'client',connectionId:'native-client'});
   client.tls.details={'Key exchange':'Classical key exchange','Negotiated group':'X25519','Negotiated group ID':'0x001d','Local handshake signature':'ecdsa_secp256r1_sha256'};
+  client.tls.http2Alps={negotiated:false,peerSettings:[]};
   const controls=structuredClone(client);controls.connectionId='native-controls';
   Object.assign(controls.tls.details,{'Negotiated group':'X25519\0MLKEM768','Key exchange':'Hybrid post-quantum key exchange'});
   const sample={...performance,transports:[performance.transports[0],connected,client,controls]};
@@ -63,6 +68,9 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   const id=await viewer.evaluate(`(async()=>{const workspace=${traffic},row=workspace.sessions.find(row=>row.path==='/native-fallback');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   const context=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_certificates',{id:${JSON.stringify(id)}})`);
   assert.equal(context.defaultConnectionId,'upstream:native-origin');
+  const alps=context.connections.find(connection=>connection.id==='upstream:native-origin').alps;
+  assert.equal(alps.payloadBase64,alpsFixture.view.payloadBase64);
+  assert.ok(alps.fields.some(field=>field.label==='Requested Client Hints (ignored)'&&field.value==='Sec-CH-UA-Platform, Sec-CH-UA-Model'));
   assert.equal(new Set(context.connections.map(connection=>connection.title)).size,4);
   const controlField=context.connections.find(connection=>connection.id==='client:native-controls').fields.find(field=>field.label==='Negotiated group');
   assert.equal(controlField.value,'X25519\0MLKEM768');assert.equal(controlField.displayValue,'X25519\\u{0000}MLKEM768');
@@ -80,7 +88,17 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
     assert.ok(await viewer.evaluate(`(()=>{const button=Array.from(${dialog}.querySelectorAll('footer button')).find(button=>button.textContent==='Close'),rect=button.getBoundingClientRect();return rect.bottom<=innerHeight&&button.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===button;})()`));
     if(screenshot)await writeFile(screenshot.replace('.png',`-fallback-${label}.png`),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
   }
+  await viewer.evaluate(`${component}.querySelector('.certificate-alps > summary').click()`);
+  await wait(`${component}.querySelector('.certificate-alps').open && ${component}.textContent.includes('Sec-CH-UA-Platform, Sec-CH-UA-Model')`);
+  await viewer.evaluate(`${component}.querySelector('.certificate-alps-raw > summary').click()`);
+  await wait(`${component}.querySelector('.certificate-alps hex-viewer')?.hexRows.length>0`);
+  assert.equal(await viewer.evaluate(`${component}.querySelector('.certificate-alps hex-viewer').preview.bytesBase64`),alpsFixture.view.payloadBase64);
+  await viewer.call('Emulation.setDeviceMetricsOverride',{width:640,height:520,deviceScaleFactor:1,mobile:false});
+  await viewer.evaluate(`${component}.querySelector('.certificate-alps-raw').scrollIntoView({block:'nearest'})`);
+  if(screenshot)await writeFile(screenshot.replace('.png','-alps-contents-compact.png'),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
   await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='upstream:native-certificate';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+  await wait(`!${component}.alpsRecorded`);
+  assert.equal(await viewer.evaluate(`${component}.querySelector('.certificate-alps')!==null`),false);
   await wait(`${component}.textContent.includes('Certificate issuer was not trusted')`);
   assert.equal(await viewer.evaluate(`${component}.textContent.includes('X25519MLKEM768')`),false);
   await viewer.evaluate(`(()=>{const select=${component}.querySelector('select');select.value='client:native-controls';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);

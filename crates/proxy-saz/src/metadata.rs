@@ -308,6 +308,10 @@ pub(crate) fn render(
             }
             if let Some(prefix) = crate::tls::flag_prefix(leg) {
                 if let Some(tls) = &transport.tls {
+                    if let Some(alps) = &tls.http2_alps {
+                        negotiation_flags.extend(crate::tls::alps_flags(alps, prefix));
+                        negotiation_flags.insert(format!("{prefix}alps"), alps.summary());
+                    }
                     if let Some(profile) = &tls.network_profile
                         && let Ok(value) = serde_json::to_string(profile)
                     {

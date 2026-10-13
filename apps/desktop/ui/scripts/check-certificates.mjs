@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {X509Certificate,createHash} from 'node:crypto';
+import {certificateAlpsFixture} from './certificate-alps-fixture.mjs';
 
 export async function checkCertificates(page, root) {
+  const alpsFixture=certificateAlpsFixture();
   const certificates=[];
   for(const name of ['leaf','root']) {
     const pem=await readFile(resolve(root,'../../../crates/app/tests/fixtures/certificates/'+name+'.pem'),'utf8'),certificate=new X509Certificate(pem);
@@ -23,6 +25,9 @@ export async function checkCertificates(page, root) {
     diagnosticFields:[{label:'https-server-cipher',value:'TLS_AES_128_GCM_SHA256'},{label:'https-server-protocol',value:'TLSv1.3'},{label:'https-server-sni',value:'localhost'}],
   });
   inspection.connections.push({id:'upstream:controls',title:'Recorded server connection · Connected · controls',summary:'TLSv1.3 · X25519\\u{0000}MLKEM768 · TLS_AES_128_GCM_SHA256',fields:[{label:'Negotiated group',value:'X25519\0MLKEM768',displayValue:'X25519\\u{0000}MLKEM768',displayNote:'Invisible characters shown as Unicode escapes.'}],policyFields:[],diagnosticFields:[{label:'Duplicate label',value:'first'},{label:'Duplicate label',value:'second'}],serverChain:[],clientChain:[],errors:[]});
+  inspection.connections[3].alps=alpsFixture.view;
+  inspection.connections[3].fields.push({label:'HTTP/2 ALPS',value:`Negotiated (${alpsFixture.bytes.length} peer bytes)`});
+  inspection.connections.push({id:'upstream:alps-empty',title:'Transmog → server · Connected · empty ALPS',fields:[{label:'HTTP/2 ALPS',value:'Negotiated (0 peer bytes)'}],alps:{peerBytes:0,fields:[{label:'Server value',value:'Empty (ALPS was negotiated)'}],notes:[],payloadBase64:''},serverChain:[],clientChain:[],errors:[]});
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
   const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
   const dialog=page.locator('.details-dialog[open]');
@@ -43,6 +48,20 @@ export async function checkCertificates(page, root) {
   const metadata=dialog.locator('details').filter({has:page.getByText('Additional recorded metadata',{exact:true})});
   assert.equal(await policy.evaluate(node=>node.open),false);
   assert.equal(await metadata.evaluate(node=>node.open),false);
+  const alps=dialog.locator('.certificate-alps');
+  assert.equal(await alps.evaluate(node=>node.open),false);
+  await alps.locator('summary').first().focus();await page.keyboard.press('Enter');
+  await alps.getByText('Sec-CH-UA-Platform, Sec-CH-UA-Model',{exact:true}).waitFor({state:'visible'});
+  await alps.locator('.certificate-alps-raw > summary').click();
+  await alps.locator('.hex-row').first().waitFor();
+  assert.equal(await alps.locator('hex-viewer').evaluate(node=>node.preview.bytesBase64),alpsFixture.view.payloadBase64);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/alps-contents-compact.png')});
+  await connection.selectOption('upstream:alps-empty');
+  await dialog.getByText('Empty (ALPS was negotiated)',{exact:true}).waitFor();
+  assert.equal(await dialog.locator('.certificate-alps-raw').count(),0);
+  await connection.selectOption('upstream:failed');
+  assert.equal(await dialog.locator('.certificate-alps').count(),0,'Prior server ALPS contents leaked into a failed attempt');
+  await connection.selectOption('upstream:connected');
   await policy.locator('summary').focus();await page.keyboard.press('Enter');
   await policy.getByText('Available cipher suites',{exact:true}).waitFor({state:'visible'});
   await policy.locator('summary').click();

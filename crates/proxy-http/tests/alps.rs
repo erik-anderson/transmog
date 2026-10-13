@@ -132,12 +132,18 @@ async fn execute(
 #[tokio::test]
 async fn alps_applies_hpack_and_concurrency_before_requests_without_a_wire_settings_frame() {
     let (client, listener, acceptor, offer) = fixture(true).await;
+    let recorder = transmog_core::performance::PerformanceRecorder::new(
+        std::time::SystemTime::now(),
+        std::time::Instant::now(),
+    );
+    let client = client.with_performance(Some(recorder.clone()));
+    let mut expected = settings(&[(1, 0), (3, 1), (8, 1), (0x2a2a, 7)]);
+    expected.extend(frame(0x89, 0, 0, &[0, 0, 0, 0]));
+    let alps = expected.clone();
     let port = listener.local_addr().unwrap().port();
     let origin = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
         let mut ssl = Ssl::new(acceptor.context()).unwrap();
-        let mut alps = settings(&[(1, 0), (3, 1), (8, 1), (0x2a2a, 7)]);
-        alps.extend(frame(0x89, 0, 0, &[0, 0, 0, 0])); // Optional Client Hint preferences are discarded.
         transmog_tls::configure_h2_application_settings(&mut ssl, &alps).unwrap();
         let mut io = tokio_boring::SslStreamBuilder::new(ssl, tcp)
             .accept()
@@ -171,6 +177,14 @@ async fn alps_applies_hpack_and_concurrency_before_requests_without_a_wire_setti
     right.unwrap();
     origin.await.unwrap();
     assert_eq!(*offer.lock().unwrap(), Some(vec![0, 3, 2, b'h', b'2']));
+    let evidence = recorder.snapshot();
+    let alps = evidence
+        .transports
+        .iter()
+        .find_map(|transport| transport.tls.as_ref()?.http2_alps.as_ref())
+        .unwrap();
+    assert!(alps.negotiated);
+    assert_eq!(alps.peer_settings.as_ref(), expected);
 }
 
 #[tokio::test]
@@ -223,8 +237,18 @@ async fn alps_zero_window_blocks_data_and_later_wire_settings_are_acknowledged()
 
 #[tokio::test]
 async fn alps_toggle_and_non_alps_origin_keep_normal_http2_working() {
-    for (enabled, server_alps) in [(false, true), (true, false), (true, true)] {
+    for (enabled, server_alps, empty) in [
+        (false, true, false),
+        (true, false, false),
+        (true, true, false),
+        (true, true, true),
+    ] {
         let (client, listener, acceptor, offer) = fixture(enabled).await;
+        let recorder = transmog_core::performance::PerformanceRecorder::new(
+            std::time::SystemTime::now(),
+            std::time::Instant::now(),
+        );
+        let client = client.with_performance(Some(recorder.clone()));
         let port = listener.local_addr().unwrap().port();
         let origin = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
@@ -236,11 +260,12 @@ async fn alps_toggle_and_non_alps_origin_keep_normal_http2_working() {
                 preferences.extend_from_slice(origin.as_bytes());
                 preferences.extend_from_slice(&u16::try_from(hint.len()).unwrap().to_be_bytes());
                 preferences.extend_from_slice(hint);
-                transmog_tls::configure_h2_application_settings(
-                    &mut ssl,
-                    &frame(0x89, 0, 0, &preferences),
-                )
-                .unwrap();
+                let payload = if empty {
+                    vec![]
+                } else {
+                    frame(0x89, 0, 0, &preferences)
+                };
+                transmog_tls::configure_h2_application_settings(&mut ssl, &payload).unwrap();
             }
             let io = tokio_boring::SslStreamBuilder::new(ssl, tcp)
                 .accept()
@@ -268,6 +293,14 @@ async fn alps_toggle_and_non_alps_origin_keep_normal_http2_working() {
         execute(&client, request).await.unwrap();
         origin.await.unwrap();
         assert_eq!(offer.lock().unwrap().is_some(), enabled);
+        let evidence = recorder.snapshot();
+        let alps = evidence
+            .transports
+            .iter()
+            .find_map(|transport| transport.tls.as_ref()?.http2_alps.as_ref())
+            .unwrap();
+        assert_eq!(alps.negotiated, enabled && server_alps);
+        assert_eq!(alps.peer_settings.is_empty(), !alps.negotiated || empty);
     }
 }
 
@@ -281,6 +314,12 @@ async fn invalid_alps_is_rejected_before_any_http_bytes_are_sent() {
         vec![0],
     ] {
         let (client, listener, acceptor, _) = fixture(true).await;
+        let recorder = transmog_core::performance::PerformanceRecorder::new(
+            std::time::SystemTime::now(),
+            std::time::Instant::now(),
+        );
+        let client = client.with_performance(Some(recorder.clone()));
+        let expected = alps.clone();
         let port = listener.local_addr().unwrap().port();
         let origin = tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
@@ -295,6 +334,14 @@ async fn invalid_alps_is_rejected_before_any_http_bytes_are_sent() {
         });
         assert!(execute(&client, support::request(port)).await.is_err());
         origin.await.unwrap();
+        let evidence = recorder.snapshot();
+        assert!(evidence.transports.iter().any(|transport| {
+            transport
+                .tls
+                .as_ref()
+                .and_then(|tls| tls.http2_alps.as_ref())
+                .is_some_and(|alps| alps.negotiated && alps.peer_settings.as_ref() == expected)
+        }));
     }
 }
 
@@ -343,6 +390,11 @@ async fn google_negotiates_alps_and_serves_a_verified_http2_request() {
         Some(transmog_core::VerificationResult::Verified)
     );
     println!("Google TLS evidence: {:?}", tls.details);
+    let alps = tls.http2_alps.as_ref().unwrap();
+    assert!(alps.negotiated);
+    assert!(!alps.peer_settings.is_empty());
+    assert_eq!(tls.details["HTTP/2 ALPS"], alps.summary());
+    println!("Google server ALPS bytes: {:02x?}", alps.peer_settings);
     assert!(
         tls.details
             .get("HTTP/2 ALPS")
@@ -391,4 +443,11 @@ async fn docker_caddy_uses_normal_settings_when_it_declines_alps() {
         Some("Not negotiated")
     );
     println!("Docker Caddy: verified H2; ALPS not negotiated");
+    assert_eq!(
+        tls.http2_alps,
+        Some(transmog_core::Http2AlpsEvidence {
+            negotiated: false,
+            peer_settings: vec![].into()
+        })
+    );
 }

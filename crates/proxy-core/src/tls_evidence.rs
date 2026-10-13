@@ -33,10 +33,40 @@ impl PublicCertificate {
     }
 }
 
+/// Observed HTTP/2 ALPS negotiation and the exact public server settings bytes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Http2AlpsEvidence {
+    /// True only when TLS negotiated ALPS, including an empty server value.
+    pub negotiated: bool,
+    /// Original server value, without TLS headers or the client settings value.
+    pub peer_settings: Arc<[u8]>,
+}
+impl Http2AlpsEvidence {
+    /// Checks the TLS extension's finite byte bound without rejecting malformed
+    /// recorded payloads that users may need to inspect after a failed connection.
+    #[must_use]
+    pub fn valid(&self) -> bool {
+        self.peer_settings.len() <= 65_535 && (self.negotiated || self.peer_settings.is_empty())
+    }
+    /// Stable recorded negotiation description, separate from configured offers.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        if self.negotiated {
+            format!("Negotiated ({} peer bytes)", self.peer_settings.len())
+        } else {
+            "Not negotiated".into()
+        }
+    }
+}
+
 /// Recorded connection facts needed to understand certificates and TLS failures.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TlsEvidence {
+    /// Actual HTTP/2 ALPS negotiation; absent when not recorded or not reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http2_alps: Option<Http2AlpsEvidence>,
     /// Effective recipe when this physical origin connection was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_profile: Option<crate::network_profile::NetworkProfileSnapshot>,
@@ -70,9 +100,13 @@ impl TlsEvidence {
     /// Checks finite shape before accepting saved evidence.
     #[must_use]
     pub fn valid(&self) -> bool {
-        self.network_profile
+        self.http2_alps
             .as_ref()
-            .is_none_or(crate::network_profile::NetworkProfileSnapshot::valid)
+            .is_none_or(Http2AlpsEvidence::valid)
+            && self
+                .network_profile
+                .as_ref()
+                .is_none_or(crate::network_profile::NetworkProfileSnapshot::valid)
             && self.server_chain.len() <= 32
             && self.client_chain.len() <= 32
             && self
@@ -105,6 +139,33 @@ impl TlsEvidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn alps_requires_recorded_contents_and_distinguishes_absence_from_decline() {
+        let mut tls = TlsEvidence::default();
+        assert!(
+            serde_json::to_value(&tls)
+                .unwrap()
+                .get("http2Alps")
+                .is_none()
+        );
+        for (negotiated, size, valid) in [
+            (true, 0, true),
+            (false, 0, true),
+            (false, 1, false),
+            (true, 65_535, true),
+            (true, 65_536, false),
+        ] {
+            tls.http2_alps = Some(Http2AlpsEvidence {
+                negotiated,
+                peer_settings: vec![0; size].into(),
+            });
+            assert_eq!(tls.valid(), valid);
+        }
+        assert!(
+            serde_json::from_value::<Http2AlpsEvidence>(serde_json::json!({"negotiated":true}))
+                .is_err()
+        );
+    }
     #[test]
     fn transport_references_never_serialize_certificate_bytes_or_arbitrary_extra_fields() {
         let certificate = PublicCertificate {

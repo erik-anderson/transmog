@@ -45,7 +45,18 @@ fn evidence(state: u8) -> PerformanceEvidence {
     let transports = ["client", "upstream"]
         .into_iter()
         .map(|leg| {
-            let details = negotiation_details(leg, state);
+            let mut details = negotiation_details(leg, state);
+            let http2_alps = (leg == "upstream").then(|| transmog_core::Http2AlpsEvidence {
+                negotiated: state != 2,
+                peer_settings: if state == 0 {
+                    alps_payload().into()
+                } else {
+                    vec![].into()
+                },
+            });
+            if let Some(alps) = &http2_alps {
+                details.insert("HTTP/2 ALPS".into(), alps.summary());
+            }
             let (version, cipher) = version_cipher(state);
             TransportObservation {
                 leg: leg.into(),
@@ -56,6 +67,7 @@ fn evidence(state: u8) -> PerformanceEvidence {
                 cipher: Some(cipher.into()),
                 tls_resumed: Some(resumed),
                 tls: Some(TlsEvidence {
+                    http2_alps,
                     network_profile: (leg == "upstream")
                         .then(transmog_app::NetworkProfileSnapshot::default),
                     server_name: Some("localhost".into()),
@@ -87,6 +99,19 @@ fn evidence(state: u8) -> PerformanceEvidence {
         transports,
         ..Default::default()
     }
+}
+
+fn alps_payload() -> Vec<u8> {
+    let mut raw = vec![0, 0, 6, 4, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 8];
+    let origin = b"https://localhost";
+    let hints = b"Sec-CH-UA-Platform, Sec-CH-UA-Model";
+    let length = 4 + origin.len() + hints.len();
+    raw.extend([0, 0, u8::try_from(length).unwrap(), 0x89, 0, 0, 0, 0, 0]);
+    raw.extend(u16::try_from(origin.len()).unwrap().to_be_bytes());
+    raw.extend(origin);
+    raw.extend(u16::try_from(hints.len()).unwrap().to_be_bytes());
+    raw.extend(hints);
+    raw
 }
 
 fn version_cipher(state: u8) -> (&'static str, &'static str) {
@@ -328,6 +353,26 @@ fn assert_inspection(
             .unwrap();
         assert_eq!(transport.tls_resumed, original.tls_resumed);
         assert_eq!(
+            transport.tls.as_ref().unwrap().http2_alps,
+            original.tls.as_ref().unwrap().http2_alps
+        );
+        if let Some(alps) = &original.tls.as_ref().unwrap().http2_alps {
+            assert_eq!(connection.alps.is_some(), alps.negotiated);
+            if let Some(contents) = &connection.alps {
+                assert_eq!(contents.peer_bytes, alps.peer_settings.len());
+                assert!(contents.notes.is_empty());
+                if state == 0 {
+                    assert!(
+                        contents
+                            .fields
+                            .iter()
+                            .any(|field| field.label == "Requested Client Hints (ignored)"
+                                && field.value == "Sec-CH-UA-Platform, Sec-CH-UA-Model")
+                    );
+                }
+            }
+        }
+        assert_eq!(
             transport
                 .tls
                 .as_ref()
@@ -350,6 +395,49 @@ fn assert_inspection(
             if state == 2 { 2 } else { 3 }
         );
     }
+}
+
+#[tokio::test]
+async fn maximum_alps_payload_survives_strict_saz_xml_limits() {
+    let root = tempfile::tempdir().unwrap();
+    let mut expected = evidence(0);
+    let original = expected.transports[1].tls.as_mut().unwrap();
+    original.http2_alps = Some(transmog_core::Http2AlpsEvidence {
+        negotiated: true,
+        peer_settings: vec![0xff; 65_535].into(),
+    });
+    original.details.insert(
+        "HTTP/2 ALPS".into(),
+        original.http2_alps.as_ref().unwrap().summary(),
+    );
+    let source = root.path().join("maximum.tmcap");
+    write_capture(&source, std::slice::from_ref(&expected));
+    let app = open(&source, &root.path().join("source-cache"), false).await;
+    let saved = root.path().join("maximum.saz");
+    app.save_traffic_trace(
+        saved.clone(),
+        TraceSaveOptions {
+            format: TraceSaveFormat::SazStrict,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let reopened = open(&saved, &root.path().join("saved-cache"), false).await;
+    let detail = reopened.session_detail(&only_id(&reopened)).unwrap();
+    assert_eq!(
+        detail
+            .performance
+            .transports
+            .iter()
+            .find(|transport| transport.leg == "upstream")
+            .unwrap()
+            .tls
+            .as_ref()
+            .unwrap()
+            .http2_alps,
+        expected.transports[1].tls.as_ref().unwrap().http2_alps
+    );
 }
 
 fn assert_saz_text(path: &Path, encrypted: bool, expected: &PerformanceEvidence) {

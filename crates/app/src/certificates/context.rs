@@ -120,6 +120,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
     if let Some(alpn) = &transport.alpn {
         connection.fields.push(field("ALPN", alpn));
     }
+    super::alps::organize(connection, transport);
     if let Some(value) = details.get("HelloRetryRequest") {
         connection.fields.push(field("HelloRetryRequest", value));
     }
@@ -135,7 +136,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
                 !ORDERED_DETAILS.contains(&label.as_str())
                     && !matches!(
                         label.as_str(),
-                        "Negotiated TLS version" | "Negotiated cipher"
+                        "Negotiated TLS version" | "Negotiated cipher" | "HTTP/2 ALPS"
                     )
             })
             .map(|(label, value)| field(label, value)),
@@ -256,6 +257,7 @@ mod tests {
             ],
             policy_fields: vec![field("Available cipher suites", "configured only")],
             diagnostic_fields: vec![],
+            alps: None,
             server_chain: vec![],
             client_chain: vec![],
             errors: vec![],
@@ -313,6 +315,7 @@ mod tests {
                 "Negotiated group",
                 "Peer handshake signature",
                 "Negotiated cipher",
+                "HTTP/2 ALPS",
                 "Recorded verification"
             ]
         );

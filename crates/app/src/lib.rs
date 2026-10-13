@@ -77,7 +77,7 @@ pub use captured_page_report::{
     CapturedPreviewRequest, CapturedResourceDecision,
 };
 pub use certificates::{
-    CertificateConnection, CertificateField, CertificateInspection, CertificateView,
+    AlpsContents, CertificateConnection, CertificateField, CertificateInspection, CertificateView,
 };
 pub use client_certificates::{
     ClientCertificateDecision, ClientCertificateIdentity, ClientCertificateManager,
