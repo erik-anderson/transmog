@@ -7268,6 +7268,7 @@ version = "0.1.4"
 dependencies = [
  "boring",
  "boring-sys",
+ "brotli",
  "quiche",
  "rustls-native-certs",
  "serde",

@@ -5,8 +5,9 @@ use boring::{
     hash::MessageDigest,
     pkey::{Id, PKey, Private},
     ssl::{
-        ExtensionType, SslAcceptor, SslConnector, SslContext, SslContextBuilder, SslMethod,
-        SslSignatureAlgorithm, SslStream, SslVersion,
+        CertificateCompressionAlgorithm, CertificateCompressor, ExtensionType, SslAcceptor,
+        SslConnector, SslContext, SslContextBuilder, SslMethod, SslSignatureAlgorithm, SslStream,
+        SslVersion,
     },
     x509::{
         X509, X509NameBuilder,
@@ -17,7 +18,10 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 use transmog_tls::{
@@ -332,6 +336,7 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             assert_eq!(shape(&shares[7..]), shape(&expected_extensions[&51][2..]));
             assert_eq!(real[&5], [1, 0, 0, 0, 0]);
             assert!(real[&18].is_empty());
+            assert_eq!(real[&27], [2, 0, 2]);
             for kind in [0, 5, 11, 16, 18, 23, 35, 45, 0xff01] {
                 assert_eq!(real[&kind], expected_extensions[&kind]);
             }
@@ -429,6 +434,134 @@ fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {
         Arc::new(TrustSnapshot::load(&source, 1).unwrap()),
         UpstreamTlsPolicy::default(),
     )
+}
+
+struct CertificateEncoder(Arc<AtomicUsize>);
+
+impl CertificateCompressor for CertificateEncoder {
+    const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::BROTLI;
+    const CAN_COMPRESS: bool = true;
+    const CAN_DECOMPRESS: bool = false;
+
+    fn compress<W: Write>(&self, input: &[u8], output: &mut W) -> std::io::Result<()> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        brotli::BrotliCompress(
+            &mut std::io::Cursor::new(input),
+            output,
+            &brotli::enc::BrotliEncoderParams::default(),
+        )
+        .map(|_| ())
+    }
+}
+
+#[test]
+fn production_clients_verify_brotli_compressed_certificates_over_tcp_and_quic() {
+    let ca = ProxyCa::generate("Brotli certificate root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let compressed = Arc::new(AtomicUsize::new(0));
+    let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    server
+        .set_min_proto_version(Some(SslVersion::TLS1_3))
+        .unwrap();
+    server
+        .set_max_proto_version(Some(SslVersion::TLS1_3))
+        .unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server
+        .add_certificate_compression_algorithm(CertificateEncoder(compressed.clone()))
+        .unwrap();
+    let (tls, _) = handshake(server.build(), &factory(&ca).hyper_connector().unwrap());
+    assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_3));
+    assert!(tls.ssl().verify_result().is_ok());
+    assert_eq!(compressed.load(Ordering::SeqCst), 1);
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server
+        .add_certificate_compression_algorithm(CertificateEncoder(compressed.clone()))
+        .unwrap();
+    let (mut client, _) = quic_handshake(
+        quic_config(factory(&ca).quiche_context_builder().unwrap()),
+        quic_config(server),
+    );
+    assert!(client.as_mut().verify_result().is_ok());
+    assert_eq!(compressed.load(Ordering::SeqCst), 2);
+}
+
+struct InvalidCertificateEncoder(u8);
+
+impl CertificateCompressor for InvalidCertificateEncoder {
+    const ALGORITHM: CertificateCompressionAlgorithm = CertificateCompressionAlgorithm::BROTLI;
+    const CAN_COMPRESS: bool = true;
+    const CAN_DECOMPRESS: bool = false;
+
+    fn compress<W: Write>(&self, input: &[u8], output: &mut W) -> std::io::Result<()> {
+        match self.0 {
+            0 => output.write_all(&[0xff; 16]),
+            1 => brotli::BrotliCompress(
+                &mut std::io::Cursor::new(&input[..input.len() - 1]),
+                output,
+                &brotli::enc::BrotliEncoderParams::default(),
+            )
+            .map(|_| ()),
+            2 => {
+                let mut oversized = input.to_vec();
+                oversized.push(0);
+                brotli::BrotliCompress(
+                    &mut std::io::Cursor::new(oversized),
+                    output,
+                    &brotli::enc::BrotliEncoderParams::default(),
+                )
+                .map(|_| ())
+            }
+            _ => brotli::BrotliCompress(
+                &mut std::io::Cursor::new(input),
+                output,
+                &brotli::enc::BrotliEncoderParams::default(),
+            )
+            .map(|_| ()),
+        }
+    }
+}
+
+#[test]
+fn compressed_certificate_errors_and_untrusted_chains_fail_the_handshake() {
+    let ca = ProxyCa::generate("Invalid compressed certificate root", 2).unwrap();
+    let unrelated = ProxyCa::generate("Unrelated compressed certificate root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    for kind in 0..4 {
+        let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+        server
+            .set_min_proto_version(Some(SslVersion::TLS1_3))
+            .unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        server
+            .add_certificate_compression_algorithm(InvalidCertificateEncoder(kind))
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (tcp, _) = listener.accept().unwrap();
+            socket(&tcp);
+            server.build().accept(tcp).is_err()
+        });
+        let tcp = TcpStream::connect(address).unwrap();
+        socket(&tcp);
+        let connector = factory(if kind == 3 { &unrelated } else { &ca })
+            .hyper_connector()
+            .unwrap();
+        assert!(
+            connector.connect("localhost", tcp).is_err(),
+            "invalid certificate case {kind} succeeded"
+        );
+        assert!(server.join().unwrap());
+    }
 }
 
 #[test]
@@ -558,6 +691,7 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
                 ExtensionType::KEY_SHARE,
                 ExtensionType::STATUS_REQUEST,
                 ExtensionType::CERTIFICATE_TIMESTAMP,
+                ExtensionType::CERT_COMPRESSION,
             ]
             .into_iter()
             .map(|kind| hello.get_extension(kind).unwrap().to_vec())
@@ -584,6 +718,7 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         assert_eq!(u16_be(&observed[0][3][4..]), 1);
         assert_eq!(observed[0][4], [1, 0, 0, 0, 0]);
         assert!(observed[0][5].is_empty());
+        assert_eq!(observed[0][6], [2, 0, 2]);
         if enabled {
             assert!(is_grease(advertised[0]));
             assert_eq!(&advertised[1..], expected);

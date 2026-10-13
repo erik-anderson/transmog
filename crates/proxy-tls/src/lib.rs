@@ -3,6 +3,7 @@
 mod algorithms;
 mod blocking_job;
 mod ca;
+mod certificate_compression;
 /// Request-driven client identity selection and asynchronous signing.
 pub mod client_authentication;
 /// Connection and pool authorization for request-driven client certificates.

@@ -58,6 +58,13 @@ timestamps, matching Chromium's request extensions. These requests do not
 introduce revocation or Certificate Transparency enforcement; certificate
 acceptance continues to use the configured trust snapshot and identity checks.
 
+Upstream TLS 1.3 clients also advertise Brotli certificate decompression
+(`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing
+certificate size limit and exact output buffer, rejects malformed, truncated
+or trailing data, and passes the decoded certificate through the same trust
+and identity verification. Origins may still send an uncompressed certificate.
+Client certificates and downstream certificates remain uncompressed.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all

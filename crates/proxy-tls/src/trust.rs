@@ -413,6 +413,9 @@ impl UpstreamTlsContextFactory {
         builder.set_permute_extensions(true);
         builder.enable_ocsp_stapling();
         builder.enable_signed_cert_timestamps();
+        builder.add_certificate_compression_algorithm(
+            crate::certificate_compression::BrotliCertificateDecoder,
+        )?;
         transmog_tls_native::set_signature_algorithm_grease(builder, true);
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {

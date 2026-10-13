@@ -11,6 +11,7 @@ repository.workspace = true
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
 boring.workspace = true
+brotli.workspace = true
 rustls-native-certs.workspace = true
 serde.workspace = true
 thiserror.workspace = true
