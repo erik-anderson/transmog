@@ -330,7 +330,9 @@ fn production_tcp_general_grease_preserves_real_preferences() {
                 result
             };
             assert_eq!(shape(&shares[7..]), shape(&expected_extensions[&51][2..]));
-            for kind in [0, 11, 16, 23, 35, 45, 0xff01] {
+            assert_eq!(real[&5], [1, 0, 0, 0, 0]);
+            assert!(real[&18].is_empty());
+            for kind in [0, 5, 11, 16, 18, 23, 35, 45, 0xff01] {
                 assert_eq!(real[&kind], expected_extensions[&kind]);
             }
         }
@@ -554,6 +556,8 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
                 ExtensionType::SUPPORTED_GROUPS,
                 ExtensionType::SUPPORTED_VERSIONS,
                 ExtensionType::KEY_SHARE,
+                ExtensionType::STATUS_REQUEST,
+                ExtensionType::CERTIFICATE_TIMESTAMP,
             ]
             .into_iter()
             .map(|kind| hello.get_extension(kind).unwrap().to_vec())
@@ -578,6 +582,8 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         assert_eq!(&observed[0][2][3..], [3, 4]);
         assert!(is_grease(u16_be(&observed[0][3][2..])));
         assert_eq!(u16_be(&observed[0][3][4..]), 1);
+        assert_eq!(observed[0][4], [1, 0, 0, 0, 0]);
+        assert!(observed[0][5].is_empty());
         if enabled {
             assert!(is_grease(advertised[0]));
             assert_eq!(&advertised[1..], expected);

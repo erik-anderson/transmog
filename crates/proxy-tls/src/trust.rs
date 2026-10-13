@@ -411,6 +411,8 @@ impl UpstreamTlsContextFactory {
         crate::algorithms::configure_authentication(builder)?;
         builder.set_grease_enabled(true);
         builder.set_permute_extensions(true);
+        builder.enable_ocsp_stapling();
+        builder.enable_signed_cert_timestamps();
         transmog_tls_native::set_signature_algorithm_grease(builder, true);
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {

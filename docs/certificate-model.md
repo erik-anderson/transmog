@@ -53,6 +53,11 @@ order for each handshake. BoringSSL keeps the pre-shared-key extension last
 when resuming a session and preserves the permutation across a retry. These
 settings leave the real cipher, group and signature preferences unchanged.
 
+Upstream clients request stapled OCSP responses and signed certificate
+timestamps, matching Chromium's request extensions. These requests do not
+introduce revocation or Certificate Transparency enforcement; certificate
+acceptance continues to use the configured trust snapshot and identity checks.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all
