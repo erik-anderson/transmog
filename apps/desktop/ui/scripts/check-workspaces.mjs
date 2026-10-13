@@ -106,7 +106,7 @@ await page.addInitScript((workspace) => {
         case 'set_automatic_update_checks': if(state.updatePreferenceError)throw new Error('Fixture preferences cannot be saved');state.update.automaticChecksEnabled=args.enabled;return structuredClone(state.update);
         case 'update_status': return structuredClone(state.update);
         case 'check_updates': {
-          state.update ??= {phase:sessionStorage.getItem('startup-update-tested')?'idle':'available',currentVersion:'0.1.0',version:sessionStorage.getItem('startup-update-tested')?null:'0.2.0',notes:'Startup release',message:'Release check complete.',downloadedBytes:0,totalBytes:null,scheduled:false,suppressed:false,remindAfterUnixMs:0};
+          state.update ??= {phase:sessionStorage.getItem('startup-update-tested')?'idle':'available',channel:'Release',currentVersion:'0.1.0',version:sessionStorage.getItem('startup-update-tested')?null:'0.2.0',notes:'Startup release',message:'Release check complete.',downloadedBytes:0,totalBytes:null,scheduled:false,suppressed:false,remindAfterUnixMs:0};
           if(state.deferUpdateCheck){state.updateCheckPending=true;await new Promise(resolve=>state.releaseUpdateCheck=resolve);state.deferUpdateCheck=false;}
           if(state.updateNetworkError){state.update.phase='error';state.update.message='Fixture GitHub unavailable';throw new Error(state.update.message);}
           state.update.lastCheckedUnixMs=Date.now();
@@ -448,7 +448,7 @@ const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole
 try {
   await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('4 traffic entries.'));
-  await page.getByRole('button',{name:'Update available',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Stable update available',exact:true}).waitFor();
   assert.equal(await page.locator('#update-panel').isVisible(),false,'Startup opened About without user action');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),1,'Startup did not check exactly once');
   assert.equal(await page.evaluate(()=>document.activeElement===document.body),true,'The startup update prompt stole focus');
@@ -1827,7 +1827,7 @@ try {
   assert.equal(await resetCertificate.isDisabled(),true,'Reset remained available while the proxy was running');
   await page.locator('#settings').getByRole('button',{name:'Stop proxy',exact:true}).click();await caIdle();
   assert.equal(await resetCertificate.isDisabled(),false);
-  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');globalThis.__workspaceFixture.update={...globalThis.__workspaceFixture.update,phase:'idle',version:null,message:'You’re up to date with the stable release.'};shell.openAbout();await shell.updates.check(true);});
+  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');globalThis.__workspaceFixture.update={...globalThis.__workspaceFixture.update,phase:'idle',version:null,message:'You’re up to date with Stable updates.'};shell.openAbout();await shell.updates.check(true);});
   assert.equal(await page.locator('.update-toggle').isVisible(),false,'Toolbar Updates remains prominent with no update');
   assert.match(await page.locator('#update-panel').textContent(),/up to date.*Last successful check/s);
   await page.evaluate(async()=>{globalThis.__workspaceFixture.updateNetworkError=true;await document.querySelector('app-shell').updates.check(true);globalThis.__workspaceFixture.updateNetworkError=false;});
@@ -1851,16 +1851,22 @@ try {
   await page.evaluate(()=>globalThis.__workspaceFixture.updatePreferenceError=false);await automaticChecks.check();
   await page.waitForFunction(()=>!document.querySelector('app-shell').updates.updatePreferenceBusy);
   // Updates preserve startup, snooze, cancellation, drafts, and safe shutdown semantics.
-  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,phase:'available',version:'0.2.0',notes:'A release note with <script>inert text</script>',message:'A new stable release is available.'};});
+  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,channel:'Release',phase:'available',version:'0.2.0',notes:'A release note with <script>inert text</script>',message:'A new Stable update is available.'};});
   const updatePanel=page.locator('#update-panel');
   await page.evaluate(()=>document.querySelector('app-shell').openAbout());
   await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(true);});
   await updatePanel.getByRole('button',{name:'Update now',exact:true}).waitFor();
+  await updatePanel.getByText('Stable release 0.2.0 is available.',{exact:true}).waitFor();
+  await page.evaluate(()=>{const shell=document.querySelector('app-shell');globalThis.__workspaceFixture.update={...globalThis.__workspaceFixture.update,channel:'Canary'};shell.updates.updateState={...shell.updates.updateState,channel:'Canary'};shell.onUpdateState(new CustomEvent('update-state-change',{detail:globalThis.__workspaceFixture.update}));});
+  await updatePanel.getByText('Canary build 0.2.0 is available.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Canary update available',exact:true}).waitFor();
+  await page.evaluate(()=>{const shell=document.querySelector('app-shell');globalThis.__workspaceFixture.update={...globalThis.__workspaceFixture.update,channel:'Release'};shell.updates.updateState={...shell.updates.updateState,channel:'Release'};shell.onUpdateState(new CustomEvent('update-state-change',{detail:globalThis.__workspaceFixture.update}));});
   await updatePanel.getByText('Release notes',{exact:true}).click();
   assert.match(await updatePanel.locator('pre').textContent(),/<script>inert text<\/script>/);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/update-available.png')});
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferUpdateCheck=true;void document.querySelector('app-shell').updates.check(true);});
+  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.update={...fixture.update,channel:'Canary',message:'A new Canary update is available.'};fixture.deferUpdateCheck=true;void document.querySelector('app-shell').updates.check(true);});
   await page.waitForFunction(()=>globalThis.__workspaceFixture.updateCheckPending);
+  await updatePanel.getByText('Checking for Canary updates…',{exact:true}).waitFor();
   const checksWhilePending=await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates);
   await page.evaluate(async()=>{await document.querySelector('app-shell').updates.check(true);});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.check_updates),checksWhilePending,'Manual checking duplicated an in-flight startup check');

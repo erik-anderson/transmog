@@ -792,6 +792,7 @@
   "sourceIp": "",
   "updateState": {
     "phase": "idle",
+    "channel": "Release",
     "currentVersion": "",
     "version": null,
     "notes": "",
@@ -805,7 +806,7 @@
     "automaticChecksEnabled": true
   },
   "updateToolbarVisible": false,
-  "updateToolbarLabel": "Update available",
+  "updateToolbarLabel": "Stable update available",
   "updateLastCheckedText": "",
   "updateBusy": false,
   "updatePreferenceBusy": false,

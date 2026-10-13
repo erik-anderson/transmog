@@ -5,6 +5,7 @@ import { describeError } from '../utilities.js';
 
 export interface UpdateStatus {
   phase: string;
+  channel: string;
   currentVersion: string;
   version: string | null;
   notes: string;
@@ -39,7 +40,7 @@ export class AppUpdates extends WebUIElement {
   }
 
   private apply(status: UpdateStatus): void {
-    this.updateState = {...status, automaticChecksEnabled:status.automaticChecksEnabled??true, message:status.message || 'Updates have not been checked yet.'};
+    this.updateState = {...status, channel:status.channel || this.updateState.channel || 'Release', automaticChecksEnabled:status.automaticChecksEnabled??true, message:status.message || 'Updates have not been checked yet.'};
     this.updateLastCheckedText = status.lastCheckedUnixMs ? 'Last successful check: '+new Date(status.lastCheckedUnixMs).toLocaleString() : '';
     this.$emit('update-state-change', status);
     this.updateProgressText = status.totalBytes
@@ -68,7 +69,10 @@ export class AppUpdates extends WebUIElement {
       if (generation !== this.generation || !this.isConnected) return;
       const currentSnapshot = snapshot && {...snapshot, automaticChecksEnabled:preferenceGeneration===this.preferenceGeneration ? snapshot.automaticChecksEnabled : this.updateState.automaticChecksEnabled};
       if(currentSnapshot&&!manual&&currentSnapshot.automaticChecksEnabled===false){this.apply(currentSnapshot);return;}
-      if (currentSnapshot) this.apply({...currentSnapshot, phase: 'checking', message: 'Checking for a stable release…'});
+      if (currentSnapshot) {
+        const track = currentSnapshot.channel === 'Canary' ? 'Canary' : 'Stable';
+        this.apply({...currentSnapshot, phase: 'checking', message: `Checking for ${track} updates…`});
+      }
       const status = await invoke<UpdateStatus>('check_updates', { manual });
       if (generation !== this.generation || !this.isConnected) return;
       this.apply(preferenceGeneration===this.preferenceGeneration?status:{...status,automaticChecksEnabled:this.updateState.automaticChecksEnabled});

@@ -4,7 +4,8 @@
     <label><input type="checkbox" ?checked="{{updateState.automaticChecksEnabled}}" ?disabled="{{updatePreferenceBusy}}" @change="{setAutomaticChecks(e)}"> Automatically check for updates</label>
     <p class="help">Check when Transmog starts. You can check manually at any time.</p>
     <p>Installed version: <if condition="updateState.currentVersion">{{updateState.currentVersion}}</if><if condition="!updateState.currentVersion">Loading…</if></p>
-    <if condition="updateState.version"><p><strong>Stable release {{updateState.version}} is available.</strong></p></if>
+    <if condition="updateState.version && updateState.channel == 'Canary'"><p><strong>Canary build {{updateState.version}} is available.</strong></p></if>
+    <if condition="updateState.version && updateState.channel != 'Canary'"><p><strong>Stable release {{updateState.version}} is available.</strong></p></if>
     <p role="status" aria-live="polite">{{updateState.message}}</p>
     <p class="help" ?hidden="{{!updateLastCheckedText}}">{{updateLastCheckedText}}</p>
     <p ?hidden="{{!updateReminderText}}">{{updateReminderText}}</p>

@@ -108,8 +108,9 @@ export class AppShell extends WebUIElement {
   @observable updateToolbarLabel=initialState.updateToolbarLabel;
   onUpdateState(event:CustomEvent<UpdateStatus>):void {
     const status=event.detail;
+    const track=status.channel==='Canary'?'Canary':'Stable';
     this.updateToolbarVisible=Boolean(status.version&&!status.suppressed||status.scheduled||['downloading','ready','installing'].includes(status.phase));
-    this.updateToolbarLabel=status.scheduled?'Update on exit':status.phase==='downloading'?'Downloading update…':status.phase==='ready'?'Update ready':status.phase==='installing'?'Installing update…':'Update available';
+    this.updateToolbarLabel=status.scheduled?`${track} update on exit`:status.phase==='downloading'?`Downloading ${track} update…`:status.phase==='ready'?`${track} update ready`:status.phase==='installing'?`Installing ${track} update…`:`${track} update available`;
   }
   openAbout():void {this.settings.showSettingsSection('about');this.activateView('settings');}
   updateDraftDialog!: HTMLDialogElement;

@@ -29,10 +29,27 @@ fn update_feed(channel: &str) -> &'static str {
     }
 }
 
+fn update_track(channel: &str) -> &'static str {
+    if channel == "Canary" { "Canary" } else { "Stable" }
+}
+
+fn checking_message(channel: &str) -> String {
+    format!("Checking for {} updates…", update_track(channel))
+}
+
+fn available_message(channel: &str) -> String {
+    format!("A new {} update is available.", update_track(channel))
+}
+
+fn current_message(channel: &str) -> String {
+    format!("You’re up to date with {} updates.", update_track(channel))
+}
+
 #[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UpdateStatus {
     pub(crate) phase: &'static str,
+    pub(crate) channel: String,
     pub(crate) current_version: String,
     pub(crate) version: Option<String>,
     pub(crate) notes: String,
@@ -75,6 +92,10 @@ impl UpdateCoordinator {
                         .as_str()
                         .expect("product version")
                         .to_owned(),
+                    channel: release["channel"]
+                        .as_str()
+                        .unwrap_or("Release")
+                        .to_owned(),
                     remind_after_unix_ms: reminder.reminder.remind_after_unix_ms,
                     automatic_checks_enabled: reminder.reminder.automatic_checks_enabled,
                     ..UpdateStatus::default()
@@ -107,13 +128,13 @@ impl UpdateCoordinator {
                 "idle"
             };
             let message = if inner.candidate.is_some() {
-                "A new release is available."
+                available_message(&inner.status.channel)
             } else if inner.status.last_checked_unix_ms > 0 {
-                "You’re up to date."
+                current_message(&inner.status.channel)
             } else {
-                "Updates have not been checked yet."
+                "Updates have not been checked yet.".to_owned()
             };
-            message.clone_into(&mut inner.status.message);
+            inner.status.message = message;
         }
         Ok(inner.status.clone())
     }
@@ -161,7 +182,7 @@ impl UpdateCoordinator {
             }
             inner.status.phase = "checking";
             inner.status.suppressed = false;
-            "Checking for an update…".clone_into(&mut inner.status.message);
+            inner.status.message = checking_message(&inner.status.channel);
         }
         let result = async {
             let release: serde_json::Value =
@@ -207,7 +228,7 @@ impl UpdateCoordinator {
                     .chars()
                     .take(8_192)
                     .collect();
-                "A new release is available.".clone_into(&mut inner.status.message);
+                inner.status.message = available_message(&inner.status.channel);
                 inner.candidate = Some(update);
                 Ok(inner.status.clone())
             }
@@ -216,7 +237,7 @@ impl UpdateCoordinator {
                 inner.status.phase = "idle";
                 inner.status.version = None;
                 inner.status.notes.clear();
-                "You’re up to date.".clone_into(&mut inner.status.message);
+                inner.status.message = current_message(&inner.status.channel);
                 inner.candidate = None;
                 Ok(inner.status.clone())
             }
@@ -458,6 +479,12 @@ mod tests {
         assert_eq!(update_feed("Canary"), CANARY_UPDATE_FEED);
         assert_eq!(update_feed("Release"), STABLE_UPDATE_FEED);
         assert_eq!(update_feed("unknown"), STABLE_UPDATE_FEED);
+        assert_eq!(checking_message("Canary"), "Checking for Canary updates…");
+        assert_eq!(available_message("Canary"), "A new Canary update is available.");
+        assert_eq!(current_message("Canary"), "You’re up to date with Canary updates.");
+        assert_eq!(checking_message("Release"), "Checking for Stable updates…");
+        assert_eq!(available_message("Release"), "A new Stable update is available.");
+        assert_eq!(current_message("Release"), "You’re up to date with Stable updates.");
     }
 
     #[test]
@@ -482,7 +509,7 @@ mod tests {
         }
         assert_eq!(
             coordinator.set_automatic_checks(true).unwrap().message,
-            "You’re up to date."
+            "You’re up to date with Stable updates."
         );
     }
 
