@@ -7271,6 +7271,7 @@ name = "transmog-tls"
 version = "0.1.3"
 dependencies = [
  "boring",
+ "boring-sys",
  "quiche",
  "rustls-native-certs",
  "serde",
