@@ -47,6 +47,12 @@ for each handshake; peers ignore it and negotiate an existing real algorithm.
 Signature-algorithm GREASE is a separate native setting from ordinary GREASE,
 and does not change the server's CertificateRequest algorithm list.
 
+The same upstream contexts enable ordinary GREASE in cipher suites, supported
+groups, key shares, versions and reserved extensions, and randomize extension
+order for each handshake. BoringSSL keeps the pre-shared-key extension last
+when resuming a session and preserves the permutation across a retry. These
+settings leave the real cipher, group and signature preferences unchanged.
+
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all

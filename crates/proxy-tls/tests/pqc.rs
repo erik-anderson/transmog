@@ -190,6 +190,15 @@ fn u16_be(bytes: &[u8]) -> u16 {
 }
 // Read the first ClientHello from the TLS records actually written by the client.
 fn hello_extensions(written: &[u8]) -> BTreeMap<u16, Vec<u8>> {
+    recorded_hello(written).extensions.into_iter().collect()
+}
+
+struct RecordedHello {
+    ciphers: Vec<u16>,
+    extensions: Vec<(u16, Vec<u8>)>,
+}
+
+fn recorded_hello(written: &[u8]) -> RecordedHello {
     let mut handshake = Vec::new();
     let mut records = written;
     while records.len() >= 5 && records[0] == 22 {
@@ -204,25 +213,30 @@ fn hello_extensions(written: &[u8]) -> BTreeMap<u16, Vec<u8>> {
     let hello = &handshake[4..4 + length];
     let mut cursor = 34;
     cursor += 1 + usize::from(hello[cursor]);
-    cursor += 2 + usize::from(u16_be(&hello[cursor..]));
+    let cipher_length = usize::from(u16_be(&hello[cursor..]));
+    let ciphers = hello[cursor + 2..cursor + 2 + cipher_length]
+        .chunks_exact(2)
+        .map(u16_be)
+        .collect();
+    cursor += 2 + cipher_length;
     cursor += 1 + usize::from(hello[cursor]);
     let length = usize::from(u16_be(&hello[cursor..]));
     let end = cursor + 2 + length;
     cursor += 2;
-    let mut extensions = BTreeMap::new();
+    let mut extensions = Vec::new();
     while cursor < end {
         let kind = u16_be(&hello[cursor..]);
         let length = usize::from(u16_be(&hello[cursor + 2..]));
         cursor += 4;
-        assert!(
-            extensions
-                .insert(kind, hello[cursor..cursor + length].to_vec())
-                .is_none()
-        );
+        assert!(!extensions.iter().any(|(previous, _)| *previous == kind));
+        extensions.push((kind, hello[cursor..cursor + length].to_vec()));
         cursor += length;
     }
     assert_eq!(cursor, end);
-    extensions
+    RecordedHello {
+        ciphers,
+        extensions,
+    }
 }
 
 fn signature_algorithms(extension: &[u8]) -> Vec<u16> {
@@ -233,6 +247,97 @@ fn signature_algorithms(extension: &[u8]) -> Vec<u16> {
 
 fn is_grease(value: u16) -> bool {
     value & 0x0f0f == 0x0a0a && value >> 8 == value & 0xff
+}
+
+#[test]
+fn production_tcp_general_grease_preserves_real_preferences() {
+    let ca = ProxyCa::generate("General GREASE TCP root", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let mut baseline = factory(&ca)
+        .hyper_connector_builder(b"\x02h2\x08http/1.1")
+        .unwrap();
+    baseline.set_grease_enabled(false);
+    baseline.set_permute_extensions(false);
+    let (tls, _) = handshake(
+        acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
+        &baseline.build(),
+    );
+    let expected = recorded_hello(&tls.get_ref().written);
+    let expected_extensions: BTreeMap<_, _> = expected.extensions.into_iter().collect();
+    let mut orders = Vec::new();
+    for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
+        for _ in 0..3 {
+            let server = DownstreamTlsContextFactory::new(DownstreamTlsPolicy {
+                minimum_version: version,
+                maximum_version: version,
+            })
+            .acceptor(&leaf)
+            .unwrap();
+            let (tls, _) = handshake(server, &factory(&ca).hyper_connector().unwrap());
+            assert_eq!(tls.ssl().version2(), Some(version));
+            assert!(tls.ssl().verify_result().is_ok());
+            let hello = recorded_hello(&tls.get_ref().written);
+            orders.push(
+                hello
+                    .extensions
+                    .iter()
+                    .filter_map(|(kind, _)| (!is_grease(*kind)).then_some(*kind))
+                    .collect::<Vec<_>>(),
+            );
+            assert!(is_grease(hello.ciphers[0]));
+            assert_eq!(&hello.ciphers[1..], expected.ciphers);
+            assert!(is_grease(hello.extensions[0].0));
+            assert!(hello.extensions[0].1.is_empty());
+            let last = hello.extensions.last().unwrap();
+            assert!(is_grease(last.0));
+            assert_eq!(last.1, [0]);
+            assert_ne!(hello.extensions[0].0, last.0);
+            let real: BTreeMap<_, _> = hello
+                .extensions
+                .into_iter()
+                .filter(|(kind, _)| !is_grease(*kind))
+                .collect();
+            assert_eq!(
+                real.keys().collect::<Vec<_>>(),
+                expected_extensions.keys().collect::<Vec<_>>()
+            );
+            let groups = signature_algorithms(&real[&10]);
+            assert!(is_grease(groups[0]));
+            assert_eq!(
+                &groups[1..],
+                signature_algorithms(&expected_extensions[&10])
+            );
+            let versions = &real[&43];
+            assert_eq!(usize::from(versions[0]), versions.len() - 1);
+            assert!(is_grease(u16_be(&versions[1..])));
+            assert_eq!(&versions[3..], &expected_extensions[&43][1..]);
+            let shares = &real[&51];
+            assert_eq!(usize::from(u16_be(shares)), shares.len() - 2);
+            assert!(is_grease(u16_be(&shares[2..])));
+            assert_eq!(u16_be(&shares[4..]), 1);
+            assert_eq!(shares[6], 0);
+            // The real shares contain fresh key bytes, so compare group IDs and lengths.
+            let shape = |bytes: &[u8]| {
+                let mut remaining = bytes;
+                let mut result = Vec::new();
+                while !remaining.is_empty() {
+                    let length = usize::from(u16_be(&remaining[2..]));
+                    result.push((u16_be(remaining), length));
+                    remaining = &remaining[4 + length..];
+                }
+                result
+            };
+            assert_eq!(shape(&shares[7..]), shape(&expected_extensions[&51][2..]));
+            for kind in [0, 11, 16, 23, 35, 45, 0xff01] {
+                assert_eq!(real[&kind], expected_extensions[&kind]);
+            }
+        }
+    }
+    // Six fresh handshakes make accidental agreement of all permutations
+    // negligible, without requiring any particular random ordering.
+    assert!(orders.windows(2).any(|pair| pair[0] != pair[1]));
 }
 
 #[test]
@@ -444,12 +549,16 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         server.set_private_key(&leaf.private_key).unwrap();
         server.set_curves_list(GROUPS).unwrap();
         server.set_select_certificate_callback(move |hello| {
-            let algorithms = signature_algorithms(
-                hello
-                    .get_extension(ExtensionType::SIGNATURE_ALGORITHMS)
-                    .unwrap(),
-            );
-            recorder.lock().unwrap().push(algorithms);
+            let extensions: Vec<_> = [
+                ExtensionType::SIGNATURE_ALGORITHMS,
+                ExtensionType::SUPPORTED_GROUPS,
+                ExtensionType::SUPPORTED_VERSIONS,
+                ExtensionType::KEY_SHARE,
+            ]
+            .into_iter()
+            .map(|kind| hello.get_extension(kind).unwrap().to_vec())
+            .collect();
+            recorder.lock().unwrap().push(extensions);
             Ok(())
         });
         let mut client = factory(&ca).quiche_context_builder().unwrap();
@@ -461,13 +570,20 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         assert!(client.as_mut().verify_result().is_ok());
         let observed = observed.lock().unwrap();
         assert_eq!(observed.len(), 1);
-        let advertised = &observed[0];
+        let advertised = signature_algorithms(&observed[0][0]);
+        let groups = signature_algorithms(&observed[0][1]);
+        assert!(is_grease(groups[0]));
+        assert_eq!(&groups[1..], [HYBRID_GROUP, 29, 23, 24]);
+        assert!(is_grease(u16_be(&observed[0][2][1..])));
+        assert_eq!(&observed[0][2][3..], [3, 4]);
+        assert!(is_grease(u16_be(&observed[0][3][2..])));
+        assert_eq!(u16_be(&observed[0][3][4..]), 1);
         if enabled {
             assert!(is_grease(advertised[0]));
             assert_eq!(&advertised[1..], expected);
         } else {
             assert!(advertised.iter().all(|&value| !is_grease(value)));
-            expected.clone_from(advertised);
+            expected = advertised;
         }
     }
 }
