@@ -30,7 +30,11 @@ fn update_feed(channel: &str) -> &'static str {
 }
 
 fn update_track(channel: &str) -> &'static str {
-    if channel == "Canary" { "Canary" } else { "Stable" }
+    if channel == "Canary" {
+        "Canary"
+    } else {
+        "Stable"
+    }
 }
 
 fn checking_message(channel: &str) -> String {
@@ -92,10 +96,7 @@ impl UpdateCoordinator {
                         .as_str()
                         .expect("product version")
                         .to_owned(),
-                    channel: release["channel"]
-                        .as_str()
-                        .unwrap_or("Release")
-                        .to_owned(),
+                    channel: release["channel"].as_str().unwrap_or("Release").to_owned(),
                     remind_after_unix_ms: reminder.reminder.remind_after_unix_ms,
                     automatic_checks_enabled: reminder.reminder.automatic_checks_enabled,
                     ..UpdateStatus::default()
@@ -480,11 +481,23 @@ mod tests {
         assert_eq!(update_feed("Release"), STABLE_UPDATE_FEED);
         assert_eq!(update_feed("unknown"), STABLE_UPDATE_FEED);
         assert_eq!(checking_message("Canary"), "Checking for Canary updates…");
-        assert_eq!(available_message("Canary"), "A new Canary update is available.");
-        assert_eq!(current_message("Canary"), "You’re up to date with Canary updates.");
+        assert_eq!(
+            available_message("Canary"),
+            "A new Canary update is available."
+        );
+        assert_eq!(
+            current_message("Canary"),
+            "You’re up to date with Canary updates."
+        );
         assert_eq!(checking_message("Release"), "Checking for Stable updates…");
-        assert_eq!(available_message("Release"), "A new Stable update is available.");
-        assert_eq!(current_message("Release"), "You’re up to date with Stable updates.");
+        assert_eq!(
+            available_message("Release"),
+            "A new Stable update is available."
+        );
+        assert_eq!(
+            current_message("Release"),
+            "You’re up to date with Stable updates."
+        );
     }
 
     #[test]

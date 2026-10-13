@@ -100,8 +100,9 @@ pub use product_state::{
 };
 pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
-    AuthoredResponseAsset, ImportResponseAsset, ResponseAsset, ResponseAssetEdit,
-    LinkedResponseBody, ResponseBodyFileInfo, ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance, SessionResponseAsset,
+    AuthoredResponseAsset, ImportResponseAsset, LinkedResponseBody, ResponseAsset,
+    ResponseAssetEdit, ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance,
+    ResponseBodyFileInfo, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
@@ -817,7 +818,10 @@ impl Application {
     ///
     /// # Errors
     /// Rejects missing response heads or unavailable retention.
-    pub fn autoresponse_source_headers(&self, id: &str) -> Result<transmog_core::HeaderBlock, AppError> {
+    pub fn autoresponse_source_headers(
+        &self,
+        id: &str,
+    ) -> Result<transmog_core::HeaderBlock, AppError> {
         let exchange = response_assets::parse_exchange_id(id)?;
         self.body_store.as_ref()
             .and_then(|store| store.response_head(exchange, transmog_core::observe::ExchangeBoundary::ClientResponse))
@@ -873,8 +877,12 @@ impl Application {
     ///
     /// # Errors
     /// Rejects missing, unreadable or oversized files.
-    pub fn response_body_file_info(&self,path:&std::path::Path,reference:Option<&str>)->Result<ResponseBodyFileInfo,AppError> {
-        self.response_assets.body_file_info(path,reference)
+    pub fn response_body_file_info(
+        &self,
+        path: &std::path::Path,
+        reference: Option<&str>,
+    ) -> Result<ResponseBodyFileInfo, AppError> {
+        self.response_assets.body_file_info(path, reference)
     }
 
     /// Copies a complete retained response boundary into durable asset storage.

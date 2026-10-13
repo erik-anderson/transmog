@@ -721,13 +721,21 @@ mod tests {
     #[test]
     fn default_ports_share_exact_matching_and_preserve_other_url_parts() {
         for (implicit, explicit, other) in [
-            ("http://example.test/a%2Fb?q=1&q=2", "http://example.test:80/a%2Fb?q=1&q=2", "http://example.test:8080/a%2Fb?q=1&q=2"),
-            ("https://[::1]/a?", "https://[::1]:443/a?", "https://[::1]:8443/a?"),
+            (
+                "http://example.test/a%2Fb?q=1&q=2",
+                "http://example.test:80/a%2Fb?q=1&q=2",
+                "http://example.test:8080/a%2Fb?q=1&q=2",
+            ),
+            (
+                "https://[::1]/a?",
+                "https://[::1]:443/a?",
+                "https://[::1]:8443/a?",
+            ),
         ] {
             assert_eq!(normalize_url(explicit).unwrap(), implicit);
             assert_eq!(normalize_url(other).unwrap(), other);
             for authored in [implicit, explicit] {
-                let condition=UrlCondition::Exact(authored.into());
+                let condition = UrlCondition::Exact(authored.into());
                 assert!(condition.compile().unwrap().matches(&target(implicit)));
                 assert!(condition.compile().unwrap().matches(&target(explicit)));
                 assert!(!condition.compile().unwrap().matches(&target(other)));

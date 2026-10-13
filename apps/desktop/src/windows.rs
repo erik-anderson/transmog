@@ -695,7 +695,10 @@ async fn inspect_response_asset(
 }
 
 #[tauri::command]
-fn autoresponse_source_headers(id: String, state: State<'_, DesktopState>) -> Result<transmog_app::ResponseAssetHeaders, AppError> {
+fn autoresponse_source_headers(
+    id: String,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseAssetHeaders, AppError> {
     state.application.autoresponse_source_headers(&id)
 }
 
@@ -725,8 +728,14 @@ async fn pick_response_body() -> Option<String> {
 }
 
 #[tauri::command]
-fn response_body_file_info(path:String,reference:Option<String>,state:State<'_,DesktopState>)->Result<transmog_app::ResponseBodyFileInfo,AppError> {
-    state.application.response_body_file_info(std::path::Path::new(&path),reference.as_deref())
+fn response_body_file_info(
+    path: String,
+    reference: Option<String>,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseBodyFileInfo, AppError> {
+    state
+        .application
+        .response_body_file_info(std::path::Path::new(&path), reference.as_deref())
 }
 
 #[tauri::command]
