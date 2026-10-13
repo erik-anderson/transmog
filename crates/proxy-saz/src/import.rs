@@ -868,6 +868,7 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
     let mut stack: Vec<String> = Vec::new();
     let mut count = 0_usize;
     let mut version = quick_xml::XmlVersion::default();
+    let mut projected = false;
     loop {
         match reader.read_event().map_err(|_| SazError::InvalidArchive)? {
             event @ (Event::Start(_) | Event::Empty(_)) => {
@@ -894,7 +895,12 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
                     }
                     attributes.insert(key, value);
                 }
-                validate_metadata_attribute_sizes(&name, &attributes)?;
+                restore_metadata_attributes(
+                    &name,
+                    &mut attributes,
+                    stack.is_empty(),
+                    &mut projected,
+                )?;
                 apply_metadata_attributes(&mut result, &name, attributes)?;
                 if !empty {
                     stack.push(name);
@@ -947,7 +953,7 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
             _ => {}
         }
     }
-    if !stack.is_empty() {
+    if !stack.is_empty() || projected != crate::xml_text::marked(&result.flags) {
         return Err(SazError::InvalidArchive);
     }
     Ok(result)
@@ -956,6 +962,7 @@ fn parse_metadata(bytes: &[u8]) -> Result<ArchiveMetadata, SazError> {
 fn validate_metadata_attribute_sizes(
     name: &str,
     attributes: &BTreeMap<String, String>,
+    projected: bool,
 ) -> Result<(), SazError> {
     let failure_flag = name == "SessionFlag"
         && attributes.get("N").is_some_and(|name| {
@@ -964,11 +971,42 @@ fn validate_metadata_attribute_sizes(
                 "x-transmog-failure-category" | "x-transmog-failure-message"
             )
         });
+    let maximum = 16
+        * 1024
+        * if projected {
+            crate::xml_text::MAX_EXPANSION
+        } else {
+            1
+        };
     if attributes
         .iter()
-        .any(|(key, value)| value.len() > 16 * 1024 && !(failure_flag && key == "V"))
+        .any(|(key, value)| value.len() > maximum && !(failure_flag && key == "V"))
     {
         return Err(SazError::ImportLimitExceeded);
+    }
+    Ok(())
+}
+
+fn restore_metadata_attributes(
+    name: &str,
+    attributes: &mut BTreeMap<String, String>,
+    root: bool,
+    projected: &mut bool,
+) -> Result<(), SazError> {
+    if name == "Session"
+        && let Some(mode) = attributes.get(crate::xml_text::ATTRIBUTE)
+    {
+        if mode != crate::xml_text::MODE || !root {
+            return Err(SazError::InvalidArchive);
+        }
+        *projected = true;
+    }
+    validate_metadata_attribute_sizes(name, attributes, *projected)?;
+    if *projected {
+        for value in attributes.values_mut() {
+            *value = crate::xml_text::restore(value)?;
+        }
+        validate_metadata_attribute_sizes(name, attributes, false)?;
     }
     Ok(())
 }
@@ -1354,6 +1392,46 @@ mod tests {
                 .any(|issue| issue.message == "Session metadata could not be parsed")
         );
         assert!(parse_metadata(b"<Session><SessionFlags><SessionFlag N=\"x\" V=\"1\"/><SessionFlag N=\"x\" V=\"2\"/></SessionFlags></Session>").is_err());
+    }
+
+    #[test]
+    fn marked_projection_expansion_does_not_relax_decoded_attribute_limits() {
+        let metadata = |value: &str, marked: bool| {
+            format!(
+                "<Session{}><SessionTimers ClientConnected=\"{value}\"/><SessionFlags>{}</SessionFlags></Session>",
+                if marked {
+                    " TransmogXmlCharacterProjection=\"unicode-escapes\""
+                } else {
+                    ""
+                },
+                if marked {
+                    "<SessionFlag N=\"x-transmog-xml-character-projection\" V=\"unicode-escapes\"/>"
+                } else {
+                    ""
+                },
+            )
+        };
+        let projected = "\\u{0000}".repeat(16 * 1024);
+        let parsed = parse_metadata(metadata(&projected, true).as_bytes()).unwrap();
+        assert_eq!(parsed.timers["ClientConnected"], "\0".repeat(16 * 1024));
+        assert_eq!(parsed.timers["ClientConnected"].capacity(), 16 * 1024);
+        assert!(matches!(
+            parse_metadata(metadata(&projected, false).as_bytes()),
+            Err(SazError::ImportLimitExceeded)
+        ));
+        assert!(matches!(
+            parse_metadata(metadata(&"a".repeat(16 * 1024 + 1), true).as_bytes()),
+            Err(SazError::ImportLimitExceeded)
+        ));
+        assert!(matches!(
+            parse_metadata(metadata(&"\\u{0000}".repeat(16 * 1024 + 1), true).as_bytes()),
+            Err(SazError::ImportLimitExceeded)
+        ));
+        assert!(
+            parse_metadata(b"<Session TransmogXmlCharacterProjection=\"unicode-escapes\"/>")
+                .is_err()
+        );
+        assert!(parse_metadata(b"<Session><SessionFlags><SessionFlag N=\"x-transmog-xml-character-projection\" V=\"unicode-escapes\"/></SessionFlags></Session>").is_err());
     }
 
     #[test]

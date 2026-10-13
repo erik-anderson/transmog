@@ -571,7 +571,9 @@ fn describe(text: &mut String, transport: &TransportObservation) {
         for (label, _) in crate::tls::NEGOTIATION_FIELDS {
             if let Some(value) = tls.details.get(label) {
                 // Imported text cannot forge another diagnostic line or heading.
-                let value = value.replace('\r', "\\r").replace('\n', "\\n");
+                let value = crate::xml_text::display_value(value)
+                    .replace('\r', "\\r")
+                    .replace('\n', "\\n");
                 let _ = writeln!(text, "{label}: {value}\r");
             }
         }

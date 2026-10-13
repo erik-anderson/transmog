@@ -29,7 +29,7 @@ pub fn tls_negotiation_details(
     let Some(prefix) = flag_prefix(leg) else {
         return BTreeMap::new();
     };
-    NEGOTIATION_FIELDS
+    let mut details = NEGOTIATION_FIELDS
         .iter()
         .filter_map(|(label, suffix)| {
             let name = format!("{prefix}{suffix}");
@@ -42,7 +42,14 @@ pub fn tls_negotiation_details(
             (value.len() <= 4096 && values.all(|other| other == value))
                 .then(|| ((*label).to_owned(), value.clone()))
         })
-        .collect()
+        .collect::<BTreeMap<_, _>>();
+    if !details.is_empty() && crate::xml_text::marked(flags) {
+        details.insert(
+            "SAZ metadata text".into(),
+            "Original text restored from visible Unicode escapes in XML metadata.".into(),
+        );
+    }
+    details
 }
 
 pub(crate) fn flag_prefix(leg: &str) -> Option<&'static str> {
@@ -83,5 +90,12 @@ mod tests {
         let mut conflicting = flags;
         conflicting.insert("x-transmog-client-tls-group".into(), "X25519".into());
         assert!(tls_negotiation_details(&conflicting, "client").is_empty());
+        assert!(
+            tls_negotiation_details(
+                &BTreeMap::from([(crate::xml_text::FLAG.into(), crate::xml_text::MODE.into())]),
+                "client"
+            )
+            .is_empty()
+        );
     }
 }

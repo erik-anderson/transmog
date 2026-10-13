@@ -33,6 +33,7 @@ mod tls;
 mod websocket;
 #[cfg(test)]
 mod websocket_tests;
+mod xml_text;
 pub use evidence::{FailureEvidence, SessionEvidence};
 pub use import::{
     ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,

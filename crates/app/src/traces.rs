@@ -560,6 +560,15 @@ fn import_saz(
             .map(|issue| format!("Session {}: {}", issue.source_id, issue.message))
             .collect(),
     };
+    if index.sessions.iter().any(|session| {
+        session
+            .metadata
+            .flags
+            .get("x-transmog-xml-character-projection")
+            .is_some_and(|value| value == "unicode-escapes")
+    }) {
+        result.notes.push("Some conventional SAZ metadata values use visible Unicode escapes for characters XML cannot represent. Transmog restores the original text when importing these marked values.".into());
+    }
     if index.additional_issues > 0 {
         result
             .issues
@@ -853,18 +862,18 @@ fn import_saz(
                                 .cloned()
                                 .unwrap_or_else(|| format!("saz-{}-{leg}", session.source_id)),
                             outcome: outcome.unwrap_or_default(),
-                            tunnel_destination: if leg == "client" {
+                            tunnel_destination: saz_tunnel_destination(if leg == "client" {
                                 session
                                     .metadata
                                     .flags
                                     .get("x-transmog-connect-destination")
-                                    .cloned()
+                                    .map(String::as_str)
                             } else {
                                 request
                                     .as_ref()
                                     .filter(|request| request.method == "CONNECT")
-                                    .map(|request| request.target.authority.clone())
-                            },
+                                    .map(|request| request.target.authority.as_str())
+                            })?,
                             bytes_read: (leg == "upstream")
                                 .then(|| {
                                     session
@@ -1110,9 +1119,11 @@ fn import_saz(
                 transmog_core::performance::TransportObservation {
                     leg: "upstream".into(),
                     connection_id: format!("saz-{}-tunnel", session.source_id),
-                    tunnel_destination: request
-                        .as_ref()
-                        .map(|request| request.target.authority.clone()),
+                    tunnel_destination: saz_tunnel_destination(
+                        request
+                            .as_ref()
+                            .map(|request| request.target.authority.as_str()),
+                    )?,
                     bytes_read: number("BytesIngress"),
                     bytes_written: number("BytesEgress"),
                     ..Default::default()
@@ -1163,6 +1174,17 @@ fn import_saz(
     }
     result.index_bytes = head_bytes;
     Ok(result)
+}
+
+fn saz_tunnel_destination(destination: Option<&str>) -> Result<Option<String>, AppError> {
+    if destination
+        .is_some_and(|value| value.len() > transmog_core::performance::MAX_TUNNEL_DESTINATION_BYTES)
+    {
+        return Err(invalid(
+            "The saved CONNECT destination exceeds its 1,024-byte limit",
+        ));
+    }
+    Ok(destination.map(str::to_owned))
 }
 
 fn generated_connection_outcomes(

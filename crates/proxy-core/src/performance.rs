@@ -6,6 +6,9 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
+/// Maximum recorded CONNECT authority length, shared by transport import and validation.
+pub const MAX_TUNNEL_DESTINATION_BYTES: usize = 1024;
+
 /// A local observation point, rather than an inferred remote event.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -372,7 +375,7 @@ impl PerformanceEvidence {
                     && transport
                         .tunnel_destination
                         .as_ref()
-                        .is_none_or(|value| value.len() <= 1024)
+                        .is_none_or(|value| value.len() <= MAX_TUNNEL_DESTINATION_BYTES)
                     && transport.tls.as_ref().is_none_or(crate::TlsEvidence::valid)
             })
             && self.protocols.iter().all(|protocol| {

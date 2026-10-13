@@ -110,6 +110,21 @@ Older archives without these fields continue to show unavailable algorithm
 evidence. Complete public DER and additional connection evidence remain part of
 the Extended profile and native TMCap.
 
+Characters that XML 1.0 cannot represent, including NUL, are displayed as visible
+Unicode escapes such as `\u{0000}` in metadata and generated negotiation summaries.
+Affected XML documents declare `TransmogXmlCharacterProjection="unicode-escapes"`
+and include the matching `x-transmog-xml-character-projection` SessionFlag. In these
+documents, literal backslashes in attribute values are doubled. Transmog restores
+the original attribute text on import; an unmarked literal `\u{0000}` stays literal.
+Native captures and Extended evidence retain the original values unchanged.
+Only marked attributes receive an allowance for up to eightfold encoded expansion;
+the existing limits are enforced again after decoding. The overall metadata size
+limit and the 64-entry TLS diagnostic bound stay unchanged.
+
+Imported CONNECT destinations must fit the shared 1,024-byte transport bound.
+An oversized destination is rejected before the imported sessions are published,
+with an explanation of that bound, so it cannot prevent saving retained traffic.
+
 Captured opaque CONNECT exchanges retain their original request headers and body
 bytes. Successful responses use `200 Connection Established` and Transmog-labeled
 headers describing the tunnel, recorded peer and physical byte totals when known.

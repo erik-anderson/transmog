@@ -93,6 +93,9 @@ resumption facts in conventional SessionFlag metadata and readable connection
 summaries. Transmog restores those recorded facts on import. Extended SAZ and
 TMCap also preserve the complete public certificate paths and richer connection
 evidence; compatibility SAZ does not include the public DER definitions.
+XML-incompatible text is rendered as marked Unicode escapes in SAZ metadata and
+generated negotiation summaries. Import restores the exact original values,
+including NUL, rather than interpreting unmarked literal escape text.
 
 The inspector defaults to the latest successful upstream connection, with the
 latest upstream attempt as fallback when none succeeded. Selector labels include

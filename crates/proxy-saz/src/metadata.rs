@@ -1,5 +1,5 @@
 //! Conventional XML timers are projections of local observations, never remote receipt.
-use crate::Session;
+use crate::{Session, xml_text};
 use std::{collections::BTreeMap, fmt::Write};
 use transmog_core::performance::Milestone;
 
@@ -27,7 +27,12 @@ pub(crate) fn reason(session: &Session) -> Option<&str> {
         .find(|item| item.boundary == "client-response")
         .and_then(|item| item.reason.as_deref())
 }
-fn xml(value: &str) -> String {
+fn xml(value: &str, projected: bool) -> String {
+    let value = if projected {
+        xml_text::project(value)
+    } else {
+        value.to_owned()
+    };
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -145,10 +150,6 @@ pub(crate) fn render(
         timers
             .entry(name.into())
             .or_insert_with(|| "0001-01-01T00:00:00".into());
-    }
-    let mut attributes = String::new();
-    for (name, value) in &timers {
-        let _ = write!(attributes, " {name}=\"{}\"", xml(value));
     }
     let mut flags = BTreeMap::new();
     let mut negotiation_flags = BTreeMap::new();
@@ -369,6 +370,35 @@ pub(crate) fn render(
     if response_incomplete {
         flags.insert("log-drop-response-body", "true".into());
     }
+    let projected = timers
+        .values()
+        .any(|value| xml_text::needs_projection(value))
+        || flags
+            .values()
+            .any(|value| xml_text::needs_projection(value))
+        || negotiation_flags
+            .values()
+            .any(|value| xml_text::needs_projection(value));
+    if projected {
+        flags.insert(xml_text::FLAG, xml_text::MODE.into());
+        let note = "Transmog: XML-incompatible characters are shown as Unicode escapes in metadata. Transmog restores the original text on import.";
+        flags
+            .entry("ui-comments")
+            .and_modify(|comments| {
+                comments.push(' ');
+                comments.push_str(note);
+            })
+            .or_insert_with(|| note.into());
+    }
+    let projection_attribute = if projected {
+        format!(" {}=\"{}\"", xml_text::ATTRIBUTE, xml_text::MODE)
+    } else {
+        String::new()
+    };
+    let mut attributes = String::new();
+    for (name, value) in &timers {
+        let _ = write!(attributes, " {name}=\"{}\"", xml(value, projected));
+    }
     let mut rendered_flags = String::new();
     for (name, value) in flags.iter().map(|(name, value)| (*name, value)).chain(
         negotiation_flags
@@ -378,7 +408,7 @@ pub(crate) fn render(
         let _ = write!(
             rendered_flags,
             "<SessionFlag N=\"{name}\" V=\"{}\"/>",
-            xml(value)
+            xml(value, projected)
         );
     }
     let websocket = crate::websocket::established(session);
@@ -437,6 +467,36 @@ pub(crate) fn render(
         tunnel_info = format!("<TunnelInfo{tunnel_info}/>");
     }
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{id}\" BitFlags=\"{bit_flags:x}\"><SessionTimers{attributes}/>{tunnel_info}<SessionFlags>{rendered_flags}</SessionFlags></Session>"
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><Session SID=\"{id}\" BitFlags=\"{bit_flags:x}\"{projection_attribute}><SessionTimers{attributes}/>{tunnel_info}<SessionFlags>{rendered_flags}</SessionFlags></Session>"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xml_values_preserve_legal_characters_and_project_unrepresentable_ones() {
+        let source = "&<>\"'\t\r\n \u{d7ff}\u{e000}\u{fffd}\u{10000}\u{10ffff}";
+        let escaped = xml(source, false);
+        assert_eq!(
+            escaped,
+            "&amp;&lt;&gt;&quot;&apos;&#9;&#13;&#10; \u{d7ff}\u{e000}\u{fffd}\u{10000}\u{10ffff}"
+        );
+        for character in (0..0x20)
+            .filter_map(char::from_u32)
+            .filter(|character| !matches!(character, '\t' | '\r' | '\n'))
+            .chain(['\u{fffe}', '\u{ffff}'])
+        {
+            assert_eq!(
+                xml(&character.to_string(), true),
+                format!("\\u{{{:04x}}}", u32::from(character))
+            );
+        }
+        assert_eq!(
+            xml("literal\\u{0000}\0", true),
+            "literal\\\\u{0000}\\u{0000}"
+        );
+        assert_eq!(xml("literal\\u{0000}", false), "literal\\u{0000}");
+    }
 }
