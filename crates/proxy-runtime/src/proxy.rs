@@ -2412,6 +2412,9 @@ impl ProxyState {
             RoutePolicy::Http2Only => Some(HyperEgressMode::Http2Only),
             RoutePolicy::Http3Only => None,
             RoutePolicy::Auto => {
+                if !upstream.partitions.protocols.snapshot().http3 {
+                    return Some(HyperEgressMode::Auto);
+                }
                 let origin = Origin {
                     host: request.target.host.clone(),
                     port: request.target.port,
@@ -3689,6 +3692,11 @@ impl ProxyState {
         request: CanonicalRequest,
         upstream: &UpstreamGeneration,
     ) -> Result<RoutedResponse, ProxyRuntimeError> {
+        if !upstream.partitions.protocols.snapshot().http3 {
+            return self
+                .route_hyper(request, HyperEgressMode::Auto, upstream)
+                .await;
+        }
         let origin = Origin {
             host: request.head.target.host.clone(),
             port: request.head.target.port,
@@ -6797,6 +6805,80 @@ mod tests {
                 .network_profile(),
             Some(&profile)
         );
+    }
+
+    #[tokio::test]
+    async fn disabled_h3_skips_cached_alternatives_for_non_replayable_requests() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = origin.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            assert!(head.starts_with(b"POST /posted HTTP/1.1"));
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+        let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+        profile.settings.protocols.http3 = false;
+        let proxy = ProxyServer::bind(
+            ProxyConfig {
+                network_profile: Some(profile),
+                ..Default::default()
+            },
+            ProxyCa::generate("Disabled H3 routing test", 2).unwrap(),
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 54).unwrap()),
+            Arc::new(transmog_core::intercept::NoopInterceptorFactory),
+        )
+        .await
+        .unwrap();
+        let upstream = proxy.state.upstream.read().await.clone();
+        upstream
+            .partitions
+            .alt_svc
+            .lock()
+            .await
+            .observe(
+                Origin {
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                },
+                &format!("h3=\":{}\"; ma=60", address.port()),
+                proxy.state.clock.instant(),
+            )
+            .unwrap();
+        let request = CanonicalRequest {
+            head: RequestHead {
+                method: "POST".into(),
+                source_version: HttpLegVersion::Http1,
+                headers: HeaderBlock::new(),
+                target: Target {
+                    scheme: "http".into(),
+                    authority: address.to_string(),
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                    path: "/posted".into(),
+                    query: None,
+                },
+            },
+            body: Vec::new(),
+        };
+        assert_eq!(
+            proxy
+                .state
+                .streaming_hyper_mode(&upstream, &request.head, RoutePolicy::Auto, false)
+                .await,
+            Some(HyperEgressMode::Auto)
+        );
+        let response = proxy.state.route_auto(request, &upstream).await.unwrap();
+        assert_eq!(response.response.head.status, 200);
+        assert_eq!(response.attempts.len(), 1);
+        assert_eq!(response.protocol, HttpLegVersion::Http1);
+        server.await.unwrap();
     }
 
     #[tokio::test]
