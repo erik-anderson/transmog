@@ -62,12 +62,29 @@ it does not wait for the grace period to expire.
 **Settings → Preferences → Network** starts with **Decrypt HTTPS traffic**.
 Turning it off applies on the next proxy start, requires no interception
 certificate setup, and presents opaque CONNECT destination and transport evidence
-in Traffic. **Advanced network settings** contains remote-client access (off by
-default), an optional saved proxy port, server connection reuse, caller-process
-isolation and allowed outbound HTTP protocols. With no saved port, each start
-chooses an available port. Turning reuse off gives later requests dedicated
-server connections. Saving connection choices preserves active requests and
-streams and does not restart the proxy.
+in Traffic. **Profile** defaults to **Chromium 154**, based on the Chromium
+154.0.8037.99 comparison. Selecting a profile previews it; **Use profile** applies
+the saved recipe to new requests. **Customize** creates an editable copy of the
+built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
+compatibility ciphers, hybrid key exchange and connection reuse. **More handshake
+options** contains GREASE, extension order, ECH GREASE and certificate compression.
+ECH GREASE sends a dummy extension and does not encrypt the server name.
+
+**Save only** preserves the active recipe; **Save and use** activates the saved
+revision. Closing an editor keeps its draft; **Discard draft** removes it.
+The profile menu supports editing, duplication and deletion with Undo. Changes
+use fresh origin pools in the proxy and Composer, including open capture viewers;
+active requests and streams finish with their original recipe. HTTP/3 requires
+TLS 1.3. Clearing all HTTP protocols blocks new outbound requests.
+Profiles govern connections made by Transmog and Composer; opaque CONNECT
+tunnels use the original client's protocol and handshake.
+Built-in recipes keep their qualified version, and **Profile details** identifies
+the remaining ALPS and Trust Anchor ID gaps.
+
+**Advanced network settings** contains remote-client access (off by default),
+an optional saved proxy port, caller-process isolation and client certificates.
+With no saved port, each start chooses an available port. Saving these connection
+choices preserves active work and does not restart the proxy.
 
 ## Live traffic and saved viewers
 

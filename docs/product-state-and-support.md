@@ -14,14 +14,21 @@ own HTTPS trust when needed. The ordinary Settings flow keeps system routing
 enabled. With HTTPS decryption enabled, both modes validate and protect CA files.
 Both always block pending host restoration.
 
-Preferences starts with HTTPS decryption in its main Network group. Advanced
-network settings contains remote access, an optional persistent proxy port,
-connection reuse, caller-process isolation and allowed outbound protocols. Isolation falls
-back to source IP and also separates downstream HTTP/2 sessions. Protocol changes
-apply to new origin connections, including Composer in already-open capture
-viewers; established connections continue serving requests until they close.
-Saving preserves explicit manual routing and does not restart
-the proxy. Embedders can supply their own network-isolation key computation.
+Preferences starts with HTTPS decryption and the network profile in its main
+Network group. The default immutable recipe is Chromium 154. Profile definitions
+and the active recipe snapshot have independent revisions: Save only does not
+activate edits, even when editing the active profile's definition. Use profile
+and Save and use create fresh TLS contexts and pools for new work across the
+proxy and Composer, including already-open viewers. In-flight requests retain
+their original transports and recorded recipe. Built-in recipes do not silently
+advance when a new browser version is added. TLS 1.2-only profiles cannot enable
+HTTP/3; disabling all HTTP protocols intentionally blocks new work.
+
+Advanced network settings contains remote access, an optional persistent proxy
+port, caller-process isolation and client certificate authorization. Isolation
+falls back to source IP and also separates downstream HTTP/2 sessions. Saving
+preserves explicit manual routing and does not restart the proxy. Embedders can
+supply their own network-isolation key computation.
 
 Recorded CONNECT destinations also appear on decrypted connections. Traffic uses
 the request method, connection leg and TLS evidence to distinguish opaque tunnels
@@ -41,7 +48,10 @@ settings so a stale workspace snapshot cannot overwrite newer preferences.
 Each save writes and flushes a temporary file, then atomically publishes a new
 numbered generation. Startup validates the newest generation and quarantines
 corrupt state, falling back to a retained valid generation or safe defaults.
-Only the current schema is supported. Exact fields and validation belong to
+Schema 6 preferences migrate to schema 7: nondefault protocol or reuse choices
+become an active Current settings custom profile. Narrow profile writes merge
+with independent layout, window and certificate policy saves and reject stale
+catalog revisions. Other legacy schemas remain unsupported. Exact fields and validation belong to
 [the product-state model](../crates/app/src/product_state.rs).
 
 On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the

@@ -1,0 +1,60 @@
+<template>
+<section class="network-profile" aria-label="Network profile">
+  <div class="profile-row">
+    <label>Profile <select w-ref="{networkSelector}" aria-label="Network profile" @change="{choose(e)}" ?disabled="{{networkBusy}}">
+      <for each="profile in networkOptions"><option value="{{profile.id}}" ?selected="{{profile.id == networkSelectedId}}">{{profile.name}}</option></for>
+      <option value="create" ?disabled="{{networkProfiles.customProfiles.length >= 32}}">Create custom profile…</option>
+    </select></label>
+    <button type="button" class="secondary" @click="{customize()}" ?disabled="{{networkBusy}}"><if condition="networkDirty">Resume draft…</if><if condition="!networkDirty">Customize…</if></button>
+    <button type="button" @click="{useProfile()}" ?disabled="{{!networkCanUse}}">Use profile</button>
+    <button type="button" class="secondary compact-button" aria-label="Manage network profile" popovertarget="network-profile-menu" ?hidden="{{!networkCustom}}" ?disabled="{{networkBusy}}">⋯</button>
+  </div>
+  <p class="field-help">{{networkSummary}} <span>· In use: {{networkActiveName}}</span></p>
+  <p class="field-help" ?hidden="{{!networkCanUse}}">Previewing the saved recipe. Choose Use profile to apply it to new requests.</p>
+  <div class="profile-menu" id="network-profile-menu" popover w-ref="{networkMenu}">
+    <button type="button" @click="{customize()}" ?disabled="{{networkDirty}}">Rename or edit…</button>
+    <button type="button" @click="{customize(true)}" ?disabled="{{networkDirty || networkProfiles.customProfiles.length >= 32}}">Duplicate…</button>
+    <button type="button" @click="{remove()}"><if condition="networkSelectedActive">Use Chromium 154 and delete</if><if condition="!networkSelectedActive">Delete profile</if></button>
+  </div>
+  <details class="profile-reference"><summary>Profile details</summary>
+    <p>{{networkDiffSummary}}</p>
+    <p>Based on Chromium 154.0.8037.99. Built-in recipes keep their measured version; new Chromium versions will appear as separate profiles.</p>
+    <p>Profiles apply to connections made by Transmog and Composer. Opaque CONNECT tunnels use the client’s protocol and handshake.</p>
+    <p>Known remaining differences: HTTP/2 ALPS and TLS Trust Anchor IDs are not yet offered. This recipe does not imply a complete Chrome fingerprint match.</p>
+  </details>
+  <div class="actions" ?hidden="{{!networkUndoAvailable}}"><button type="button" class="secondary" @click="{undoRemove()}" ?disabled="{{networkBusy}}">Undo deletion</button></div>
+  <p role="status" class="field-help" ?hidden="{{!networkText}}">{{networkText}}</p>
+  <p role="status" class="field-error" ?hidden="{{!networkError}}">{{networkError}} <button type="button" class="secondary compact-button" @click="{load()}" ?disabled="{{networkBusy}}">Reload profiles</button></p>
+  <dialog w-ref="{networkEditor}" class="profile-editor" aria-labelledby="network-editor-heading" @cancel="{editorCancelled(e)}" @close="{editorClosed()}">
+    <form w-ref="{networkForm}" @submit="{saveEditor(e,true)}" @input="{edit(e)}" @change="{edit(e)}" @keydown="{editorKeyboard(e)}">
+      <header class="profile-editor-header"><h2 id="network-editor-heading">Custom network profile</h2><button type="button" class="secondary" @click="{closeEditor()}" ?disabled="{{networkBusy}}">Close</button></header>
+      <div class="profile-editor-body">
+        <fieldset ?disabled="{{networkBusy}}">
+          <label class="profile-name">Name <input name="name" value="{{networkDraft.name}}" required maxlength="80" autocomplete="off"></label>
+          <p class="field-help">Copied from Chromium 154. Changes take effect only when you use this profile.</p>
+          <div class="profile-setting" ?data-changed="{{networkChanged.protocols}}"><span>HTTP protocols <small ?hidden="{{!networkChanged.protocols}}">Changed</small></span><div class="protocols" role="group" aria-label="Profile HTTP protocols"><label><input name="http1" type="checkbox" checked> HTTP/1.1</label><label><input name="http2" type="checkbox" checked> HTTP/2</label><label><input name="http3" type="checkbox" checked> HTTP/3</label></div></div>
+          <p class="field-help">Clear all three to block new outbound HTTP requests. Existing requests finish normally.</p>
+          <label class="profile-setting" ?data-changed="{{networkChanged.tlsVersions}}"><span>TLS versions <small ?hidden="{{!networkChanged.tlsVersions}}">Changed</small></span><select name="tlsVersions" aria-label="Profile TLS versions"><option value="tls12-and13">TLS 1.2 and 1.3</option><option value="tls12-only">TLS 1.2 only</option><option value="tls13-only">TLS 1.3 only</option></select></label>
+          <p class="field-error" role="status" ?hidden="{{!networkValidation}}">{{networkValidation}}</p>
+          <label class="profile-setting" ?data-changed="{{networkChanged.compatibilityCiphers}}"><span>Compatibility ciphers <small ?hidden="{{!networkChanged.compatibilityCiphers}}">Changed</small></span><span class="checkbox-label"><input name="compatibilityCiphers" aria-label="Include Chromium compatibility ciphers" type="checkbox" checked> Include Chromium’s CBC and static RSA suites</span></label>
+          <p class="field-help">When off, TLS 1.2 offers only ECDHE with AES-GCM or ChaCha20-Poly1305. TLS 1.3 is unchanged.</p>
+          <label class="profile-setting" ?data-changed="{{networkChanged.hybridKeyExchange}}"><span>Key exchange <small ?hidden="{{!networkChanged.hybridKeyExchange}}">Changed</small></span><span class="checkbox-label"><input name="hybridKeyExchange" aria-label="Offer hybrid post-quantum exchange" type="checkbox" checked> Offer hybrid post-quantum exchange</span></label>
+          <p class="field-help">X25519MLKEM768 followed by classical groups. When off, offer X25519, P-256 and P-384.</p>
+          <label class="profile-setting" ?data-changed="{{networkChanged.reuseConnections}}"><span>Connection reuse <small ?hidden="{{!networkChanged.reuseConnections}}">Changed</small></span><span class="checkbox-label"><input name="reuseConnections" aria-label="Reuse server connections" type="checkbox" checked> Reuse server connections</span></label>
+          <details class="profile-handshake"><summary>More handshake options</summary>
+            <label class="profile-setting" ?data-changed="{{networkChanged.grease}}"><span>GREASE <small ?hidden="{{!networkChanged.grease}}">Changed</small></span><select name="grease" aria-label="Profile GREASE"><option value="chromium">Chromium · algorithms and signatures</option><option value="no-signature">Algorithms only · omit signature GREASE</option><option value="disabled">Disabled</option></select></label>
+            <label class="profile-setting" ?data-changed="{{networkChanged.randomizeExtensions}}"><span>Extension order <small ?hidden="{{!networkChanged.randomizeExtensions}}">Changed</small></span><span class="checkbox-label"><input name="randomizeExtensions" aria-label="Randomize TLS extensions" type="checkbox" checked> Randomize TLS extensions</span></label>
+            <label class="profile-setting" ?data-changed="{{networkChanged.echGrease}}"><span>ECH GREASE <small ?hidden="{{!networkChanged.echGrease}}">Changed</small></span><span class="checkbox-label"><input name="echGrease" aria-label="Send a dummy ECH extension" type="checkbox" checked> Send a dummy ECH extension</span></label>
+            <p class="field-help">Exercises ECH support. It does not encrypt the server name.</p>
+            <label class="profile-setting" ?data-changed="{{networkChanged.certificateCompression}}"><span>Certificate compression <small ?hidden="{{!networkChanged.certificateCompression}}">Changed</small></span><span class="checkbox-label"><input name="certificateCompression" aria-label="Accept Brotli-compressed certificates" type="checkbox" checked> Accept Brotli-compressed certificates</span></label>
+          </details>
+        </fieldset>
+        <p class="profile-differences" role="status">{{networkDiffSummary}}</p>
+        <p class="field-error" role="status" ?hidden="{{!networkError}}">{{networkError}} <button type="button" class="secondary" @click="{load()}" ?disabled="{{networkBusy}}">Reload profiles</button></p>
+        <button type="button" class="secondary" @click="{reset()}" ?disabled="{{networkBusy}}">Reset to Chromium 154</button>
+      </div>
+      <footer class="profile-editor-footer"><p class="field-help">New requests use fresh pools. Active requests and streams finish with their original recipe.</p><div class="actions"><button type="submit" ?disabled="{{networkBusy || networkValidation}}">Save and use</button><button type="button" class="secondary" @click="{saveEditor(e,false)}" ?disabled="{{networkBusy || networkValidation}}">Save only</button><button type="button" class="secondary" @click="{discard()}" ?disabled="{{networkBusy}}">Discard draft</button><span role="status" ?hidden="{{!networkBusy}}">Saving…</span></div></footer>
+    </form>
+  </dialog>
+</section>
+</template>

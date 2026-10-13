@@ -1,4 +1,35 @@
 {
+  "networkProfiles": {
+    "revision": 1,
+    "activeProfile": {
+      "id": "chromium-154", "name": "Chromium 154", "revision": 1, "baseProfile": "chromium-154",
+      "settings": {
+        "protocols": {"http1":true,"http2":true,"http3":true}, "reuseConnections": true,
+        "tlsVersions": "tls12-and13", "compatibilityCiphers": true, "hybridKeyExchange": true,
+        "grease": "chromium", "randomizeExtensions": true, "echGrease": true, "certificateCompression": true
+      }
+    },
+    "customProfiles": []
+  },
+  "networkOptions": [{"id":"chromium-154","name":"Chromium 154"}],
+  "networkSelectedId": "chromium-154",
+  "networkActiveName": "Chromium 154",
+  "networkSummary": "H1 / H2 / H3 · TLS 1.2–1.3 · Reuse on",
+  "networkDiffSummary": "Matches the Chromium 154 recipe.",
+  "networkDifferences": [],
+  "networkChanged": {"protocols":false,"reuseConnections":false,"tlsVersions":false,"compatibilityCiphers":false,"hybridKeyExchange":false,"grease":false,"randomizeExtensions":false,"echGrease":false,"certificateCompression":false},
+  "networkBusy": true,
+  "networkError": "", "networkText": "", "networkCustom": false,
+  "networkSelectedActive": true, "networkCanUse": false, "networkDirty": false, "networkEditorOpen": false,
+  "networkValidation": "", "networkUndoAvailable": false,
+  "networkDraft": {
+    "id":"chromium-154", "name":"Chromium 154", "revision":1, "baseProfile":"chromium-154",
+    "settings": {
+      "protocols":{"http1":true,"http2":true,"http3":true}, "reuseConnections":true,
+      "tlsVersions":"tls12-and13", "compatibilityCiphers":true, "hybridKeyExchange":true,
+      "grease":"chromium", "randomizeExtensions":true, "echGrease":true, "certificateCompression":true
+    }
+  },
   "streamPanel": false,
   "streamRows": [],
   "streamStatus": "",

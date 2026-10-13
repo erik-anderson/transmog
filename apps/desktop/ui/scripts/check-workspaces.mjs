@@ -14,6 +14,7 @@ import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTraceSave } from './check-trace-save.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
+import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
@@ -56,7 +57,8 @@ await page.route('https://workspace.test/**', async (route) => {
     await route.fulfill({ contentType: asset.contentType, body: asset.body ?? await readFile(asset.file) });
   }
 });
-await page.addInitScript((workspace) => {
+await page.addInitScript((configuration) => {
+  const {workspace,networkProfiles}=configuration;
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
@@ -179,7 +181,7 @@ await page.addInitScript((workspace) => {
         case 'decide_client_certificate': {if(!state.certificatePending?.some(row=>row.id===args.id))throw new Error('This connection is no longer waiting.');state.certificateDecision=structuredClone(args);state.certificatePending=state.certificatePending.filter(row=>row.id!==args.id);return {supported:true,pending:structuredClone(state.certificatePending)};}
         case 'save_client_certificate_policy': {if(state.certificateSaveError)throw {category:'unavailable',message:'Fixture certificate policy persistence failed',retryable:true};state.certificatePolicy=structuredClone(args.policy);localStorage.setItem('certificatePolicy',JSON.stringify(state.certificatePolicy));return structuredClone(state.certificatePolicy);}
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
+        case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.networkProfiles=structuredClone(state.networkProfiles??networkProfiles);product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
         case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': if(state.holdProxyStart)await new Promise(resolve=>state.releaseProxyStart=resolve);else await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
@@ -393,6 +395,16 @@ await page.addInitScript((workspace) => {
           state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
           ruleDiagnostics();
           return structuredClone(state.automation);
+        case 'save_network_profiles': {
+          if(state.networkSaveError)throw new Error(state.networkSaveError);
+          if(state.delayNetworkSave)await new Promise(resolve=>{state.resolveNetworkSave=resolve;});
+          const catalog=state.networkProfiles??structuredClone(networkProfiles);
+          if(args.expectedRevision!==catalog.revision)throw new Error('Network profiles changed in another window. Reload profiles before saving; your draft is still available.');
+          const profiles=args.profiles.map(profile=>{const old=catalog.customProfiles.find(item=>item.id===profile.id);return {...structuredClone(profile),revision:old?old.revision+(JSON.stringify(old.settings)!==JSON.stringify(profile.settings)||old.name!==profile.name?1:0):1};});
+          const active=args.useProfile?args.useProfile==='chromium-154'?networkProfiles.activeProfile:profiles.find(profile=>profile.id===args.useProfile):catalog.activeProfile;
+          state.networkProfiles={revision:catalog.revision+1,customProfiles:profiles,activeProfile:structuredClone(active)};
+          return structuredClone(state.networkProfiles);
+        }
         case 'save_product_state': state.savedProduct=structuredClone(args.productState);state.savedProduct.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??{default:'noCertificate',rules:[]});return structuredClone(state.savedProduct);
         case 'pick_support_path': return state.supportPick??null;
         case 'diagnostics_report': return {applicationVersion:'0.1.0',runtime:{operatingSystem:'Windows fixture',architecture:'x64',webviewVersion:'test'},events:[{level:'warning',message:'safe fixture'}],privacyNotice:'Traffic bodies and credentials are omitted'};
@@ -435,7 +447,7 @@ await page.addInitScript((workspace) => {
   };
   globalThis.__cspViolations = [];
   addEventListener('securitypolicyviolation', (event) => globalThis.__cspViolations.push(event.effectiveDirective));
-}, initial.workspace);
+}, {workspace:initial.workspace,networkProfiles:initial.networkProfiles});
 
 const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
@@ -446,6 +458,15 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--network-profiles')) {
+    await page.goto('https://workspace.test/');
+    await view('settings');
+    await checkNetworkProfiles(page,root);
+    assert.deepEqual(errors,[]);
+    await browser.close();
+    process.stdout.write('Network profile interactions and responsive layouts verified.\n');
+    process.exit(0);
+  }
   await page.goto('https://workspace.test/');
   await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('.session-status').textContent.includes('4 traffic entries.'));
   await page.getByRole('button',{name:'Stable update available',exact:true}).waitFor();
@@ -1629,27 +1650,22 @@ try {
   assert.equal(await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).isVisible(),true,'HTTPS decryption is hidden in advanced settings');
   await advancedNetwork.locator('summary').click();
   assert.equal(await preferences.getByLabel('Allow remote computers to connect',{exact:true}).isChecked(),false);
-  assert.equal(await preferences.getByLabel('Reuse server connections',{exact:true}).isChecked(),true);
+
   assert.equal(await preferences.getByLabel('Proxy port',{exact:true}).isVisible(),false);
   await preferences.getByLabel('Allow remote computers to connect',{exact:true}).check();
-  await preferences.getByLabel('Reuse server connections',{exact:true}).uncheck();
   await preferences.getByLabel('Use a specific proxy port',{exact:true}).check();
   await preferences.getByLabel('Proxy port',{exact:true}).fill('8123');
   assert.equal(await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).isChecked(),true);
   assert.equal(await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).isChecked(),true);
-  for(const name of ['HTTP/1.1','HTTP/2','HTTP/3'])assert.equal(await advancedNetwork.getByLabel(name,{exact:true}).isChecked(),true);
   await page.evaluate(()=>{globalThis.__workspaceFixture.configureSystemProxy=false;});
   await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).uncheck();
-  await advancedNetwork.getByLabel('HTTP/2',{exact:true}).uncheck();
-  await advancedNetwork.getByLabel('HTTP/3',{exact:true}).uncheck();
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   const networkSaved=await page.evaluate(()=>globalThis.__workspaceFixture.savedProduct.preferences);
   assert.equal(networkSaved.allowRemoteClients,true);
   assert.equal(networkSaved.proxyPort,8123);
-  assert.equal(networkSaved.reuseServerConnections,false);
   assert.equal(networkSaved.isolateOutboundConnections,false);
-  assert.deepEqual(networkSaved.allowedOutboundProtocols,{http1:true,http2:false,http3:false});
+  await checkNetworkProfiles(page,root);
   assert.equal(networkSaved.configureSystemProxy,false,'Saving preferences enabled host routing');
   await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).check();
   await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
@@ -1669,14 +1685,13 @@ try {
   await page.locator('.settings-tabs').getByRole('button',{name:'Preferences',exact:true}).click();
   await preferences.getByLabel('Decrypt HTTPS traffic',{exact:true}).check();
   await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).check();
-  for(const name of ['HTTP/1.1','HTTP/2','HTTP/3'])await advancedNetwork.getByLabel(name,{exact:true}).check();
   await preferences.getByRole('button',{name:'Save settings',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
   await advancedNetwork.scrollIntoViewIfNeeded();
   await page.screenshot({path:resolve(root,'../../../target/ui-check/network-settings-wide.png')});
   await page.setViewportSize({width:760,height:520});
   await advancedNetwork.scrollIntoViewIfNeeded();
-  assert.equal(await advancedNetwork.getByLabel('HTTP/3',{exact:true}).isVisible(),true);
+  assert.equal(await preferences.getByLabel('Isolate outbound connections by caller process',{exact:true}).isVisible(),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/network-settings-small.png')});
   await page.setViewportSize({width:1280,height:800});
   await advancedNetwork.locator('summary').click();

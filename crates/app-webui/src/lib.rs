@@ -331,5 +331,9 @@ mod tests {
         let defaults = serde_json::to_value(transmog_app::WorkspacePreferences::default()).unwrap();
         assert_eq!(initial["workspace"], defaults);
         assert_eq!(initial["preferences"], defaults);
+        assert_eq!(
+            initial["networkProfiles"],
+            serde_json::to_value(transmog_app::NetworkProfiles::default()).unwrap()
+        );
     }
 }

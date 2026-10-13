@@ -179,11 +179,24 @@ export interface TrafficSearchResult {id:string;operationId:string;ids:string[];
 export interface TrafficSearchProgress {operationId:string;completed:number;total:number;}
 export interface ProductState {
   schemaVersion: number;
-  preferences: { clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; allowRemoteClients:boolean; proxyPort:number|null; reuseServerConnections:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
+  preferences: { networkProfiles:NetworkProfiles; clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; allowRemoteClients:boolean; proxyPort:number|null; reuseServerConnections:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
   privacy: { maxLiveEntries: number | null; bufferLimit: {mode: 'automatic'} | {mode: 'custom'; bytes: number} | {mode: 'unlimited'}; retainRequestBodies: boolean; requestBodyLimit: number | null; customRequestBodyLimit?: boolean; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
   workspace: WorkspacePreferences;
+}
+
+export interface NetworkProfileSettings {
+  protocols:{http1:boolean;http2:boolean;http3:boolean}; reuseConnections:boolean;
+  tlsVersions:'tls12-and13'|'tls12-only'|'tls13-only'; compatibilityCiphers:boolean;
+  hybridKeyExchange:boolean; grease:'chromium'|'no-signature'|'disabled';
+  randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean;
+}
+export interface NetworkProfileSnapshot {
+  id:string; name:string; revision:number; baseProfile:string; settings:NetworkProfileSettings;
+}
+export interface NetworkProfiles {
+  revision:number; activeProfile:NetworkProfileSnapshot; customProfiles:NetworkProfileSnapshot[];
 }
 
 export interface ClientCertificateIdentity {id:string;fingerprint:string;subject:string;issuer:string;validUntil:string}

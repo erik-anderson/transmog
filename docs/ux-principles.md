@@ -14,8 +14,11 @@ its actual effect on the user's task. For a short per-change workflow, follow
 ## Organize around the task
 
 - Upstream TLS and HTTP offers follow Chrome's behavior by default. Offer
-  overrides belong in advanced settings; keep the ordinary capture path direct
-  and retain the actual negotiated protocol and algorithms in connection evidence.
+  overrides belong in custom network profiles. Built-in profiles keep the Chromium
+  version against which they were compared. Selection previews a recipe; explicit
+  Use profile or Save and use activates it, while Save only preserves the active
+  revision. Keep the ordinary capture path direct and retain the effective recipe
+  and actual negotiated protocol and algorithms in connection evidence.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is
@@ -302,9 +305,11 @@ their own trust. The ordinary desktop connection flow uses Windows routing.
 
 Outbound connections are isolated by caller process, with source IP as fallback,
 and by each HTTP/2 browser session. Keep the desktop control to one enabled-by-default
-checkbox in Advanced network settings. Outbound protocol choices apply when
-creating connections; established connections may continue serving new requests
-until they close. Saving these choices must not restart the proxy or interrupt traffic.
+checkbox in Advanced network settings. Outbound protocol and reuse choices belong
+to the network profile. Applying a profile gives new requests fresh origin pools
+in the proxy and Composer across open windows. In-flight requests and streams
+finish with their original recipe. Saving a definition alone must not activate
+it, restart the proxy or interrupt traffic.
 
 Client certificate authorization lives behind Advanced network settings. Its
 default continues without a certificate; ordered exact host/port rules can
