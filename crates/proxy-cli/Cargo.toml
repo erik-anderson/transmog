@@ -14,22 +14,22 @@ path = "src/main.rs"
 [dependencies]
 rpassword.workspace = true
 zeroize.workspace = true
-transmog-key-protection = { version = "=0.1.3", path = "../key-protection" }
+transmog-key-protection = { version = "=0.1.4", path = "../key-protection" }
 sysinfo.workspace = true
-transmog-network = { version = "=0.1.3", path = "../network" }
+transmog-network = { version = "=0.1.4", path = "../network" }
 bytes.workspace = true
 boring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-transmog-host-windows = { version = "=0.1.3", path = "../host-windows" }
-transmog-session = { version = "=0.1.3", path = "../proxy-session" }
-transmog-capture = { version = "=0.1.3", path = "../proxy-capture" }
-transmog-content = { version = "=0.1.3", path = "../proxy-content" }
-transmog-core = { version = "=0.1.3", path = "../proxy-core" }
-transmog-runtime = { version = "=0.1.3", path = "../proxy-runtime" }
-transmog-saz = { version = "=0.1.3", path = "../proxy-saz" }
-transmog-tls = { version = "=0.1.3", path = "../proxy-tls" }
+transmog-host-windows = { version = "=0.1.4", path = "../host-windows" }
+transmog-session = { version = "=0.1.4", path = "../proxy-session" }
+transmog-capture = { version = "=0.1.4", path = "../proxy-capture" }
+transmog-content = { version = "=0.1.4", path = "../proxy-content" }
+transmog-core = { version = "=0.1.4", path = "../proxy-core" }
+transmog-runtime = { version = "=0.1.4", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.4", path = "../proxy-saz" }
+transmog-tls = { version = "=0.1.4", path = "../proxy-tls" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

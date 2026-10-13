@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Transmog",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "identifier": "app.transmog.desktop",
   "build": {
     "frontendDist": "transmog-ui://localhost/"
@@ -40,6 +40,11 @@
         "installMode": "currentUser",
         "compression": "lzma",
         "startMenuFolder": "Transmog",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "sidebarImage": "windows/installer-sidebar.bmp",
+        "headerImage": "windows/installer-header.bmp",
+        "uninstallerHeaderImage": "windows/installer-header.bmp",
         "installerHooks": "windows/installer-hooks.nsh",
         "languages": [
           "English"

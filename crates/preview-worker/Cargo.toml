@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 image.workspace = true
-transmog-process-sandbox = { version = "=0.1.3", path = "../process-sandbox" }
+transmog-process-sandbox = { version = "=0.1.4", path = "../process-sandbox" }
 
 [lints]
 workspace = true

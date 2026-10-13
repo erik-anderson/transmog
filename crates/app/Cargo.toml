@@ -11,7 +11,7 @@ repository.workspace = true
 boring.workspace = true
 sysinfo.workspace = true
 url = "=2.5.8"
-transmog-network = { version = "=0.1.3", path = "../network" }
+transmog-network = { version = "=0.1.4", path = "../network" }
 bytes.workspace = true
 base64.workspace = true
 getrandom.workspace = true
@@ -25,25 +25,25 @@ sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 zeroize.workspace = true
-transmog-key-protection = { version = "=0.1.3", path = "../key-protection" }
+transmog-key-protection = { version = "=0.1.4", path = "../key-protection" }
 time.workspace = true
 tokio.workspace = true
 zip.workspace = true
-transmog-content = { version = "=0.1.3", path = "../proxy-content" }
-transmog-automation = { version = "=0.1.3", path = "../proxy-automation" }
-transmog-control-model = { version = "=0.1.3", path = "../proxy-control-model" }
-transmog-control-transport = { version = "=0.1.3", path = "../proxy-control-transport" }
-transmog-capture = { version = "=0.1.3", path = "../proxy-capture" }
-transmog-core = { version = "=0.1.3", path = "../proxy-core" }
-transmog-http = { version = "=0.1.3", path = "../proxy-http" }
-transmog-h3 = { version = "=0.1.3", path = "../proxy-h3" }
-transmog-preview-worker = { version = "=0.1.3", path = "../preview-worker" }
-transmog-runtime = { version = "=0.1.3", path = "../proxy-runtime" }
-transmog-saz = { version = "=0.1.3", path = "../proxy-saz" }
-transmog-script = { version = "=0.1.3", path = "../proxy-script" }
-transmog-script-supervisor = { version = "=0.1.3", path = "../script-supervisor" }
-transmog-session = { version = "=0.1.3", path = "../proxy-session" }
-transmog-tls = { version = "=0.1.3", path = "../proxy-tls" }
+transmog-content = { version = "=0.1.4", path = "../proxy-content" }
+transmog-automation = { version = "=0.1.4", path = "../proxy-automation" }
+transmog-control-model = { version = "=0.1.4", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=0.1.4", path = "../proxy-control-transport" }
+transmog-capture = { version = "=0.1.4", path = "../proxy-capture" }
+transmog-core = { version = "=0.1.4", path = "../proxy-core" }
+transmog-http = { version = "=0.1.4", path = "../proxy-http" }
+transmog-h3 = { version = "=0.1.4", path = "../proxy-h3" }
+transmog-preview-worker = { version = "=0.1.4", path = "../preview-worker" }
+transmog-runtime = { version = "=0.1.4", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.4", path = "../proxy-saz" }
+transmog-script = { version = "=0.1.4", path = "../proxy-script" }
+transmog-script-supervisor = { version = "=0.1.4", path = "../script-supervisor" }
+transmog-session = { version = "=0.1.4", path = "../proxy-session" }
+transmog-tls = { version = "=0.1.4", path = "../proxy-tls" }
 
 [lints]
 workspace = true
