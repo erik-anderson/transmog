@@ -52,6 +52,27 @@ pub fn tls_negotiation_details(
     details
 }
 
+/// Restores the effective recipe recorded on the original physical connection.
+/// Invalid or conflicting aliases remain unavailable rather than inventing provenance.
+#[must_use]
+pub fn tls_network_profile(
+    flags: &BTreeMap<String, String>,
+    leg: &str,
+) -> Option<transmog_core::network_profile::NetworkProfileSnapshot> {
+    let name = format!("{}network-profile", flag_prefix(leg)?);
+    let mut values = flags
+        .iter()
+        .filter(|(key, _)| key.eq_ignore_ascii_case(&name))
+        .map(|(_, value)| value);
+    let value = values.next()?;
+    if value.len() > 4096 || values.any(|other| other != value) {
+        return None;
+    }
+    let profile: transmog_core::network_profile::NetworkProfileSnapshot =
+        serde_json::from_str(value).ok()?;
+    profile.valid().then_some(profile)
+}
+
 pub(crate) fn flag_prefix(leg: &str) -> Option<&'static str> {
     match leg {
         "client" => Some("x-transmog-client-tls-"),

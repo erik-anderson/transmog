@@ -70,13 +70,10 @@ impl TlsEvidence {
     /// Checks finite shape before accepting saved evidence.
     #[must_use]
     pub fn valid(&self) -> bool {
-        self.network_profile.as_ref().is_none_or(|profile| {
-            profile.id.len() <= 80
-                && profile.name.chars().count() <= 80
-                && profile.base_profile.len() <= 80
-                && profile.revision > 0
-                && profile.settings.validate().is_ok()
-        }) && self.server_chain.len() <= 32
+        self.network_profile
+            .as_ref()
+            .is_none_or(crate::network_profile::NetworkProfileSnapshot::valid)
+            && self.server_chain.len() <= 32
             && self.client_chain.len() <= 32
             && self
                 .server_chain

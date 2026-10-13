@@ -1278,18 +1278,24 @@ mod tests {
         };
         let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = origin.local_addr().unwrap();
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let server_arrived = arrived.clone();
+        let (finish, waiting) = tokio::sync::oneshot::channel();
+        let (release, retained) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
             let (mut socket, _) = origin.accept().await.unwrap();
-            for _ in 0..1 {
-                let mut head = Vec::new();
-                while !head.ends_with(b"\r\n\r\n") {
-                    head.push(socket.read_u8().await.unwrap());
-                }
-                socket
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
-                    .await
-                    .unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
             }
+            server_arrived.notify_one();
+            waiting.await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            let _ = retained.await;
+            drop(socket);
         });
         let root = tempfile::tempdir().unwrap();
         let preferences = root.path().join("preferences.json");
@@ -1312,14 +1318,10 @@ mod tests {
             acknowledge_non_idempotent: false,
             acknowledge_credentials: false,
         };
-        assert_eq!(
-            application
-                .execute_composer(input.clone())
-                .await
-                .unwrap()
-                .body,
-            "ok"
-        );
+        let sending = application.clone();
+        let in_flight = input.clone();
+        let active = tokio::spawn(async move { sending.execute_composer(in_flight).await });
+        arrived.notified().await;
         let mut profile = crate::NetworkProfileSnapshot {
             id: "custom-blocked".into(),
             name: "Blocked".into(),
@@ -1334,7 +1336,10 @@ mod tests {
             .save_network_profiles(1, vec![profile], Some("custom-blocked".into()))
             .await
             .unwrap();
+        finish.send(()).unwrap();
+        assert_eq!(active.await.unwrap().unwrap().body, "ok");
         assert!(application.execute_composer(input.clone()).await.is_err());
+        release.send(()).unwrap();
         server.await.unwrap();
         let denied_origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let denied = ComposerRequest {

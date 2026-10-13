@@ -565,6 +565,19 @@ fn describe(text: &mut String, transport: &TransportObservation) {
         );
     }
     if let Some(tls) = &transport.tls {
+        if let Some(profile) = &tls.network_profile {
+            let name = crate::xml_text::display_value(&profile.name)
+                .replace('\r', "\\r")
+                .replace('\n', "\\n");
+            let _ = writeln!(
+                text,
+                "Network profile: {name} (revision {})\r",
+                profile.revision
+            );
+            if let Ok(settings) = serde_json::to_string(&profile.settings) {
+                let _ = writeln!(text, "Effective network settings: {settings}\r");
+            }
+        }
         if let Some(name) = &tls.server_name {
             let _ = writeln!(text, "Server name: {name}\r");
         }

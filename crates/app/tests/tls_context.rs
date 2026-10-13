@@ -56,6 +56,8 @@ fn evidence(state: u8) -> PerformanceEvidence {
                 cipher: Some(cipher.into()),
                 tls_resumed: Some(resumed),
                 tls: Some(TlsEvidence {
+                    network_profile: (leg == "upstream")
+                        .then(transmog_app::NetworkProfileSnapshot::default),
                     server_name: Some("localhost".into()),
                     server_chain: vec![
                         public(if leg == "client" && !tls12 {
@@ -325,6 +327,16 @@ fn assert_inspection(
             .find(|transport| transport.leg == original.leg)
             .unwrap();
         assert_eq!(transport.tls_resumed, original.tls_resumed);
+        assert_eq!(
+            transport
+                .tls
+                .as_ref()
+                .and_then(|tls| tls.network_profile.as_ref()),
+            original
+                .tls
+                .as_ref()
+                .and_then(|tls| tls.network_profile.as_ref())
+        );
     }
     if format != TraceSaveFormat::SazStrict {
         assert!(

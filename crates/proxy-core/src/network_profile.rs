@@ -114,3 +114,18 @@ impl Default for NetworkProfileSnapshot {
         }
     }
 }
+
+impl NetworkProfileSnapshot {
+    /// Checks finite public provenance before accepting imported capture metadata.
+    #[must_use]
+    pub fn valid(&self) -> bool {
+        !self.id.is_empty()
+            && self.id.len() <= 80
+            && !self.name.is_empty()
+            && self.name.chars().count() <= 80
+            && !self.base_profile.is_empty()
+            && self.base_profile.len() <= 80
+            && self.revision > 0
+            && self.settings.validate().is_ok()
+    }
+}

@@ -39,18 +39,6 @@ impl WindowWorkspaces {
             })
             .collect()
     }
-    #[cfg(test)]
-    pub fn set_outbound_protocols(&self, allowed: transmog_app::AllowedHttpProtocols, reuse: bool) {
-        for viewer in self
-            .viewers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-        {
-            viewer.application.set_replay_outbound_protocols(allowed);
-            viewer.application.set_replay_server_connection_reuse(reuse);
-        }
-    }
     pub fn application(&self, main: &Application, label: &str) -> Result<Application, AppError> {
         if label == "main" {
             return Ok(main.clone());
@@ -355,7 +343,7 @@ fn error(message: &str) -> AppError {
 mod tests {
     use super::*;
     #[tokio::test]
-    async fn protocol_updates_reach_open_viewers_without_replacing_their_workspace() {
+    async fn profile_updates_reach_open_viewers_without_replacing_their_workspace() {
         use tokio::{
             io::{AsyncReadExt, AsyncWriteExt},
             net::TcpListener,
@@ -392,14 +380,15 @@ mod tests {
             acknowledge_non_idempotent: false,
             acknowledge_credentials: false,
         };
-        workspaces.set_outbound_protocols(
-            AllowedHttpProtocols {
-                http1: false,
-                http2: false,
-                http3: false,
-            },
-            true,
-        );
+        let mut blocked = transmog_app::NetworkProfileSnapshot::default();
+        blocked.settings.protocols = AllowedHttpProtocols {
+            http1: false,
+            http2: false,
+            http3: false,
+        };
+        for update in workspaces.prepare_network_profile(blocked).unwrap() {
+            update();
+        }
         for (application, original) in &applications {
             assert!(application.execute_composer(input.clone()).await.is_err());
             assert_eq!(&application.product_state(), original);
@@ -424,7 +413,12 @@ mod tests {
                     .unwrap();
             }
         });
-        workspaces.set_outbound_protocols(AllowedHttpProtocols::default(), true);
+        for update in workspaces
+            .prepare_network_profile(transmog_app::NetworkProfileSnapshot::default())
+            .unwrap()
+        {
+            update();
+        }
         for (application, original) in applications {
             assert_eq!(
                 application

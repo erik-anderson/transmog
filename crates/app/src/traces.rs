@@ -847,6 +847,8 @@ fn import_saz(
                             .or_else(|| value(suffix, 512))
                     };
                     let server_name = value("sni", 1024);
+                    let network_profile =
+                        transmog_saz::tls_network_profile(&session.metadata.flags, leg);
                     snapshot.performance.transports.push(
                         transmog_core::performance::TransportObservation {
                             leg: leg.into(),
@@ -899,10 +901,13 @@ fn import_saz(
                                 Some("No") => Some(false),
                                 _ => None,
                             },
-                            tls: (!details.is_empty()).then(|| transmog_core::TlsEvidence {
-                                server_name,
-                                details,
-                                ..transmog_core::TlsEvidence::default()
+                            tls: (!details.is_empty() || network_profile.is_some()).then(|| {
+                                transmog_core::TlsEvidence {
+                                    network_profile,
+                                    server_name,
+                                    details,
+                                    ..transmog_core::TlsEvidence::default()
+                                }
                             }),
                             ..transmog_core::performance::TransportObservation::default()
                         },

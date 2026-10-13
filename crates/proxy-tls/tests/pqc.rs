@@ -808,7 +808,10 @@ fn production_tls12_offers_chromium_order_and_negotiates_each_suite() {
             .set_max_proto_version(Some(SslVersion::TLS1_2))
             .unwrap();
         server.set_cipher_list(cipher).unwrap();
-        let (tls, _) = handshake(server.build(), &factory(&ca).hyper_connector().unwrap());
+        let preset = factory(&ca)
+            .with_network_profile(transmog_core::network_profile::NetworkProfileSnapshot::default())
+            .unwrap();
+        let (tls, _) = handshake(server.build(), &preset.hyper_connector().unwrap());
         assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
         assert!(tls.ssl().verify_result().is_ok());
         assert_eq!(tls.ssl().current_cipher().unwrap().name(), cipher);

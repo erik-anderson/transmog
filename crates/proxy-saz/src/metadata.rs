@@ -308,6 +308,11 @@ pub(crate) fn render(
             }
             if let Some(prefix) = crate::tls::flag_prefix(leg) {
                 if let Some(tls) = &transport.tls {
+                    if let Some(profile) = &tls.network_profile
+                        && let Ok(value) = serde_json::to_string(profile)
+                    {
+                        negotiation_flags.insert(format!("{prefix}network-profile"), value);
+                    }
                     for (label, suffix) in crate::tls::NEGOTIATION_FIELDS {
                         if let Some(value) = tls.details.get(label) {
                             negotiation_flags.insert(format!("{prefix}{suffix}"), value.clone());
