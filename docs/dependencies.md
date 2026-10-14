@@ -77,6 +77,14 @@ policy, schema and source-label changes, then run the qualification in the
 candidate before applying its patch. Profiles are not automatically activated or
 renamed by a data roll.
 
+Generated notices and CycloneDX artifacts identify Git packages by their full
+resolved commit, even when the package version matches a registry release.
+They record the native BoringSSL base revision, enabled binding features and
+upstream patch hashes, distinguishing applied patches from inactive source
+inventory. Patch selection is qualified against the reviewed upstream build
+function; a change to that logic stops the roll for review before provenance can
+claim which patches are applied.
+
 ## Content, WebSockets, and file formats
 
 | Responsibility | Key dependencies | Transmog usage |

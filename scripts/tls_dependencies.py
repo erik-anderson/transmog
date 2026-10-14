@@ -14,6 +14,12 @@ REPOSITORY = "https://github.com/cloudflare/boring"
 FAMILY = ("boring", "boring-sys", "hyper-boring", "tokio-boring")
 UNSUPPORTED_FEATURES = {"fips", "rpk", "underscore-wildcards", "allow-crl-extensions-bad-version", "relax-cert-validation"}
 OVERRIDES = ("PATH", "INCLUDE_PATH", "SOURCE_PATH", "ASSUME_PATCHED")
+# Fingerprint the reviewed selection logic, rather than guessing which patches
+# apply from filenames. A roll that changes this function needs a fresh review;
+# this is qualification metadata, not a second source revision pin.
+REVIEWED_PATCH_PROFILES = {
+    "efc15101c200c961176f848ea8ab409520467a49f52cd9b04ab6ca5043c98cdf": ["boring-pq.patch"],
+}
 
 
 def reject_native_overrides(environment):
@@ -73,6 +79,16 @@ def verify_source(source: Path, expected):
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(patches.glob("*.patch"))}
 
 
+def applied_patches(source: Path):
+    """Only the unconditional PQ patch applies to the qualified feature set."""
+    script = (source / "boring-sys/build/main.rs").read_text(encoding="utf-8")
+    function = re.search(r"fn ensure_patches_applied\(.*?\n}\n", script, re.S)
+    digest = hashlib.sha256(function.group().encode()).hexdigest() if function else None
+    if digest not in REVIEWED_PATCH_PROFILES:
+        raise ValueError("Upstream native patch selection changed; review it before qualifying this provider")
+    return list(REVIEWED_PATCH_PROFILES[digest])
+
+
 def verify_stack(metadata, root: Path, *, verify_checkout=True):
     expected = baseline(root)
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
@@ -103,6 +119,7 @@ def verify_stack(metadata, root: Path, *, verify_checkout=True):
     source = Path(selected["boring-sys"]["manifest_path"]).parent.parent
     patches = verify_source(source, expected) if verify_checkout else {}
     return {**expected, "source": str(source), "patches": patches,
+            "applied_patches": applied_patches(source) if verify_checkout else [],
             "features": {name: nodes[p["id"]]["features"] for name, p in selected.items()}}
 
 

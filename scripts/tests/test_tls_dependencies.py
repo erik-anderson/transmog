@@ -1,4 +1,5 @@
 """Qualified TLS builds check resolved sources, features and native overrides."""
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -78,6 +79,22 @@ class TlsDependencyTests(unittest.TestCase):
             with patch.object(tls, "git", side_effect=["a" * 40, "?? .cargo-ok", f"160000 commit {'b'*40}\tboring-sys/deps/boringssl", "c" * 40]):
                 with self.assertRaisesRegex(ValueError, "submodule has the wrong revision"):
                     tls.verify_source(source, expected)
+
+    def test_patch_provenance_requires_review_when_selection_logic_changes(self):
+        function = 'fn ensure_patches_applied(config: &Config) {\n    apply_patch(config, "example.patch");\n}\n'
+        digest = hashlib.sha256(function.encode()).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            script = root / "boring-sys/build/main.rs"
+            script.parent.mkdir(parents=True)
+            script.write_text(function, encoding="utf-8")
+            with patch.object(tls, "REVIEWED_PATCH_PROFILES", {digest: ["example.patch"]}):
+                self.assertEqual(tls.applied_patches(root), ["example.patch"])
+                # Same patch name, different condition: filename inventories
+                # cannot tell us whether the native build still applies it.
+                script.write_text(function.replace("    apply_patch", "    if false { return; }\n    apply_patch"), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "patch selection changed"):
+                    tls.applied_patches(root)
 
 
 if __name__ == "__main__":

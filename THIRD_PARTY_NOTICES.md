@@ -55,8 +55,8 @@ Transmog includes the following third-party software.
 | block-padding | 0.3.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block2 | 0.6.2 | MIT | https://github.com/madsmtm/objc2 |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/blocking |
-| boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring |
-| boring-sys | 5.2.0 | MIT | https://github.com/cloudflare/boring |
+| boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
+| boring-sys | 5.2.0 | MIT | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | boxed_error | 0.2.3 | MIT | https://github.com/denoland/boxed_error |
 | brotli | 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
 | brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
@@ -85,6 +85,7 @@ Transmog includes the following third-party software.
 | cfg_aliases | 0.2.2 | MIT | https://github.com/katharostech/cfg_aliases |
 | cfg-expr | 0.15.8 | MIT OR Apache-2.0 | https://github.com/EmbarkStudios/cfg-expr |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if |
+| chacha20 | 0.10.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/stream-ciphers |
 | chrono | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
 | cipher | 0.4.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | cipher | 0.5.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
@@ -111,6 +112,7 @@ Transmog includes the following third-party software.
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | crc32fast | 1.5.2 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
+| critical-section | 1.2.0 | MIT OR Apache-2.0 | https://github.com/rust-embedded/critical-section |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crossbeam-epoch | 0.9.21 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
@@ -235,6 +237,9 @@ Transmog includes the following third-party software.
 | heck | 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 | https://github.com/hermit-os/hermit-rs |
 | hex | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex |
+| hickory-net | 0.26.3 | MIT OR Apache-2.0 | https://github.com/hickory-dns/hickory-dns |
+| hickory-proto | 0.26.3 | MIT OR Apache-2.0 | https://github.com/hickory-dns/hickory-dns |
+| hickory-resolver | 0.26.3 | MIT OR Apache-2.0 | https://github.com/hickory-dns/hickory-dns |
 | hkdf | 0.12.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/KDFs/ |
 | hmac | 0.12.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
 | hmac | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
@@ -249,7 +254,7 @@ Transmog includes the following third-party software.
 | httpdate | 1.0.3 | MIT OR Apache-2.0 | https://github.com/pyfisch/httpdate |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hybrid-array |
 | hyper | 1.11.1 | MIT | https://github.com/hyperium/hyper |
-| hyper-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring |
+| hyper-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/hyper-rustls |
 | hyper-util | 0.1.21 | MIT | https://github.com/hyperium/hyper-util |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
@@ -279,6 +284,7 @@ Transmog includes the following third-party software.
 | inout | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | intrusive-collections | 0.10.3 | MIT OR Apache-2.0 | https://github.com/Amanieu/intrusive-rs |
 | inventory | 0.3.24 | MIT OR Apache-2.0 | https://github.com/dtolnay/inventory |
+| ipconfig | 0.3.4 | MIT/Apache-2.0 | https://github.com/liranringel/ipconfig |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | https://github.com/krisprice/ipnet |
 | is-macro | 0.3.8 | Apache-2.0 | https://github.com/dudykr/ddbase.git |
 | itertools | 0.13.0 | MIT OR Apache-2.0 | https://github.com/rust-itertools/itertools |
@@ -334,6 +340,7 @@ Transmog includes the following third-party software.
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
+| moka | 0.12.16 | (MIT OR Apache-2.0) AND Apache-2.0 | https://github.com/moka-rs/moka |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/moxcms.git |
 | muda | 0.20.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/muda |
 | ndk | 0.9.0 | MIT OR Apache-2.0 | https://github.com/rust-mobile/ndk |
@@ -420,6 +427,7 @@ Transmog includes the following third-party software.
 | powerfmt | 0.2.0 | MIT OR Apache-2.0 | https://github.com/jhpratt/powerfmt |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | https://github.com/cryptocorrosion/cryptocorrosion |
 | precomputed-hash | 0.1.1 | MIT | https://github.com/emilio/precomputed-hash |
+| prefix-trie | 0.8.4 | MIT OR Apache-2.0 | https://github.com/tiborschneider/prefix-trie |
 | prettyplease | 0.2.37 | MIT OR Apache-2.0 | https://github.com/dtolnay/prettyplease |
 | proc-macro-crate | 1.3.1 | MIT OR Apache-2.0 | https://github.com/bkchr/proc-macro-crate |
 | proc-macro-crate | 2.0.2 | MIT OR Apache-2.0 | https://github.com/bkchr/proc-macro-crate |
@@ -438,8 +446,10 @@ Transmog includes the following third-party software.
 | r-efi | 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | r-efi | 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | https://github.com/r-efi/r-efi |
 | radium | 0.7.0 | MIT | https://github.com/bitvecto-rs/radium |
+| rand | 0.10.3 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand | 0.8.8 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | rand_chacha | 0.3.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
+| rand_core | 0.10.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand_core |
 | rand_core | 0.6.4 | MIT OR Apache-2.0 | https://github.com/rust-random/rand |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib | https://github.com/rust-windowing/raw-window-handle |
 | rayon | 1.12.0 | MIT OR Apache-2.0 | https://github.com/rayon-rs/rayon |
@@ -453,6 +463,7 @@ Transmog includes the following third-party software.
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | https://github.com/seanmonstar/reqwest |
 | resb | 0.1.2 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| resolv-conf | 0.7.6 | MIT OR Apache-2.0 | https://github.com/hickory-dns/resolv-conf |
 | rfd | 0.17.2 | MIT | https://github.com/PolyMeilex/rfd |
 | ring | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
 | rpassword | 7.5.4 | Apache-2.0 | https://github.com/conradkleinespel/rpassword |
@@ -570,6 +581,7 @@ Transmog includes the following third-party software.
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | system-deps | 6.2.2 | MIT OR Apache-2.0 | https://github.com/gdesmott/system-deps |
+| tagptr | 0.2.0 | MIT/Apache-2.0 | https://github.com/oliver-giersch/tagptr.git |
 | tao | 0.37.1 | Apache-2.0 | https://github.com/tauri-apps/tao |
 | tao-macros | 0.1.4 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tao |
 | tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
@@ -604,7 +616,7 @@ Transmog includes the following third-party software.
 | tinystr | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
 | tokio | 1.53.1 | MIT | https://github.com/tokio-rs/tokio |
-| tokio-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring |
+| tokio-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | tokio-macros | 2.7.2 | MIT | https://github.com/tokio-rs/tokio |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | https://github.com/rustls/tokio-rustls |
 | tokio-util | 0.7.19 | MIT | https://github.com/tokio-rs/tokio |
@@ -674,6 +686,7 @@ Transmog includes the following third-party software.
 | webview2-com-sys | 0.39.1 | MIT | https://github.com/wravery/webview2-rs |
 | weezl | 0.1.12 | MIT OR Apache-2.0 | https://github.com/image-rs/weezl |
 | which | 6.0.3 | MIT | https://github.com/harryfei/which-rs.git |
+| widestring | 1.2.1 | MIT OR Apache-2.0 | https://github.com/VoidStarKat/widestring-rs |
 | winapi | 0.3.9 | MIT/Apache-2.0 | https://github.com/retep998/winapi-rs |
 | winapi-i686-pc-windows-gnu | 0.4.0 | MIT/Apache-2.0 | https://github.com/retep998/winapi-rs |
 | winapi-util | 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util |
@@ -1477,3 +1490,17 @@ Source and reproducible generator: `third_party/chromium-root-store` and `script
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+## Qualified BoringSSL native source and patches
+
+SSL/crypto source: https://boringssl.googlesource.com/boringssl/+/427ec40cc8edc545253289232e885708c409e5ea. Rust bindings: https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b.
+
+Only the patches marked applied below are included in this qualified native build.
+
+| Upstream patch | Applied | SHA-256 |
+|---|---|---|
+| [bad-cert-verification.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/bad-cert-verification.patch) | No | 1e5c0e034f8ba5bc6699fcfb7cf1768fa8ad162be513061d09285b5285fc8113 |
+| [boring-pq.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/boring-pq.patch) | Yes | 25bb5efaba76f5d0d3abcc335f081b258d408bbab416feca21e343cf89ebf2b3 |
+| [relax-cert-validation.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/relax-cert-validation.patch) | No | ae2b951654f6b79590af47ee9e3c263f5fe4d36f57428c4aeb7307e8d580ebe0 |
+| [rpk.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/rpk.patch) | No | 6051949fe7cb5cbb290b41830b1d8b0714d4eeb2d25a306f76716087a9caba0a |
+| [underscore-wildcards.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/underscore-wildcards.patch) | No | 6a410a73a6d5eb83f0d10305217089444a7ead52f386b6c8b9611347796a7385 |
