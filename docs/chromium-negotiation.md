@@ -69,6 +69,8 @@ mandatory keys, target name and port select a compatible endpoint. For a `.` tar
 discovery uses the actual HTTPS record owner, including after CNAME
 resolution and for port-prefixed owners. The original origin remains the
 certificate and HTTP authority.
+Bindings that change the requested destination port are ignored, matching the
+pinned Chromium recipe. An explicit Alt-Svc destination port remains supported.
 A/AAAA resolution uses the existing system resolver and Happy Eyeballs policy. DNS-cache TTLs apply;
 configuration changes refresh the resolver on subsequent lookups. This supplies
 ECH discovery, rather than Chromium's complete browser secure-DNS/DoH policy.

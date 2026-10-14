@@ -178,7 +178,7 @@ fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<
     {
         return None;
     }
-    let port = params
+    let service_port = params
         .iter()
         .find_map(|(_, value)| {
             if let SvcParamValue::Port(port) = value {
@@ -188,7 +188,9 @@ fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<
             }
         })
         .unwrap_or(port);
-    if port == 0 {
+    // The pinned Chromium recipe ignores port redirects in HTTPS records.
+    // Alt-Svc still supplies an explicit destination port to this lookup.
+    if port == 0 || service_port != port {
         return None;
     }
     let endpoint = if service.target_name.is_root() {
@@ -368,6 +370,27 @@ mod tests {
         assert_eq!(offer.endpoint, "_8443._https.origin.example.test");
     }
     #[test]
+    fn https_port_parameters_cannot_redirect_the_requested_destination() {
+        for port in [0, 25, 443, 8443, 65535] {
+            let service = SVCB::new(
+                1,
+                Name::root(),
+                vec![
+                    (SvcParamKey::Port, SvcParamValue::Port(port)),
+                    (
+                        SvcParamKey::EchConfigList,
+                        SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
+                    ),
+                ],
+            );
+            let offer = select(&service, "example.test.", 443, &["http/1.1".into()]);
+            assert_eq!(offer.is_some(), port == 443);
+            if let Some(offer) = offer {
+                assert_eq!(offer.port, 443);
+            }
+        }
+    }
+    #[test]
     fn service_bindings_require_compatible_alpn_and_complete_mandatory_keys() {
         let mut service = SVCB::new(
             1,
@@ -399,8 +422,9 @@ mod tests {
         service
             .svc_params
             .push((SvcParamKey::Port, SvcParamValue::Port(8443)));
+        assert!(select(&service, "example.com.", 443, &["h3".into()]).is_none());
         assert_eq!(
-            select(&service, "example.com.", 443, &["h3".into()])
+            select(&service, "example.com.", 8443, &["h3".into()])
                 .unwrap()
                 .port,
             8443
