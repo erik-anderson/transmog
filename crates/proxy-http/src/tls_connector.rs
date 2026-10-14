@@ -48,6 +48,7 @@ struct Key {
     port: u16,
     trust: TrustEpoch,
     authentication: u64,
+    ech: Option<Vec<u8>>,
 }
 #[derive(Clone)]
 struct TicketOwner {
@@ -67,12 +68,15 @@ pub struct ChromiumHttpsConnector<S> {
     factory: UpstreamTlsContextFactory,
     cache: Arc<SessionCache<Key, SslSession>>,
     callback: Option<Callback>,
+    automatic_ech_retry: bool,
+    offered_protocols: Vec<String>,
 }
 impl<S> ChromiumHttpsConnector<S> {
     pub(crate) fn new(
         tcp: S,
         mut builder: SslContextBuilder,
         factory: UpstreamTlsContextFactory,
+        alpn: &[u8],
     ) -> Result<Self, ErrorStack> {
         let cache = Arc::new(SessionCache::default());
         let index = owner_index()?;
@@ -93,6 +97,8 @@ impl<S> ChromiumHttpsConnector<S> {
             factory,
             cache,
             callback: None,
+            automatic_ech_retry: true,
+            offered_protocols: decode_alpn(alpn),
         })
     }
     /// Installs per-connection policy before the first `ClientHello` is sent.
@@ -102,10 +108,13 @@ impl<S> ChromiumHttpsConnector<S> {
     {
         self.callback = Some(Arc::new(callback));
     }
+    pub(crate) fn capture_each_ech_attempt(&mut self) {
+        self.automatic_ech_retry = false;
+    }
 }
 impl<S, T> Service<Uri> for ChromiumHttpsConnector<S>
 where
-    S: Service<Uri, Response = TokioIo<T>> + Send,
+    S: Service<Uri, Response = TokioIo<T>> + Send + Clone + 'static,
     S::Error: Into<BoxError>,
     S::Future: Send + 'static,
     T: AsyncRead + AsyncWrite + Connection + Unpin + Send + Sync + std::fmt::Debug + 'static,
@@ -116,52 +125,137 @@ where
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), BoxError>> {
         self.tcp.poll_ready(cx).map_err(Into::into)
     }
+    #[allow(clippy::too_many_lines)] // Keeps endpoint selection and the single pre-HTTP retry in one owned future.
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let socket = self.tcp.call(uri.clone());
+        let mut tcp = self.tcp.clone();
         let context = self.context.clone();
         let factory = self.factory.clone();
         let cache = self.cache.clone();
         let callback = self.callback.clone();
+        let automatic_ech_retry = self.automatic_ech_retry;
+        let mut alpn = self.offered_protocols.clone();
         Box::pin(async move {
-            let socket = socket.await.map_err(Into::into)?.into_inner();
-            if !matches!(uri.scheme_str(), Some("https" | "wss")) {
-                return Ok(MaybeHttpsStream::Http(socket));
-            }
+            let https = matches!(uri.scheme_str(), Some("https" | "wss"));
             factory.prepare_trust().await?;
             let host = uri
                 .host()
                 .ok_or("URI missing host")?
                 .trim_matches(['[', ']']);
-            let key = Key {
-                host: host.to_ascii_lowercase(),
-                port: uri.port_u16().unwrap_or(443),
-                trust: factory.trust_epoch(),
-                authentication: factory.client_certificate_admission_generation(),
+            let allowed = crate::metrics::allowed_for_setup()
+                .or_else(|| factory.network_profile().map(|p| p.settings.protocols))
+                .unwrap_or_default();
+            alpn.retain(|protocol| match protocol.as_str() {
+                "h2" => allowed.http2,
+                "http/1.1" => allowed.http1,
+                _ => false,
+            });
+            let discovery_start = std::time::Instant::now();
+            let mut offer = if https {
+                factory
+                    .ech_offer(host, uri.port_u16().unwrap_or(443), alpn)
+                    .await
+            } else {
+                None
             };
-            let mut ssl = Ssl::new(&context)?;
-            if host.parse::<std::net::IpAddr>().is_err() {
-                ssl.set_hostname(host)?;
+            if https && host.contains('.') && host.parse::<std::net::IpAddr>().is_err() {
+                crate::metrics::dns_finished(discovery_start, true);
             }
-            ssl.set_ex_data(
-                owner_index()?,
-                TicketOwner {
-                    key: key.clone(),
-                    generation: cache.generation(),
-                },
-            );
-            if !factory.has_client_certificate_resolver()
-                && let Some(session) = cache.take(&key)
-            {
-                transmog_tls::restore_client_session(&mut ssl, &session)?;
+            for attempt in 0..2 {
+                let routed = if let Some(offer) = &offer {
+                    Uri::builder()
+                        .scheme(uri.scheme_str().unwrap_or("https"))
+                        .authority(if offer.endpoint.parse::<std::net::Ipv6Addr>().is_ok() {
+                            format!("[{}]:{}", offer.endpoint, offer.port)
+                        } else {
+                            format!("{}:{}", offer.endpoint, offer.port)
+                        })
+                        .path_and_query("/")
+                        .build()?
+                } else {
+                    uri.clone()
+                };
+                std::future::poll_fn(|cx| tcp.poll_ready(cx))
+                    .await
+                    .map_err(Into::into)?;
+                let socket = tcp.call(routed).await.map_err(Into::into)?.into_inner();
+                if !https {
+                    return Ok(MaybeHttpsStream::Http(socket));
+                }
+                let key = Key {
+                    host: host.to_ascii_lowercase(),
+                    port: uri.port_u16().unwrap_or(443),
+                    trust: factory.trust_epoch(),
+                    authentication: factory.client_certificate_admission_generation(),
+                    ech: offer
+                        .as_ref()
+                        .filter(|o| !o.config.is_empty())
+                        .map(|o| {
+                            boring::hash::hash(boring::hash::MessageDigest::sha256(), &o.config)
+                                .map(|hash| hash.to_vec())
+                        })
+                        .transpose()?,
+                };
+                let mut ssl = Ssl::new(&context)?;
+                if host.parse::<std::net::IpAddr>().is_err() {
+                    ssl.set_hostname(host)?;
+                }
+                if let Some(offer) = &offer
+                    && !offer.config.is_empty()
+                {
+                    transmog_tls::configure_ech(&mut ssl, &offer.config)?;
+                }
+                ssl.set_ex_data(
+                    owner_index()?,
+                    TicketOwner {
+                        key: key.clone(),
+                        generation: cache.generation(),
+                    },
+                );
+                if !factory.has_client_certificate_resolver()
+                    && let Some(session) = cache.take(&key)
+                {
+                    transmog_tls::restore_client_session(&mut ssl, &session)?;
+                }
+                if let Some(callback) = &callback {
+                    callback(&mut ssl, &uri)?;
+                }
+                if let Some(offer) = &offer {
+                    transmog_tls::ech::record_ech_service(&ssl, offer);
+                }
+                match tokio_boring::SslStreamBuilder::new(ssl, socket)
+                    .connect()
+                    .await
+                {
+                    Ok(stream) => return Ok(MaybeHttpsStream::Https(stream)),
+                    Err(error) => {
+                        let retry = error.ssl().and_then(transmog_tls::authenticated_ech_retry);
+                        if automatic_ech_retry
+                            && attempt == 0
+                            && let Some(config) = retry
+                            && let Some(offer) = &mut offer
+                        {
+                            offer.config = config.into();
+                            continue;
+                        }
+                        return Err(Box::new(HandshakeFailure(Box::new(error))) as BoxError);
+                    }
+                }
             }
-            if let Some(callback) = callback {
-                callback(&mut ssl, &uri)?;
-            }
-            let stream = tokio_boring::SslStreamBuilder::new(ssl, socket)
-                .connect()
-                .await
-                .map_err(|error| Box::new(HandshakeFailure(Box::new(error))) as BoxError)?;
-            Ok(MaybeHttpsStream::Https(stream))
+            Err("ECH retry limit reached".into())
         })
     }
+}
+fn decode_alpn(mut wire: &[u8]) -> Vec<String> {
+    let mut protocols = Vec::new();
+    while let Some((length, rest)) = wire.split_first() {
+        let length = usize::from(*length);
+        if rest.len() < length {
+            break;
+        }
+        if let Ok(protocol) = std::str::from_utf8(&rest[..length]) {
+            protocols.push(protocol.to_owned());
+        }
+        wire = &rest[length..];
+    }
+    protocols
 }

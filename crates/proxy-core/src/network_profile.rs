@@ -71,6 +71,10 @@ pub struct NetworkProfileSettings {
     pub randomize_extensions: bool,
     /// Send a dummy ECH extension; this does not encrypt the server name.
     pub ech_grease: bool,
+    /// Encrypt `ClientHello` using a usable DNS HTTPS service binding.
+    /// Historical captures offered only GREASE, not real ECH.
+    #[serde(default)]
+    pub encrypted_client_hello: bool,
     /// Accept Brotli-compressed server certificates.
     pub certificate_compression: bool,
     /// Negotiate HTTP/2 settings in TLS; Client Hint preferences remain with the caller.
@@ -104,6 +108,7 @@ impl Default for NetworkProfileSettings {
             grease: TlsGrease::default(),
             randomize_extensions: true,
             ech_grease: true,
+            encrypted_client_hello: true,
             certificate_compression: true,
             http2_alps: true,
             trust_anchor_ids: true,
@@ -161,8 +166,8 @@ impl NetworkProfileSnapshot {
     #[must_use]
     pub fn builtin(id: &str) -> Option<Self> {
         let (name, revision, root_store) = match id {
-            CHROMIUM_154 => ("Chromium 154", 5, RootStore::ChromeInstalled),
-            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 2, RootStore::Webview2Installed),
+            CHROMIUM_154 => ("Chromium 154", 6, RootStore::ChromeInstalled),
+            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 3, RootStore::Webview2Installed),
             _ => return None,
         };
         Some(Self {
@@ -183,6 +188,7 @@ impl NetworkProfileSnapshot {
                 grease: TlsGrease::Chromium,
                 randomize_extensions: true,
                 ech_grease: true,
+                encrypted_client_hello: true,
                 certificate_compression: true,
                 http2_alps: true,
                 trust_anchor_ids: true,
@@ -242,11 +248,16 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("localCertificates");
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("encryptedClientHello");
         let result: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
         assert!(!result.settings.trust_anchor_ids);
         assert!(result.settings.pki_metadata_file.is_none());
         assert_eq!(result.settings.root_store, RootStore::Os);
         assert!(!result.settings.local_certificates);
+        assert!(!result.settings.encrypted_client_hello);
         assert!(result.valid());
     }
 

@@ -166,11 +166,15 @@ pub(crate) fn dns_finished(started: Instant, succeeded: bool) {
     let _ = SETUP.try_with(|setup| {
         let mut values = setup.values();
         let done = Instant::now();
+        let started = values.dns_begin.map_or(started, |prior| prior.min(started));
         values.dns_begin = Some(started);
         values.dns_done = Some(done);
         values.facts.dns_micros = Some(micros(done.duration_since(started)));
         values.dns_failed = !succeeded;
     });
+}
+pub(crate) fn allowed_for_setup() -> Option<AllowedHttpProtocols> {
+    SETUP.try_with(|setup| setup.allowed).ok()
 }
 fn micros(duration: std::time::Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
@@ -191,14 +195,22 @@ impl Service<Uri> for MeasuredTcpConnector {
             let setup = SETUP.with(Arc::clone);
             let started = Instant::now();
             let result = connection.await;
-            let overall = micros(started.elapsed());
             {
                 let mut values = setup.values();
                 if !values.dns_failed {
-                    values.tcp_begin = Some(values.dns_done.unwrap_or(started));
+                    values.tcp_begin = Some(
+                        values
+                            .dns_done
+                            .filter(|done| *done >= started)
+                            .unwrap_or(started),
+                    );
                     values.tcp_done = Some(Instant::now());
-                    values.facts.tcp_micros =
-                        Some(overall.saturating_sub(values.facts.dns_micros.unwrap_or(0)));
+                    values.facts.tcp_micros = Some(micros(
+                        values
+                            .tcp_done
+                            .unwrap()
+                            .duration_since(values.tcp_begin.unwrap()),
+                    ));
                 }
             }
             let socket = result?.into_inner();
@@ -461,7 +473,11 @@ fn metadata_recovery(
             .metadata_factory
             .as_ref()
             .zip(values.tls_capture.as_ref())
-            .and_then(|(factory, capture)| factory.trust_anchor_recovery(capture))?
+            .and_then(|(factory, capture)| {
+                factory
+                    .ech_recovery(capture)
+                    .or_else(|| factory.trust_anchor_recovery(capture))
+            })?
     };
     Some(
         connector(&factory, mode, happy, protocols)
@@ -532,7 +548,8 @@ pub(crate) fn connector(
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.tcp_context_builder(mode.alpn())?;
     let mut connector =
-        ChromiumHttpsConnector::new(MeasuredTcpConnector(tcp), tls, factory.clone())?;
+        ChromiumHttpsConnector::new(MeasuredTcpConnector(tcp), tls, factory.clone(), mode.alpn())?;
+    connector.capture_each_ech_attempt();
     let authorization = factory.clone();
     let factory = factory.clone();
     let generation = factory.client_certificate_admission_generation();

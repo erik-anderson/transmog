@@ -189,6 +189,28 @@ pub fn local_buffer_chain(ssl: &SslRef) -> Vec<Vec<u8>> {
     unsafe { copy_buffer_stack(boring_sys::SSL_get0_chain(ssl.as_ptr()).cast()) }
         .unwrap_or_default()
 }
+
+/// Decodes a stored session with this SSL context's certificate-buffer method.
+/// # Errors
+/// Returns malformed/oversized session or native allocation errors.
+pub fn decode_session_for_context(
+    ssl: &SslRef,
+    bytes: &[u8],
+) -> Result<boring::ssl::SslSession, ErrorStack> {
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(ErrorStack::get());
+    }
+    // SAFETY: borrowed input/context are live; the parser returns an independently
+    // owned session using the matching certificate representation.
+    let session = unsafe {
+        boring_sys::SSL_SESSION_from_bytes(bytes.as_ptr(), bytes.len(), ssl.ssl_context().as_ptr())
+    };
+    if session.is_null() {
+        Err(ErrorStack::get())
+    } else {
+        Ok(unsafe { boring::ssl::SslSession::from_ptr(session) })
+    }
+}
 pub(crate) unsafe fn copy_buffer_stack(stack: *const std::ffi::c_void) -> Option<Vec<Vec<u8>>> {
     if stack.is_null() {
         return Some(Vec::new());

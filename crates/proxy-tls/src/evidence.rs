@@ -24,13 +24,18 @@ fn context_index() -> Result<Index<SslContext, TlsCapture>, ErrorStack> {
 
 /// Cloneable public evidence for one physical TLS connection, including failures.
 #[derive(Clone, Debug)]
-pub struct TlsCapture(Arc<Mutex<TlsEvidence>>, Arc<Mutex<Vec<u8>>>);
+pub struct TlsCapture(
+    Arc<Mutex<TlsEvidence>>,
+    Arc<Mutex<Vec<u8>>>,
+    Arc<Mutex<Option<Vec<u8>>>>,
+);
 impl TlsCapture {
     /// Starts collection with the local connection policy and trust provenance.
     pub fn new(evidence: TlsEvidence) -> Self {
         Self(
             Arc::new(Mutex::new(evidence)),
             Arc::new(Mutex::new(Vec::new())),
+            Arc::default(),
         )
     }
     fn data(&self) -> std::sync::MutexGuard<'_, TlsEvidence> {
@@ -88,6 +93,16 @@ impl TlsCapture {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+    pub(crate) fn ech_retry(&self) -> Option<Vec<u8>> {
+        self.2
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    /// Whether the failed handshake authenticated an ECH retry or rollback.
+    pub fn ech_retry_available(&self) -> bool {
+        self.ech_retry().is_some()
     }
     /// Records a bounded public client authentication state or policy explanation.
     pub fn authentication_detail(&self, name: &str, value: &str) {
@@ -209,6 +224,17 @@ impl TlsCapture {
             insert_detail(&mut data, "Handshake completion", "Complete");
         }
         if finished {
+            insert_detail(
+                &mut data,
+                "Encrypted Client Hello",
+                if ssl.ech_accepted() {
+                    "Accepted"
+                } else if transmog_tls_native::ech_configured(ssl) {
+                    "Configured; not accepted"
+                } else {
+                    "Not negotiated"
+                },
+            );
             collect_key_exchange(&mut data, ssl);
             // The local signature is available only at HANDSHAKE_DONE. A later
             // completed() call must preserve the value collected by the callback.
@@ -362,6 +388,25 @@ pub(crate) fn configure_completion(context: &mut SslContextBuilder) {
         if mode == SslInfoCallbackMode::HANDSHAKE_START {
             crate::client_hello::handshake_started(ssl);
         }
+        if mode == SslInfoCallbackMode::CONNECT_EXIT {
+            transmog_tls_native::record_ech_exit(ssl);
+            if let Some(config) = transmog_tls_native::authenticated_ech_retry(ssl)
+                && let Some(capture) = capture_for(ssl)
+            {
+                *capture
+                    .2
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(config);
+                capture.authentication_detail(
+                    "Encrypted Client Hello",
+                    "Rejected; authenticated retry available",
+                );
+                capture.authentication_detail(
+                    "Handshake completion",
+                    "ECH rejected; connection closed",
+                );
+            }
+        }
         if mode == SslInfoCallbackMode::HANDSHAKE_DONE
             && let Some(capture) = capture_for(ssl)
         {
@@ -372,7 +417,7 @@ pub(crate) fn configure_completion(context: &mut SslContextBuilder) {
     });
 }
 
-fn capture_for(ssl: &SslRef) -> Option<TlsCapture> {
+pub(crate) fn capture_for(ssl: &SslRef) -> Option<TlsCapture> {
     ssl_index()
         .ok()
         .and_then(|index| ssl.ex_data(index))
@@ -388,6 +433,20 @@ impl TlsCapture {
     fn verification(&self, ssl: &SslRef, result: &transmog_tls_native::Verification) {
         let capture = self;
         let mut data = capture.data();
+        if ssl.get_ech_name_override().is_some() {
+            data.client_chain.clear();
+            insert_detail(
+                &mut data,
+                "ECH client identity",
+                "Not sent to rejection endpoint",
+            );
+            if let Some(name) = ssl
+                .get_ech_name_override()
+                .and_then(|name| std::str::from_utf8(name).ok())
+            {
+                insert_detail(&mut data, "ECH rejection public name", name);
+            }
+        }
         insert_detail(&mut data, "Certificate verifier", "Chromium BoringSSL PKI");
         collect_verification(&mut data, &result.security);
         insert_detail(

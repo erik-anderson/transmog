@@ -28,6 +28,8 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.locator('.profile-handshake').getAttribute('open'),null);
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
+  assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true);
+  await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).uncheck();
   await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).uncheck();
@@ -45,6 +47,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.encryptedClientHello),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.localCertificates),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.pkiMetadataFile),'C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
@@ -61,6 +64,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
+  assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true,'Reset did not restore ECH');
   const roots=dialog.getByRole('combobox',{name:'Profile root store',exact:true});
   assert.equal(await localTrust.isChecked(),true,'Reset did not restore local trust');
   for(const choice of ['os','chromium-bundled','webview2-installed','chrome-installed']) {
@@ -117,6 +121,13 @@ export async function checkNetworkProfiles(page,root) {
       return input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)===input;
     }),true,'Metadata file control is obscured in the profile editor');
     await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-metadata-${width}.png`)});
+    const ech=dialog.getByLabel('Use Encrypted Client Hello',{exact:true});
+    await ech.focus();
+    assert.equal(await ech.evaluate(input=>{
+      const box=input.getBoundingClientRect();
+      return input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)===input;
+    }),true,'ECH control is obscured in the profile editor');
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-ech-${width}.png`)});
     await dialog.getByLabel('Name',{exact:true}).focus();
   }
   await page.emulateMedia({forcedColors:'active'});

@@ -52,3 +52,27 @@ Credentials and requested CA names use buffer APIs. QUIC connections are created
 without quiche's legacy hostname setter; SNI and expected identity are installed
 separately before the first packet. The older `hyper_connector*` embedding helpers
 retain their legacy return types; the production adapter uses `tcp_context_builder`.
+
+## Encrypted Client Hello
+
+Built-ins enable real ECH independently of ECH GREASE. Custom profiles can disable
+either under **More handshake options**. Old captures missing the real-ECH field
+retain false. TLS 1.2-only profiles do not attempt ECH.
+
+The pinned Hickory resolver reads the configured system DNS servers. HTTPS records
+are bounded by a three-second discovery deadline, eight aliases, 64 service records
+and native configuration size limits. Service priority, ALPN, no-default-ALPN,
+mandatory keys, target name and port select a compatible endpoint. A/AAAA resolution
+uses the existing system resolver and Happy Eyeballs policy. DNS-cache TTLs apply;
+configuration changes refresh the resolver on subsequent lookups. This supplies
+ECH discovery, rather than Chromium's complete browser secure-DNS/DoH policy.
+
+TCP and QUIC install the configuration before sending their first flight; ticket
+keys include its digest. The certificate verifier uses the ECH public name only
+for a rejection handshake. Retry configs are copied only when BoringSSL reports
+`SSL_R_ECH_REJECTED` after authenticating both the certificate and Finished. A new
+connection retries once with those configs, or without ECH after authenticated
+rollback. Its certificate must verify for the original origin. Origin client
+identities and HTTP requests are never sent on a rejection connection. Untrusted
+public-name certificates, damaged handshakes and repeated rejections fail closed.
+Both attempted connections and their actual ECH outcomes remain in captures.

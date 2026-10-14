@@ -315,6 +315,9 @@ fn verify_peer(ssl: &mut SslRef) -> Result<(), SslVerifyError> {
     .unwrap_or(Err(SslVerifyError::Invalid(SslAlert::INTERNAL_ERROR)))
 }
 fn expected_name(ssl: &SslRef) -> Option<&str> {
+    if let Some(name) = ssl.get_ech_name_override() {
+        return std::str::from_utf8(name).ok();
+    }
     SSL_NAME
         .get()
         .and_then(|i| i.as_ref().ok())

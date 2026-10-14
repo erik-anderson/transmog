@@ -323,12 +323,14 @@ impl Default for UpstreamTlsPolicy {
 // Independent embedding/test source overrides; these are not mutually exclusive states.
 #[allow(clippy::struct_excessive_bools)]
 pub struct UpstreamTlsContextFactory {
+    pub(crate) ech_source: Arc<dyn crate::ech::EchConfigSource>,
+    pub(crate) ech_retry: Option<crate::ech::EchOffer>,
     verification_policy_cache: PolicyCache,
     verification_data: Arc<crate::verification_data::VerificationDataProvider>,
     verification_data_override: bool,
     connection_verification_data: Option<Arc<crate::verification_data::VerificationData>>,
     snapshot: Arc<TrustSnapshot>,
-    policy: UpstreamTlsPolicy,
+    pub(crate) policy: UpstreamTlsPolicy,
     profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
     metadata: Arc<crate::trust_anchors::PkiMetadataProvider>,
     metadata_override: bool,
@@ -364,6 +366,8 @@ impl UpstreamTlsContextFactory {
     /// Creates a factory. Replacing trust requires constructing a new factory and pools.
     pub fn new(snapshot: Arc<TrustSnapshot>, policy: UpstreamTlsPolicy) -> Self {
         Self {
+            ech_source: Arc::new(crate::ech::SystemEchSource::default()),
+            ech_retry: None,
             verification_policy_cache: Arc::default(),
             verification_data: Arc::new(crate::verification_data::VerificationDataProvider::new(
                 None, None,
@@ -1134,6 +1138,9 @@ impl UpstreamTlsContextFactory {
                 &chain,
                 &authentication.private_key,
             )?;
+            transmog_tls_native::set_context_client_certificate_callback(builder, |_, _| {
+                transmog_tls_native::SelectionResult::Ready
+            })?;
         }
         Ok(())
     }

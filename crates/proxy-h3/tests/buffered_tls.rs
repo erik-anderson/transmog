@@ -17,6 +17,7 @@ async fn h3_accepts_a_valid_path_and_records_raw_unused_certificate_bytes() {
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
     let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
+    tls.set_session_id_context(b"buffered-session").unwrap();
     transmog_tls_native::set_context_chain_and_key(
         &mut tls,
         &[leaf.certificate.to_der().unwrap(), vec![0x30, 0]],
@@ -51,4 +52,24 @@ async fn h3_accepts_a_valid_path_and_records_raw_unused_certificate_bytes() {
     .unwrap()
     .unwrap();
     assert_eq!(response.telemetry.peer_chain_sha256.len(), 2);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    client.retire_cached_connections().await;
+    let recorder = transmog_core::performance::PerformanceRecorder::new(
+        std::time::SystemTime::now(),
+        std::time::Instant::now(),
+    );
+    let response = client
+        .with_performance(Some(recorder.clone()))
+        .execute(support::request(origin.port), origin.port, 1024)
+        .await
+        .unwrap();
+    assert_eq!(response.telemetry.peer_chain_sha256.len(), 2);
+    assert!(
+        recorder
+            .snapshot()
+            .transports
+            .iter()
+            .any(|transport| transport.tls_resumed == Some(true)),
+        "Malformed unused wire issuer prevented buffered session resumption"
+    );
 }

@@ -45,6 +45,10 @@ its actual effect on the user's task. For a short per-change workflow, follow
   keep each source's contents separate. Put CT/CRLSet/OCSP outcomes and dataset
   provenance in the existing connection-policy disclosure. Clearly distinguish
   checked, stale, disabled, private trust and resumed-session states.
+  Encrypted Client Hello and ECH GREASE are separate custom-profile choices under
+  More handshake options. Record whether ECH was accepted and distinguish an
+  authenticated public-name rejection from an origin connection; no origin client
+  identity or HTTP request is sent to a rejection endpoint.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is

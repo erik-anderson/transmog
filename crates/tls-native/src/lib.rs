@@ -3,6 +3,10 @@
 
 mod application_settings;
 mod credentials;
+mod ech;
+pub use ech::{
+    authenticated_ech_retry, configure_ech, ech_configured, marshal_ech_config, record_ech_exit,
+};
 mod hostname;
 mod security;
 pub use security::{
@@ -14,8 +18,8 @@ mod verifier;
 pub use application_settings::{configure_h2_application_settings, peer_application_settings};
 pub use credentials::{
     MlDsaVariant, add_client_credential, add_server_credential,
-    add_server_credential_for_trust_anchor, local_buffer_chain, selected_credential_chain,
-    set_client_chain_and_private_key_method, set_context_chain_and_key,
+    add_server_credential_for_trust_anchor, decode_session_for_context, local_buffer_chain,
+    selected_credential_chain, set_client_chain_and_private_key_method, set_context_chain_and_key,
 };
 pub use trust_anchors::{
     CertificatePolicy, RootConstraint, TrustAnchorOfferError, certificate_is_ca,
@@ -198,6 +202,10 @@ unsafe extern "C" fn trampoline(pointer: *mut boring_sys::SSL, _: *mut c_void) -
         // SAFETY: BoringSSL calls this with its live, exclusively driven SSL.
         // The reference and all constraint pointers are confined to this call.
         let ssl = unsafe { SslRef::from_ptr_mut(pointer) };
+        if ssl.get_ech_name_override().is_some() {
+            clear_client_credentials(ssl);
+            return 1; // Never send the origin's identity to an ECH rejection endpoint.
+        }
         if ssl.is_server()
             // SAFETY: mode bits are available on both native TLS methods.
             || unsafe { boring_sys::SSL_get_verify_mode(pointer) } & SslVerifyMode::PEER.bits() == 0

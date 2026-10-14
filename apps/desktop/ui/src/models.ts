@@ -190,7 +190,7 @@ export interface NetworkProfileSettings {
   protocols:{http1:boolean;http2:boolean;http3:boolean}; reuseConnections:boolean;
   tlsVersions:'tls12-and13'|'tls12-only'|'tls13-only'; compatibilityCiphers:boolean;
   hybridKeyExchange:boolean; grease:'chromium'|'no-signature'|'disabled';
-  randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean; http2Alps:boolean;
+  randomizeExtensions:boolean; echGrease:boolean; encryptedClientHello:boolean; certificateCompression:boolean; http2Alps:boolean;
   trustAnchorIds:boolean; pkiMetadataFile:string|null;
   rootStore:'os'|'chromium-bundled'|'chrome-installed'|'webview2-installed';
   localCertificates:boolean;

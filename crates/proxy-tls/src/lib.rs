@@ -12,6 +12,8 @@ mod client_hello;
 /// Bounded nonmodal certificate decisions owned by physical handshakes.
 pub mod client_prompts;
 mod downstream;
+/// HTTPS service-binding discovery for encrypted ClientHello.
+pub mod ech;
 mod evidence;
 /// Monitored local certificate roles and pool admission identity.
 pub mod local_trust;
@@ -37,7 +39,9 @@ pub use resolver::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
 };
 pub use transmog_tls_native::configure_quic_server_name;
+pub use transmog_tls_native::decode_session_for_context;
 pub use transmog_tls_native::restore_client_session;
+pub use transmog_tls_native::{authenticated_ech_retry, configure_ech};
 pub use transmog_tls_native::{configure_h2_application_settings, peer_application_settings};
 pub use trust::{
     CompositeTrustSource, LoadedTrust, PemTrustSource, SystemTrustSource, TrustError,
