@@ -40,6 +40,26 @@ pub fn catalog_bytes(certificates: &[(&X509, u8)], version: u8) -> Vec<u8> {
 }
 
 pub fn catalog_bytes_with_flags(certificates: &[(&X509, u8, bool, bool)], version: u8) -> Vec<u8> {
+    encode_catalog(
+        &certificates
+            .iter()
+            .map(|(cert, id, expiry, constraints)| (*cert, Some(*id), *expiry, *constraints))
+            .collect::<Vec<_>>(),
+        version,
+    )
+}
+
+pub fn catalog_bytes_without_ids(certificates: &[&X509], version: u8) -> Vec<u8> {
+    encode_catalog(
+        &certificates
+            .iter()
+            .map(|cert| (*cert, None, false, false))
+            .collect::<Vec<_>>(),
+        version,
+    )
+}
+
+fn encode_catalog(certificates: &[(&X509, Option<u8>, bool, bool)], version: u8) -> Vec<u8> {
     fn varint(mut value: usize) -> Vec<u8> {
         let mut bytes = vec![];
         while value >= 128 {
@@ -55,7 +75,9 @@ pub fn catalog_bytes_with_flags(certificates: &[(&X509, u8, bool, bool)], versio
         let mut anchor = vec![0x0a];
         anchor.extend(varint(der.len()));
         anchor.extend(der);
-        anchor.extend([0x5a, 1, *id]);
+        if let Some(id) = id {
+            anchor.extend([0x5a, 1, *id]);
+        }
         anchor.extend([0x40, u8::from(*expiry), 0x48, u8::from(*constraints)]);
         bytes.push(0x0a);
         bytes.extend(varint(anchor.len()));

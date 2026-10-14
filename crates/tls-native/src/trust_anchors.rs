@@ -4,8 +4,8 @@ use boring::{
     error::ErrorStack,
     ex_data::Index,
     ssl::{
-        NameType, Ssl, SslAlert, SslContext, SslContextBuilder, SslRef, SslVerifyError,
-        SslVerifyMode,
+        NameType, Ssl, SslAlert, SslContext, SslContextBuilder, SslContextRef, SslRef,
+        SslVerifyError, SslVerifyMode,
     },
     x509::{X509, X509Ref},
 };
@@ -50,6 +50,40 @@ static SSL_NAME: OnceLock<Result<Index<Ssl, String>, ErrorStack>> = OnceLock::ne
 static CTX_NAME: OnceLock<Result<Index<SslContext, String>, ErrorStack>> = OnceLock::new();
 static SSL_OBSERVER: OnceLock<Result<Index<Ssl, Observer>, ErrorStack>> = OnceLock::new();
 static CTX_OBSERVER: OnceLock<Result<Index<SslContext, Observer>, ErrorStack>> = OnceLock::new();
+static SSL_OFFER: OnceLock<Result<Index<Ssl, bool>, ErrorStack>> = OnceLock::new();
+static CTX_OFFER: OnceLock<Result<Index<SslContext, bool>, ErrorStack>> = OnceLock::new();
+
+/// A Trust Anchor ID offer could not be applied to this TLS object.
+#[derive(Debug)]
+pub enum TrustAnchorOfferError {
+    /// Native allocation or wire-list validation failed.
+    Native(ErrorStack),
+    /// An existing offer cannot be removed with `BoringSSL`'s public setters.
+    RequiresFreshContext,
+}
+impl std::fmt::Display for TrustAnchorOfferError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Native(error) => error.fmt(formatter),
+            Self::RequiresFreshContext => formatter.write_str(
+                "Rebuild the TLS connector to remove its existing Trust Anchor ID offer",
+            ),
+        }
+    }
+}
+impl std::error::Error for TrustAnchorOfferError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Native(error) => Some(error),
+            Self::RequiresFreshContext => None,
+        }
+    }
+}
+impl From<ErrorStack> for TrustAnchorOfferError {
+    fn from(error: ErrorStack) -> Self {
+        Self::Native(error)
+    }
+}
 
 /// Installs the single PKI verifier on an upstream context.
 /// # Errors
@@ -247,37 +281,78 @@ pub fn configure_available_trust_anchors(
 }
 
 /// Offers certificate-based IDs. PKI helpers and trust are configured separately.
+/// An empty list omits the extension on a fresh context. Once installed, an
+/// offer cannot be removed; callers must create a new context instead.
 /// # Errors
-/// Returns native allocation/configuration errors, including malformed ID lists.
+/// Returns native errors or rejects removing an offer from an existing context.
 pub fn configure_context_trust_anchors(
     context: &mut SslContextBuilder,
     ids: &[u8],
-) -> Result<(), ErrorStack> {
+) -> Result<(), TrustAnchorOfferError> {
+    let index = CTX_OFFER
+        .get_or_init(SslContext::new_ex_index::<bool>)
+        .clone()?;
+    if ids.is_empty() {
+        // SAFETY: a read-only borrow of the builder's live context, confined to
+        // this expression before any context mutation.
+        let configured = unsafe { SslContextRef::from_ptr(context.as_ptr()) }
+            .ex_data(index)
+            .copied()
+            .unwrap_or(false);
+        return if configured {
+            Err(TrustAnchorOfferError::RequiresFreshContext)
+        } else {
+            Ok(())
+        };
+    }
     // SAFETY: context is exclusively borrowed. The setter copies the wire list;
     // callback data is owned by typed ex-data, not a borrowed user pointer.
     let accepted = unsafe {
         boring_sys::SSL_CTX_set1_requested_trust_anchors(context.as_ptr(), ids.as_ptr(), ids.len())
     };
     if accepted == 1 {
+        context.set_ex_data(index, true);
         Ok(())
     } else {
-        Err(ErrorStack::get())
+        Err(ErrorStack::get().into())
     }
 }
 
 /// Freezes a fresh metadata snapshot on a TCP SSL object, overriding its pool's
 /// older context without changing established connections or session trust.
+/// Pool contexts must omit context-level offers so empty metadata can omit the
+/// extension. `BoringSSL` has no public API to clear an inherited offer.
 /// # Errors
-/// Returns native configuration/allocation failures.
-pub fn configure_ssl_trust_anchors(ssl: &mut SslRef, ids: &[u8]) -> Result<(), ErrorStack> {
+/// Returns native errors or rejects removing an existing/inherited offer.
+pub fn configure_ssl_trust_anchors(
+    ssl: &mut SslRef,
+    ids: &[u8],
+) -> Result<(), TrustAnchorOfferError> {
+    let index = SSL_OFFER.get_or_init(Ssl::new_ex_index::<bool>).clone()?;
+    if ids.is_empty() {
+        let inherited = CTX_OFFER
+            .get()
+            .and_then(|index| index.as_ref().ok())
+            .and_then(|index| ssl.ssl_context().ex_data(*index))
+            .copied()
+            .unwrap_or(false);
+        return if inherited || ssl.ex_data(index).copied().unwrap_or(false) {
+            Err(TrustAnchorOfferError::RequiresFreshContext)
+        } else {
+            // Passing an empty list to the native setter would send an empty
+            // extension, which Chromium deliberately does not advertise.
+            Ok(())
+        };
+    }
     // SAFETY: exclusively borrowed SSL; the set1 function copies the slice.
     if unsafe {
         boring_sys::SSL_set1_requested_trust_anchors(ssl.as_ptr(), ids.as_ptr(), ids.len())
     } == 1
     {
+        ssl.set_ex_data(index, true);
         Ok(())
     } else {
-        Err(ErrorStack::get())
+        Err(ErrorStack::get().into())
     }
 }
 

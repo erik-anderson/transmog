@@ -529,7 +529,7 @@ pub(crate) fn connector(
     tcp.enforce_http(false);
     tcp.set_nodelay(true);
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
-    let tls = factory.hyper_connector_builder(mode.alpn())?;
+    let tls = factory.hyper_pool_connector_builder(mode.alpn())?;
     let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;
     let authorization = factory.clone();
     let factory = factory.clone();

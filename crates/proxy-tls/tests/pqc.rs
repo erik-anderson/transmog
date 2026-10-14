@@ -642,6 +642,69 @@ fn chromium_trust_anchor_ids_match_actual_tcp_and_quic_client_hellos() {
     }
 }
 
+#[test]
+fn webview2_catalog_without_ids_omits_the_extension_over_tcp_and_quic() {
+    // RootStore { trust_anchors: [{der: ...}], version_major: 43 }, without
+    // trust_anchor_id. Trust remains available even when the ID catalog is empty.
+    fn bytes_field(number: u8, value: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![(number << 3) | 2];
+        let mut length = value.len();
+        while length >= 128 {
+            bytes.push(u8::try_from(length & 127).unwrap() | 128);
+            length >>= 7;
+        }
+        bytes.push(u8::try_from(length).unwrap());
+        bytes.extend(value);
+        bytes
+    }
+    let ca = ProxyCa::generate("WebView2 empty ID wire fixture", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let mut protobuf = bytes_field(1, &bytes_field(1, &ca.certificate().to_der().unwrap()));
+    protobuf.extend([0x10, 43]);
+    let metadata = Arc::new(
+        transmog_tls::trust_anchors::PkiMetadata::decode(
+            &protobuf,
+            "WebView2 component without IDs".into(),
+        )
+        .unwrap(),
+    );
+    assert!(metadata.requested_ids().is_empty());
+    let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+    profile.settings.local_certificates = false;
+    let factory = factory(&ca)
+        .with_pki_metadata(Arc::new(
+            transmog_tls::trust_anchors::PkiMetadataProvider::new(metadata, None),
+        ))
+        .with_network_profile(profile)
+        .unwrap();
+    let (tcp, _) = handshake(
+        acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
+        &factory.hyper_connector().unwrap(),
+    );
+    let extensions = recorded_hello(&tcp.get_ref().written).extensions;
+    assert!(!extensions.iter().any(|(kind, _)| *kind == 0xca34));
+    let observed = Arc::new(Mutex::new(None));
+    let callback = observed.clone();
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf.certificate).unwrap();
+    server.set_private_key(&leaf.private_key).unwrap();
+    server.set_select_certificate_callback(move |hello| {
+        *callback.lock().unwrap() = Some(
+            hello
+                .get_extension(ExtensionType::from(0xca34))
+                .map(<[u8]>::to_vec),
+        );
+        Ok(())
+    });
+    quic_handshake(
+        quic_config(factory.quiche_context_builder().unwrap()),
+        quic_config(server),
+    );
+    assert_eq!(*observed.lock().unwrap(), Some(None));
+}
+
 struct CertificateEncoder(Arc<AtomicUsize>);
 
 impl CertificateCompressor for CertificateEncoder {

@@ -27,6 +27,8 @@ export async function checkCertificates(page, root) {
   inspection.connections.push({id:'upstream:controls',title:'Recorded server connection · Connected · controls',summary:'TLSv1.3 · X25519\\u{0000}MLKEM768 · TLS_AES_128_GCM_SHA256',fields:[{label:'Negotiated group',value:'X25519\0MLKEM768',displayValue:'X25519\\u{0000}MLKEM768',displayNote:'Invisible characters shown as Unicode escapes.'}],policyFields:[],diagnosticFields:[{label:'Duplicate label',value:'first'},{label:'Duplicate label',value:'second'}],serverChain:[],clientChain:[],errors:[]});
   inspection.connections[3].alps=alpsFixture.view;
   inspection.connections[3].fields.push({label:'HTTP/2 ALPS',value:`Negotiated (${alpsFixture.bytes.length} peer bytes)`});
+  const noTrustAnchorIds='Not offered; selected metadata has no supported Trust Anchor IDs';
+  inspection.connections[3].fields.push({label:'Trust Anchor IDs',value:noTrustAnchorIds});
   inspection.connections.push({id:'upstream:alps-empty',title:'Transmog → server · Connected · empty ALPS',fields:[{label:'HTTP/2 ALPS',value:'Negotiated (0 peer bytes)'}],alps:{peerBytes:0,fields:[{label:'Server value',value:'Empty (ALPS was negotiated)'}],notes:[],payloadBase64:''},serverChain:[],clientChain:[],errors:[]});
   await page.evaluate(inspection=>globalThis.__workspaceFixture.certificateInspection=inspection,inspection);
   const trigger=page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true});await trigger.click();await page.getByRole('tab',{name:'Certificates',exact:true}).click();
@@ -41,6 +43,12 @@ export async function checkCertificates(page, root) {
   await page.setViewportSize({width:1440,height:900});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/tls-fallback-wide.png')});
   await page.setViewportSize({width:800,height:600});
+  const noIdStatus=dialog.getByText(noTrustAnchorIds,{exact:true});
+  await noIdStatus.scrollIntoViewIfNeeded();
+  assert.ok(await noIdStatus.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.left>=0&&rect.right<=innerWidth;}),'Empty-catalog reason was clipped in the compact connection view');
+  assert.equal(await dialog.getByText('Requested Trust Anchor IDs',{exact:true}).count(),0,'An omitted offer acquired a requested-ID row');
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/trust-anchor-ids-omitted-compact.png')});
+  await dialog.getByLabel('Recorded TLS summary',{exact:true}).scrollIntoViewIfNeeded();
   const summary=dialog.getByLabel('Recorded TLS summary',{exact:true});
   assert.equal(await summary.textContent(),inspection.connections[3].summary);
   assert.equal(await summary.evaluate(node=>{const rect=node.getBoundingClientRect();return rect.top>=0&&rect.bottom<=innerHeight&&rect.height>0;}),true,'The compact connection view buried its TLS summary');
@@ -61,6 +69,7 @@ export async function checkCertificates(page, root) {
   assert.equal(await dialog.locator('.certificate-alps-raw').count(),0);
   await connection.selectOption('upstream:failed');
   assert.equal(await dialog.locator('.certificate-alps').count(),0,'Prior server ALPS contents leaked into a failed attempt');
+  assert.equal(await dialog.getByText(noTrustAnchorIds,{exact:true}).count(),0,'Prior Trust Anchor ID status leaked into another attempt');
   await connection.selectOption('upstream:connected');
   await policy.locator('summary').focus();await page.keyboard.press('Enter');
   await policy.getByText('Available cipher suites',{exact:true}).waitFor({state:'visible'});

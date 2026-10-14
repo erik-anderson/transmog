@@ -32,6 +32,8 @@ its actual effect on the user's task. For a short per-change workflow, follow
   Record effective source/version/hash and verification restrictions for each
   connection, including when IDs are off. Disabling IDs and choosing an explicit
   crs.pb belong under More handshake options.
+  If the selected component has no supported Trust Anchor IDs, keep its roots,
+  omit the ID offer and record why; do not substitute another store's IDs.
   Built-ins declare every setting explicitly. Trust-data updates refresh roots
   without editing recipes or custom profiles. Both built-ins add monitored local
   Windows certificates. Keep one local trust switch beside the root selector in

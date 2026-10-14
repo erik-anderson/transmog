@@ -2,8 +2,8 @@
 #[path = "support/trust_anchors.rs"]
 mod anchors;
 mod support;
-use boring::ssl::Ssl;
-use std::sync::Arc;
+use boring::ssl::{ExtensionType, Ssl, SslAcceptor, SslMethod};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -89,6 +89,155 @@ async fn fresh_tcp_connection_automatically_uses_newer_discovered_metadata() {
             "Server reported a matching certificate chain"
         );
     }
+}
+
+#[tokio::test]
+async fn newer_webview2_catalog_without_ids_keeps_roots_and_omits_the_offer() {
+    use transmog_core::network_profile::{NetworkProfileSnapshot, RootStore};
+    use transmog_tls::trust_anchors::PkiMetadataProvider;
+    let root = ProxyCa::generate("WebView2 no-ID component fixture", 2).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let provider = Arc::new(PkiMetadataProvider::new(
+        anchors::catalog(&[(root.certificate(), 1)], 42),
+        Some(directory.path().into()),
+    ));
+    let mut profile = NetworkProfileSnapshot::default();
+    profile.settings.root_store = RootStore::Webview2Installed;
+    profile.settings.local_certificates = false;
+    let factory = anchors::factory(&root, provider.current())
+        .with_pki_metadata(provider.clone())
+        .with_network_profile(profile)
+        .unwrap();
+    // Construct a pool while IDs exist; it must not leave an inherited offer
+    // when discovery replaces that catalog before the next physical handshake.
+    let pool = factory
+        .hyper_pool_connector_builder(b"\x08http/1.1")
+        .unwrap()
+        .build();
+    let frozen_connector = factory.hyper_connector().unwrap();
+    let public_connector =
+        transmog_http::build_https_connector(&factory, HyperEgressMode::Http1Only).unwrap();
+    let path = directory.path().join("46.0.0.0");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::write(
+        path.join("crs.pb"),
+        anchors::catalog_bytes_without_ids(&[root.certificate()], 43),
+    )
+    .unwrap();
+    provider.refresh();
+    assert_eq!(provider.current().version, 43);
+    assert!(provider.current().requested_ids().is_empty());
+    let mut inherited = frozen_connector
+        .configure()
+        .unwrap()
+        .into_ssl("localhost")
+        .unwrap();
+    assert!(matches!(
+        factory.configure_ssl_metadata_for_peer(&mut inherited, "localhost"),
+        Err(transmog_tls::TrustError::TrustAnchorOffer(
+            transmog_tls_native::TrustAnchorOfferError::RequiresFreshContext,
+        )),
+    ));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let offered = Arc::new(Mutex::new(vec![]));
+    let server = observe_trust_anchor_offers(&root, listener, offered.clone(), 3);
+    let current = factory.for_connection();
+    let capture = current.capture(Some("localhost".into()), vec!["http/1.1".into()]);
+    let mut ssl = pool.configure().unwrap().into_ssl("localhost").unwrap();
+    current
+        .configure_ssl_metadata_for_peer(&mut ssl, "localhost")
+        .unwrap();
+    capture.attach_ssl(&mut ssl).unwrap();
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let mut io = tokio_boring::SslStreamBuilder::new(ssl, tcp)
+        .connect()
+        .await
+        .unwrap();
+    io.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = vec![];
+    io.read_to_end(&mut response).await.unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    capture.completed(io.ssl(), false);
+    let evidence = capture.snapshot();
+    assert_eq!(evidence.verification, Some(VerificationResult::Verified));
+    assert_eq!(evidence.details["PKI metadata version"], "43");
+    assert_eq!(evidence.details["Root store version"], "43");
+    assert_eq!(
+        evidence.details["Trust Anchor IDs"],
+        "Not offered; selected metadata has no supported Trust Anchor IDs"
+    );
+    assert!(!evidence.details.contains_key("Requested Trust Anchor IDs"));
+    // Exercise the production HTTP adapter's callback as well as the stale pool.
+    let client = HyperOriginClient::new(&factory).unwrap();
+    let response = client
+        .execute(
+            support::request(port),
+            HyperEgressMode::Http1Only,
+            1024,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.head.status, 200);
+    let public_client =
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build::<_, http_body_util::Empty<bytes::Bytes>>(public_connector);
+    let response = public_client
+        .get(format!("https://localhost:{port}/").parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    server.await.unwrap();
+    assert_eq!(*offered.lock().unwrap(), vec![None, None, None]);
+}
+
+type ObservedOffers = Arc<Mutex<Vec<Option<Vec<u8>>>>>;
+
+fn observe_trust_anchor_offers(
+    root: &ProxyCa,
+    listener: TcpListener,
+    offered: ObservedOffers,
+    connections: usize,
+) -> tokio::task::JoinHandle<()> {
+    let leaf = root
+        .issue(
+            transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+            1,
+        )
+        .unwrap();
+    let observer = offered;
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
+    acceptor.set_certificate(&leaf.certificate).unwrap();
+    acceptor.set_private_key(&leaf.private_key).unwrap();
+    acceptor.set_select_certificate_callback(move |hello| {
+        observer.lock().unwrap().push(
+            hello
+                .get_extension(ExtensionType::from(0xca34))
+                .map(<[u8]>::to_vec),
+        );
+        Ok(())
+    });
+    let acceptor = acceptor.build();
+    tokio::spawn(async move {
+        for _ in 0..connections {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut io =
+                tokio_boring::SslStreamBuilder::new(Ssl::new(acceptor.context()).unwrap(), tcp)
+                    .accept()
+                    .await
+                    .unwrap();
+            let mut request = [0; 4096];
+            assert!(io.read(&mut request).await.unwrap() > 0);
+            io.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        }
+    })
 }
 
 #[tokio::test]

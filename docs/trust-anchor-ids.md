@@ -39,6 +39,17 @@ Fresh connections freeze their metadata and trusted store together. Established
 connections finish normally. TCP sessions authenticated under an older store
 cannot resume across a discovered trust change without certificate verification.
 
+A valid installed component can contain roots without any supported Trust Anchor
+IDs. In that case Transmog keeps those roots and omits the `trust_anchors`
+extension; it does not borrow IDs from the Chromium bundle or send an empty
+offer. The bundled fallback applies when no newer usable root store is found.
+This follows [Chromium's nonempty-offer policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
+and its [component ID replacement](https://github.com/chromium/chromium/blob/154.0.8037.99/chrome/browser/component_updater/pki_metadata_component_installer.cc).
+A local check of Edge
+155.0.4283.45 through the proxy also found the extension absent in all eight
+ClientHellos, including isolated profiles seeded with its installed version 46
+component. No TLS feature flags or certificate-error overrides were used.
+
 **Customize → More handshake options** also allows disabling Trust Anchor IDs
 and providing an optional full path to `crs.pb`. That file replaces the bundled
 baseline; a newer copy from the chosen installed source takes precedence. With
@@ -117,7 +128,8 @@ Chrome's additional policies remain tracked in [the verifier contract](chromium-
 Excluded-anchor counts and the applied policy are retained in connection evidence.
 
 A server matching marker never authorizes a chain. After certificate rejection,
-available server IDs can trigger one retry before HTTP data is sent. Only catalog
+available server IDs can trigger one retry before HTTP data is sent when the
+initial connection offered IDs. Only catalog
 IDs whose CA verifies through selected trust are requested, in server preference
 order. Unknown IDs, untrusted CAs, an unchanged offer and a second failure do not
 cause further recovery. Both physical attempts remain captured.
@@ -130,7 +142,10 @@ an issuer because it must be able to authorize the server's leaf certificate.
 
 Traffic → Details → Connection reports the server's matching marker. Original
 connection settings retain the effective trust source, root-store version/hash,
-policy/exclusions, PKI provenance and requested IDs, even when ID offers are off.
+policy/exclusions and PKI provenance, even when ID offers are off. Requested IDs
+are retained when offered.
+An empty supported ID catalog is reported as **Not offered** with its reason;
+there is no requested-ID list or selection recovery for that connection.
 Local trust adds inventory generation/hash, role counts, monitoring source and
 the verified path's trust role. Capture does not dump the private inventory;
 observed verification-path certificates remain inspectable. Native captures and
@@ -144,6 +159,11 @@ Embedders can use `PkiMetadata::from_file`, `PkiMetadataProvider::new` and
 `UpstreamTlsContextFactory::with_pki_metadata`. The network profile determines
 whether a provider supplies trust or only metadata. `refresh` performs discovery
 off transport threads; `current` returns an immutable snapshot without file IO.
+Pooled TCP adapters use `hyper_pool_connector_builder` and apply
+`configure_ssl_metadata_for_peer` before each physical handshake. Both public
+HTTP connector builders do this automatically. A frozen raw connector carrying
+an old nonempty offer must be rebuilt to remove it; BoringSSL's public setters
+cannot clear the offer. The native boundary rejects that stale configuration.
 
 The bundle is generated from pinned public Chromium source, with its full BSD
 notice in Credits. See [snapshot provenance and generator](../third_party/chromium-root-store/README.md).

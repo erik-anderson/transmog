@@ -12,7 +12,7 @@ pub use credentials::{
     selected_credential_chain,
 };
 pub use trust_anchors::{
-    CertificatePolicy, certificate_is_ca, configure_available_trust_anchors,
+    CertificatePolicy, TrustAnchorOfferError, certificate_is_ca, configure_available_trust_anchors,
     configure_context_certificate_policy, configure_context_peer_name,
     configure_context_trust_anchors, configure_ssl_certificate_policy, configure_ssl_peer_name,
     configure_ssl_trust_anchors, observe_context_verification, observe_ssl_verification,

@@ -612,15 +612,17 @@ impl UpstreamTlsContextFactory {
             // validated against an older root store must not bypass new trust.
             crate::client_connections::clear_cached_session(ssl)?;
         }
-        if self.trust_anchor_ids_enabled() {
-            let metadata = self.metadata();
-            transmog_tls_native::configure_ssl_trust_anchors(
-                ssl,
+        let metadata = self.metadata();
+        transmog_tls_native::configure_ssl_trust_anchors(
+            ssl,
+            if self.trust_anchor_ids_enabled() {
                 self.recovery_ids
                     .as_deref()
-                    .unwrap_or_else(|| metadata.requested_ids()),
-            )?;
-        }
+                    .unwrap_or_else(|| metadata.requested_ids())
+            } else {
+                &[]
+            },
+        )?;
         let policy = self.certificate_policy()?;
         transmog_tls_native::configure_ssl_certificate_policy(ssl, policy)?;
         Ok(())
@@ -635,7 +637,10 @@ impl UpstreamTlsContextFactory {
     /// Allows one certificate-selection recovery before any HTTP bytes are sent.
     /// Only advertised server IDs that chain to configured trust are requested.
     pub fn trust_anchor_recovery(&self, capture: &crate::TlsCapture) -> Option<Self> {
-        if !self.trust_anchor_ids_enabled() || self.recovery_ids.is_some() {
+        if !self.trust_anchor_ids_enabled()
+            || self.recovery_ids.is_some()
+            || self.metadata().requested_ids().is_empty()
+        {
             return None;
         }
         let evidence = capture.snapshot();
@@ -784,10 +789,6 @@ impl UpstreamTlsContextFactory {
     fn capture_trust_anchor_ids(&self, capture: &crate::TlsCapture) {
         if self.trust_anchor_ids_enabled() {
             let metadata = self.metadata();
-            capture.authentication_detail(
-                "Trust Anchor IDs",
-                "Offer configured; server negotiation not reached",
-            );
             capture.authentication_detail("PKI metadata source", &metadata.source);
             capture.authentication_detail("PKI metadata version", &metadata.version.to_string());
             capture.authentication_detail("PKI metadata SHA-256", &metadata.sha256);
@@ -795,6 +796,17 @@ impl UpstreamTlsContextFactory {
                 .recovery_ids
                 .as_deref()
                 .unwrap_or_else(|| metadata.requested_ids());
+            capture.authentication_detail(
+                "Trust Anchor IDs",
+                if ids.is_empty() {
+                    "Not offered; selected metadata has no supported Trust Anchor IDs"
+                } else {
+                    "Offer configured; server negotiation not reached"
+                },
+            );
+            if ids.is_empty() {
+                return;
+            }
             let wire = crate::trust_anchors::hex(ids);
             capture.authentication_detail(
                 "Requested Trust Anchor IDs",
@@ -838,6 +850,27 @@ impl UpstreamTlsContextFactory {
         &self,
         alpn_wire_format: &[u8],
     ) -> Result<SslConnectorBuilder, TrustError> {
+        self.build_hyper_connector(alpn_wire_format, true)
+    }
+
+    /// Creates a pooled TCP context without a frozen Trust Anchor ID offer.
+    /// The adapter must call [`Self::configure_ssl_metadata_for_peer`] on each
+    /// fresh physical connection, including when the selected catalog is empty.
+    ///
+    /// # Errors
+    /// Returns [`TrustError`] when TLS policy or ALPN cannot be applied.
+    pub fn hyper_pool_connector_builder(
+        &self,
+        alpn_wire_format: &[u8],
+    ) -> Result<SslConnectorBuilder, TrustError> {
+        self.build_hyper_connector(alpn_wire_format, false)
+    }
+
+    fn build_hyper_connector(
+        &self,
+        alpn_wire_format: &[u8],
+        context_offer: bool,
+    ) -> Result<SslConnectorBuilder, TrustError> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
         let mut frozen = self.for_connection();
         // Bootstrap pool construction may precede the native worker's first read.
@@ -845,7 +878,7 @@ impl UpstreamTlsContextFactory {
         if matches!(frozen.connection_local, Some(Err(_))) {
             frozen.bootstrap_trust_failure = true;
         }
-        frozen.configure_frozen(&mut builder)?;
+        frozen.configure_frozen(&mut builder, context_offer)?;
         builder.set_alpn_protos(alpn_wire_format)?;
         Ok(builder)
     }
@@ -862,10 +895,14 @@ impl UpstreamTlsContextFactory {
     }
 
     fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
-        self.for_connection().configure_frozen(builder)
+        self.for_connection().configure_frozen(builder, true)
     }
 
-    fn configure_frozen(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
+    fn configure_frozen(
+        &self,
+        builder: &mut SslContextBuilder,
+        context_offer: bool,
+    ) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
         let settings = self.profile.as_ref().map_or_else(
             transmog_core::network_profile::NetworkProfileSettings::default,
@@ -876,7 +913,7 @@ impl UpstreamTlsContextFactory {
         }
         let trust = self.effective_trust();
         builder.set_ex_data(context_trust_index()?, trust);
-        if settings.trust_anchor_ids {
+        if settings.trust_anchor_ids && context_offer {
             let metadata = self.metadata();
             transmog_tls_native::configure_context_trust_anchors(
                 builder,
@@ -928,6 +965,9 @@ impl UpstreamTlsContextFactory {
 /// Trust loading or `BoringSSL` context failure.
 #[derive(Debug, Error)]
 pub enum TrustError {
+    /// A native Trust Anchor ID offer could not be applied safely.
+    #[error("{0}")]
+    TrustAnchorOffer(#[from] transmog_tls_native::TrustAnchorOfferError),
     /// Native local certificate inventory is not safe to use for new handshakes.
     #[error("{0}")]
     Local(#[from] crate::local_trust::LocalTrustError),

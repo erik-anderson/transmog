@@ -112,8 +112,15 @@ pub fn build_https_connector_with_happy_eyeballs(
     let mut tcp = HttpConnector::new_with_resolver(resolver);
     tcp.enforce_http(false);
     tcp.set_happy_eyeballs_timeout(Some(happy_eyeballs.attempt_delay()));
-    let tls = factory.hyper_connector_builder(mode.alpn())?;
-    Ok(HttpsConnector::with_connector(tcp, tls)?)
+    let tls = factory.hyper_pool_connector_builder(mode.alpn())?;
+    let mut connector = HttpsConnector::with_connector(tcp, tls)?;
+    let factory = factory.clone();
+    connector.set_ssl_callback(move |ssl, uri| {
+        factory
+            .configure_ssl_metadata_for_peer(ssl, uri.host().unwrap_or(""))
+            .map_err(|_| boring::error::ErrorStack::get())
+    });
+    Ok(connector)
 }
 
 #[cfg(test)]
