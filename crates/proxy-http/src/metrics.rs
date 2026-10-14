@@ -50,6 +50,8 @@ struct ConnectionSetup {
 }
 #[derive(Debug, Default)]
 struct SetupValues {
+    metadata_factory: Option<UpstreamTlsContextFactory>,
+    prior_failure: Option<ConnectionObservation>,
     no_reuse: bool,
     facts: TransportObservation,
     tls_capture: Option<TlsCapture>,
@@ -94,6 +96,9 @@ impl ConnectionObservation {
         performance: Option<&PerformanceRecorder>,
     ) -> TransportObservation {
         let values = self.0.values();
+        if let (Some(previous), Some(performance)) = (&values.prior_failure, performance) {
+            performance.transport(previous.snapshot(false, Some(performance)));
+        }
         let mut facts = values.facts.clone();
         facts.tls = values.tls_capture.as_ref().map(TlsCapture::snapshot);
         if let Some(performance) = performance {
@@ -329,6 +334,8 @@ pub(crate) struct MeasuredHttpsConnector {
     inner: HttpsConnector<MeasuredTcpConnector>,
     mode: HyperEgressMode,
     protocols: OutboundProtocolPolicy,
+    happy: HappyEyeballsConfig,
+    prior_failure: Option<ConnectionObservation>,
 }
 impl Service<Uri> for MeasuredHttpsConnector {
     type Response = crate::alps::AlpsStream<MaybeHttpsStream<MeasuredTcp>>;
@@ -339,22 +346,16 @@ impl Service<Uri> for MeasuredHttpsConnector {
     }
     fn call(&mut self, uri: Uri) -> Self::Future {
         let allowed = self.protocols.snapshot();
-        let admitted = match self.mode {
-            HyperEgressMode::Http1Only => allowed.http1,
-            HyperEgressMode::Http2Only => allowed.http2,
-            HyperEgressMode::Auto => {
-                if uri.scheme_str() == Some("https") {
-                    allowed.http1 || allowed.http2
-                } else {
-                    allowed.http1
-                }
-            }
-        };
+        let admitted = mode_admitted(self.mode, allowed, uri.scheme_str() == Some("https"));
         let mode = self.mode;
         let authorization = self.authorization.clone();
         let host = uri.host().unwrap_or("").trim_matches(['[', ']']).to_owned();
         let port = uri.port_u16().unwrap_or(443);
         let setup = ConnectionSetup::new(allowed);
+        setup.values().prior_failure.clone_from(&self.prior_failure);
+        let retry_uri = uri.clone();
+        let protocols = self.protocols.clone();
+        let happy = self.happy;
         if !admitted {
             setup.values().facts.outcome = TransportOutcome::PolicyRejected;
             return Box::pin(async move {
@@ -376,7 +377,14 @@ impl Service<Uri> for MeasuredHttpsConnector {
             .await;
             let stream = match result {
                 Ok(stream) => stream,
-                Err(source) => return Err(connection_failed(setup, source)),
+                Err(source) => {
+                    let recovery = metadata_recovery(&setup, mode, happy, protocols);
+                    let failure = connection_failed(setup.clone(), source);
+                    if let Some(retry) = recovery {
+                        return retry?.call(retry_uri).await;
+                    }
+                    return Err(failure);
+                }
             };
             setup.values().facts.outcome = TransportOutcome::Connected;
             if let MaybeHttpsStream::Https(tls) = &stream {
@@ -430,6 +438,38 @@ impl Service<Uri> for MeasuredHttpsConnector {
             Ok(crate::alps::AlpsStream::new(stream, prefix))
         }))
     }
+}
+
+fn mode_admitted(mode: HyperEgressMode, allowed: AllowedHttpProtocols, https: bool) -> bool {
+    match mode {
+        HyperEgressMode::Http1Only => allowed.http1,
+        HyperEgressMode::Http2Only => allowed.http2,
+        HyperEgressMode::Auto => allowed.http1 || (https && allowed.http2),
+    }
+}
+
+fn metadata_recovery(
+    setup: &Arc<ConnectionSetup>,
+    mode: HyperEgressMode,
+    happy: HappyEyeballsConfig,
+    protocols: OutboundProtocolPolicy,
+) -> Option<Result<MeasuredHttpsConnector, BoxError>> {
+    let factory = {
+        let values = setup.values();
+        values
+            .metadata_factory
+            .as_ref()
+            .zip(values.tls_capture.as_ref())
+            .and_then(|(factory, capture)| factory.trust_anchor_recovery(capture))?
+    };
+    Some(
+        connector(&factory, mode, happy, protocols)
+            .map(|mut retry| {
+                retry.prior_failure = Some(ConnectionObservation(setup.clone()));
+                retry
+            })
+            .map_err(|error| Box::new(error) as BoxError),
+    )
 }
 
 fn connection_failed(setup: Arc<ConnectionSetup>, source: BoxError) -> BoxError {
@@ -495,6 +535,9 @@ pub(crate) fn connector(
     let factory = factory.clone();
     let generation = factory.client_certificate_admission_generation();
     connector.set_ssl_callback(move |ssl, uri| {
+        let factory = factory.for_connection();
+        factory.configure_ssl_metadata(ssl)?;
+        let _ = SETUP.try_with(|setup| setup.values().metadata_factory = Some(factory.clone()));
         let _ = SETUP.try_with(|setup| setup.values().tls_begin = Some(Instant::now()));
         let allowed = SETUP.try_with(|setup| setup.allowed).unwrap_or_default();
         let alpn = match mode {
@@ -548,6 +591,8 @@ pub(crate) fn connector(
         inner: connector,
         mode,
         protocols,
+        happy,
+        prior_failure: None,
     })
 }
 

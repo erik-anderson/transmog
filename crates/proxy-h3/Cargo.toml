@@ -22,6 +22,7 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
+transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
 transmog-http = { version = "=0.1.4", path = "../proxy-http" }
 http.workspace = true
 http-body-util.workspace = true

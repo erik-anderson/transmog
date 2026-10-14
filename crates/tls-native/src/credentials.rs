@@ -103,6 +103,28 @@ pub fn add_server_credential(
     chain: &[X509],
     key: &PKeyRef<Private>,
 ) -> Result<(), ErrorStack> {
+    add_credential(context, chain, key, None)
+}
+
+/// Adds a server credential whose final certificate's issuer has this classical
+/// Trust Anchor ID, enabling `BoringSSL`'s normal matching and available-ID list.
+/// # Errors
+/// Returns native credential, identifier or context configuration errors.
+pub fn add_server_credential_for_trust_anchor(
+    context: &mut SslContextBuilder,
+    chain: &[X509],
+    key: &PKeyRef<Private>,
+    id: &[u8],
+) -> Result<(), ErrorStack> {
+    add_credential(context, chain, key, Some(id))
+}
+
+fn add_credential(
+    context: &mut SslContextBuilder,
+    chain: &[X509],
+    key: &PKeyRef<Private>,
+    id: Option<&[u8]>,
+) -> Result<(), ErrorStack> {
     // SAFETY: new_x509 returns an owned allocation. SslCredential's Drop uses
     // the corresponding free function, including all early error returns.
     let pointer = unsafe { boring_sys::SSL_CREDENTIAL_new_x509() };
@@ -136,11 +158,22 @@ pub fn add_server_credential(
     // synchronous calls. The set1/add1 APIs retain references. The context is
     // exclusively borrowed, and this credential is never mutated after add1.
     let accepted = unsafe {
-        boring_sys::SSL_CREDENTIAL_set1_cert_chain(
-            credential.as_ptr(),
-            pointers.as_ptr(),
-            pointers.len(),
-        ) == 1
+        let id_set = if let Some(id) = id {
+            boring_sys::SSL_CREDENTIAL_set_must_match_issuer(credential.as_ptr(), 1);
+            boring_sys::SSL_CREDENTIAL_set1_trust_anchor_id(
+                credential.as_ptr(),
+                id.as_ptr(),
+                id.len(),
+            ) == 1
+        } else {
+            true
+        };
+        id_set
+            && boring_sys::SSL_CREDENTIAL_set1_cert_chain(
+                credential.as_ptr(),
+                pointers.as_ptr(),
+                pointers.len(),
+            ) == 1
             && boring_sys::SSL_CREDENTIAL_set1_private_key(credential.as_ptr(), key.as_ptr()) == 1
             && boring_sys::SSL_CTX_add1_credential(context.as_ptr(), credential.as_ptr()) == 1
     };

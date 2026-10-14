@@ -15,6 +15,8 @@ mod downstream;
 mod evidence;
 mod resolver;
 mod trust;
+/// Public Chromium PKI metadata; certificates are never installed as trusted roots.
+pub mod trust_anchors;
 /// Current-user Windows software CNG identity inventory and change monitoring.
 #[cfg(windows)]
 pub mod windows_client_certificates;

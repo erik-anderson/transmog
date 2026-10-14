@@ -638,6 +638,8 @@ impl ResponseTarget {
 }
 
 struct H3ConnectionDriver {
+    host: String,
+    origin_port: u16,
     authentication: Option<transmog_tls::client_authentication::ClientAuthenticationAttempt>,
     capture: transmog_tls::TlsCapture,
     tls: UpstreamTlsContextFactory,
@@ -715,6 +717,7 @@ impl H3ConnectionDriver {
         performance: Option<PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
         let setup_begin = Instant::now();
+        let tls = tls.for_connection();
         let bind_addr = if peer_addr.is_ipv4() {
             "0.0.0.0:0"
         } else {
@@ -755,6 +758,8 @@ impl H3ConnectionDriver {
         )?;
         Box::pin(
             Self {
+                host,
+                origin_port,
                 authentication,
                 capture,
                 tls,
@@ -809,6 +814,21 @@ impl H3ConnectionDriver {
             self.transport.tls = Some(self.capture.snapshot());
             if let Some(performance) = performance {
                 performance.transport(quic_observation(&self.connection, &self.transport));
+            }
+            if authentication
+                .as_ref()
+                .is_none_or(|a| !a.evidence().details.contains_key("Client certificate"))
+                && let Some(recovery) = self.tls.trust_anchor_recovery(&self.capture)
+            {
+                return Box::pin(Self::connect_address(
+                    self.host.clone(),
+                    self.origin_port,
+                    self.peer_addr,
+                    recovery,
+                    self.limits,
+                    performance.cloned(),
+                ))
+                .await;
             }
             return Err(
                 if authentication

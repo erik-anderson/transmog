@@ -581,6 +581,62 @@ fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {
         Arc::new(TrustSnapshot::load(&source, 1).unwrap()),
         UpstreamTlsPolicy::default(),
     )
+    .with_pki_metadata(Arc::new(
+        transmog_tls::trust_anchors::PkiMetadataProvider::new(
+            transmog_tls::trust_anchors::PkiMetadata::bundled(),
+            None,
+        ),
+    ))
+}
+
+#[test]
+fn chromium_trust_anchor_ids_match_actual_tcp_and_quic_client_hellos() {
+    let ca = ProxyCa::generate("Trust Anchor ID wire fixture", 2).unwrap();
+    let leaf = ca
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+        .unwrap();
+    let ids = transmog_tls::trust_anchors::PkiMetadata::bundled();
+    let expected = [
+        u16::try_from(ids.requested_ids().len())
+            .unwrap()
+            .to_be_bytes()
+            .as_slice(),
+        ids.requested_ids(),
+    ]
+    .concat();
+    for enabled in [true, false] {
+        let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+        profile.settings.trust_anchor_ids = enabled;
+        let factory = factory(&ca).with_network_profile(profile).unwrap();
+        let (tcp, _) = handshake(
+            acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
+            &factory.hyper_connector().unwrap(),
+        );
+        let extensions = recorded_hello(&tcp.get_ref().written)
+            .extensions
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(extensions.get(&0xca34), enabled.then_some(&expected));
+        let observed = Arc::new(Mutex::new(None));
+        let callback = observed.clone();
+        let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+        server.set_certificate(&leaf.certificate).unwrap();
+        server.set_private_key(&leaf.private_key).unwrap();
+        server.set_select_certificate_callback(move |hello| {
+            *callback.lock().unwrap() = hello
+                .get_extension(ExtensionType::from(0xca34))
+                .map(<[u8]>::to_vec);
+            Ok(())
+        });
+        quic_handshake(
+            quic_config(factory.quiche_context_builder().unwrap()),
+            quic_config(server),
+        );
+        assert_eq!(
+            *observed.lock().unwrap(),
+            enabled.then_some(expected.clone())
+        );
+    }
 }
 
 struct CertificateEncoder(Arc<AtomicUsize>);

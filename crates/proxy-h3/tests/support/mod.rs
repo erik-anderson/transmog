@@ -66,7 +66,16 @@ pub async fn paused_origin(f: &Fixture) -> Origin {
 }
 #[allow(clippy::too_many_lines)]
 async fn origin_options(f: &Fixture, bind: &str, released: bool) -> Origin {
-    let mut config = config(f);
+    origin_configs(vec![config(f)], bind, released).await
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn origin_configs(
+    mut configs: Vec<quiche::Config>,
+    bind: &str,
+    released: bool,
+) -> Origin {
+    assert!(!configs.is_empty());
     let socket = tokio::net::UdpSocket::bind(bind).await.unwrap();
     let local = socket.local_addr().unwrap();
     let count = Arc::new(AtomicUsize::new(0));
@@ -98,7 +107,8 @@ async fn origin_options(f: &Fixture, bind: &str, released: bool) -> Origin {
                 if let std::collections::hash_map::Entry::Vacant(entry) = peers.entry(from) {
                     let header = quiche::Header::from_slice(&mut input[..n], quiche::MAX_CONN_ID_LEN).unwrap(); if header.ty != quiche::Type::Initial { continue; }
                     let id = counts.fetch_add(1, Ordering::SeqCst) + 1; let source = id.to_be_bytes();
-                    entry.insert((quiche::accept(&quiche::ConnectionId::from_ref(&source), None, local, from, &mut config).unwrap(), None, id, HashMap::new()));
+                    let index = (id - 1).min(configs.len() - 1);
+                    entry.insert((quiche::accept(&quiche::ConnectionId::from_ref(&source), None, local, from, &mut configs[index]).unwrap(), None, id, HashMap::new()));
                 }
                 let (connection, _, _, _) = peers.get_mut(&from).unwrap();
                 let _ = connection.recv(&mut input[..n], quiche::RecvInfo { from, to: local });

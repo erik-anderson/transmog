@@ -121,6 +121,24 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
         connection.fields.push(field("ALPN", alpn));
     }
     super::alps::organize(connection, transport);
+    if let Some(value) = details.get("Trust Anchor IDs") {
+        connection.fields.push(field("Trust Anchor IDs", value));
+    }
+    for label in [
+        "PKI metadata source",
+        "PKI metadata version",
+        "PKI metadata SHA-256",
+    ] {
+        if let Some(value) = details.get(label) {
+            connection.policy_fields.push(field(label, value));
+        }
+    }
+    if let Some(value) = details.get("Requested Trust Anchor IDs") {
+        connection.policy_fields.push(field(
+            "Requested Trust Anchor IDs",
+            describe_trust_anchor_ids(value),
+        ));
+    }
     if let Some(value) = details.get("HelloRetryRequest") {
         connection.fields.push(field("HelloRetryRequest", value));
     }
@@ -136,13 +154,76 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
                 !ORDERED_DETAILS.contains(&label.as_str())
                     && !matches!(
                         label.as_str(),
-                        "Negotiated TLS version" | "Negotiated cipher" | "HTTP/2 ALPS"
+                        "Negotiated TLS version"
+                            | "Negotiated cipher"
+                            | "HTTP/2 ALPS"
+                            | "Trust Anchor IDs"
+                            | "PKI metadata source"
+                            | "PKI metadata version"
+                            | "PKI metadata SHA-256"
+                            | "Requested Trust Anchor IDs"
                     )
             })
-            .map(|(label, value)| field(label, value)),
+            .map(|(label, value)| {
+                if label == "Server available Trust Anchor IDs" {
+                    field(label, describe_trust_anchor_ids(value))
+                } else {
+                    field(label, value)
+                }
+            }),
     );
     connection.summary = summary(transport, details, version, cipher);
     warn_imported_conflicts(connection, transport, details, version, cipher);
+}
+
+fn describe_trust_anchor_ids(wire: &str) -> String {
+    fn decode(wire: &str) -> Option<Vec<String>> {
+        if wire.len() > 2048 || !wire.len().is_multiple_of(2) {
+            return None;
+        }
+        let bytes = wire
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let text = std::str::from_utf8(pair).ok()?;
+                u8::from_str_radix(text, 16).ok()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let mut remaining = bytes.as_slice();
+        let mut oids = vec![];
+        while let Some((&size, tail)) = remaining.split_first() {
+            let size = usize::from(size);
+            if size == 0 || size > 32 || size > tail.len() {
+                return None;
+            }
+            let mut oid = "1.3.6.1.4.1".to_owned();
+            let mut arc = 0u64;
+            let mut first = true;
+            for &byte in &tail[..size] {
+                if first && byte == 0x80 {
+                    return None;
+                }
+                arc = arc.checked_mul(128)?.checked_add(u64::from(byte & 127))?;
+                first = byte & 128 == 0;
+                if first {
+                    use std::fmt::Write as _;
+                    let _ = write!(oid, ".{arc}");
+                    arc = 0;
+                }
+            }
+            if !first {
+                return None;
+            }
+            oids.push(oid);
+            remaining = &tail[size..];
+        }
+        Some(oids)
+    }
+    match decode(wire) {
+        Some(oids) if oids.is_empty() => "Empty classical ID offer".into(),
+        Some(oids) => format!("{} (wire hex: {wire})", oids.join(", ")),
+        None => wire.to_owned(),
+    }
 }
 
 fn append_exchange(
@@ -240,6 +321,18 @@ fn warn_imported_conflicts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_anchor_ids_display_assigned_oids_and_preserve_bad_recorded_values() {
+        assert_eq!(
+            describe_trust_anchor_ids("04d6790901"),
+            "1.3.6.1.4.1.11129.9.1 (wire hex: 04d6790901)"
+        );
+        for bad in ["0", "01ff", "0004d6790901", "not hex"] {
+            assert_eq!(describe_trust_anchor_ids(bad), bad);
+        }
+        assert_eq!(describe_trust_anchor_ids(""), "Empty classical ID offer");
+    }
     use transmog_core::TlsEvidence;
 
     fn connection() -> CertificateConnection {

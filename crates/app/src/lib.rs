@@ -350,21 +350,29 @@ impl Application {
     /// Returns a bounded application error if the owned service cannot start.
     #[allow(clippy::too_many_lines)]
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
-        let (product_state, warning) =
+        let (product_state, mut warning) =
             product_state::ProductStateManager::load(config.product_state_path);
         let initial_state = product_state.snapshot();
         if let Some(executor) = &config.replay_executor {
-            executor
-                .prepare_network_profile(
-                    initial_state
-                        .preferences
-                        .network_profiles
-                        .active_profile
-                        .clone(),
-                )
-                .map_err(|error| {
-                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
-                })?();
+            let profile = &initial_state.preferences.network_profiles.active_profile;
+            match executor.prepare_network_profile(profile.clone()) {
+                Ok(apply) => apply(),
+                Err(error) if executor.defer_unavailable_network_profile(profile, &error) => {
+                    let message = format!(
+                        "Network profile unavailable: {error}. Repair the PKI metadata file or choose another profile in Settings."
+                    );
+                    warning = Some(
+                        warning.map_or_else(|| message.clone(), |old| format!("{old}; {message}")),
+                    );
+                }
+                Err(error) => {
+                    return Err(AppError::new(
+                        ErrorCategory::Unavailable,
+                        error.to_string(),
+                        true,
+                    ));
+                }
+            }
         }
         if let Some(manager) = &config.client_certificates {
             manager.replace_policy(initial_state.preferences.client_certificate_policy.clone())?;
@@ -523,6 +531,7 @@ impl Application {
                 .preferences
                 .network_profiles
                 .active_profile
+            && use_profile.is_none()
         {
             return self
                 .product_state

@@ -7078,6 +7078,7 @@ dependencies = [
  "transmog-http",
  "transmog-network",
  "transmog-tls",
+ "transmog-tls-native",
 ]
 
 [[package]]
@@ -7103,6 +7104,7 @@ dependencies = [
  "hyper",
  "hyper-boring",
  "hyper-util",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-boring",
@@ -7111,6 +7113,7 @@ dependencies = [
  "transmog-core",
  "transmog-network",
  "transmog-tls",
+ "transmog-tls-native",
 ]
 
 [[package]]
@@ -7269,10 +7272,12 @@ dependencies = [
  "boring",
  "boring-sys",
  "brotli",
+ "prost",
  "quiche",
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-boring",

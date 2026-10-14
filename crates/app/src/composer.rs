@@ -511,6 +511,7 @@ pub struct SystemReplayExecutor {
 
 #[derive(Clone)]
 struct ReplayTransports {
+    blocked_profile: Option<String>,
     factory: UpstreamTlsContextFactory,
     client: HyperOriginClient,
     h3: Option<transmog_h3::H3OriginClient>,
@@ -518,19 +519,25 @@ struct ReplayTransports {
 }
 
 impl SystemReplayExecutor {
-    fn request_transports(&self) -> (HyperOriginClient, Option<transmog_h3::H3OriginClient>) {
+    fn request_transports(
+        &self,
+    ) -> Result<(HyperOriginClient, Option<transmog_h3::H3OriginClient>), ReplayExecutionError>
+    {
         let transports = self
             .transports
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
+        if let Some(error) = transports.blocked_profile {
+            return Err(ReplayExecutionError::new(error));
+        }
         let client = transports.client.with_performance(self.performance.clone());
         let allowed = transports.protocols.snapshot();
         let h3 = transports
             .h3
             .map(|h3| h3.with_performance(self.performance.clone()))
             .filter(|_| self.force_http3 || (allowed.http3 && !allowed.http1 && !allowed.http2));
-        (client, h3)
+        Ok((client, h3))
     }
 
     /// Shares a certificate controller while keeping Composer's caller/run pool separate.
@@ -615,6 +622,7 @@ impl SystemReplayExecutor {
             force_http3: matches!(route, ProxyRoute::Http3),
             performance: None,
             transports: Arc::new(Mutex::new(ReplayTransports {
+                blocked_profile: None,
                 factory: factory.clone(),
                 h3: matches!(route, ProxyRoute::Auto | ProxyRoute::Http3).then(|| {
                     transmog_h3::H3OriginClient::new(
@@ -632,6 +640,22 @@ impl SystemReplayExecutor {
 }
 
 impl ReplayExecutor for SystemReplayExecutor {
+    fn defer_unavailable_network_profile(
+        &self,
+        profile: &crate::NetworkProfileSnapshot,
+        error: &ReplayExecutionError,
+    ) -> bool {
+        if !profile.settings.trust_anchor_ids || profile.settings.pki_metadata_file.is_none() {
+            return false;
+        }
+        self.transports
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .blocked_profile = Some(format!(
+            "Network profile unavailable: {error}. Repair the PKI metadata file or choose another profile in Settings."
+        ));
+        true
+    }
     fn prepare_network_profile(
         &self,
         profile: crate::NetworkProfileSnapshot,
@@ -660,6 +684,7 @@ impl ReplayExecutor for SystemReplayExecutor {
                 .with_outbound_protocols(protocols.clone())
         });
         let next = ReplayTransports {
+            blocked_profile: None,
             factory,
             client,
             h3,
@@ -714,9 +739,10 @@ impl ReplayExecutor for SystemReplayExecutor {
         length: u64,
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
-        let (client, h3) = self.request_transports();
+        let transports = self.request_transports();
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
+            let (client, h3) = transports?;
             if cancellation.is_cancelled() {
                 return Err(ReplayExecutionError::new("replay cancelled"));
             }
@@ -814,9 +840,10 @@ impl ReplayExecutor for SystemReplayExecutor {
         request: ValidatedReplayRequest,
         cancellation: ExchangeCancellation,
     ) -> BoxReplayFuture<'_> {
-        let (client, h3) = self.request_transports();
+        let transports = self.request_transports();
         let mode = self.mode;
         bounded_replay(cancellation.clone(), async move {
+            let (client, h3) = transports?;
             if cancellation.is_cancelled() {
                 return Err(ReplayExecutionError::new("replay cancelled"));
             }
@@ -1124,6 +1151,149 @@ mod tests {
                 })
             })
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_enabled_pki_file_does_not_activate_a_profile() {
+        let application = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(
+                SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+            )),
+            ..crate::AppConfig::default()
+        })
+        .unwrap();
+        let before = application
+            .product_state
+            .snapshot()
+            .preferences
+            .network_profiles;
+        let mut profile = crate::NetworkProfileSnapshot {
+            id: "custom-invalid-pki".into(),
+            name: "Invalid PKI".into(),
+            ..Default::default()
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("crs.pb");
+        std::fs::write(&file, b"incomplete protobuf").unwrap();
+        profile.settings.pki_metadata_file = Some(file.to_string_lossy().into_owned());
+        assert!(
+            application
+                .save_network_profiles(
+                    before.revision,
+                    vec![profile.clone()],
+                    Some(profile.id.clone())
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            application
+                .product_state
+                .snapshot()
+                .preferences
+                .network_profiles,
+            before
+        );
+        profile.settings.trust_anchor_ids = false;
+        assert!(
+            application
+                .save_network_profiles(
+                    before.revision,
+                    vec![profile.clone()],
+                    Some(profile.id.clone())
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_pki_file_after_restart_preserves_settings_and_blocks_sends_until_repaired() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        let file = directory.path().join("crs.pb");
+        std::fs::write(
+            &file,
+            include_bytes!("../../../third_party/chromium-root-store/crs.pb"),
+        )
+        .unwrap();
+        let make = || {
+            crate::Application::new(crate::AppConfig {
+                replay_executor: Some(Arc::new(
+                    SystemReplayExecutor::new(ProxyRoute::Http1).unwrap(),
+                )),
+                product_state_path: Some(preferences.clone()),
+                ..crate::AppConfig::default()
+            })
+            .unwrap()
+        };
+        let application = make();
+        let mut profile = crate::NetworkProfileSnapshot {
+            id: "custom-file".into(),
+            name: "Local file".into(),
+            ..Default::default()
+        };
+        profile.settings.pki_metadata_file = Some(file.to_string_lossy().into_owned());
+        application
+            .save_network_profiles(1, vec![profile], Some("custom-file".into()))
+            .await
+            .unwrap();
+        drop(application);
+        std::fs::remove_file(&file).unwrap();
+        let reopened = make();
+        let catalog = reopened
+            .product_state
+            .snapshot()
+            .preferences
+            .network_profiles;
+        assert_eq!(catalog.active_profile.id, "custom-file");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let input = ComposerRequest {
+            method: "GET".into(),
+            url: format!("http://{}/", listener.local_addr().unwrap()),
+            headers: vec![],
+            body: String::new(),
+            body_is_hex: false,
+            body_source: None,
+            source_entry_id: None,
+            acknowledge_non_idempotent: false,
+            acknowledge_credentials: false,
+        };
+        let error = reopened.execute_composer(input.clone()).await.unwrap_err();
+        assert!(error.message.contains("Repair the PKI metadata file"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        std::fs::write(
+            &file,
+            include_bytes!("../../../third_party/chromium-root-store/crs.pb"),
+        )
+        .unwrap();
+        reopened
+            .save_network_profiles(
+                catalog.revision,
+                catalog.custom_profiles,
+                Some(catalog.active_profile.id),
+            )
+            .await
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 4096];
+            assert!(socket.read(&mut bytes).await.unwrap() > 0);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+        assert_eq!(reopened.execute_composer(input).await.unwrap().body, "ok");
+        server.await.unwrap();
     }
 
     #[tokio::test]

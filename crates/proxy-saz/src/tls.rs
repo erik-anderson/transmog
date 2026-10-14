@@ -1,7 +1,17 @@
 //! Negotiated facts carried in conventional `SessionFlag` members.
 use std::collections::BTreeMap;
 
-pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 13] = [
+pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 20] = [
+    ("Trust Anchor IDs", "trust-anchor-ids"),
+    ("Requested Trust Anchor IDs", "requested-trust-anchor-ids"),
+    (
+        "Server available Trust Anchor IDs",
+        "available-trust-anchor-ids",
+    ),
+    ("PKI metadata source", "pki-metadata-source"),
+    ("PKI metadata version", "pki-metadata-version"),
+    ("PKI metadata SHA-256", "pki-metadata-sha256"),
+    ("Trust Anchor ID recovery", "trust-anchor-recovery"),
     ("HTTP/2 ALPS", "alps"),
     ("Key exchange", "key-exchange"),
     ("Negotiated group", "group"),
@@ -178,6 +188,45 @@ pub(crate) fn flag_prefix(leg: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trust_anchor_metadata_facts_survive_conventional_flags() {
+        let flags = BTreeMap::from([
+            (
+                "x-transmog-server-tls-trust-anchor-ids".into(),
+                "Server reported a matching certificate chain".into(),
+            ),
+            (
+                "x-transmog-server-tls-requested-trust-anchor-ids".into(),
+                "04d6790901".into(),
+            ),
+            (
+                "x-transmog-server-tls-available-trust-anchor-ids".into(),
+                "04d6790901".into(),
+            ),
+            (
+                "x-transmog-server-tls-pki-metadata-source".into(),
+                "C:\\Chrome data\\1804\\crs.pb".into(),
+            ),
+            (
+                "x-transmog-server-tls-pki-metadata-version".into(),
+                "42".into(),
+            ),
+            (
+                "x-transmog-server-tls-pki-metadata-sha256".into(),
+                "a".repeat(64),
+            ),
+            (
+                "x-transmog-server-tls-trust-anchor-recovery".into(),
+                "One retry".into(),
+            ),
+        ]);
+        let parsed = tls_negotiation_details(&flags, "upstream");
+        assert_eq!(parsed.len(), 7);
+        assert_eq!(parsed["Requested Trust Anchor IDs"], "04d6790901");
+        assert_eq!(parsed["PKI metadata version"], "42");
+        assert_eq!(parsed["PKI metadata SHA-256"], "a".repeat(64));
+    }
 
     #[test]
     fn alps_flags_preserve_maximum_bytes_and_require_complete_unambiguous_hex() {

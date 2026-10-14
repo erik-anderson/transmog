@@ -191,6 +191,7 @@ export interface NetworkProfileSettings {
   tlsVersions:'tls12-and13'|'tls12-only'|'tls13-only'; compatibilityCiphers:boolean;
   hybridKeyExchange:boolean; grease:'chromium'|'no-signature'|'disabled';
   randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean; http2Alps:boolean;
+  trustAnchorIds:boolean; pkiMetadataFile:string|null;
 }
 export interface NetworkProfileSnapshot {
   id:string; name:string; revision:number; baseProfile:string; settings:NetworkProfileSettings;

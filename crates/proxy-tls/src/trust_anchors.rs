@@ -1,0 +1,481 @@
+//! Classical Chrome Trust Anchor IDs from `root_store.proto`, not a trust policy.
+use boring::{
+    hash::MessageDigest,
+    stack::Stack,
+    x509::{X509, X509StoreContext},
+};
+use prost::Message;
+use std::{
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::{Arc, OnceLock, RwLock},
+    time::Duration,
+};
+use thiserror::Error;
+
+const BUNDLED: &[u8] = include_bytes!("../../../third_party/chromium-root-store/crs.pb");
+const MAX_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_CERTIFICATES: usize = 1024;
+
+// Projection of the checked-in Chromium schema. prost ignores unknown fields,
+// including future policy fields: this module never applies Chrome trust policy.
+#[derive(Clone, PartialEq, Message)]
+struct RootStore {
+    #[prost(message, repeated, tag = "1")]
+    trust_anchors: Vec<Anchor>,
+    #[prost(int64, tag = "2")]
+    version_major: i64,
+    #[prost(message, repeated, tag = "3")]
+    additional_certs: Vec<Anchor>,
+}
+#[derive(Clone, PartialEq, Message)]
+#[allow(clippy::struct_field_names)] // Mirrors the external Chromium protobuf schema.
+struct Anchor {
+    #[prost(oneof = "Certificate", tags = "1, 2")]
+    certificate: Option<Certificate>,
+    #[prost(bool, optional, tag = "10")]
+    tls_trust_anchor: Option<bool>,
+    #[prost(bytes, optional, tag = "11")]
+    trust_anchor_id: Option<Vec<u8>>,
+}
+#[derive(Clone, PartialEq, prost::Oneof)]
+enum Certificate {
+    #[prost(bytes, tag = "1")]
+    Der(Vec<u8>),
+    #[prost(string, tag = "2")]
+    Sha256(String),
+}
+
+/// A parsed, immutable public certificate catalog and its provenance.
+#[derive(Clone, Debug)]
+pub struct PkiMetadata {
+    /// Chrome Root Store major version, used for freshness (not CRX version/mtime).
+    pub version: i64,
+    /// SHA-256 of the exact input protobuf.
+    pub sha256: String,
+    /// Public file location or bundled-source description.
+    pub source: String,
+    ids: Vec<(Vec<u8>, X509)>,
+    issuers: Arc<Vec<X509>>,
+    wire: Vec<u8>,
+}
+
+/// Invalid or inaccessible metadata. Automatic discovery retains the last good copy.
+#[derive(Debug, Error)]
+pub enum MetadataError {
+    /// File access failed.
+    #[error("PKI metadata file: {0}")]
+    Io(#[from] std::io::Error),
+    /// The protobuf or its certificate catalog was not usable.
+    #[error("Invalid PKI metadata: {0}")]
+    Invalid(&'static str),
+}
+
+impl PkiMetadata {
+    /// Loads a bounded Chrome `PKIMetadata` `crs.pb`. Does not change trusted roots.
+    /// # Errors
+    /// Rejects malformed protobufs, missing DER, invalid CA certificates or bounds.
+    pub fn from_file(path: &Path) -> Result<Self, MetadataError> {
+        let mut bytes = Vec::new();
+        File::open(path)?
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        Self::decode(&bytes, path.to_string_lossy().into_owned())
+    }
+
+    /// Decodes the public `RootStore` protobuf described by Chromium's schema.
+    /// # Errors
+    /// Rejects malformed or oversized inputs and invalid certificate/ID material.
+    pub fn decode(bytes: &[u8], source: String) -> Result<Self, MetadataError> {
+        if bytes.len() as u64 > MAX_BYTES || source.len() > 1024 {
+            return Err(MetadataError::Invalid("size limit"));
+        }
+        // Bound repeated-message allocation before prost materializes the catalog.
+        let mut remaining = bytes;
+        let mut certificates = 0;
+        let mut fields = 0;
+        while !remaining.is_empty() {
+            let (tag, wire) = prost::encoding::decode_key(&mut remaining)
+                .map_err(|_| MetadataError::Invalid("protobuf key"))?;
+            fields += 1;
+            if matches!(tag, 1 | 3) {
+                certificates += 1;
+            }
+            if certificates > MAX_CERTIFICATES || fields > 8192 {
+                return Err(MetadataError::Invalid("protobuf field count"));
+            }
+            prost::encoding::skip_field(
+                wire,
+                tag,
+                &mut remaining,
+                prost::encoding::DecodeContext::default(),
+            )
+            .map_err(|_| MetadataError::Invalid("protobuf field"))?;
+        }
+        let store = RootStore::decode(bytes).map_err(|_| MetadataError::Invalid("protobuf"))?;
+        if store.version_major <= 0
+            || store.trust_anchors.len() + store.additional_certs.len() == 0
+            || store.trust_anchors.len() + store.additional_certs.len() > MAX_CERTIFICATES
+        {
+            return Err(MetadataError::Invalid("version or certificate count"));
+        }
+        let mut ids = Vec::new();
+        let mut issuers = Vec::new();
+        for (anchor, tls) in store.trust_anchors.iter().map(|a| (a, true)).chain(
+            store
+                .additional_certs
+                .iter()
+                .map(|a| (a, a.tls_trust_anchor == Some(true))),
+        ) {
+            let Some(Certificate::Der(der)) = &anchor.certificate else {
+                return Err(MetadataError::Invalid(
+                    "DER required; textproto hashes are not certificates",
+                ));
+            };
+            if der.is_empty() || der.len() > 65_536 {
+                return Err(MetadataError::Invalid("certificate size"));
+            }
+            let cert =
+                X509::from_der(der).map_err(|_| MetadataError::Invalid("certificate DER"))?;
+            if !transmog_tls_native::certificate_is_ca(&cert) {
+                return Err(MetadataError::Invalid("non-CA certificate"));
+            }
+            if tls {
+                issuers.push(cert.clone());
+                if let Some(id) = &anchor.trust_anchor_id {
+                    if id.is_empty() || id.len() > 32 || !valid_relative_oid(id) {
+                        return Err(MetadataError::Invalid("Trust Anchor ID"));
+                    }
+                    ids.push((id.clone(), cert));
+                }
+            }
+        }
+        if issuers.is_empty() {
+            return Err(MetadataError::Invalid("no TLS CA certificates"));
+        }
+        // Chromium sorts raw identifiers and preserves duplicate entries.
+        ids.sort_by(|a, b| a.0.cmp(&b.0));
+        let wire = encode_ids(ids.iter().map(|(id, _)| id.as_slice()));
+        if wire.len() > 65_533 {
+            return Err(MetadataError::Invalid("TLS vector size"));
+        }
+        let digest = boring::hash::hash(MessageDigest::sha256(), bytes)
+            .map_err(|_| MetadataError::Invalid("digest"))?;
+        Ok(Self {
+            version: store.version_major,
+            source,
+            sha256: hex(&digest),
+            ids,
+            issuers: Arc::new(issuers),
+            wire,
+        })
+    }
+
+    /// Reproducible public Chromium source snapshot matching the measured offer.
+    /// # Panics
+    /// Panics if the compiled-in, qualified snapshot cannot be decoded.
+    #[must_use]
+    pub fn bundled() -> Arc<Self> {
+        static VALUE: OnceLock<Arc<PkiMetadata>> = OnceLock::new();
+        VALUE
+            .get_or_init(|| {
+                Arc::new(
+                    Self::decode(
+                        BUNDLED,
+                        "Bundled Chromium root-store source (version 41)".into(),
+                    )
+                    .expect("qualified bundled Chrome metadata"),
+                )
+            })
+            .clone()
+    }
+
+    /// TLS list without the outer u16 length (added by `BoringSSL`).
+    pub fn requested_ids(&self) -> &[u8] {
+        &self.wire
+    }
+    /// Number of classical identifiers in the Chrome offer.
+    pub fn id_count(&self) -> usize {
+        self.ids.len()
+    }
+
+    pub(crate) fn issuers(&self) -> Arc<Vec<X509>> {
+        self.issuers.clone()
+    }
+
+    /// Recovery requests only IDs whose associated CA chains to configured trust.
+    /// The peer's decreasing preference order is retained, with no invented IDs.
+    pub(crate) fn recovery_ids(&self, available: &[u8], trust: &crate::TrustSnapshot) -> Vec<u8> {
+        let Ok(mut chain) = Stack::new() else {
+            return Vec::new();
+        };
+        for cert in self.issuers.iter() {
+            if chain.push(cert.clone()).is_err() {
+                return Vec::new();
+            }
+        }
+        let mut selected = Vec::new();
+        let mut remaining = available;
+        while let Some((&length, tail)) = remaining.split_first() {
+            let length = usize::from(length);
+            if length == 0 || length > tail.len() {
+                return Vec::new();
+            }
+            let id = &tail[..length];
+            remaining = &tail[length..];
+            let Some((_, certificate)) = self.ids.iter().find(|(known, _)| known == id) else {
+                continue;
+            };
+            let Ok(mut context) = X509StoreContext::new() else {
+                continue;
+            };
+            if context
+                .init(
+                    &trust.store,
+                    certificate,
+                    &chain,
+                    boring::x509::X509StoreContextRef::verify_cert,
+                )
+                .unwrap_or(false)
+            {
+                selected.extend_from_slice(&tail[..length]);
+                let start = selected.len() - length;
+                selected.insert(start, u8::try_from(length).expect("validated identifier"));
+            }
+        }
+        selected
+    }
+}
+
+fn valid_relative_oid(id: &[u8]) -> bool {
+    let mut first = true;
+    for &byte in id {
+        if first && byte == 0x80 {
+            return false;
+        }
+        first = byte & 0x80 == 0;
+    }
+    first
+}
+fn encode_ids<'a>(ids: impl Iterator<Item = &'a [u8]>) -> Vec<u8> {
+    ids.flat_map(|id| {
+        std::iter::once(u8::try_from(id.len()).expect("bounded ID")).chain(id.iter().copied())
+    })
+    .collect()
+}
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
+}
+
+/// Shared last-good metadata, refreshed off transport threads once per minute.
+/// Established TLS/QUIC connections keep their immutable original snapshot.
+#[derive(Debug)]
+pub struct PkiMetadataProvider {
+    directory: Option<PathBuf>,
+    current: RwLock<Arc<PkiMetadata>>,
+}
+impl PkiMetadataProvider {
+    /// Creates a resolver with an explicit fallback and optional component directory.
+    #[must_use]
+    pub fn new(fallback: Arc<PkiMetadata>, directory: Option<PathBuf>) -> Self {
+        Self {
+            directory,
+            current: RwLock::new(fallback),
+        }
+    }
+    /// Last validated catalog; this operation does no filesystem IO.
+    pub fn current(&self) -> Arc<PkiMetadata> {
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+    /// Scans numeric Chrome component directories, selecting a strictly newer
+    /// `RootStore` version. Corrupt, partial, old, or missing files retain last-good.
+    /// Invoke outside latency-sensitive async transport work.
+    pub fn refresh(&self) {
+        let Some(directory) = &self.directory else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(directory) else {
+            return;
+        };
+        let mut candidates = Vec::new();
+        for entry in entries.take(4096).flatten() {
+            let name = entry.file_name();
+            let Some(version) = name.to_str().and_then(component_version) else {
+                continue;
+            };
+            candidates.push((version, entry.path().join("crs.pb")));
+        }
+        candidates.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut best = self.current();
+        for (_, path) in candidates.into_iter().take(128) {
+            if let Ok(value) = PkiMetadata::from_file(&path)
+                && value.version > best.version
+            {
+                best = Arc::new(value);
+            }
+        }
+        let mut current = self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if best.version > current.version {
+            *current = best;
+        }
+    }
+    /// Windows Chrome discovery with a bundled fallback. No updater downloads.
+    pub fn automatic() -> Arc<Self> {
+        static VALUE: OnceLock<Arc<PkiMetadataProvider>> = OnceLock::new();
+        VALUE
+            .get_or_init(|| {
+                let directory = if cfg!(windows) {
+                    std::env::var_os("LOCALAPPDATA")
+                        .map(|p| PathBuf::from(p).join("Google/Chrome/User Data/PKIMetadata"))
+                } else {
+                    None
+                };
+                let provider = Arc::new(Self::new(PkiMetadata::bundled(), directory));
+                let owner = Arc::downgrade(&provider);
+                // First discovery runs immediately in this worker, without blocking UI
+                // or making filesystem reads in SSL callbacks. Failure to spawn leaves
+                // the bundled snapshot usable.
+                let _ = std::thread::Builder::new()
+                    .name("chrome-pki-metadata".into())
+                    .spawn(move || {
+                        loop {
+                            let Some(provider) = owner.upgrade() else {
+                                break;
+                            };
+                            provider.refresh();
+                            drop(provider);
+                            std::thread::sleep(Duration::from_secs(60));
+                        }
+                    });
+                provider
+            })
+            .clone()
+    }
+}
+fn component_version(name: &str) -> Option<Vec<u32>> {
+    if name.len() > 64 {
+        return None;
+    }
+    let version = name
+        .split('.')
+        .map(|part| {
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            part.parse().ok()
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (version.len() <= 4).then_some(version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn encoded(version: i64) -> Vec<u8> {
+        let ca = crate::ProxyCa::generate("metadata-only CA", 2).unwrap();
+        RootStore {
+            version_major: version,
+            trust_anchors: vec![Anchor {
+                certificate: Some(Certificate::Der(ca.certificate().to_der().unwrap())),
+                tls_trust_anchor: None,
+                trust_anchor_id: Some(vec![1, 2]),
+            }],
+            additional_certs: vec![],
+        }
+        .encode_to_vec()
+    }
+    #[test]
+    fn bundle_has_the_exact_measured_chromium_classical_offer() {
+        let metadata = PkiMetadata::bundled();
+        assert_eq!(metadata.version, 41);
+        assert_eq!(metadata.id_count(), 28);
+        assert_eq!(metadata.requested_ids().len(), 184);
+        // Independent original Chrome ClientHello extension bytes (without
+        // outer u16 length). This checks sorting, role filtering and exact IDs.
+        let expected = include_str!("../../../third_party/chromium-root-store/snapshot.json");
+        assert!(expected.contains(&metadata.sha256));
+        let chrome = "0582df1302010582df1302060582df13020d0582df13020e0582df13020f0582df1302120582df1302130582df13021408839a648c9b2d010708839a648c9b2d010808839a648c9b2d010908839a648c9b2d010a08839a648c9b2d010b08839a648c9b2d010c08839a648c9b2d010d08839a648c9b2d011208839a648c9b2d011304d679090104d679090404d679090504d679090604d679090704d679090804d679090a04d679090b04d679090c04d679090d04d679090f";
+        assert_eq!(hex(metadata.requested_ids()), chrome);
+    }
+    #[test]
+    fn discovery_uses_root_version_and_keeps_last_good_after_corruption() {
+        let directory = tempfile::tempdir().unwrap();
+        let provider =
+            PkiMetadataProvider::new(PkiMetadata::bundled(), Some(directory.path().into()));
+        let put = |name: &str, data: &[u8]| {
+            let path = directory.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("crs.pb"), data).unwrap();
+        };
+        put("9999", &encoded(40));
+        put("100.2", &encoded(42));
+        put("100.10", &encoded(43));
+        put("100.11", b"incomplete");
+        put("ignore-me", &encoded(99));
+        provider.refresh();
+        let old = provider.current();
+        assert_eq!(old.version, 43);
+        assert!(old.source.contains("100.10"));
+        put("101", &encoded(44));
+        provider.refresh();
+        assert_eq!(provider.current().version, 44);
+        assert_eq!(old.version, 43); // Existing connections keep their Arc.
+        put("101", b"truncated");
+        provider.refresh();
+        assert_eq!(provider.current().version, 44);
+    }
+    #[test]
+    fn loader_rejects_bad_catalog_and_bounds_before_allocation() {
+        for bytes in [
+            vec![],
+            vec![0x0a, 255],
+            [0x0a, 0].repeat(1025),
+            vec![0; 8 * 1024 * 1024 + 1],
+        ] {
+            assert!(PkiMetadata::decode(&bytes, "test".into()).is_err());
+        }
+        let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+        store.trust_anchors[0].certificate = Some(Certificate::Sha256("00".repeat(32)));
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "test".into()).is_err());
+        let ca = crate::ProxyCa::generate("nonCA", 2).unwrap();
+        let leaf = ca
+            .issue(crate::EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        store.trust_anchors[0].certificate =
+            Some(Certificate::Der(leaf.certificate.to_der().unwrap()));
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "test".into()).is_err());
+        for id in [vec![], vec![0x80, 1], vec![0x81], vec![1; 33]] {
+            store.trust_anchors[0].certificate =
+                Some(Certificate::Der(ca.certificate().to_der().unwrap()));
+            store.trust_anchors[0].trust_anchor_id = Some(id);
+            assert!(PkiMetadata::decode(&store.encode_to_vec(), "test".into()).is_err());
+        }
+    }
+    #[test]
+    fn roles_sorting_and_duplicates_follow_chromium() {
+        let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+        let mut extra = store.trust_anchors[0].clone();
+        extra.trust_anchor_id = Some(vec![1]);
+        extra.tls_trust_anchor = Some(false);
+        store.additional_certs.push(extra.clone());
+        extra.tls_trust_anchor = Some(true);
+        store.additional_certs.push(extra.clone());
+        store.trust_anchors.push(extra);
+        let metadata = PkiMetadata::decode(&store.encode_to_vec(), "test".into()).unwrap();
+        assert_eq!(metadata.requested_ids(), &[1, 1, 1, 1, 2, 1, 2]);
+        store.trust_anchors.clear();
+        let additional_only = PkiMetadata::decode(&store.encode_to_vec(), "test".into()).unwrap();
+        assert_eq!(additional_only.requested_ids(), &[1, 1]);
+    }
+}

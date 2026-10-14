@@ -24,11 +24,14 @@ fn context_index() -> Result<Index<SslContext, TlsCapture>, ErrorStack> {
 
 /// Cloneable public evidence for one physical TLS connection, including failures.
 #[derive(Clone, Debug)]
-pub struct TlsCapture(Arc<Mutex<TlsEvidence>>);
+pub struct TlsCapture(Arc<Mutex<TlsEvidence>>, Arc<Mutex<Vec<u8>>>);
 impl TlsCapture {
     /// Starts collection with the local connection policy and trust provenance.
     pub fn new(evidence: TlsEvidence) -> Self {
-        Self(Arc::new(Mutex::new(evidence)))
+        Self(
+            Arc::new(Mutex::new(evidence)),
+            Arc::new(Mutex::new(Vec::new())),
+        )
     }
     fn data(&self) -> std::sync::MutexGuard<'_, TlsEvidence> {
         self.0
@@ -65,6 +68,12 @@ impl TlsCapture {
     #[must_use]
     pub fn snapshot(&self) -> TlsEvidence {
         self.data().clone()
+    }
+    pub(crate) fn available_trust_anchors(&self) -> Vec<u8> {
+        self.1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
     /// Records a bounded public client authentication state or policy explanation.
     pub fn authentication_detail(&self, name: &str, value: &str) {
@@ -198,6 +207,16 @@ impl TlsCapture {
                 "Session resumed",
                 if ssl.session_reused() { "Yes" } else { "No" },
             );
+            if !server
+                && ssl.session_reused()
+                && data.details.contains_key("Requested Trust Anchor IDs")
+            {
+                insert_detail(
+                    &mut data,
+                    "Trust Anchor IDs",
+                    "Offered; session resumed without a new certificate",
+                );
+            }
             insert_detail(
                 &mut data,
                 "HelloRetryRequest",
@@ -208,15 +227,7 @@ impl TlsCapture {
                 },
             );
             insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
-            if ssl.selected_alpn_protocol() == Some(b"h2") {
-                let alps = transmog_tls_native::peer_application_settings(ssl);
-                let alps = transmog_core::Http2AlpsEvidence {
-                    negotiated: alps.is_some(),
-                    peer_settings: alps.unwrap_or_default().into(),
-                };
-                insert_detail(&mut data, "HTTP/2 ALPS", &alps.summary());
-                data.http2_alps = Some(alps);
-            }
+            collect_alps(&mut data, ssl);
             if let Some(cipher) = ssl.current_cipher() {
                 insert_detail(&mut data, "Negotiated cipher", cipher.name());
             }
@@ -275,6 +286,18 @@ impl TlsCapture {
     }
 }
 
+fn collect_alps(data: &mut TlsEvidence, ssl: &SslRef) {
+    if ssl.selected_alpn_protocol() == Some(b"h2") {
+        let alps = transmog_tls_native::peer_application_settings(ssl);
+        let alps = transmog_core::Http2AlpsEvidence {
+            negotiated: alps.is_some(),
+            peer_settings: alps.unwrap_or_default().into(),
+        };
+        insert_detail(data, "HTTP/2 ALPS", &alps.summary());
+        data.http2_alps = Some(alps);
+    }
+}
+
 // Both Hyper's per-SSL data and quiche's per-connection context use this hook.
 // Reading public facts here also preserves signatures before BoringSSL releases
 // handshake-only state, and never installs a verification override.
@@ -315,6 +338,34 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
         return;
     };
     let mut data = capture.data();
+    if data.details.contains_key("Requested Trust Anchor IDs") {
+        let (matched, available) = transmog_tls_native::peer_trust_anchors(ssl);
+        insert_detail(
+            &mut data,
+            "Trust Anchor IDs",
+            if matched {
+                "Server reported a matching certificate chain"
+            } else {
+                "Offered; server did not report a match"
+            },
+        );
+        if !available.is_empty() {
+            let value = crate::trust_anchors::hex(&available);
+            insert_detail(
+                &mut data,
+                "Server available Trust Anchor IDs",
+                if value.len() <= 2048 {
+                    &value
+                } else {
+                    "List exceeds display limit; retained for bounded connection recovery"
+                },
+            );
+            *capture
+                .1
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = available;
+        }
+    }
     if let Some(chain) = context.chain() {
         let mut certificates = Vec::new();
         for certificate in chain {

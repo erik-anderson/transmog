@@ -40,6 +40,7 @@ impl NetworkProfiles {
                 revision: 1,
                 settings: NetworkProfileSettings {
                     http2_alps: false,
+                    trust_anchor_ids: false,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -57,6 +58,30 @@ impl NetworkProfiles {
         }
         // Existing custom profiles keep their previous offer. Imported capture
         // snapshots also default the absent field to false, preserving history.
+        Ok(())
+    }
+
+    pub(crate) fn migrate_trust_anchor_ids(&mut self) -> Result<(), AppError> {
+        if self.active_profile.id == CHROMIUM_154 {
+            let previous = NetworkProfileSnapshot {
+                revision: 2,
+                settings: NetworkProfileSettings {
+                    trust_anchor_ids: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            if self.active_profile != previous {
+                return Err(invalid(
+                    "The saved Chromium 154 profile is not a supported recipe.",
+                ));
+            }
+            self.active_profile = NetworkProfileSnapshot::default();
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("Network profile catalog revision is exhausted."))?;
+        }
         Ok(())
     }
 

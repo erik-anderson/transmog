@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 8;
+const CURRENT_SCHEMA: u32 = 9;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -402,6 +402,13 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         state.preferences.network_profiles.migrate_alps()?;
         state.schema_version = CURRENT_SCHEMA;
     }
+    if state.schema_version == 8 {
+        state
+            .preferences
+            .network_profiles
+            .migrate_trust_anchor_ids()?;
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -680,6 +687,12 @@ mod tests {
             .active_profile
             .settings
             .http2_alps = false;
+        previous
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .trust_anchor_ids = false;
         let mut custom = previous.preferences.network_profiles.active_profile.clone();
         custom.id = "custom-diagnostic".into();
         custom.name = "Diagnostic".into();
@@ -722,6 +735,58 @@ mod tests {
         assert_eq!(
             migrated.preferences.network_profiles.active_profile,
             migrated.preferences.network_profiles.custom_profiles[0]
+        );
+    }
+
+    #[test]
+    fn schema_eight_migration_keeps_custom_offers_and_updates_the_builtin() {
+        let mut state = ProductState {
+            schema_version: 8,
+            ..Default::default()
+        };
+        state.preferences.network_profiles.active_profile.revision = 2;
+        state
+            .preferences
+            .network_profiles
+            .active_profile
+            .settings
+            .trust_anchor_ids = false;
+        let mut custom = state.preferences.network_profiles.active_profile.clone();
+        custom.id = "custom-before-tai".into();
+        custom.name = "Before TAI".into();
+        state
+            .preferences
+            .network_profiles
+            .custom_profiles
+            .push(custom.clone());
+        let mut json = serde_json::to_value(&state).unwrap();
+        json["preferences"]["networkProfiles"]["activeProfile"]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("trustAnchorIds");
+        json["preferences"]["networkProfiles"]["customProfiles"][0]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("trustAnchorIds");
+        let result = validate(serde_json::from_value(json).unwrap()).unwrap();
+        assert_eq!(result.schema_version, CURRENT_SCHEMA);
+        assert_eq!(
+            result.preferences.network_profiles.active_profile,
+            crate::NetworkProfileSnapshot::default()
+        );
+        assert_eq!(
+            result.preferences.network_profiles.custom_profiles,
+            [custom.clone()]
+        );
+        state.preferences.network_profiles.active_profile = custom;
+        assert!(
+            !validate(state)
+                .unwrap()
+                .preferences
+                .network_profiles
+                .active_profile
+                .settings
+                .trust_anchor_ids
         );
     }
 

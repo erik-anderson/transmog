@@ -35,11 +35,17 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     const profileForm=profiles.networkForm;
     if(!original.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('Chromium ALPS default is disabled');
     const alps=profileForm.elements.namedItem('http2Alps');
+    if(!original.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Chromium Trust Anchor IDs default is disabled');
+    const trustAnchors=profileForm.elements.namedItem('trustAnchorIds');
     profiles.querySelector('.profile-handshake').open=true;
     alps.scrollIntoView({block:'center'});alps.focus();
     const alpsBox=alps.getBoundingClientRect();
     if(alps.getRootNode().activeElement!==alps||alps.getRootNode().elementFromPoint(alpsBox.x+alpsBox.width/2,alpsBox.y+alpsBox.height/2)!==alps)throw new Error('ALPS profile control is not reachable');
     alps.checked=false;
+    trustAnchors.scrollIntoView({block:'center'});trustAnchors.focus();
+    const anchorBox=trustAnchors.getBoundingClientRect();
+    if(trustAnchors.getRootNode().activeElement!==trustAnchors||trustAnchors.getRootNode().elementFromPoint(anchorBox.x+anchorBox.width/2,anchorBox.y+anchorBox.height/2)!==trustAnchors)throw new Error('Trust Anchor IDs control is not reachable');
+    trustAnchors.checked=false;
     profileForm.elements.namedItem('name').value='Native diagnostic profile';
     for(const name of ['http2','http3','reuseConnections'])profileForm.elements.namedItem(name).checked=false;
     profiles.edit(new Event('change',{bubbles:true}));
@@ -51,6 +57,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     await settings.saveSettings(new Event('submit',{cancelable:true}));
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
     if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
+    if(saved.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Trust Anchor IDs toggle did not persist');
     if(saved.preferences.decryptHttps||saved.preferences.isolateOutboundConnections||saved.preferences.configureSystemProxy||JSON.stringify(saved.preferences.allowedOutboundProtocols)!==JSON.stringify({http1:true,http2:false,http3:false}))throw new Error('Network settings did not persist');
     await settings.startProxy();
     const status=await window.__TAURI_INTERNALS__.invoke('app_status');

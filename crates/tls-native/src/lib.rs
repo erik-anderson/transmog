@@ -3,8 +3,16 @@
 
 mod application_settings;
 mod credentials;
+mod trust_anchors;
 pub use application_settings::{configure_h2_application_settings, peer_application_settings};
-pub use credentials::{MlDsaVariant, add_server_credential, selected_credential_chain};
+pub use credentials::{
+    MlDsaVariant, add_server_credential, add_server_credential_for_trust_anchor,
+    selected_credential_chain,
+};
+pub use trust_anchors::{
+    certificate_is_ca, configure_available_trust_anchors, configure_context_trust_anchors,
+    configure_ssl_trust_anchors, peer_trust_anchors,
+};
 
 use boring::{
     error::ErrorStack,

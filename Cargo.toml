@@ -67,6 +67,7 @@ httparse = "=1.10.1"
 image = { version = "=0.25.10", default-features = false, features = ["gif", "ico", "jpeg", "png", "webp"] }
 libc = "=0.2.190"
 percent-encoding = "2.3.2"
+prost = "=0.14.4"
 hyper = { version = "1.11.1", features = ["client", "http1", "http2", "server"] }
 h2 = "0.4.19"
 hyper-boring = "=5.2.0"

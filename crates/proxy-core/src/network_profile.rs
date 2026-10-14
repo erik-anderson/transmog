@@ -60,6 +60,13 @@ pub struct NetworkProfileSettings {
     /// Older capture metadata omitted ALPS because it was not offered.
     #[serde(default)]
     pub http2_alps: bool,
+    /// Offer classical Chrome Trust Anchor IDs using bundled/newer local PKI metadata.
+    /// Historical captures omitted the extension; do not infer an old offer.
+    #[serde(default)]
+    pub trust_anchor_ids: bool,
+    /// Optional local crs.pb baseline. Newer discovered Chrome metadata takes precedence.
+    #[serde(default)]
+    pub pki_metadata_file: Option<String>,
 }
 
 impl Default for NetworkProfileSettings {
@@ -75,6 +82,8 @@ impl Default for NetworkProfileSettings {
             ech_grease: true,
             certificate_compression: true,
             http2_alps: true,
+            trust_anchor_ids: true,
+            pki_metadata_file: None,
         }
     }
 }
@@ -85,6 +94,13 @@ impl NetworkProfileSettings {
     /// # Errors
     /// Returns an actionable field error for incompatible HTTP/3 and TLS choices.
     pub fn validate(&self) -> Result<(), &'static str> {
+        if self
+            .pki_metadata_file
+            .as_ref()
+            .is_some_and(|p| p.is_empty() || p.len() > 1024 || p.contains('\0'))
+        {
+            return Err("Choose a valid PKI metadata file path (up to 1024 bytes).");
+        }
         if self.protocols.http3 && self.tls_versions == TlsVersions::Tls12Only {
             return Err("HTTP/3 requires TLS 1.3. Enable TLS 1.3 or turn off HTTP/3.");
         }
@@ -113,7 +129,7 @@ impl Default for NetworkProfileSnapshot {
         Self {
             id: CHROMIUM_154.into(),
             name: "Chromium 154".into(),
-            revision: 2,
+            revision: 3,
             base_profile: CHROMIUM_154.into(),
             settings: NetworkProfileSettings::default(),
         }
@@ -138,6 +154,24 @@ impl NetworkProfileSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_snapshots_keep_trust_anchor_ids_disabled() {
+        let mut value = serde_json::to_value(NetworkProfileSnapshot::default()).unwrap();
+        value["revision"] = 2.into();
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("trustAnchorIds");
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("pkiMetadataFile");
+        let result: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
+        assert!(!result.settings.trust_anchor_ids);
+        assert!(result.settings.pki_metadata_file.is_none());
+        assert!(result.valid());
+    }
 
     #[test]
     fn older_capture_recipe_does_not_claim_an_alps_offer() {

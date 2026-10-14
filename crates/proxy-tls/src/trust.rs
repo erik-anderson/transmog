@@ -154,7 +154,7 @@ pub struct TrustSnapshot {
     source_description: String,
     source_version: Option<String>,
     root_count: usize,
-    store: Arc<boring::x509::store::X509Store>,
+    pub(crate) store: Arc<boring::x509::store::X509Store>,
     diagnostics: Arc<[String]>,
 }
 
@@ -274,6 +274,10 @@ pub struct UpstreamTlsContextFactory {
     snapshot: Arc<TrustSnapshot>,
     policy: UpstreamTlsPolicy,
     profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
+    metadata: Arc<crate::trust_anchors::PkiMetadataProvider>,
+    connection_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
+    baseline_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
+    recovery_ids: Option<Vec<u8>>,
     client_authentication: Option<Arc<ClientAuthentication>>,
     pub(crate) authentication: Option<Arc<crate::client_connections::AuthenticationScope>>,
 }
@@ -300,6 +304,10 @@ impl UpstreamTlsContextFactory {
             snapshot,
             policy,
             profile: None,
+            metadata: crate::trust_anchors::PkiMetadataProvider::automatic(),
+            connection_metadata: None,
+            baseline_metadata: None,
+            recovery_ids: None,
             client_authentication: None,
             authentication: None,
         }
@@ -317,6 +325,21 @@ impl UpstreamTlsContextFactory {
             .settings
             .validate()
             .map_err(TrustError::NetworkProfile)?;
+        self.baseline_metadata = if profile.settings.trust_anchor_ids {
+            profile
+                .settings
+                .pki_metadata_file
+                .as_ref()
+                .map(|path| {
+                    crate::trust_anchors::PkiMetadata::from_file(std::path::Path::new(path))
+                        .map(Arc::new)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        self.connection_metadata = None;
+        self.recovery_ids = None;
         self.policy.minimum_version = match profile.settings.tls_versions {
             TlsVersions::Tls13Only => SslVersion::TLS1_3,
             _ => SslVersion::TLS1_2,
@@ -341,6 +364,92 @@ impl UpstreamTlsContextFactory {
         &self,
     ) -> Option<&transmog_core::network_profile::NetworkProfileSnapshot> {
         self.profile.as_ref()
+    }
+
+    /// Uses an explicitly loaded catalog and optional automatic discovery source.
+    /// Certificate trust remains bound to this factory's configured snapshot.
+    #[must_use]
+    pub fn with_pki_metadata(
+        mut self,
+        provider: Arc<crate::trust_anchors::PkiMetadataProvider>,
+    ) -> Self {
+        self.metadata = provider;
+        self.connection_metadata = None;
+        self.recovery_ids = None;
+        self
+    }
+
+    /// Freezes current PKI metadata for one physical connection.
+    #[must_use]
+    pub fn for_connection(&self) -> Self {
+        let mut factory = self.clone();
+        if factory.connection_metadata.is_none() {
+            factory.connection_metadata = Some(self.metadata());
+        }
+        factory
+    }
+
+    fn metadata(&self) -> Arc<crate::trust_anchors::PkiMetadata> {
+        self.connection_metadata.clone().unwrap_or_else(|| {
+            let discovered = self.metadata.current();
+            self.baseline_metadata
+                .as_ref()
+                .filter(|base| {
+                    base.version >= discovered.version
+                        || Arc::ptr_eq(&discovered, &crate::trust_anchors::PkiMetadata::bundled())
+                })
+                .cloned()
+                .unwrap_or(discovered)
+        })
+    }
+
+    /// Applies the frozen offer and untrusted helpers to fresh TCP SSL objects.
+    /// # Errors
+    /// Returns native configuration errors.
+    pub fn configure_ssl_metadata(
+        &self,
+        ssl: &mut boring::ssl::SslRef,
+    ) -> Result<(), boring::error::ErrorStack> {
+        if self.trust_anchor_ids_enabled() {
+            let metadata = self.metadata();
+            transmog_tls_native::configure_ssl_trust_anchors(
+                ssl,
+                self.recovery_ids
+                    .as_deref()
+                    .unwrap_or_else(|| metadata.requested_ids()),
+                metadata.issuers(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn trust_anchor_ids_enabled(&self) -> bool {
+        self.profile
+            .as_ref()
+            .is_none_or(|p| p.settings.trust_anchor_ids)
+    }
+
+    /// Allows one certificate-selection recovery before any HTTP bytes are sent.
+    /// Only advertised server IDs that chain to configured trust are requested.
+    pub fn trust_anchor_recovery(&self, capture: &crate::TlsCapture) -> Option<Self> {
+        if !self.trust_anchor_ids_enabled() || self.recovery_ids.is_some() {
+            return None;
+        }
+        let evidence = capture.snapshot();
+        if !matches!(
+            evidence.verification,
+            Some(transmog_core::VerificationResult::Rejected { .. })
+        ) {
+            return None;
+        }
+        let metadata = self.metadata();
+        let ids = metadata.recovery_ids(&capture.available_trust_anchors(), &self.snapshot);
+        if ids.is_empty() || ids == metadata.requested_ids() {
+            return None;
+        }
+        let mut factory = self.for_connection();
+        factory.recovery_ids = Some(ids);
+        Some(factory)
     }
 
     /// Configures a client certificate and its ordered public issuer path for
@@ -390,6 +499,37 @@ impl UpstreamTlsContextFactory {
             network_profile: self.profile.clone(),
             ..transmog_core::TlsEvidence::default()
         });
+        if self.trust_anchor_ids_enabled() {
+            let metadata = self.metadata();
+            capture.authentication_detail(
+                "Trust Anchor IDs",
+                "Offer configured; server negotiation not reached",
+            );
+            capture.authentication_detail("PKI metadata source", &metadata.source);
+            capture.authentication_detail("PKI metadata version", &metadata.version.to_string());
+            capture.authentication_detail("PKI metadata SHA-256", &metadata.sha256);
+            let ids = self
+                .recovery_ids
+                .as_deref()
+                .unwrap_or_else(|| metadata.requested_ids());
+            let wire = crate::trust_anchors::hex(ids);
+            capture.authentication_detail(
+                "Requested Trust Anchor IDs",
+                if wire.len() <= 2048 {
+                    &wire
+                } else {
+                    "Wire list exceeds display limit; the complete list was supplied to TLS"
+                },
+            );
+            if self.recovery_ids.is_some() {
+                capture.authentication_detail(
+                    "Trust Anchor ID recovery",
+                    "One retry with IDs validated against configured trust; no HTTP data replayed",
+                );
+            }
+        } else {
+            capture.authentication_detail("Trust Anchor IDs", "Disabled by network profile");
+        }
         if let Some(authentication) = &self.client_authentication {
             capture.client_issuers(
                 std::iter::once(authentication.certificate.as_ref())
@@ -454,6 +594,16 @@ impl UpstreamTlsContextFactory {
             crate::evidence::verification(context, accepted);
             accepted
         });
+        if settings.trust_anchor_ids {
+            let metadata = self.metadata();
+            transmog_tls_native::configure_context_trust_anchors(
+                builder,
+                self.recovery_ids
+                    .as_deref()
+                    .unwrap_or_else(|| metadata.requested_ids()),
+                metadata.issuers(),
+            )?;
+        }
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         if settings.hybrid_key_exchange {
@@ -522,6 +672,9 @@ fn verify_peer_identity(
 /// Trust loading or `BoringSSL` context failure.
 #[derive(Debug, Error)]
 pub enum TrustError {
+    /// An explicitly selected PKI metadata file could not be loaded.
+    #[error("{0}")]
+    Metadata(#[from] crate::trust_anchors::MetadataError),
     /// Diagnostic profile combinations rejected before transport changes.
     #[error("{0}")]
     NetworkProfile(&'static str),

@@ -20,6 +20,9 @@ export async function checkNetworkProfiles(page,root) {
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
   await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
+  assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
+  await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).uncheck();
+  await dialog.getByLabel('PKI metadata file',{exact:true}).fill('C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
   await dialog.locator('.profile-handshake summary').click();
   await dialog.getByLabel('HTTP/3',{exact:true}).uncheck();
   await dialog.getByLabel('Reuse server connections',{exact:true}).uncheck();
@@ -33,6 +36,8 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.pkiMetadataFile),'C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
   await dialog.getByLabel('Profile TLS versions').selectOption('tls12-only');
   await dialog.getByLabel('HTTP/3',{exact:true}).check();
@@ -44,6 +49,8 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('Profile TLS versions').inputValue(),'tls12-and13');
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
+  assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
+  assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
   await dialog.getByLabel('Profile GREASE').selectOption('no-signature');
   await dialog.getByLabel('Send a dummy ECH extension',{exact:true}).uncheck();
   assert.match(await dialog.locator('.profile-differences').textContent(),/2 changes/);
@@ -84,6 +91,14 @@ export async function checkNetworkProfiles(page,root) {
     assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=width+1,'Profile editor clips horizontally');
     assert.equal(await dialog.getByRole('button',{name:'Save only',exact:true}).isVisible(),true);
     await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-${width}.png`)});
+    const metadataFile=dialog.getByLabel('PKI metadata file',{exact:true});
+    await metadataFile.focus();
+    assert.equal(await metadataFile.evaluate(input=>{
+      const box=input.getBoundingClientRect();
+      return input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)===input;
+    }),true,'Metadata file control is obscured in the profile editor');
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-metadata-${width}.png`)});
+    await dialog.getByLabel('Name',{exact:true}).focus();
   }
   await page.emulateMedia({forcedColors:'active'});
   await page.screenshot({path:resolve(root,'../../../target/ui-check/network-profile-forced-colors.png')});

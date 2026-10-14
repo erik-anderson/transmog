@@ -140,6 +140,16 @@ pub type BoxReplayFuture<'a> =
 /// Caller-supplied replay path, normally backed by the application's existing
 /// routing and network stack.
 pub trait ReplayExecutor: Send + Sync {
+    /// Retains an unavailable external-file recipe during host startup so Settings
+    /// can repair it. Return true only when sends are blocked until a valid profile
+    /// is applied. The default preserves the existing startup error behavior.
+    fn defer_unavailable_network_profile(
+        &self,
+        _profile: &transmog_core::network_profile::NetworkProfileSnapshot,
+        _error: &ReplayExecutionError,
+    ) -> bool {
+        false
+    }
     /// Prepares an immutable transport recipe; the returned action commits only after persistence.
     /// Custom executors retain responsibility for their own network stack.
     /// # Errors
