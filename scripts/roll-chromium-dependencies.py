@@ -133,7 +133,8 @@ def prepare(args, environment):
         manifest = candidate / "Cargo.toml"
         manifest.write_text(update_cargo(manifest.read_text(encoding="utf-8"), version, revision), encoding="utf-8", newline="\n")
         load("vendor-boringssl-pki").generate_snapshot(source / "boring-sys/deps/boringssl", candidate / "third_party/boringssl-pki", native_revision, revision, version)
-        command(["cargo", "update", "--manifest-path", manifest, *sum((["-p", name] for name in FAMILY), [])], cwd=candidate, env=environment)
+        if revision != before["revision"] or version != before["version"]:
+            command(["cargo", "update", "--manifest-path", manifest, *sum((["-p", name] for name in FAMILY), [])], cwd=candidate, env=environment)
     if args.chromium_version:
         for name in ("update-chromium-psl", "update-chromium-certificate-policy"):
             command([sys.executable, candidate / "scripts" / (name + ".py"), "--chromium-version", args.chromium_version], cwd=candidate, env=environment)

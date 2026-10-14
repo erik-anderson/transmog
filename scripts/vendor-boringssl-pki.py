@@ -96,21 +96,28 @@ def generate_snapshot(source: Path, destination: Path, revision: str, boring_rev
                             raise ValueError(f"Include escapes upstream source: {include_path}")
                         pending.append(candidate)
                         break
-        manifest = {"revision": revision, "boring_revision": boring_revision,
-                    "sources": sources, "files": dict(sorted(files.items()))}
+        manifest = {"revision": revision, "boring_revision": boring_revision}
         if boring_version is not None:
             manifest["boring_version"] = boring_version
+        manifest.update(sources=sources, files=dict(sorted(files.items())))
         (staged / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
         (staged / "README.md").write_text(
-            f"# BoringSSL PKI\n\nUnmodified PKI target from BoringSSL `{revision}`,\n"
-            f"matching cloudflare/boring `{boring_revision}`. Only PKI is\n"
-            "compiled here; SSL and crypto come from that same boring-sys instance.\n\n"
-            "Source hashes and the upstream target list are in manifest.json.\n"
-            "Verify with `python scripts/vendor-boringssl-pki.py --check`.\n"
-            "Regenerate with `--source PATH` to a clean matching checkout.\n"
-            "Update this snapshot together with the Boring crate family.\n"
-            f"Upstream: https://boringssl.googlesource.com/boringssl/+/{revision}/pki/\n\n"
-            "Preserve LICENSE and the notices in each original source header.\n",
+            "# BoringSSL PKI\n\nThe unmodified PKI target from BoringSSL commit\n"
+            f"`{revision}`, the submodule used by our\n"
+            f"`cloudflare/boring` revision `{boring_revision}`.\n"
+            "Chromium uses this PKI implementation for certificate path building and RFC 5280\n"
+            "verification. The Rust binding currently builds SSL and crypto but does not\n"
+            "expose this separate target. We compile PKI only and link it to that same crypto\n"
+            "instance; there is no second crypto implementation or legacy verifier fallback.\n\n"
+            "Run `python scripts/vendor-boringssl-pki.py --check` to verify the byte hashes.\n"
+            "To regenerate, pass `--source` pointing to the matching BoringSSL checkout.\n"
+            "The checkout must be clean. Generation validates a fresh sibling staging tree\n"
+            "before replacing the snapshot, removes obsolete upstream files and restores the\n"
+            "previous directory if publication fails. Checks reject unlisted files and links.\n"
+            "`manifest.json` records the upstream source list and exact file hashes. Update\n"
+            "this snapshot together with the pinned boring family, never independently.\n\n"
+            f"Upstream: https://boringssl.googlesource.com/boringssl/+/{revision}/pki/\n"
+            "Licenses are in `LICENSE` and each original source header.\n",
             encoding="utf-8", newline="\n")
         check_snapshot(staged, revision=revision, boring_revision=boring_revision)
         replace_directory(staged, destination)
