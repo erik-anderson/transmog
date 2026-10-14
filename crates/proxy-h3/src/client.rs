@@ -721,11 +721,9 @@ impl H3ConnectionDriver {
         tickets: Option<TicketPartition>,
     ) -> Result<Self, H3OriginError> {
         let dns_begin = Instant::now();
-        let ech = if peer_port == origin_port {
-            tls.ech_offer(&host, origin_port, vec!["h3".into()]).await
-        } else {
-            None
-        };
+        // Alt-Svc destinations also resolve HTTPS metadata. Identity remains the
+        // logical origin; discovery uses the actual destination's service port.
+        let ech = tls.ech_offer(&host, peer_port, vec!["h3".into()]).await;
         let endpoint = ech
             .as_ref()
             .map_or(host.as_str(), |offer| offer.endpoint.as_str());

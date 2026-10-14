@@ -55,6 +55,12 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(!original.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Chromium Trust Anchor IDs default is disabled');
     const trustAnchors=profileForm.elements.namedItem('trustAnchorIds');
     profiles.querySelector('.profile-handshake').open=true;
+    const ech=profileForm.elements.namedItem('encryptedClientHello');
+    if(!original.preferences.networkProfiles.activeProfile.settings.encryptedClientHello||!ech.checked)throw new Error('Real ECH is not the built-in default');
+    ech.scrollIntoView({block:'center'});ech.focus();
+    const echBox=ech.getBoundingClientRect();
+    if(ech.getRootNode().activeElement!==ech||ech.getRootNode().elementFromPoint(echBox.x+echBox.width/2,echBox.y+echBox.height/2)!==ech)throw new Error('ECH profile control is not reachable');
+    ech.checked=false;
     alps.scrollIntoView({block:'center'});alps.focus();
     const alpsBox=alps.getBoundingClientRect();
     if(alps.getRootNode().activeElement!==alps||alps.getRootNode().elementFromPoint(alpsBox.x+alpsBox.width/2,alpsBox.y+alpsBox.height/2)!==alps)throw new Error('ALPS profile control is not reachable');
@@ -74,6 +80,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     await settings.saveSettings(new Event('submit',{cancelable:true}));
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
     if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
+    if(saved.preferences.networkProfiles.activeProfile.settings.encryptedClientHello)throw new Error('ECH profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Trust Anchor IDs toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.localCertificates)throw new Error('Local trust toggle did not persist');
     if(saved.preferences.decryptHttps||saved.preferences.isolateOutboundConnections||saved.preferences.configureSystemProxy||JSON.stringify(saved.preferences.allowedOutboundProtocols)!==JSON.stringify({http1:true,http2:false,http3:false}))throw new Error('Network settings did not persist');

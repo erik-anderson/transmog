@@ -24,7 +24,11 @@ struct Fixed {
     port: u16,
 }
 impl EchConfigSource for Fixed {
-    fn lookup(&self, _: String, _: u16, _: Vec<String>) -> EchLookup {
+    fn lookup(&self, _: String, port: u16, _: Vec<String>) -> EchLookup {
+        assert_eq!(
+            port, self.port,
+            "ECH discovery must use the destination port"
+        );
         let offer = EchOffer {
             config: self.config.clone(),
             endpoint: "127.0.0.1".into(),
@@ -66,12 +70,21 @@ fn server(ca: &ProxyCa, name: &str, keys: Option<&SslEchKeys>) -> quiche::Config
     config
 }
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // Acceptance, alternative-port routing and bounded retries share the real QUIC fixture.
 async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retry() {
-    for scenario in ["accepted", "rotation", "rollback", "untrusted", "repeat"] {
+    for scenario in [
+        "accepted",
+        "alternative-port",
+        "rotation",
+        "rollback",
+        "untrusted",
+        "repeat",
+    ] {
+        let direct_acceptance = matches!(scenario, "accepted" | "alternative-port");
         let fixture = support::Fixture::new();
         let wrong = ProxyCa::generate("Untrusted public name", 2).unwrap();
         let (initial, _) = configs(7);
-        let (_, current) = configs(if scenario == "accepted" { 7 } else { 8 });
+        let (_, current) = configs(if direct_acceptance { 7 } else { 8 });
         let (_, newer) = configs(9);
         let first = server(
             if scenario == "untrusted" {
@@ -79,7 +92,7 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
             } else {
                 &fixture.ca
             },
-            if scenario == "accepted" {
+            if direct_acceptance {
                 "hidden.example.test"
             } else {
                 "public.example.test"
@@ -87,7 +100,7 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
             (scenario != "rollback").then_some(&current),
         );
         let mut servers = vec![first];
-        if scenario != "accepted" {
+        if !direct_acceptance {
             servers.push(server(
                 &fixture.ca,
                 if scenario == "repeat" {
@@ -119,6 +132,10 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         let mut request = support::request(origin.port);
         request.head.target.host = "hidden.example.test".into();
         request.head.target.authority = format!("hidden.example.test:{}", origin.port);
+        if scenario == "alternative-port" {
+            request.head.target.port = 443;
+            request.head.target.authority = "hidden.example.test:443".into();
+        }
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             client.execute(request, origin.port, 1024),
@@ -139,7 +156,7 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         );
         assert_eq!(
             origin.count.load(Ordering::SeqCst),
-            if matches!(scenario, "accepted" | "untrusted") {
+            if direct_acceptance || scenario == "untrusted" {
                 1
             } else {
                 2

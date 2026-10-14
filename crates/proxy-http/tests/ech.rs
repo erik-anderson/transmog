@@ -46,9 +46,15 @@ fn configs(seed: u8) -> (Vec<u8>, SslEchKeys) {
 }
 
 #[tokio::test]
-#[allow(clippy::too_many_lines)] // Four real rejection/rotation cases share fixture ownership and evidence assertions.
+#[allow(clippy::too_many_lines)] // Real rejection/rotation cases share fixture ownership and evidence assertions.
 async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
-    for scenario in ["accepted", "rotation", "rollback", "untrusted"] {
+    for scenario in [
+        "accepted",
+        "rotation",
+        "rollback",
+        "rollback-tls12",
+        "untrusted",
+    ] {
         let ca = ProxyCa::generate("ECH fixture", 2).unwrap();
         let wrong = ProxyCa::generate("Untrusted public name", 2).unwrap();
         let (initial, _) = configs(7);
@@ -76,8 +82,16 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
             let mut tls = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
             tls.set_certificate(&leaf.certificate).unwrap();
             tls.set_private_key(&leaf.private_key).unwrap();
-            if scenario != "rollback" {
+            if !scenario.starts_with("rollback") {
                 tls.set_ech_keys(&current).unwrap();
+            }
+            if scenario == "rollback-tls12" {
+                tls.set_max_proto_version(Some(boring::ssl::SslVersion::TLS1_2))
+                    .unwrap();
+                tls.set_alpn_select_callback(|_, offered| {
+                    boring::ssl::select_next_proto(b"\x08http/1.1", offered)
+                        .ok_or(boring::ssl::AlpnError::NOACK)
+                });
             }
             servers.push(tls.build());
         }
@@ -154,7 +168,7 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
         );
         assert_eq!(
             connections.load(Ordering::SeqCst),
-            if matches!(scenario, "rotation" | "rollback") {
+            if scenario == "rotation" || scenario.starts_with("rollback") {
                 2
             } else {
                 1
@@ -181,7 +195,7 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
                     .filter_map(|t| t.tls.as_ref())
                     .any(|tls| tls.details.get("Encrypted Client Hello").is_some_and(
                         |value| value
-                            == if scenario == "rollback" {
+                            == if scenario.starts_with("rollback") {
                                 "Not negotiated"
                             } else {
                                 "Accepted"
@@ -190,6 +204,19 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
                 "{scenario}: {:?}",
                 evidence.transports
             );
+            if scenario == "rollback-tls12" {
+                assert!(
+                    evidence
+                        .transports
+                        .iter()
+                        .filter_map(|t| t.tls.as_ref())
+                        .any(|tls| tls
+                            .details
+                            .get("TLS False Start")
+                            .is_some_and(|v| v == "Used")),
+                    "Rollback must exercise an eligible TLS 1.2 False Start handshake"
+                );
+            }
         }
         server.abort();
     }

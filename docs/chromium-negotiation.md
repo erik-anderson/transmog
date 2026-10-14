@@ -72,7 +72,9 @@ ECH discovery, rather than Chromium's complete browser secure-DNS/DoH policy.
 
 TCP and QUIC install the configuration before sending their first flight; ticket
 keys include its digest. The certificate verifier uses the ECH public name only
-for a rejection handshake. Retry configs are copied only when BoringSSL reports
+for a rejection handshake. HTTP/3 also resolves HTTPS metadata for Alt-Svc
+destinations, using their destination port while authenticating the logical origin.
+Retry configs are copied only when BoringSSL reports
 `SSL_R_ECH_REJECTED` after authenticating both the certificate and Finished. A new
 connection retries once with those configs, or without ECH after authenticated
 rollback. Its certificate must verify for the original origin. Origin client
