@@ -740,7 +740,7 @@ mod tests {
         cert.build()
     }
     #[test]
-    fn recovery_does_not_promote_a_locally_trusted_exact_leaf_to_a_ca_anchor() {
+    fn recovery_does_not_bypass_root_version_limits_via_locally_trusted_leaves() {
         use crate::local_trust::{LocalCertificates, LocalTrust, LocalTrustMonitor};
         let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
         let restricted = match &store.trust_anchors[0].certificate {
@@ -748,7 +748,7 @@ mod tests {
             _ => panic!("DER fixture"),
         };
         store.trust_anchors[0].constraints.push(ConstraintSet {
-            sct_not_after_sec: Some(1),
+            max_version_exclusive: Some("153.0.8010.0".into()),
             ..Default::default()
         });
         let usable_ca = crate::ProxyCa::generate("Usable public recovery root", 2).unwrap();
@@ -876,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn constrained_anchors_are_not_silently_trusted_and_unknown_policy_fails_closed() {
+    fn recovery_defers_leaf_constraints_but_checks_versions_and_unknown_policy() {
         let verifies = |store: &RootStore| {
             let metadata = PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).unwrap();
             transmog_tls_native::verify_certificate_authority(
@@ -889,7 +889,9 @@ mod tests {
             sct_not_after_sec: Some(1),
             ..Default::default()
         });
-        assert!(!verifies(&store));
+        assert!(verifies(&store));
+        // All groups must disallow this Chromium version to exclude recovery.
+        store.trust_anchors[0].constraints.clear();
         store.trust_anchors[0].constraints.push(ConstraintSet {
             max_version_exclusive: Some("153.0.8010.0".into()),
             ..Default::default()

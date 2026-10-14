@@ -220,9 +220,16 @@ struct Delegate : SimplePathBuilderDelegate {
       if (!policy->local_roots.count(root) &&
           found != policy->constraints.end()) {
         bool satisfied = false;
-        for (const auto &group : found->second)
-          satisfied |= group.Satisfied(*path->certs.front(),
-                                       policy->security.get(), now, *data);
+        for (const auto &group : found->second) {
+          // Recovery asks whether this CA can issue a future TLS leaf. Its
+          // issuance date, names and absent SCTs are not that leaf's evidence.
+          // Keep root version eligibility here; the fresh TLS retry checks
+          // every leaf constraint before authorizing a connection.
+          satisfied |= authority
+                           ? group.version
+                           : group.Satisfied(*path->certs.front(),
+                                             policy->security.get(), now, *data);
+        }
         if (!satisfied)
           path->errors.GetOtherErrors()->AddError(kRootConstraints);
       }

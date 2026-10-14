@@ -208,6 +208,110 @@ fn ct_private_disabled_and_exact_seventy_day_boundary() {
     assert!(result.accepted);
     assert_eq!(result.security.ct, "Disabled by component");
 }
+
+#[test]
+fn recovery_defers_leaf_metadata_but_tls_retry_enforces_it() {
+    let issuer = key();
+    let root = certificate(&issuer, None, 1_577_836_800, 4_102_444_800); // 2020
+    let root_der = root.to_der().unwrap();
+    let leaf = certificate(&issuer, Some(&root), START, START + 86400)
+        .to_der()
+        .unwrap();
+    let a = key();
+    let b = key();
+    let mut p = policy(&root, vec![log(&a, "A"), log(&b, "B")], true);
+    let group = RootConstraint {
+        version_allowed: true,
+        validity_after: Some(START - 1),
+        validity_not_after: Some(START),
+        sct_all_after: Some(START),
+        sct_not_after: Some(START + 1),
+        permitted_dns_names: vec![".example.com".into()],
+    };
+    p.root_constraints = Arc::new([(root_der.clone(), vec![group.clone()])].into());
+    let recovery = |p: &CertificatePolicy| {
+        let p = Arc::new(p.clone());
+        verify_time(
+            &compile(&p).unwrap(),
+            &p,
+            std::slice::from_ref(&root_der),
+            true,
+            START * 1000 + 1000,
+            &[],
+            &[],
+        )
+    };
+    let result = recovery(&p);
+    assert!(result.accepted, "{}", result.diagnostic);
+    assert_eq!(result.security.ct, "Not reached");
+    let signed = |bytes: &[u8], timestamp| {
+        list(&[
+            sct(&a, timestamp, &entry(bytes), &[]),
+            sct(&b, timestamp, &entry(bytes), &[]),
+        ])
+    };
+    let result = check(
+        &p,
+        &leaf,
+        START * 1000 + 1000,
+        &signed(&leaf, START * 1000 + 500),
+        &[],
+    );
+    assert!(result.accepted, "{}", result.diagnostic);
+    assert!(!check(&p, &leaf, START * 1000 + 1000, &[], &[]).accepted);
+    assert!(
+        !check(
+            &p,
+            &leaf,
+            START * 1000 + 1000,
+            &signed(&leaf, START * 1000),
+            &[]
+        )
+        .accepted,
+        "The fresh TLS retry must enforce the SCT lower bound"
+    );
+    let older_leaf = certificate(&issuer, Some(&root), START - 1, START + 86400)
+        .to_der()
+        .unwrap();
+    assert!(
+        !check(
+            &p,
+            &older_leaf,
+            START * 1000 + 1000,
+            &signed(&older_leaf, START * 1000 + 500),
+            &[]
+        )
+        .accepted,
+        "The fresh TLS retry must enforce the issuance lower bound"
+    );
+    p.root_constraints = Arc::new(
+        [(
+            root_der.clone(),
+            vec![RootConstraint {
+                version_allowed: false,
+                ..group.clone()
+            }],
+        )]
+        .into(),
+    );
+    assert!(
+        !recovery(&p).accepted,
+        "Root version limits still govern recovery"
+    );
+    p.root_constraints = Arc::new([(root_der.clone(), vec![group])].into());
+    let mut leaf_only = p.clone();
+    leaf_only.anchors = Arc::default();
+    leaf_only.trusted_leaves = Arc::new(vec![root]);
+    assert!(
+        !recovery(&leaf_only).accepted,
+        "An exact TrustedPeople leaf must not become an issuer"
+    );
+    Arc::make_mut(p.security.as_mut().unwrap())
+        .crl
+        .blocked_spkis
+        .push(boring::sha::sha256(&issuer.public_key_to_der().unwrap()));
+    assert!(!recovery(&p).accepted, "Revocation still governs recovery");
+}
 pub(super) fn der(tag: u8, body: &[u8]) -> Vec<u8> {
     let mut result = vec![tag];
     if body.len() < 128 {

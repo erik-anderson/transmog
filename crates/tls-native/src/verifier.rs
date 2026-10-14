@@ -573,6 +573,8 @@ mod static_policy_tests;
 
 /// Validates a prospective TLS issuer using the same path builder and trust roles.
 /// This confers no new trust and cannot authorize `TrustedPeople` as an issuer.
+/// Root version limits apply, while leaf-specific metadata constraints are
+/// deferred until the recovery TLS handshake supplies its actual leaf and SCTs.
 pub fn verify_certificate_authority(policy: &Arc<CertificatePolicy>, certificate: &X509) -> bool {
     let Ok(compiled) = compile(policy) else {
         return false;

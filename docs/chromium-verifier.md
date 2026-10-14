@@ -76,6 +76,9 @@ Recovery uses these same trust inputs and path builder. A candidate CA must
 terminate at anchor trust and be capable of issuing a TLS leaf; it cannot gain
 CA authority from TrustedPeople. Its issuer position is included when checking
 path-length limits. The fresh TLS retry still performs full server verification.
+Recovery checks root version eligibility, trust and revocation without applying
+leaf issuance, DNS or SCT metadata conditions to the candidate CA itself. Those
+conditions are evaluated against the retry's actual TLS leaf and verified SCTs.
 
 ## Remaining Chrome policies
 
