@@ -14,7 +14,9 @@ the source revision and input/output SHA-256 hashes. When updating the bundle,
 fetch all five inputs from one immutable Chromium revision, update the generator's
 revision, regenerate, and qualify the resulting TLS offer.
 
-Version 41 produces the 28 classical Trust Anchor IDs captured from Chromium
-154.0.8037.99. Certificates are untrusted path-building helpers only. Chrome's
-root policy, additional certificate trust, EV, constraints and Merkle Tree
-Certificate (MTC) trust are not installed or claimed by Transmog.
+Version 41 produces the 28 certificate-based Trust Anchor IDs captured from
+Chromium 154.0.8037.99. Network profiles can use its public TLS anchors as their
+trusted store; OS mode uses certificates as untrusted path-building helpers.
+No roots are installed into the OS. Chrome's complete verifier, EV and Merkle
+Tree Certificate trust are not claimed. Anchors requiring unsupported Chrome
+constraints are excluded; see [root-store selection](../../docs/trust-anchor-ids.md).

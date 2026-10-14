@@ -49,6 +49,15 @@ fn text(response: ReplayResponse) -> String {
     let body = response.body;
     String::from_utf8(body.to_vec()).unwrap()
 }
+async fn use_fixture_trust(app: &transmog_app::Application) {
+    let catalog = app.product_state().preferences.network_profiles;
+    let mut profile = transmog_app::NetworkProfileSnapshot::legacy_chromium(3);
+    profile.id = "custom-fixture-trust".into();
+    profile.name = "Fixture OS trust".into();
+    app.save_network_profiles(catalog.revision, vec![profile.clone()], Some(profile.id))
+        .await
+        .unwrap();
+}
 
 #[tokio::test]
 async fn a_closed_viewer_cancels_its_composer_wait_without_revoking_other_callers() {
@@ -96,6 +105,8 @@ async fn a_closed_viewer_cancels_its_composer_wait_without_revoking_other_caller
         };
         let viewer = app("composer:viewer-1");
         let main = app("composer:main");
+        use_fixture_trust(&viewer).await;
+        use_fixture_trust(&main).await;
         let input = || {
             serde_json::from_value(
                 serde_json::json!({"method":"GET","url":format!("https://localhost:{port}/")}),
@@ -193,6 +204,7 @@ async fn main_shutdown_preserves_open_viewer_certificate_handshakes() {
             ..Default::default()
         })
         .unwrap();
+        use_fixture_trust(&viewer).await;
         let request = serde_json::from_value(
             serde_json::json!({"method":"GET", "url":format!("https://localhost:{port}/")}),
         )
@@ -260,12 +272,16 @@ async fn application_certificate_commands_drive_live_composer_handshakes_on_ever
             ..Default::default()
         })
         .unwrap();
+        if !matches!(route, ProxyRoute::Auto) {
+            use_fixture_trust(&app).await;
+        }
         if matches!(route, ProxyRoute::Auto) {
             let mut profile = transmog_app::NetworkProfileSnapshot {
                 id: "custom-h3".into(),
                 name: "H3 only".into(),
                 ..Default::default()
             };
+            profile.settings.root_store = transmog_app::RootStore::Os;
             profile.settings.protocols = transmog_core::connection_policy::AllowedHttpProtocols {
                 http1: false,
                 http2: false,

@@ -57,6 +57,11 @@ Upstream clients request stapled OCSP responses and signed certificate
 timestamps, matching Chromium's request extensions. These requests do not
 introduce revocation or Certificate Transparency enforcement; certificate
 acceptance continues to use the configured trust snapshot and identity checks.
+Desktop network profiles select the effective trust source. The default WebView2
+profile discovers its installed public roots, falling back to bundled Chromium;
+custom profiles can select OS, bundled Chromium or installed Chrome roots.
+This does not implement Chrome's complete verifier: anchors with unsupported
+metadata constraints are excluded. See [root-store selection](trust-anchor-ids.md).
 
 Upstream TLS 1.3 clients also advertise Brotli certificate decompression
 (`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing

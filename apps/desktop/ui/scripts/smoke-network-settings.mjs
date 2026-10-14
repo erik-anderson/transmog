@@ -33,6 +33,15 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     if(profiles.networkBusy)throw new Error('Network profiles are unavailable');
     profiles.customize();
     const profileForm=profiles.networkForm;
+    if(original.preferences.networkProfiles.activeProfile.id!=='webview2-chromium-154'||original.preferences.networkProfiles.activeProfile.settings.rootStore!=='webview2-installed')throw new Error('WebView2 root store is not the default');
+    const rootStore=profileForm.elements.namedItem('rootStore');
+    for(const value of ['os','chromium-bundled','chrome-installed','webview2-installed']) {
+      rootStore.value=value;rootStore.scrollIntoView({block:'center'});rootStore.focus();
+      const box=rootStore.getBoundingClientRect();
+      if(rootStore.getRootNode().activeElement!==rootStore||rootStore.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==rootStore)throw new Error('Root store choice is unreachable');
+      profiles.edit(new Event('change',{bubbles:true}));
+      if(profiles.networkDraft.settings.rootStore!==value)throw new Error('Root store choice did not update the draft');
+    }
     if(!original.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('Chromium ALPS default is disabled');
     const alps=profileForm.elements.namedItem('http2Alps');
     if(!original.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Chromium Trust Anchor IDs default is disabled');
@@ -51,7 +60,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     profiles.edit(new Event('change',{bubbles:true}));
     profileForm.elements.namedItem('grease').value='no-signature';profiles.edit(new Event('change'));
     await profiles.saveEditor(new Event('submit',{cancelable:true}),false);
-    if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles.activeProfile.id!=='chromium-154')throw new Error('Save only activated the native profile');
+    if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles.activeProfile.id!=='webview2-chromium-154')throw new Error('Save only activated the native profile');
     await profiles.useProfile();
     if(profiles.networkError)throw new Error(profiles.networkError);
     await settings.saveSettings(new Event('submit',{cancelable:true}));

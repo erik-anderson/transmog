@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub use transmog_core::network_profile::{
     CHROMIUM_154, CHROMIUM_REFERENCE_VERSION, NetworkProfileSettings, NetworkProfileSnapshot,
-    TlsGrease, TlsVersions,
+    RootStore, TlsGrease, TlsVersions, WEBVIEW2_154,
 };
 
 /// Persisted profiles; saving a definition does not implicitly activate its edits.
@@ -43,7 +43,7 @@ impl NetworkProfiles {
                     trust_anchor_ids: false,
                     ..Default::default()
                 },
-                ..Default::default()
+                ..NetworkProfileSnapshot::legacy_chromium(1)
             };
             if self.active_profile != previous {
                 return Err(invalid(
@@ -69,7 +69,7 @@ impl NetworkProfiles {
                     trust_anchor_ids: false,
                     ..Default::default()
                 },
-                ..Default::default()
+                ..NetworkProfileSnapshot::legacy_chromium(2)
             };
             if self.active_profile != previous {
                 return Err(invalid(
@@ -107,6 +107,23 @@ impl NetworkProfiles {
         catalog
     }
 
+    pub(crate) fn migrate_root_stores(&mut self) -> Result<(), AppError> {
+        if self.active_profile.id == CHROMIUM_154 {
+            if self.active_profile != NetworkProfileSnapshot::legacy_chromium(3) {
+                return Err(invalid(
+                    "The saved Chromium 154 profile is not a supported recipe.",
+                ));
+            }
+            self.active_profile = NetworkProfileSnapshot::default();
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("Network profile catalog revision is exhausted."))?;
+        }
+        // Authored profiles retain OS trust, including older active revisions.
+        Ok(())
+    }
+
     pub(crate) fn validate(&self) -> Result<(), AppError> {
         if self.revision == 0
             || self.revision > 9_007_199_254_740_990
@@ -126,11 +143,9 @@ impl NetworkProfiles {
                 ));
             }
         }
-        if self.active_profile.id == CHROMIUM_154 {
-            if self.active_profile != NetworkProfileSnapshot::default() {
-                return Err(invalid(
-                    "The Chromium 154 built-in profile cannot be edited.",
-                ));
+        if let Some(builtin) = NetworkProfileSnapshot::builtin(&self.active_profile.id) {
+            if self.active_profile != builtin {
+                return Err(invalid("Built-in network profiles cannot be edited."));
             }
         } else {
             validate_custom(&self.active_profile)?;
@@ -181,11 +196,8 @@ impl NetworkProfiles {
             };
         }
         let active_profile = match use_profile {
-            Some(CHROMIUM_154) => NetworkProfileSnapshot::default(),
-            Some(id) => profiles
-                .iter()
-                .find(|profile| profile.id == id)
-                .cloned()
+            Some(id) => NetworkProfileSnapshot::builtin(id)
+                .or_else(|| profiles.iter().find(|profile| profile.id == id).cloned())
                 .ok_or_else(|| invalid("Choose a saved network profile to use."))?,
             None => self.active_profile.clone(),
         };
@@ -215,6 +227,7 @@ fn validate_custom(profile: &NetworkProfileSnapshot) -> Result<(), AppError> {
         || profile.name.trim() != profile.name
         || profile.name.chars().any(char::is_control)
         || profile.name.eq_ignore_ascii_case("Chromium 154")
+        || profile.name.eq_ignore_ascii_case("WebView2 (Chromium 154)")
         || profile.revision == 0
         || profile.revision > 9_007_199_254_740_990
         || profile.base_profile != CHROMIUM_154
@@ -229,6 +242,34 @@ fn validate_custom(profile: &NetworkProfileSnapshot) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_store_migration_keeps_custom_snapshots_and_switches_only_old_builtin() {
+        let old = NetworkProfileSnapshot::legacy_chromium(3);
+        let mut custom = old.clone();
+        custom.id = "custom-old-trust".into();
+        custom.name = "Old trust".into();
+        let mut catalog = NetworkProfiles {
+            revision: 9,
+            active_profile: old,
+            custom_profiles: vec![custom.clone()],
+        };
+        catalog.migrate_root_stores().unwrap();
+        catalog.validate().unwrap();
+        assert_eq!(catalog.active_profile.id, WEBVIEW2_154);
+        assert_eq!(catalog.custom_profiles, [custom.clone()]);
+        catalog.active_profile = custom.clone();
+        catalog.migrate_root_stores().unwrap();
+        assert_eq!(catalog.active_profile, custom);
+        assert_eq!(catalog.active_profile.settings.root_store, RootStore::Os);
+        let selected = catalog
+            .edited(10, catalog.custom_profiles.clone(), Some(CHROMIUM_154))
+            .unwrap();
+        assert_eq!(
+            selected.active_profile.settings.root_store,
+            RootStore::ChromeInstalled
+        );
+    }
 
     fn custom() -> NetworkProfileSnapshot {
         NetworkProfileSnapshot {

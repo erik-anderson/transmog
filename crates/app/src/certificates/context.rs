@@ -125,6 +125,10 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
         connection.fields.push(field("Trust Anchor IDs", value));
     }
     for label in [
+        "Root store version",
+        "Root store SHA-256",
+        "Root store policy",
+        "Root store exclusions",
         "PKI metadata source",
         "PKI metadata version",
         "PKI metadata SHA-256",
@@ -161,6 +165,10 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
                             | "PKI metadata source"
                             | "PKI metadata version"
                             | "PKI metadata SHA-256"
+                            | "Root store version"
+                            | "Root store SHA-256"
+                            | "Root store policy"
+                            | "Root store exclusions"
                             | "Requested Trust Anchor IDs"
                     )
             })
@@ -220,7 +228,7 @@ fn describe_trust_anchor_ids(wire: &str) -> String {
         Some(oids)
     }
     match decode(wire) {
-        Some(oids) if oids.is_empty() => "Empty classical ID offer".into(),
+        Some(oids) if oids.is_empty() => "Empty certificate-based ID offer".into(),
         Some(oids) => format!("{} (wire hex: {wire})", oids.join(", ")),
         None => wire.to_owned(),
     }
@@ -331,7 +339,10 @@ mod tests {
         for bad in ["0", "01ff", "0004d6790901", "not hex"] {
             assert_eq!(describe_trust_anchor_ids(bad), bad);
         }
-        assert_eq!(describe_trust_anchor_ids(""), "Empty classical ID offer");
+        assert_eq!(
+            describe_trust_anchor_ids(""),
+            "Empty certificate-based ID offer"
+        );
     }
     use transmog_core::TlsEvidence;
 

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 /// Initial qualified Chromium recipe identifier.
 pub const CHROMIUM_154: &str = "chromium-154";
+/// Chromium transport recipe with installed `WebView2` PKI discovery.
+pub const WEBVIEW2_154: &str = "webview2-chromium-154";
 /// Browser build used for the initial `ClientHello` comparison.
 pub const CHROMIUM_REFERENCE_VERSION: &str = "154.0.8037.99";
 
@@ -33,6 +35,21 @@ pub enum TlsGrease {
     Disabled,
 }
 
+/// Certificate trust and PKI metadata source for origin connections.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RootStore {
+    /// Configured OS/embedding trust; absent historical fields retain this choice.
+    #[default]
+    Os,
+    /// Public snapshot shipped with Transmog.
+    ChromiumBundled,
+    /// Newer installed Chrome metadata, with a bundled fallback.
+    ChromeInstalled,
+    /// Newer installed `WebView2` metadata, with a bundled Chromium fallback.
+    Webview2Installed,
+}
+
 /// Bounded, typed diagnostic overrides for an origin transport recipe.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -46,7 +63,7 @@ pub struct NetworkProfileSettings {
     pub tls_versions: TlsVersions,
     /// Include Chromium's CBC and static-RSA TLS 1.2 suites.
     pub compatibility_ciphers: bool,
-    /// Prefer hybrid post-quantum exchange ahead of classical groups.
+    /// Prefer hybrid post-quantum exchange ahead of traditional groups.
     pub hybrid_key_exchange: bool,
     /// Reserved TLS offers.
     pub grease: TlsGrease,
@@ -60,13 +77,16 @@ pub struct NetworkProfileSettings {
     /// Older capture metadata omitted ALPS because it was not offered.
     #[serde(default)]
     pub http2_alps: bool,
-    /// Offer classical Chrome Trust Anchor IDs using bundled/newer local PKI metadata.
+    /// Offer certificate-based Chrome Trust Anchor IDs from the selected metadata.
     /// Historical captures omitted the extension; do not infer an old offer.
     #[serde(default)]
     pub trust_anchor_ids: bool,
-    /// Optional local crs.pb baseline. Newer discovered Chrome metadata takes precedence.
+    /// Optional local crs.pb baseline. Newer metadata from the selected installed source wins.
     #[serde(default)]
     pub pki_metadata_file: Option<String>,
+    /// Actual certificate trust source. Historical captures used configured OS trust.
+    #[serde(default)]
+    pub root_store: RootStore,
 }
 
 impl Default for NetworkProfileSettings {
@@ -84,6 +104,7 @@ impl Default for NetworkProfileSettings {
             http2_alps: true,
             trust_anchor_ids: true,
             pki_metadata_file: None,
+            root_store: RootStore::Os,
         }
     }
 }
@@ -126,17 +147,42 @@ pub struct NetworkProfileSnapshot {
 
 impl Default for NetworkProfileSnapshot {
     fn default() -> Self {
-        Self {
-            id: CHROMIUM_154.into(),
-            name: "Chromium 154".into(),
-            revision: 3,
-            base_profile: CHROMIUM_154.into(),
-            settings: NetworkProfileSettings::default(),
-        }
+        Self::builtin(WEBVIEW2_154).expect("qualified default profile")
     }
 }
 
 impl NetworkProfileSnapshot {
+    /// Qualified immutable preset, or `None` for an unknown/custom identifier.
+    #[must_use]
+    pub fn builtin(id: &str) -> Option<Self> {
+        let (name, revision, root_store) = match id {
+            CHROMIUM_154 => ("Chromium 154", 4, RootStore::ChromeInstalled),
+            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 1, RootStore::Webview2Installed),
+            _ => return None,
+        };
+        Some(Self {
+            id: id.into(),
+            name: name.into(),
+            revision,
+            base_profile: CHROMIUM_154.into(),
+            settings: NetworkProfileSettings {
+                root_store,
+                ..Default::default()
+            },
+        })
+    }
+
+    /// Historical Chromium recipe used only while migrating application state.
+    #[must_use]
+    pub fn legacy_chromium(revision: u64) -> Self {
+        Self {
+            id: CHROMIUM_154.into(),
+            name: "Chromium 154".into(),
+            revision,
+            base_profile: CHROMIUM_154.into(),
+            settings: NetworkProfileSettings::default(),
+        }
+    }
     /// Checks finite public provenance before accepting imported capture metadata.
     #[must_use]
     pub fn valid(&self) -> bool {
@@ -167,10 +213,25 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("pkiMetadataFile");
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rootStore");
         let result: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
         assert!(!result.settings.trust_anchor_ids);
         assert!(result.settings.pki_metadata_file.is_none());
+        assert_eq!(result.settings.root_store, RootStore::Os);
         assert!(result.valid());
+    }
+
+    #[test]
+    fn webview2_default_changes_only_the_chromium_root_store() {
+        let default = NetworkProfileSnapshot::default();
+        assert_eq!(default.id, WEBVIEW2_154);
+        let mut chromium = NetworkProfileSnapshot::builtin(CHROMIUM_154).unwrap();
+        assert_eq!(chromium.settings.root_store, RootStore::ChromeInstalled);
+        chromium.settings.root_store = RootStore::Webview2Installed;
+        assert_eq!(chromium.settings, default.settings);
     }
 
     #[test]

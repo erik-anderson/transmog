@@ -1,8 +1,8 @@
-//! Classical Chrome Trust Anchor IDs from `root_store.proto`, not a trust policy.
+//! Certificate-based Chrome Trust Anchor IDs and selectable public root stores.
 use boring::{
     hash::MessageDigest,
     stack::Stack,
-    x509::{X509, X509StoreContext},
+    x509::{X509, X509StoreContext, store::X509StoreBuilder, verify::X509VerifyFlags},
 };
 use prost::Message;
 use std::{
@@ -18,8 +18,9 @@ const BUNDLED: &[u8] = include_bytes!("../../../third_party/chromium-root-store/
 const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CERTIFICATES: usize = 1024;
 
-// Projection of the checked-in Chromium schema. prost ignores unknown fields,
-// including future policy fields: this module never applies Chrome trust policy.
+// TLS projection of the checked-in Chromium schema. Preflight bounds repeated
+// fields and rejects unknown policy; known non-TLS fields are ignored by prost.
+// Unsupported Chrome CT constraints exclude anchors from our trusted store.
 #[derive(Clone, PartialEq, Message)]
 struct RootStore {
     #[prost(message, repeated, tag = "1")]
@@ -34,10 +35,62 @@ struct RootStore {
 struct Anchor {
     #[prost(oneof = "Certificate", tags = "1, 2")]
     certificate: Option<Certificate>,
+    #[prost(message, repeated, tag = "4")]
+    constraints: Vec<ConstraintSet>,
     #[prost(bool, optional, tag = "10")]
     tls_trust_anchor: Option<bool>,
     #[prost(bytes, optional, tag = "11")]
     trust_anchor_id: Option<Vec<u8>>,
+}
+#[derive(Clone, PartialEq, Message)]
+struct ConstraintSet {
+    #[prost(int64, optional, tag = "1")]
+    sct_not_after_sec: Option<i64>,
+    #[prost(int64, optional, tag = "2")]
+    sct_all_after_sec: Option<i64>,
+    #[prost(string, optional, tag = "3")]
+    min_version: Option<String>,
+    #[prost(string, optional, tag = "4")]
+    max_version_exclusive: Option<String>,
+    #[prost(string, repeated, tag = "5")]
+    permitted_dns_names: Vec<String>,
+    #[prost(uint64, optional, tag = "8")]
+    serial_not_after: Option<u64>,
+    #[prost(uint64, optional, tag = "9")]
+    serial_after: Option<u64>,
+    #[prost(int64, optional, tag = "10")]
+    validity_starts_not_after_sec: Option<i64>,
+    #[prost(int64, optional, tag = "11")]
+    validity_starts_after_sec: Option<i64>,
+}
+impl ConstraintSet {
+    fn unrestricted_for_reference(&self) -> bool {
+        let Some(reference) =
+            component_version(transmog_core::network_profile::CHROMIUM_REFERENCE_VERSION)
+        else {
+            return false;
+        };
+        let version_allowed = |value: &Option<String>, minimum: bool| {
+            value.as_ref().is_none_or(|v| {
+                component_version(v).is_some_and(|v| {
+                    if minimum {
+                        reference >= v
+                    } else {
+                        reference < v
+                    }
+                })
+            })
+        };
+        version_allowed(&self.min_version, true)
+            && version_allowed(&self.max_version_exclusive, false)
+            && self.sct_not_after_sec.is_none()
+            && self.sct_all_after_sec.is_none()
+            && self.permitted_dns_names.is_empty()
+            && self.serial_not_after.is_none()
+            && self.serial_after.is_none()
+            && self.validity_starts_not_after_sec.is_none()
+            && self.validity_starts_after_sec.is_none()
+    }
 }
 #[derive(Clone, PartialEq, prost::Oneof)]
 enum Certificate {
@@ -59,6 +112,7 @@ pub struct PkiMetadata {
     ids: Vec<(Vec<u8>, X509)>,
     issuers: Arc<Vec<X509>>,
     wire: Vec<u8>,
+    trust: Arc<crate::TrustSnapshot>,
 }
 
 /// Invalid or inaccessible metadata. Automatic discovery retains the last good copy.
@@ -73,7 +127,7 @@ pub enum MetadataError {
 }
 
 impl PkiMetadata {
-    /// Loads a bounded Chrome `PKIMetadata` `crs.pb`. Does not change trusted roots.
+    /// Loads a bounded `PKIMetadata` `crs.pb`, including a separate public trust store.
     /// # Errors
     /// Rejects malformed protobufs, missing DER, invalid CA certificates or bounds.
     pub fn from_file(path: &Path) -> Result<Self, MetadataError> {
@@ -91,28 +145,7 @@ impl PkiMetadata {
         if bytes.len() as u64 > MAX_BYTES || source.len() > 1024 {
             return Err(MetadataError::Invalid("size limit"));
         }
-        // Bound repeated-message allocation before prost materializes the catalog.
-        let mut remaining = bytes;
-        let mut certificates = 0;
-        let mut fields = 0;
-        while !remaining.is_empty() {
-            let (tag, wire) = prost::encoding::decode_key(&mut remaining)
-                .map_err(|_| MetadataError::Invalid("protobuf key"))?;
-            fields += 1;
-            if matches!(tag, 1 | 3) {
-                certificates += 1;
-            }
-            if certificates > MAX_CERTIFICATES || fields > 8192 {
-                return Err(MetadataError::Invalid("protobuf field count"));
-            }
-            prost::encoding::skip_field(
-                wire,
-                tag,
-                &mut remaining,
-                prost::encoding::DecodeContext::default(),
-            )
-            .map_err(|_| MetadataError::Invalid("protobuf field"))?;
-        }
+        preflight_store(bytes)?;
         let store = RootStore::decode(bytes).map_err(|_| MetadataError::Invalid("protobuf"))?;
         if store.version_major <= 0
             || store.trust_anchors.len() + store.additional_certs.len() == 0
@@ -122,26 +155,41 @@ impl PkiMetadata {
         }
         let mut ids = Vec::new();
         let mut issuers = Vec::new();
+        let mut trusted = X509StoreBuilder::new()
+            .map_err(|_| MetadataError::Invalid("trust store allocation"))?;
+        trusted.set_flags(X509VerifyFlags::PARTIAL_CHAIN);
+        let mut root_count = 0;
+        let mut excluded = 0;
+        if store
+            .trust_anchors
+            .iter()
+            .any(|a| a.tls_trust_anchor.is_some())
+        {
+            return Err(MetadataError::Invalid(
+                "trust_anchors must not override the TLS role",
+            ));
+        }
         for (anchor, tls) in store.trust_anchors.iter().map(|a| (a, true)).chain(
             store
                 .additional_certs
                 .iter()
                 .map(|a| (a, a.tls_trust_anchor == Some(true))),
         ) {
-            let Some(Certificate::Der(der)) = &anchor.certificate else {
-                return Err(MetadataError::Invalid(
-                    "DER required; textproto hashes are not certificates",
-                ));
-            };
-            if der.is_empty() || der.len() > 65_536 {
-                return Err(MetadataError::Invalid("certificate size"));
-            }
-            let cert =
-                X509::from_der(der).map_err(|_| MetadataError::Invalid("certificate DER"))?;
-            if !transmog_tls_native::certificate_is_ca(&cert) {
-                return Err(MetadataError::Invalid("non-CA certificate"));
-            }
+            let cert = parse_ca(anchor)?;
             if tls {
+                if anchor.constraints.is_empty()
+                    || anchor
+                        .constraints
+                        .iter()
+                        .any(ConstraintSet::unrestricted_for_reference)
+                {
+                    trusted
+                        .add_cert(&cert)
+                        .map_err(|_| MetadataError::Invalid("trust anchor"))?;
+                    root_count += 1;
+                } else {
+                    excluded += 1;
+                }
                 issuers.push(cert.clone());
                 if let Some(id) = &anchor.trust_anchor_id {
                     if id.is_empty() || id.len() > 32 || !valid_relative_oid(id) {
@@ -162,13 +210,32 @@ impl PkiMetadata {
         }
         let digest = boring::hash::hash(MessageDigest::sha256(), bytes)
             .map_err(|_| MetadataError::Invalid("digest"))?;
+        if root_count == 0 {
+            return Err(MetadataError::Invalid("no usable TLS trust anchors"));
+        }
+        let sha256 = hex(&digest);
+        let generation = u64::from_be_bytes(
+            digest
+                .get(..8)
+                .and_then(|bytes| bytes.try_into().ok())
+                .ok_or(MetadataError::Invalid("digest size"))?,
+        ) & 0x001f_ffff_ffff_ffff;
+        let trust = Arc::new(crate::trust::TrustSnapshot::from_public_store(
+            trusted.build(),
+            generation,
+            source.clone(),
+            store.version_major,
+            root_count,
+            excluded,
+        ));
         Ok(Self {
             version: store.version_major,
             source,
-            sha256: hex(&digest),
+            sha256,
             ids,
             issuers: Arc::new(issuers),
             wire,
+            trust,
         })
     }
 
@@ -195,13 +262,16 @@ impl PkiMetadata {
     pub fn requested_ids(&self) -> &[u8] {
         &self.wire
     }
-    /// Number of classical identifiers in the Chrome offer.
+    /// Number of certificate-based identifiers in the Chrome offer.
     pub fn id_count(&self) -> usize {
         self.ids.len()
     }
 
     pub(crate) fn issuers(&self) -> Arc<Vec<X509>> {
         self.issuers.clone()
+    }
+    pub(crate) fn trust(&self) -> Arc<crate::TrustSnapshot> {
+        self.trust.clone()
     }
 
     /// Recovery requests only IDs whose associated CA chains to configured trust.
@@ -246,6 +316,117 @@ impl PkiMetadata {
         }
         selected
     }
+}
+
+fn parse_ca(anchor: &Anchor) -> Result<X509, MetadataError> {
+    let Some(Certificate::Der(der)) = &anchor.certificate else {
+        return Err(MetadataError::Invalid(
+            "DER required; textproto hashes are not certificates",
+        ));
+    };
+    if der.is_empty() || der.len() > 65_536 {
+        return Err(MetadataError::Invalid("certificate size"));
+    }
+    let cert = X509::from_der(der).map_err(|_| MetadataError::Invalid("certificate DER"))?;
+    if !transmog_tls_native::certificate_is_ca(&cert) {
+        return Err(MetadataError::Invalid("non-CA certificate"));
+    }
+    Ok(cert)
+}
+
+fn preflight_store(bytes: &[u8]) -> Result<(), MetadataError> {
+    // Bound repeated-message allocation before prost materializes the catalog.
+    let mut remaining = bytes;
+    let mut certificates = 0;
+    let mut fields = 0;
+    while !remaining.is_empty() {
+        let (tag, wire) = prost::encoding::decode_key(&mut remaining)
+            .map_err(|_| MetadataError::Invalid("protobuf key"))?;
+        if !matches!(tag, 1..=3) {
+            return Err(MetadataError::Invalid("unsupported root-store fields"));
+        }
+        fields += 1;
+        if matches!(tag, 1 | 3) {
+            certificates += 1;
+            if wire != prost::encoding::WireType::LengthDelimited {
+                return Err(MetadataError::Invalid("certificate message wire type"));
+            }
+            let mut message = remaining;
+            let length = usize::try_from(
+                prost::encoding::decode_varint(&mut message)
+                    .map_err(|_| MetadataError::Invalid("certificate message length"))?,
+            )
+            .map_err(|_| MetadataError::Invalid("certificate message length"))?;
+            preflight_anchor(
+                message
+                    .get(..length)
+                    .ok_or(MetadataError::Invalid("certificate message"))?,
+            )?;
+        }
+        if certificates > MAX_CERTIFICATES || fields > 8192 {
+            return Err(MetadataError::Invalid("protobuf field count"));
+        }
+        prost::encoding::skip_field(
+            wire,
+            tag,
+            &mut remaining,
+            prost::encoding::DecodeContext::default(),
+        )
+        .map_err(|_| MetadataError::Invalid("protobuf field"))?;
+    }
+    Ok(())
+}
+
+fn preflight_anchor(mut bytes: &[u8]) -> Result<(), MetadataError> {
+    let mut fields = 0;
+    let mut constraints = 0;
+    while !bytes.is_empty() {
+        let (tag, wire) = prost::encoding::decode_key(&mut bytes)
+            .map_err(|_| MetadataError::Invalid("anchor field"))?;
+        fields += 1;
+        if fields > 512 || !matches!(tag, 1..=6 | 8..=12) {
+            return Err(MetadataError::Invalid("unsupported anchor fields"));
+        }
+        if tag == 4 {
+            constraints += 1;
+            if constraints > 64 || wire != prost::encoding::WireType::LengthDelimited {
+                return Err(MetadataError::Invalid("constraint count or wire type"));
+            }
+            let mut message = bytes;
+            let length = usize::try_from(
+                prost::encoding::decode_varint(&mut message)
+                    .map_err(|_| MetadataError::Invalid("constraint length"))?,
+            )
+            .map_err(|_| MetadataError::Invalid("constraint length"))?;
+            let mut constraint = message
+                .get(..length)
+                .ok_or(MetadataError::Invalid("constraint"))?;
+            let mut count = 0;
+            while !constraint.is_empty() {
+                let (tag, wire) = prost::encoding::decode_key(&mut constraint)
+                    .map_err(|_| MetadataError::Invalid("constraint field"))?;
+                count += 1;
+                if count > 256 || !matches!(tag, 1..=5 | 8..=11) {
+                    return Err(MetadataError::Invalid("unsupported constraint fields"));
+                }
+                prost::encoding::skip_field(
+                    wire,
+                    tag,
+                    &mut constraint,
+                    prost::encoding::DecodeContext::default(),
+                )
+                .map_err(|_| MetadataError::Invalid("constraint field"))?;
+            }
+        }
+        prost::encoding::skip_field(
+            wire,
+            tag,
+            &mut bytes,
+            prost::encoding::DecodeContext::default(),
+        )
+        .map_err(|_| MetadataError::Invalid("anchor field"))?;
+    }
+    Ok(())
 }
 
 fn valid_relative_oid(id: &[u8]) -> bool {
@@ -335,32 +516,46 @@ impl PkiMetadataProvider {
         static VALUE: OnceLock<Arc<PkiMetadataProvider>> = OnceLock::new();
         VALUE
             .get_or_init(|| {
-                let directory = if cfg!(windows) {
-                    std::env::var_os("LOCALAPPDATA")
-                        .map(|p| PathBuf::from(p).join("Google/Chrome/User Data/PKIMetadata"))
-                } else {
-                    None
-                };
-                let provider = Arc::new(Self::new(PkiMetadata::bundled(), directory));
-                let owner = Arc::downgrade(&provider);
-                // First discovery runs immediately in this worker, without blocking UI
-                // or making filesystem reads in SSL callbacks. Failure to spawn leaves
-                // the bundled snapshot usable.
-                let _ = std::thread::Builder::new()
-                    .name("chrome-pki-metadata".into())
-                    .spawn(move || {
-                        loop {
-                            let Some(provider) = owner.upgrade() else {
-                                break;
-                            };
-                            provider.refresh();
-                            drop(provider);
-                            std::thread::sleep(Duration::from_secs(60));
-                        }
-                    });
-                provider
+                Self::discover("Google/Chrome/User Data/PKIMetadata", "chrome-pki-metadata")
             })
             .clone()
+    }
+    /// Installed `WebView2` discovery with the same public Chromium fallback.
+    pub fn webview2() -> Arc<Self> {
+        static VALUE: OnceLock<Arc<PkiMetadataProvider>> = OnceLock::new();
+        VALUE
+            .get_or_init(|| {
+                Self::discover(
+                    "Microsoft/Windows/SharedWebView/EBWebView/PKIMetadata",
+                    "webview2-pki-metadata",
+                )
+            })
+            .clone()
+    }
+    fn discover(relative_path: &str, worker_name: &str) -> Arc<Self> {
+        let directory = if cfg!(windows) {
+            std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join(relative_path))
+        } else {
+            None
+        };
+        let provider = Arc::new(Self::new(PkiMetadata::bundled(), directory));
+        let owner = Arc::downgrade(&provider);
+        // First discovery runs immediately in this worker, without blocking UI
+        // or making filesystem reads in SSL callbacks. Failure to spawn leaves
+        // the bundled snapshot usable.
+        let _ = std::thread::Builder::new()
+            .name(worker_name.into())
+            .spawn(move || {
+                loop {
+                    let Some(provider) = owner.upgrade() else {
+                        break;
+                    };
+                    provider.refresh();
+                    drop(provider);
+                    std::thread::sleep(Duration::from_secs(60));
+                }
+            });
+        provider
     }
 }
 fn component_version(name: &str) -> Option<Vec<u32>> {
@@ -390,13 +585,14 @@ mod tests {
                 certificate: Some(Certificate::Der(ca.certificate().to_der().unwrap())),
                 tls_trust_anchor: None,
                 trust_anchor_id: Some(vec![1, 2]),
+                constraints: vec![],
             }],
             additional_certs: vec![],
         }
         .encode_to_vec()
     }
     #[test]
-    fn bundle_has_the_exact_measured_chromium_classical_offer() {
+    fn bundle_has_the_exact_measured_chromium_certificate_based_offer() {
         let metadata = PkiMetadata::bundled();
         assert_eq!(metadata.version, 41);
         assert_eq!(metadata.id_count(), 28);
@@ -471,11 +667,49 @@ mod tests {
         store.additional_certs.push(extra.clone());
         extra.tls_trust_anchor = Some(true);
         store.additional_certs.push(extra.clone());
+        extra.tls_trust_anchor = None;
         store.trust_anchors.push(extra);
         let metadata = PkiMetadata::decode(&store.encode_to_vec(), "test".into()).unwrap();
         assert_eq!(metadata.requested_ids(), &[1, 1, 1, 1, 2, 1, 2]);
         store.trust_anchors.clear();
         let additional_only = PkiMetadata::decode(&store.encode_to_vec(), "test".into()).unwrap();
         assert_eq!(additional_only.requested_ids(), &[1, 1]);
+    }
+
+    #[test]
+    fn constrained_anchors_are_not_silently_trusted_and_unknown_policy_fails_closed() {
+        let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+        store.trust_anchors[0].constraints.push(ConstraintSet {
+            sct_not_after_sec: Some(1),
+            ..Default::default()
+        });
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).is_err());
+        store.trust_anchors[0].constraints.push(ConstraintSet {
+            max_version_exclusive: Some("153.0.8010.0".into()),
+            ..Default::default()
+        });
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).is_err());
+        store.trust_anchors[0].constraints.push(ConstraintSet {
+            min_version: Some("154.0.0.0".into()),
+            ..Default::default()
+        });
+        assert_eq!(
+            PkiMetadata::decode(&store.encode_to_vec(), "policy".into())
+                .unwrap()
+                .trust
+                .root_count(),
+            1
+        );
+        // A future unknown constraint must not turn into an empty, unrestricted set.
+        assert!(preflight_anchor(&[0x22, 3, 0x60, 1, 0]).is_err());
+        assert!(preflight_anchor(&[0x22, 2, 0x60, 1]).is_err());
+        assert!(preflight_anchor(&[0x22, 0].repeat(65)).is_err());
+        assert!(
+            PkiMetadata::decode(
+                &[encoded(42), vec![0x20, 1]].concat(),
+                "future root policy".into()
+            )
+            .is_err()
+        );
     }
 }

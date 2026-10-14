@@ -11,7 +11,12 @@ export async function checkNetworkProfiles(page,root) {
   const ordinaryWrites=await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0);
   await preferences.getByLabel('Theme',{exact:true}).selectOption('dark');
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkForm.parentElement.closest('form')),null,'Profile and ordinary settings forms are nested');
-  assert.equal(await selector.inputValue(),'chromium-154');
+  assert.equal(await selector.inputValue(),'webview2-chromium-154');
+  assert.equal(await panel.evaluate(element=>element.networkProfiles.activeProfile.settings.rootStore),'webview2-installed');
+  await selector.selectOption('chromium-154');
+  assert.match(await panel.textContent(),/In use: WebView2/,'Selecting Chromium activated it');
+  assert.equal(await panel.getByRole('button',{name:'Manage network profile'}).isVisible(),false,'Built-in Chromium can be deleted');
+  await selector.selectOption('webview2-chromium-154');
   assert.equal(await panel.getByRole('button',{name:'Use profile',exact:true}).isEnabled(),false);
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
   await dialog.waitFor({state:'visible'});
@@ -30,7 +35,7 @@ export async function checkNetworkProfiles(page,root) {
   await idle();await dialog.waitFor({state:'hidden'});
   const savedId=await selector.inputValue();
   assert.match(savedId,/^custom-/);
-  assert.match(await panel.textContent(),/In use: Chromium 154/);
+  assert.match(await panel.textContent(),/In use: WebView2/);
   assert.equal(await panel.getByRole('button',{name:'Use profile',exact:true}).isEnabled(),true);
   await panel.getByRole('button',{name:'Use profile',exact:true}).click();await idle();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
@@ -51,6 +56,11 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
+  const roots=dialog.getByRole('combobox',{name:'Profile root store',exact:true});
+  for(const choice of ['os','chromium-bundled','webview2-installed','chrome-installed']) {
+    await roots.selectOption(choice);
+    assert.equal(await roots.inputValue(),choice);
+  }
   await dialog.getByLabel('Profile GREASE').selectOption('no-signature');
   await dialog.getByLabel('Send a dummy ECH extension',{exact:true}).uncheck();
   assert.match(await dialog.locator('.profile-differences').textContent(),/2 changes/);
@@ -81,6 +91,7 @@ export async function checkNetworkProfiles(page,root) {
   await selector.selectOption('chromium-154');
   assert.match(await panel.textContent(),/In use: Renamed diagnostic profile/,'Selecting a profile silently activated it');
   await panel.getByRole('button',{name:'Use profile',exact:true}).click();await idle();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.rootStore),'chrome-installed');
   await selector.selectOption(savedId);
   await panel.getByRole('button',{name:'Manage network profile'}).click();
   await panel.getByRole('button',{name:'Duplicate…',exact:true}).click();

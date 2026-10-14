@@ -22,12 +22,16 @@ its actual effect on the user's task. For a short per-change workflow, follow
   HTTP/2 ALPS is a separate profile choice. Apply negotiated transport settings,
   but leave Client Hint values and permissions with the caller; do not fabricate
   hints or retry a caller's request to satisfy connection-level preferences.
-  Classical Trust Anchor IDs use a bundled public Chromium snapshot and newer
-  valid local Chrome PKIMetadata when discovered. Preserve configured trust;
-  public catalog certificates are untrusted path-building helpers. Keep the
-  measured browser profile stable and record effective metadata provenance for
-  each physical connection. Disabling the offer and choosing an explicit crs.pb
-  belong under a custom profile's More handshake options.
+  Certificate-based Trust Anchor IDs are independent of PQC algorithm choices.
+  WebView2 (Chromium 154) is the default recipe: it differs from Chromium 154
+  only by discovering WebView2's installed public root store. Offer OS, bundled
+  Chromium, installed Chrome and installed WebView2 root sources in custom
+  profiles; installed sources fall back to the bundled public snapshot. The
+  choice governs actual certificate trust, independently of the ID offer. Keep
+  authored profiles and historical captures on their recorded trust source.
+  Record effective source/version/hash and verification restrictions for each
+  connection, including when IDs are off. Disabling IDs and choosing an explicit
+  crs.pb belong under More handshake options.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is

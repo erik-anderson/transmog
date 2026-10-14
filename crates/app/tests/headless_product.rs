@@ -686,6 +686,21 @@ export function onRequestHead(
 }
 
 async fn start(application: &Application, environment: &Environment) -> String {
+    // Docker origins use the harness's private CA from the configured OS trust
+    // source. The production default intentionally uses public Chromium roots.
+    let catalog = application.product_state().preferences.network_profiles;
+    if catalog.active_profile.settings.root_store != transmog_app::RootStore::Os {
+        let mut profile = catalog.active_profile.clone();
+        profile.id = "custom-interop-os".into();
+        profile.name = "Interoperability OS roots".into();
+        profile.settings.root_store = transmog_app::RootStore::Os;
+        let mut profiles = catalog.custom_profiles;
+        profiles.push(profile.clone());
+        application
+            .save_network_profiles(catalog.revision, profiles, Some(profile.id))
+            .await
+            .unwrap();
+    }
     let status = application
         .start_proxy(
             ProxyStartRequest {

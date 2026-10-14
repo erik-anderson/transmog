@@ -62,7 +62,7 @@ it does not wait for the grace period to expire.
 **Settings → Preferences → Network** starts with **Decrypt HTTPS traffic**.
 Turning it off applies on the next proxy start, requires no interception
 certificate setup, and presents opaque CONNECT destination and transport evidence
-in Traffic. **Profile** defaults to **Chromium 154**, based on the Chromium
+in Traffic. **Profile** defaults to **WebView2 (Chromium 154)**, based on the Chromium
 154.0.8037.99 comparison. Selecting a profile previews it; **Use profile** applies
 the saved recipe to new requests. **Customize** creates an editable copy of the
 built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
@@ -81,8 +81,9 @@ Profiles govern connections made by Transmog and Composer; opaque CONNECT
 tunnels use the original client's protocol and handshake.
 Built-in recipes keep their qualified version, and **Profile details** identifies
 the intentional Client Hints limitation. Trust Anchor IDs use a bundled Chromium
-snapshot and automatically adopt a newer valid local Chrome PKIMetadata root
-store for fresh connections, while keeping configured certificate trust. See
+snapshot and automatically adopt a newer valid local Chrome or WebView2 PKIMetadata root
+store for fresh connections. A custom profile can choose OS, bundled Chromium,
+installed Chrome or installed WebView2 certificate trust. See
 [Trust Anchor IDs](trust-anchor-ids.md) for discovery, recovery and recorded evidence.
 HTTP/2 ALPS is enabled in the Chromium recipe and separately editable in custom
 profiles. It applies server settings without generating or forwarding

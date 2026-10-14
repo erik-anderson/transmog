@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 9;
+const CURRENT_SCHEMA: u32 = 10;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -409,6 +409,10 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
             .migrate_trust_anchor_ids()?;
         state.schema_version = CURRENT_SCHEMA;
     }
+    if state.schema_version == 9 {
+        state.preferences.network_profiles.migrate_root_stores()?;
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -566,7 +570,7 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    if schema != u64::from(CURRENT_SCHEMA) && schema != 6 && schema != 7 {
+    if schema != u64::from(CURRENT_SCHEMA) && !(6..=9).contains(&schema) {
         return Err(());
     }
     if schema >= 7
@@ -676,6 +680,8 @@ mod tests {
             schema_version: 7,
             ..Default::default()
         };
+        previous.preferences.network_profiles.active_profile =
+            crate::NetworkProfileSnapshot::legacy_chromium(1);
         previous
             .preferences
             .network_profiles
@@ -744,6 +750,8 @@ mod tests {
             schema_version: 8,
             ..Default::default()
         };
+        state.preferences.network_profiles.active_profile =
+            crate::NetworkProfileSnapshot::legacy_chromium(2);
         state.preferences.network_profiles.active_profile.revision = 2;
         state
             .preferences
@@ -811,6 +819,64 @@ mod tests {
     }
 
     #[test]
+    fn schema_nine_files_migrate_to_webview2_and_preserve_authored_os_trust() {
+        let path = prefix("root-store-migration");
+        cleanup(&path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut old = ProductState {
+            schema_version: 9,
+            ..Default::default()
+        };
+        old.preferences.network_profiles.active_profile =
+            crate::NetworkProfileSnapshot::legacy_chromium(3);
+        let mut custom = old.preferences.network_profiles.active_profile.clone();
+        custom.id = "custom-os-roots".into();
+        custom.name = "OS roots".into();
+        old.preferences
+            .network_profiles
+            .custom_profiles
+            .push(custom.clone());
+        let mut json = serde_json::to_value(&old).unwrap();
+        json["preferences"]["networkProfiles"]["activeProfile"]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rootStore");
+        json["preferences"]["networkProfiles"]["customProfiles"][0]["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("rootStore");
+        fs::write(
+            generation_path(&path, 1),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        let (store, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none(), "{warning:?}");
+        assert_eq!(
+            store
+                .snapshot()
+                .preferences
+                .network_profiles
+                .active_profile
+                .id,
+            crate::WEBVIEW2_154
+        );
+        assert_eq!(
+            store
+                .snapshot()
+                .preferences
+                .network_profiles
+                .custom_profiles,
+            [custom]
+        );
+        store.save(store.snapshot()).unwrap();
+        let (reopened, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(reopened.snapshot(), store.snapshot());
+        cleanup(&path);
+    }
+
+    #[test]
     fn schema_six_without_profiles_loads_and_saves_a_preserved_custom_recipe() {
         let path = prefix("profile-migration");
         cleanup(&path);
@@ -851,7 +917,7 @@ mod tests {
                 .preferences
                 .network_profiles
                 .active_profile,
-            crate::NetworkProfileSnapshot::default()
+            crate::NetworkProfileSnapshot::builtin(crate::CHROMIUM_154).unwrap()
         );
         cleanup(&path);
     }

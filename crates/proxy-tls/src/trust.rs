@@ -1,4 +1,9 @@
-use std::{fmt, net::IpAddr, sync::Arc, time::SystemTime};
+use std::{
+    fmt,
+    net::IpAddr,
+    sync::{Arc, OnceLock},
+    time::SystemTime,
+};
 
 use boring::{
     pkey::{PKey, Private},
@@ -9,6 +14,14 @@ use boring::{
     x509::{X509, X509StoreContext, X509VerifyError, store::X509StoreBuilder},
 };
 use thiserror::Error;
+
+type ContextTrustIndex = boring::ex_data::Index<SslContext, Arc<TrustSnapshot>>;
+fn context_trust_index() -> Result<ContextTrustIndex, boring::error::ErrorStack> {
+    static INDEX: OnceLock<Result<ContextTrustIndex, boring::error::ErrorStack>> = OnceLock::new();
+    INDEX
+        .get_or_init(SslContext::new_ex_index::<Arc<TrustSnapshot>>)
+        .clone()
+}
 
 /// Raw trust material and source metadata before `BoringSSL` parsing.
 #[derive(Clone, Debug)]
@@ -173,6 +186,22 @@ impl fmt::Debug for TrustSnapshot {
 }
 
 impl TrustSnapshot {
+    pub(crate) fn from_public_store(
+        store: boring::x509::store::X509Store,
+        generation: u64,
+        source: String,
+        version: i64,
+        root_count: usize,
+        excluded: usize,
+    ) -> Self {
+        Self {
+            generation, loaded_at: SystemTime::now(), source_description: source,
+            source_version: Some(version.to_string()), root_count, store: Arc::new(store),
+            diagnostics: if excluded == 0 { Vec::new() } else {
+                vec![format!("{excluded} anchors excluded: their Chromium constraints require verification policy unavailable in Transmog")]
+            }.into(),
+        }
+    }
     /// Parses source bytes with `BoringSSL` and creates a new immutable store.
     ///
     /// # Errors
@@ -275,6 +304,7 @@ pub struct UpstreamTlsContextFactory {
     policy: UpstreamTlsPolicy,
     profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
     metadata: Arc<crate::trust_anchors::PkiMetadataProvider>,
+    metadata_override: bool,
     connection_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
     baseline_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
     recovery_ids: Option<Vec<u8>>,
@@ -304,7 +334,11 @@ impl UpstreamTlsContextFactory {
             snapshot,
             policy,
             profile: None,
-            metadata: crate::trust_anchors::PkiMetadataProvider::automatic(),
+            metadata: Arc::new(crate::trust_anchors::PkiMetadataProvider::new(
+                crate::trust_anchors::PkiMetadata::bundled(),
+                None,
+            )),
+            metadata_override: false,
             connection_metadata: None,
             baseline_metadata: None,
             recovery_ids: None,
@@ -325,7 +359,26 @@ impl UpstreamTlsContextFactory {
             .settings
             .validate()
             .map_err(TrustError::NetworkProfile)?;
-        self.baseline_metadata = if profile.settings.trust_anchor_ids {
+        if !self.metadata_override {
+            use transmog_core::network_profile::RootStore;
+            self.metadata = match profile.settings.root_store {
+                RootStore::Webview2Installed => {
+                    crate::trust_anchors::PkiMetadataProvider::webview2()
+                }
+                RootStore::ChromeInstalled => {
+                    crate::trust_anchors::PkiMetadataProvider::automatic()
+                }
+                RootStore::Os | RootStore::ChromiumBundled => {
+                    Arc::new(crate::trust_anchors::PkiMetadataProvider::new(
+                        crate::trust_anchors::PkiMetadata::bundled(),
+                        None,
+                    ))
+                }
+            };
+        }
+        self.baseline_metadata = if profile.settings.trust_anchor_ids
+            || profile.settings.root_store != transmog_core::network_profile::RootStore::Os
+        {
             profile
                 .settings
                 .pki_metadata_file
@@ -367,13 +420,14 @@ impl UpstreamTlsContextFactory {
     }
 
     /// Uses an explicitly loaded catalog and optional automatic discovery source.
-    /// Certificate trust remains bound to this factory's configured snapshot.
+    /// The network profile chooses whether this supplies trust or only ID metadata.
     #[must_use]
     pub fn with_pki_metadata(
         mut self,
         provider: Arc<crate::trust_anchors::PkiMetadataProvider>,
     ) -> Self {
         self.metadata = provider;
+        self.metadata_override = true;
         self.connection_metadata = None;
         self.recovery_ids = None;
         self
@@ -387,6 +441,18 @@ impl UpstreamTlsContextFactory {
             factory.connection_metadata = Some(self.metadata());
         }
         factory
+    }
+
+    fn effective_trust(&self) -> Arc<TrustSnapshot> {
+        if self
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.settings.root_store != transmog_core::network_profile::RootStore::Os)
+        {
+            self.metadata().trust()
+        } else {
+            self.snapshot.clone()
+        }
     }
 
     fn metadata(&self) -> Arc<crate::trust_anchors::PkiMetadata> {
@@ -410,6 +476,17 @@ impl UpstreamTlsContextFactory {
         &self,
         ssl: &mut boring::ssl::SslRef,
     ) -> Result<(), boring::error::ErrorStack> {
+        let trust = self.effective_trust();
+        if ssl
+            .ssl_context()
+            .ex_data(context_trust_index()?)
+            .is_some_and(|original| !Arc::ptr_eq(original, &trust))
+        {
+            // Hyper applies its cached session before this callback. A session
+            // validated against an older root store must not bypass new trust.
+            crate::client_connections::clear_cached_session(ssl)?;
+        }
+        ssl.set_verify_cert_store((*trust.store).clone())?;
         if self.trust_anchor_ids_enabled() {
             let metadata = self.metadata();
             transmog_tls_native::configure_ssl_trust_anchors(
@@ -443,7 +520,8 @@ impl UpstreamTlsContextFactory {
             return None;
         }
         let metadata = self.metadata();
-        let ids = metadata.recovery_ids(&capture.available_trust_anchors(), &self.snapshot);
+        let ids =
+            metadata.recovery_ids(&capture.available_trust_anchors(), &self.effective_trust());
         if ids.is_empty() || ids == metadata.requested_ids() {
             return None;
         }
@@ -470,13 +548,16 @@ impl UpstreamTlsContextFactory {
         self
     }
 
-    /// Snapshot used by contexts from this factory.
+    /// Configured OS/embedding snapshot, retained for the OS profile choice.
+    /// Public-store profiles freeze their selected metadata trust per connection;
+    /// capture evidence records that effective source and generation.
     pub fn snapshot(&self) -> &Arc<TrustSnapshot> {
         &self.snapshot
     }
 
     /// Creates connection-specific public evidence before attempting a handshake.
     pub fn capture(&self, server_name: Option<String>, alpn: Vec<String>) -> crate::TlsCapture {
+        let trust = self.effective_trust();
         let label = |version| {
             if version == SslVersion::TLS1_2 {
                 "TLS1.2".into()
@@ -494,11 +575,24 @@ impl UpstreamTlsContextFactory {
             server_name,
             offered_versions: versions,
             offered_alpn: alpn,
-            trust_generation: Some(self.snapshot.generation()),
-            trust_source: Some(self.snapshot.source_description().to_owned()),
+            trust_generation: Some(trust.generation()),
+            trust_source: Some(trust.source_description().to_owned()),
             network_profile: self.profile.clone(),
             ..transmog_core::TlsEvidence::default()
         });
+        if self
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.settings.root_store != transmog_core::network_profile::RootStore::Os)
+        {
+            let metadata = self.metadata();
+            capture.authentication_detail("Root store version", &metadata.version.to_string());
+            capture.authentication_detail("Root store SHA-256", &metadata.sha256);
+            capture.authentication_detail("Root store policy", "BoringSSL certificate verification; unsupported Chromium constraints exclude affected anchors");
+            if let Some(diagnostic) = trust.diagnostics().first() {
+                capture.authentication_detail("Root store exclusions", diagnostic);
+            }
+        }
         if self.trust_anchor_ids_enabled() {
             let metadata = self.metadata();
             capture.authentication_detail(
@@ -580,6 +674,10 @@ impl UpstreamTlsContextFactory {
     }
 
     fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
+        self.for_connection().configure_frozen(builder)
+    }
+
+    fn configure_frozen(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
         let settings = self.profile.as_ref().map_or_else(
             transmog_core::network_profile::NetworkProfileSettings::default,
@@ -588,7 +686,9 @@ impl UpstreamTlsContextFactory {
         if settings.ech_grease {
             crate::client_hello::enable_ech_grease(builder)?;
         }
-        builder.set_cert_store((*self.snapshot.store).clone());
+        let trust = self.effective_trust();
+        builder.set_cert_store((*trust.store).clone());
+        builder.set_ex_data(context_trust_index()?, trust);
         builder.set_verify_callback(SslVerifyMode::PEER, |accepted, context| {
             let accepted = verify_peer_identity(accepted, context);
             crate::evidence::verification(context, accepted);

@@ -88,6 +88,42 @@ async fn quic_uses_an_omitted_intermediate_and_records_a_server_match() {
     );
     assert_eq!(tls.server_chain.len(), 3);
 }
+
+#[tokio::test]
+async fn quic_uses_selected_public_trust_instead_of_configured_os_roots() {
+    let os = ProxyCa::generate("QUIC OS root", 2).unwrap();
+    let public = ProxyCa::generate("QUIC public root", 2).unwrap();
+    let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+    profile.settings.trust_anchor_ids = false;
+    let factory = anchors::factory(&os, anchors::catalog(&[(public.certificate(), 1)], 42))
+        .with_network_profile(profile)
+        .unwrap();
+    let origin = quic::origin_configs(vec![config(&public, None, None)], "127.0.0.1:0", true).await;
+    let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+    let client = H3OriginClient::new(factory, H3TransportLimits::default())
+        .with_performance(Some(recorder.clone()));
+    let response = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.execute(support::request(origin.port), origin.port, 1024),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(response.response.head.status, 200);
+    let evidence = recorder.snapshot();
+    let tls = evidence
+        .transports
+        .iter()
+        .filter_map(|t| t.tls.as_ref())
+        .find(|tls| tls.verification == Some(VerificationResult::Verified))
+        .unwrap();
+    assert_eq!(tls.trust_source.as_deref(), Some("local public CA fixture"));
+    assert_eq!(tls.details["Root store version"], "42");
+    assert_eq!(
+        tls.details["Trust Anchor IDs"],
+        "Disabled by network profile"
+    );
+}
 #[tokio::test]
 async fn quic_recovery_is_bounded_before_any_http_request() {
     for succeeds in [true, false] {

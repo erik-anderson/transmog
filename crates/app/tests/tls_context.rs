@@ -186,6 +186,17 @@ fn negotiation_details(leg: &str, state: u8) -> BTreeMap<String, String> {
     let (version, cipher) = version_cipher(state);
     details.insert("Negotiated TLS version".into(), version.into());
     details.insert("Negotiated cipher".into(), cipher.into());
+    if leg == "upstream" {
+        details.extend([
+            ("Root store version".into(), "46".into()),
+            ("Root store SHA-256".into(), "a".repeat(64)),
+            (
+                "Root store policy".into(),
+                "BoringSSL certificate verification".into(),
+            ),
+            ("Root store exclusions".into(), "27 anchors excluded".into()),
+        ]);
+    }
     details
 }
 
@@ -331,6 +342,7 @@ fn assert_inspection(
                 connection
                     .fields
                     .iter()
+                    .chain(&connection.policy_fields)
                     .chain(&connection.diagnostic_fields)
                     .any(|field| &field.label == label && &field.value == value),
                 "{format:?} lost {label} for {}",

@@ -282,6 +282,7 @@ fn custom_profile_controls_actual_tcp_offers_and_capture_provenance() {
             name: "Diagnostic".into(),
             ..Default::default()
         };
+        profile.settings.root_store = transmog_core::network_profile::RootStore::Os;
         profile.settings.protocols.http3 = versions != TlsVersions::Tls12Only;
         profile.settings.tls_versions = versions;
         profile.settings.compatibility_ciphers = false;
@@ -359,6 +360,7 @@ fn custom_profile_controls_quic_context_before_capture_callback_reinstallation()
         Ok(())
     });
     let mut profile = NetworkProfileSnapshot::default();
+    profile.settings.root_store = transmog_core::network_profile::RootStore::Os;
     profile.settings.grease = TlsGrease::NoSignature;
     profile.settings.hybrid_key_exchange = false;
     profile.settings.ech_grease = false;
@@ -606,6 +608,7 @@ fn chromium_trust_anchor_ids_match_actual_tcp_and_quic_client_hellos() {
     .concat();
     for enabled in [true, false] {
         let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+        profile.settings.root_store = transmog_core::network_profile::RootStore::Os;
         profile.settings.trust_anchor_ids = enabled;
         let factory = factory(&ca).with_network_profile(profile).unwrap();
         let (tcp, _) = handshake(
@@ -865,7 +868,9 @@ fn production_tls12_offers_chromium_order_and_negotiates_each_suite() {
             .unwrap();
         server.set_cipher_list(cipher).unwrap();
         let preset = factory(&ca)
-            .with_network_profile(transmog_core::network_profile::NetworkProfileSnapshot::default())
+            .with_network_profile(
+                transmog_core::network_profile::NetworkProfileSnapshot::legacy_chromium(3),
+            )
             .unwrap();
         let (tls, _) = handshake(server.build(), &preset.hyper_connector().unwrap());
         assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));

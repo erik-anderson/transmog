@@ -49,7 +49,7 @@ mod workspace;
 
 pub use network_profiles::{
     CHROMIUM_154, CHROMIUM_REFERENCE_VERSION, NetworkProfileSettings, NetworkProfileSnapshot,
-    NetworkProfiles, TlsGrease, TlsVersions,
+    NetworkProfiles, RootStore, TlsGrease, TlsVersions, WEBVIEW2_154,
 };
 use std::{path::PathBuf, sync::Arc};
 

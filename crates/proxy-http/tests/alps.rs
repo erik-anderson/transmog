@@ -28,6 +28,7 @@ async fn fixture(enabled: bool) -> (HyperOriginClient, TcpListener, SslAcceptor,
         .unwrap();
     let trust = PemTrustSource::from_pem(&ca.certificate_pem().unwrap(), "ALPS fixture").unwrap();
     let mut profile = NetworkProfileSnapshot::default();
+    profile.settings.root_store = transmog_core::network_profile::RootStore::Os;
     profile.settings.http2_alps = enabled;
     let factory = UpstreamTlsContextFactory::new(
         Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
@@ -416,7 +417,7 @@ async fn docker_caddy_uses_normal_settings_when_it_declines_alps() {
         Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
         UpstreamTlsPolicy::default(),
     )
-    .with_network_profile(NetworkProfileSnapshot::default())
+    .with_network_profile(NetworkProfileSnapshot::legacy_chromium(3))
     .unwrap();
     let recorder =
         PerformanceRecorder::new(std::time::SystemTime::now(), std::time::Instant::now());

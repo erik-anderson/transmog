@@ -401,7 +401,8 @@ await page.addInitScript((configuration) => {
           const catalog=state.networkProfiles??structuredClone(networkProfiles);
           if(args.expectedRevision!==catalog.revision)throw new Error('Network profiles changed in another window. Reload profiles before saving; your draft is still available.');
           const profiles=args.profiles.map(profile=>{const old=catalog.customProfiles.find(item=>item.id===profile.id);return {...structuredClone(profile),revision:old?old.revision+(JSON.stringify(old.settings)!==JSON.stringify(profile.settings)||old.name!==profile.name?1:0):1};});
-          const active=args.useProfile?args.useProfile==='chromium-154'?networkProfiles.activeProfile:profiles.find(profile=>profile.id===args.useProfile):catalog.activeProfile;
+          const chromium={...structuredClone(networkProfiles.activeProfile),id:'chromium-154',name:'Chromium 154',revision:4,settings:{...structuredClone(networkProfiles.activeProfile.settings),rootStore:'chrome-installed'}};
+          const active=args.useProfile?[networkProfiles.activeProfile,chromium,...profiles].find(profile=>profile.id===args.useProfile):catalog.activeProfile;
           state.networkProfiles={revision:catalog.revision+1,customProfiles:profiles,activeProfile:structuredClone(active)};
           return structuredClone(state.networkProfiles);
         }

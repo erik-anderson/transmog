@@ -645,7 +645,10 @@ impl ReplayExecutor for SystemReplayExecutor {
         profile: &crate::NetworkProfileSnapshot,
         error: &ReplayExecutionError,
     ) -> bool {
-        if !profile.settings.trust_anchor_ids || profile.settings.pki_metadata_file.is_none() {
+        if profile.settings.pki_metadata_file.is_none()
+            || (!profile.settings.trust_anchor_ids
+                && profile.settings.root_store == crate::RootStore::Os)
+        {
             return false;
         }
         self.transports
@@ -1195,6 +1198,18 @@ mod tests {
             before
         );
         profile.settings.trust_anchor_ids = false;
+        assert!(
+            application
+                .save_network_profiles(
+                    before.revision,
+                    vec![profile.clone()],
+                    Some(profile.id.clone())
+                )
+                .await
+                .is_err(),
+            "Root store metadata must load even with IDs disabled"
+        );
+        profile.settings.root_store = crate::RootStore::Os;
         assert!(
             application
                 .save_network_profiles(

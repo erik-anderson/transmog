@@ -278,6 +278,19 @@ impl Application {
                     connection
                         .policy_fields
                         .push(field("Profile baseline", &profile.base_profile));
+                    let roots = match profile.settings.root_store {
+                        crate::RootStore::Os => "Public OS Root Store",
+                        crate::RootStore::ChromiumBundled => "Bundled Chromium Root Store",
+                        crate::RootStore::ChromeInstalled => {
+                            "Installed Chrome Root Store (fall back to bundled)"
+                        }
+                        crate::RootStore::Webview2Installed => {
+                            "Installed WebView2 Root Store (fall back to Chromium bundled)"
+                        }
+                    };
+                    connection
+                        .policy_fields
+                        .push(field("Selected root store", roots));
                     connection.policy_fields.push(field(
                         "Effective network settings",
                         serde_json::to_string(&profile.settings).unwrap_or_default(),

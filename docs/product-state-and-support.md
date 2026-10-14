@@ -27,11 +27,16 @@ The Chromium 154 recipe revision 2 adds HTTP/2 ALPS. Schema 7 state migrates to
 schema 8: the built-in recipe advances, while existing custom profiles retain
 ALPS disabled. Missing ALPS fields in older capture snapshots mean disabled,
 preserving the offer recorded at the time. See [HTTP/2 ALPS](http2-alps.md) for
-the intentional Client Hints limitation. Recipe revision 3 adds classical Trust
+the intentional Client Hints limitation. Recipe revision 3 adds certificate-based Trust
 Anchor IDs; schema 8 migrates to schema 9, advancing the built-in recipe while
 preserving custom profiles with the previous offer. Absent Trust Anchor IDs fields
 in historical capture snapshots remain disabled. Effective PKI metadata provenance
 is separate from the measured browser profile; see [Trust Anchor IDs](trust-anchor-ids.md).
+Schema 9 migrates to schema 10, selecting WebView2 (Chromium 154) for the previous
+built-in default. Chromium revision 4 and WebView2 revision 1 share transport
+settings but discover separate installed public root stores, falling back to
+bundled Chromium. Older custom recipes and captures retain OS trust when the
+new root-store field is absent.
 
 Advanced network settings contains remote access, an optional persistent proxy
 port, caller-process isolation and client certificate authorization. Isolation

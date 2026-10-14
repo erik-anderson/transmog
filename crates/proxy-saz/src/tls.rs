@@ -1,7 +1,11 @@
 //! Negotiated facts carried in conventional `SessionFlag` members.
 use std::collections::BTreeMap;
 
-pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 20] = [
+pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 24] = [
+    ("Root store version", "root-store-version"),
+    ("Root store SHA-256", "root-store-sha256"),
+    ("Root store policy", "root-store-policy"),
+    ("Root store exclusions", "root-store-exclusions"),
     ("Trust Anchor IDs", "trust-anchor-ids"),
     ("Requested Trust Anchor IDs", "requested-trust-anchor-ids"),
     (
@@ -220,12 +224,30 @@ mod tests {
                 "x-transmog-server-tls-trust-anchor-recovery".into(),
                 "One retry".into(),
             ),
+            (
+                "x-transmog-server-tls-root-store-version".into(),
+                "43".into(),
+            ),
+            (
+                "x-transmog-server-tls-root-store-sha256".into(),
+                "b".repeat(64),
+            ),
+            (
+                "x-transmog-server-tls-root-store-policy".into(),
+                "BoringSSL verification".into(),
+            ),
+            (
+                "x-transmog-server-tls-root-store-exclusions".into(),
+                "2 anchors excluded".into(),
+            ),
         ]);
         let parsed = tls_negotiation_details(&flags, "upstream");
-        assert_eq!(parsed.len(), 7);
+        assert_eq!(parsed.len(), 11);
         assert_eq!(parsed["Requested Trust Anchor IDs"], "04d6790901");
         assert_eq!(parsed["PKI metadata version"], "42");
         assert_eq!(parsed["PKI metadata SHA-256"], "a".repeat(64));
+        assert_eq!(parsed["Root store version"], "43");
+        assert_eq!(parsed["Root store SHA-256"], "b".repeat(64));
     }
 
     #[test]

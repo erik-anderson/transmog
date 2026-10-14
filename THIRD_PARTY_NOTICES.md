@@ -793,7 +793,7 @@ Transmog includes the following third-party software.
 
 ## Chromium root-store data
 
-The bundled crs.pb is generated from public Chromium source revision 6baa586063d26e723f468ec8f213069fdb2d120c (root-store version 41). It supplies classical Trust Anchor IDs and untrusted public chain-building certificates; it does not replace configured certificate trust.
+The bundled crs.pb is generated from public Chromium source revision 6baa586063d26e723f468ec8f213069fdb2d120c (root-store version 41). It supplies certificate-based Trust Anchor IDs and public certificates. Network profiles can select these public TLS anchors for verification; OS mode uses them as untrusted chain-building helpers.
 
 Source and reproducible generator: `third_party/chromium-root-store` and `scripts/generate-chromium-root-store.py`. Google’s PKIMetadata CRX package is not redistributed.
 
