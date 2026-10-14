@@ -59,6 +59,7 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   client.tls.http2Alps={negotiated:false,peerSettings:[]};
   const controls=structuredClone(client);controls.connectionId='native-controls';
   Object.assign(controls.tls.details,{'Negotiated group':'X25519\0MLKEM768','Key exchange':'Hybrid post-quantum key exchange'});
+  Object.assign(connected.tls.details,{'Certificate Transparency':'Compliant','Verified SCTs':'3','CT log list source':'Installed WebView2 PKIMetadata/ct_config.pb','CT log list updated':'2026-10-04T12:00:00Z','CRLSet result':'Inconclusive','CRLSet sequence':'187','Stapled OCSP':'Not provided'});
   const sample={...performance,transports:[performance.transports[0],connected,client,controls]};
   const records=[...chain.map(definition=>({exchange_id:0,kind:'public-certificate',payload:definition})),{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://localhost/native-fallback',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'performance',payload:sample},{kind:'completed',payload:null}];
   const path=join(dirname(source),'fallback-fixture.tmcap');await writeFile(path,nativeFixture(records,106));
@@ -68,6 +69,11 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   const id=await viewer.evaluate(`(async()=>{const workspace=${traffic},row=workspace.sessions.find(row=>row.path==='/native-fallback');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   const context=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_certificates',{id:${JSON.stringify(id)}})`);
   assert.equal(context.defaultConnectionId,'upstream:native-origin');
+  const originPolicy=context.connections.find(connection=>connection.id==='upstream:native-origin');
+  for(const label of ['Certificate Transparency','CT log list updated','CRLSet result','CRLSet sequence','Stapled OCSP']) {
+    assert.ok(originPolicy.policyFields.some(field=>field.label===label));
+    assert.equal(originPolicy.diagnosticFields.some(field=>field.label===label),false);
+  }
   const alps=context.connections.find(connection=>connection.id==='upstream:native-origin').alps;
   assert.equal(alps.payloadBase64,alpsFixture.view.payloadBase64);
   assert.ok(alps.fields.some(field=>field.label==='Requested Client Hints (ignored)'&&field.value==='Sec-CH-UA-Platform, Sec-CH-UA-Model'));
@@ -88,6 +94,16 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
     assert.ok(await viewer.evaluate(`(()=>{const button=Array.from(${dialog}.querySelectorAll('footer button')).find(button=>button.textContent==='Close'),rect=button.getBoundingClientRect();return rect.bottom<=innerHeight&&button.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===button;})()`));
     if(screenshot)await writeFile(screenshot.replace('.png',`-fallback-${label}.png`),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
   }
+  await viewer.evaluate(`Array.from(${component}.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent==='Connection and recorded policy').querySelector('summary').focus()`);
+  await viewer.call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,text:'\r',unmodifiedText:'\r'});
+  await viewer.call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+  await wait(`Array.from(${component}.querySelectorAll('details')).some(node=>node.open&&node.querySelector('summary')?.textContent==='Connection and recorded policy')`);
+  for(const [width,height,label] of [[1440,900,'wide'],[800,600,'compact']]) {
+    await viewer.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    assert.ok(await viewer.evaluate(`(()=>{const value=Array.from(${component}.querySelectorAll('dd')).find(node=>node.textContent==='Compliant');value.scrollIntoView({block:'nearest'});const rect=value.getBoundingClientRect();return rect.height>0&&rect.top>=0&&rect.bottom<=innerHeight;})()`));
+    if(screenshot)await writeFile(screenshot.replace('.png',`-ct-policy-${label}.png`),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
+  }
+  await viewer.evaluate(`Array.from(${component}.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent==='Connection and recorded policy').querySelector('summary').click()`);
   await viewer.evaluate(`${component}.querySelector('.certificate-alps > summary').click()`);
   await wait(`${component}.querySelector('.certificate-alps').open && ${component}.textContent.includes('Sec-CH-UA-Platform, Sec-CH-UA-Model')`);
   await viewer.evaluate(`${component}.querySelector('.certificate-alps-raw > summary').click()`);

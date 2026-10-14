@@ -34,13 +34,17 @@ its actual effect on the user's task. For a short per-change workflow, follow
   crs.pb belong under More handshake options.
   If the selected component has no supported Trust Anchor IDs, keep its roots,
   omit the ID offer and record why; do not substitute another store's IDs.
-  Built-ins declare every setting explicitly. Trust-data updates refresh roots
+  Built-ins declare every setting explicitly. Trust-data updates refresh verification inputs
   without editing recipes or custom profiles. Both built-ins add monitored local
   Windows certificates. Keep one local trust switch beside the root selector in
   Customize; OS mode already includes local roots. New work revalidates after
   changes while admitted streams finish. Retain original local trust provenance.
   Use one Chromium verifier across root choices; the selector changes trust
   inputs, not verification rules. Record the actual selected path and PKI errors.
+  Chrome and WebView2 component lists share verification and freshness rules;
+  keep each source's contents separate. Put CT/CRLSet/OCSP outcomes and dataset
+  provenance in the existing connection-policy disclosure. Clearly distinguish
+  checked, stale, disabled, private trust and resumed-session states.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is

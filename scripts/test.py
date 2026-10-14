@@ -11,6 +11,7 @@ def main():
     command([sys.executable, ROOT / "scripts/vendor-boringssl-pki.py", "--check"], env=env)
     command([sys.executable, ROOT / "scripts/test-chromium-psl.py"], env=env)
     command([sys.executable, ROOT / "scripts/update-chromium-certificate-policy.py", "--check"], env=env)
+    command([sys.executable, ROOT / "scripts/test-chromium-certificate-policy.py"], env=env)
     command(["cargo", "fmt", "--all", "--", "--check"], env=env)
     command(["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], env=env)
     command(["cargo", "test", "--workspace", "--all-features", "--locked"], env=env)

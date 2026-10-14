@@ -1,7 +1,22 @@
 //! Negotiated facts carried in conventional `SessionFlag` members.
 use std::collections::BTreeMap;
 
-pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 29] = [
+pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 44] = [
+    ("Certificate verifier", "certificate-verifier"),
+    ("Public trust program", "public-trust-program"),
+    ("Certificate Transparency", "ct-result"),
+    ("Verified SCTs", "ct-verified-scts"),
+    ("Invalid or unknown SCTs", "ct-invalid-scts"),
+    ("CRLSet result", "crlset-result"),
+    ("Stapled OCSP", "stapled-ocsp"),
+    ("Known interception key", "known-interception-key"),
+    ("CT log list source", "ct-log-list-source"),
+    ("CT log list updated", "ct-log-list-updated"),
+    ("CT log list SHA-256", "ct-log-list-sha256"),
+    ("CRLSet source", "crlset-source"),
+    ("CRLSet sequence", "crlset-sequence"),
+    ("CRLSet expires", "crlset-expires"),
+    ("CRLSet SHA-256", "crlset-sha256"),
     ("Verified trust role", "verified-trust-role"),
     ("Local certificate trust", "local-trust"),
     ("Local trust generation", "local-trust-generation"),

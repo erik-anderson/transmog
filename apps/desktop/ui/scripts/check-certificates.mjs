@@ -26,6 +26,15 @@ export async function checkCertificates(page, root) {
   });
   inspection.connections.push({id:'upstream:controls',title:'Recorded server connection · Connected · controls',summary:'TLSv1.3 · X25519\\u{0000}MLKEM768 · TLS_AES_128_GCM_SHA256',fields:[{label:'Negotiated group',value:'X25519\0MLKEM768',displayValue:'X25519\\u{0000}MLKEM768',displayNote:'Invisible characters shown as Unicode escapes.'}],policyFields:[],diagnosticFields:[{label:'Duplicate label',value:'first'},{label:'Duplicate label',value:'second'}],serverChain:[],clientChain:[],errors:[]});
   inspection.connections[3].alps=alpsFixture.view;
+  inspection.connections[3].policyFields.push(
+    {label:'Certificate Transparency',value:'Compliant'},
+    {label:'Verified SCTs',value:'3'},
+    {label:'CT log list source',value:'C:\\Users\\Fixture\\AppData\\Local\\Microsoft\\Windows\\SharedWebView\\EBWebView\\PKIMetadata\\46.0.0.0\\ct_config.pb'},
+    {label:'CT log list updated',value:'2026-10-04T12:00:00Z'},
+    {label:'CRLSet result',value:'Inconclusive'},
+    {label:'CRLSet sequence',value:'187'},
+    {label:'Stapled OCSP',value:'Not provided'},
+  );
   inspection.connections[3].fields.push({label:'HTTP/2 ALPS',value:`Negotiated (${alpsFixture.bytes.length} peer bytes)`});
   const noTrustAnchorIds='Not offered; selected metadata has no supported Trust Anchor IDs';
   inspection.connections[3].fields.push({label:'Trust Anchor IDs',value:noTrustAnchorIds});
@@ -73,6 +82,12 @@ export async function checkCertificates(page, root) {
   await connection.selectOption('upstream:connected');
   await policy.locator('summary').focus();await page.keyboard.press('Enter');
   await policy.getByText('Available cipher suites',{exact:true}).waitFor({state:'visible'});
+  await policy.getByText('Compliant',{exact:true}).scrollIntoViewIfNeeded();
+  assert.equal(await metadata.getByText('Certificate Transparency',{exact:true}).count(),0);
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/ct-policy-compact.png')});
+  await page.setViewportSize({width:1440,height:900});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/ct-policy-wide.png')});
+  await page.setViewportSize({width:800,height:600});
   await policy.locator('summary').click();
   await metadata.locator('summary').click();
   await metadata.getByText('https-server-cipher',{exact:true}).waitFor({state:'visible'});

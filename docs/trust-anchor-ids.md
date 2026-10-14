@@ -119,8 +119,9 @@ This is root-store selection, not a complete implementation of Chrome's verifier
 Metadata ConstraintSets are evaluated on candidate paths. Conditions within a
 set are combined with AND; any passing set suffices. Version bounds, DNS subtrees
 and leaf issuance-time bounds are enforced. MTC serial bounds are ignored for
-ordinary X.509, as in Chromium. SCT-dependent sets remain conservative until CT
-verification supplies validated timestamps. Public anchors use the protobuf's
+ordinary X.509, as in Chromium. SCT-dependent sets use cryptographically verified
+timestamps from currently qualified logs, and are skipped when CT is disabled or
+the selected log list is stale. Public anchors use the protobuf's
 `enforce_anchor_expiry` and `enforce_anchor_constraints` flags (both default to
 false), including additional TLS anchors. Eligible public trust overrides
 duplicate local trust flags; exact local distrust still wins. Windows local ROOT

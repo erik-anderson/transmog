@@ -48,6 +48,9 @@ pub struct CertificatePolicy {
     pub known_public_roots: Arc<HashSet<Vec<u8>>>,
     /// Root metadata policy, keyed by the exact root certificate DER.
     pub root_constraints: Arc<HashMap<Vec<u8>, Vec<RootConstraint>>>,
+    /// Frozen CT/revocation inputs. Low-level fixture verification may omit them;
+    /// production upstream factories supply a validated bundled or component set.
+    pub security: Option<Arc<crate::SecurityPolicy>>,
     /// Anchors whose encoded X.509 constraints must be enforced.
     pub constrained_anchors: Arc<HashSet<Vec<u8>>>,
     /// Public anchors whose validity period is not a trust constraint.
@@ -249,7 +252,8 @@ fn verify_peer_inner(ssl: &SslRef) -> Verification {
         return Verification::failure("No PKI verifier inputs configured");
     };
     let certificates = crate::verifier::peer_certificate_chain(ssl);
-    let mut result = crate::verifier::verify(&policy.compiled, &policy.input, &certificates, false);
+    let mut result =
+        crate::verifier::verify_peer(&policy.compiled, &policy.input, &certificates, ssl);
     let name = SSL_NAME
         .get()
         .and_then(|i| i.as_ref().ok())

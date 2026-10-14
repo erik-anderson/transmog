@@ -73,7 +73,11 @@ entries authorize only the exact server certificate, and explicit distrust wins.
 Custom profiles can disable the overlay for public-only debugging.
 Chrome's policies around this PKI core are not all implemented yet. The exact
 remaining differences are listed in [the verifier contract](chromium-verifier.md);
-anchors with unsupported metadata constraints remain excluded.
+root metadata constraints are evaluated on candidate paths. The same verifier
+enforces CT and CRLSet/stapled-OCSP policies. Installed Chrome and WebView2 profiles
+source their own component lists with identical freshness rules; other root
+profiles use the bundled baseline. The connection-policy disclosure records
+the selected datasets and actual checks, including stale or disabled CT.
 
 Upstream TLS 1.3 clients also advertise Brotli certificate decompression
 (`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing

@@ -1414,7 +1414,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ## Chromium certificate policy data
 
-Chromium 154.0.8037.99 certificate blocklist and public CT data/schema source snapshots are in `third_party/chromium-certificate-policy`.
+Chromium 154.0.8037.99 certificate blocklist, public CT log list and wire schemas are in `third_party/chromium-certificate-policy`. The generated ct_config.pb supplies the shared verifier's CT baseline; installed browser component packages are not bundled.
 
 // Copyright 2015 The Chromium Authors
 //

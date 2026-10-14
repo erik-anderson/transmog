@@ -19,6 +19,9 @@ unsafe extern "C" {
     fn transmog_pki_certificate_parseable(bytes: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_new() -> *mut c_void;
     fn transmog_pki_policy_free(policy: *mut c_void);
+    fn transmog_pki_policy_security(policy: *mut c_void, data: *const u8, len: usize) -> bool;
+    fn transmog_tls_security(ssl: *const boring_sys::SSL, kind: u32, len: *mut usize) -> *const u8;
+    fn transmog_pki_result_security(result: *const c_void, field: u32) -> u32;
     fn transmog_pki_policy_known_root(policy: *mut c_void, data: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_local_root(policy: *mut c_void, data: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_constraint(
@@ -55,6 +58,10 @@ unsafe extern "C" {
         count: usize,
         time: i64,
         authority: bool,
+        scts: *const u8,
+        scts_len: usize,
+        ocsp: *const u8,
+        ocsp_len: usize,
     ) -> *mut c_void;
     fn transmog_pki_result_free(result: *mut c_void);
     fn transmog_pki_result_code(result: *const c_void) -> i32;
@@ -89,6 +96,8 @@ pub fn certificate_is_parseable(bytes: &[u8]) -> bool {
 /// Result of a single PKI path-building operation, including failed paths.
 #[derive(Clone, Debug)]
 pub struct Verification {
+    /// CT and revocation checks on PKI's chosen path.
+    pub security: crate::SecurityVerification,
     /// Whether the requested certificate use passed verification.
     pub accepted: bool,
     /// Stable legacy display code for compatibility with saved capture evidence.
@@ -113,6 +122,7 @@ impl Verification {
     /// receive results by shared reference and cannot authorize certificates.
     pub fn failure(message: &str) -> Self {
         Self {
+            security: crate::SecurityVerification::default(),
             accepted: false,
             error_code: 28,
             pki_status: 16,
@@ -205,6 +215,15 @@ pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPol
         add(blocked, 4, false, false)?;
     }
     configure_root_metadata(&compiled, policy)?;
+    if let Some(security) = &policy.security {
+        let encoded = security.encode().ok_or_else(ErrorStack::get)?;
+        // SAFETY: unpublished native policy copies all decoded data; no borrowed pointers survive.
+        if !unsafe {
+            transmog_pki_policy_security(compiled.0.as_ptr(), encoded.as_ptr(), encoded.len())
+        } {
+            return Err(ErrorStack::get());
+        }
+    }
     let compiled = Arc::new(compiled);
     if cache.len() == 16 {
         cache.remove(0);
@@ -344,6 +363,42 @@ pub(crate) fn verify(
     certificates: &[Vec<u8>],
     authority: bool,
 ) -> Verification {
+    verify_evidence(compiled, policy, certificates, authority, &[], &[])
+}
+
+pub(crate) fn verify_peer(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    ssl: &SslRef,
+) -> Verification {
+    let evidence = |kind| {
+        let mut len = 0;
+        // SAFETY: SSL is borrowed for the copy; native getter exposes handshake-owned bytes.
+        let pointer = unsafe { transmog_tls_security(ssl.as_ptr(), kind, &raw mut len) };
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        if len > 1024 * 1024 || pointer.is_null() {
+            return Err(());
+        }
+        // SAFETY: getter returned len valid bytes owned by the live SSL object.
+        Ok(unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec())
+    };
+    let (Ok(scts), Ok(ocsp)) = (evidence(0), evidence(1)) else {
+        return Verification::failure("TLS verification evidence exceeds supported bounds");
+    };
+    verify_evidence(compiled, policy, certificates, false, &scts, &ocsp)
+}
+
+fn verify_evidence(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    authority: bool,
+    scts: &[u8],
+    ocsp: &[u8],
+) -> Verification {
     if policy.unavailable {
         return Verification::failure("Current certificate trust is unavailable");
     }
@@ -353,19 +408,40 @@ pub(crate) fn verify(
     let Some(time) = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .ok()
-        .and_then(|time| i64::try_from(time.as_secs()).ok())
+        .and_then(|time| i64::try_from(time.as_millis()).ok())
     else {
         return Verification::failure("Cannot determine certificate verification time");
     };
-    verify_at(compiled, policy, certificates, authority, time)
+    verify_time(compiled, policy, certificates, authority, time, scts, ocsp)
 }
 
+#[cfg(test)]
 fn verify_at(
     compiled: &CompiledPolicy,
     policy: &CertificatePolicy,
     certificates: &[Vec<u8>],
     authority: bool,
     time: i64,
+) -> Verification {
+    verify_time(
+        compiled,
+        policy,
+        certificates,
+        authority,
+        time * 1000,
+        &[],
+        &[],
+    )
+}
+
+fn verify_time(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    authority: bool,
+    time: i64,
+    scts: &[u8],
+    ocsp: &[u8],
 ) -> Verification {
     let pointers: Vec<_> = certificates.iter().map(Vec::as_ptr).collect();
     let lengths: Vec<_> = certificates.iter().map(Vec::len).collect();
@@ -379,6 +455,10 @@ fn verify_at(
             certificates.len(),
             time,
             authority,
+            scts.as_ptr(),
+            scts.len(),
+            ocsp.as_ptr(),
+            ocsp.len(),
         )
     };
     let Some(result) = NonNull::new(result).map(NativeResult) else {
@@ -435,6 +515,7 @@ fn verify_at(
         _ => 28,
     };
     Verification {
+        security: security_result(&result),
         accepted,
         error_code,
         pki_status: status,
@@ -452,6 +533,37 @@ fn verify_at(
                 ips: result.names(true),
             }
         }),
+    }
+}
+
+fn security_result(result: &NativeResult) -> crate::SecurityVerification {
+    // SAFETY: bounded field getters read the immutable, live native result.
+    let value = |field| unsafe { transmog_pki_result_security(result.0.as_ptr(), field) };
+    crate::SecurityVerification {
+        ct: match value(0) {
+            1 => "Not required for private trust",
+            2 => "Disabled by component",
+            3 => "Not enforced: CT log list is stale",
+            4 => "Compliant",
+            5 => "Rejected: SCT quorum or diversity not met",
+            _ => "Not reached",
+        },
+        crl: match value(1) {
+            1 => "Inconclusive",
+            2 => "Leaf covered",
+            3 => "Revoked",
+            _ => "Not reached",
+        },
+        ocsp: match value(2) {
+            1 => "Not provided",
+            2 => "Good",
+            3 => "Revoked",
+            4 => "Invalid or unknown (soft fail)",
+            _ => "Not reached",
+        },
+        valid_scts: value(3),
+        invalid_scts: value(4),
+        known_interception: value(5) != 0,
     }
 }
 

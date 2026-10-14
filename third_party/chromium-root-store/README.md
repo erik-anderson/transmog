@@ -19,5 +19,5 @@ Chromium 154.0.8037.99. Network profiles can use its public TLS anchors as their
 trusted store; OS mode uses certificates as untrusted path-building helpers.
 No roots are installed into the OS. Chrome's complete verifier, EV and Merkle
 Tree Certificate trust are not claimed. Root metadata constraints are checked
-per path; SCT-dependent conditions remain conservative
-until CT verification is available. See [root-store selection](../../docs/trust-anchor-ids.md).
+per path; SCT-dependent conditions use verified CT timestamps when the selected
+list is enabled and timely. See [root-store selection](../../docs/trust-anchor-ids.md).

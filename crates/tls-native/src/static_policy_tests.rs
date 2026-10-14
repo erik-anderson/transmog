@@ -13,6 +13,16 @@ use boring::{
 };
 
 fn certificate(key: &PKey<Private>, issuer: Option<&X509>, start: i64, expiry: i64) -> X509 {
+    certificate_extra(key, issuer, start, expiry, None)
+}
+
+fn certificate_extra(
+    key: &PKey<Private>,
+    issuer: Option<&X509>,
+    start: i64,
+    expiry: i64,
+    scts: Option<&[u8]>,
+) -> X509 {
     let mut name = X509NameBuilder::new().unwrap();
     name.append_entry_by_text("CN", if issuer.is_some() { "leaf" } else { "root" })
         .unwrap();
@@ -51,9 +61,27 @@ fn certificate(key: &PKey<Private>, issuer: Option<&X509>, start: i64, expiry: i
         )
         .unwrap();
     }
+    if let Some(scts) = scts {
+        let der = security::der(4, scts);
+        let value = format!(
+            "DER:{}",
+            der.iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<Vec<_>>()
+                .join(":")
+        );
+        cert.append_extension(
+            &boring::x509::X509Extension::new(None, None, "1.3.6.1.4.1.11129.2.4.2", &value)
+                .unwrap(),
+        )
+        .unwrap();
+    }
     cert.sign(key, MessageDigest::sha256()).unwrap();
     cert.build()
 }
+
+#[path = "security_tests.rs"]
+mod security;
 
 #[test]
 fn root_metadata_checks_each_group_and_preserves_local_override() {

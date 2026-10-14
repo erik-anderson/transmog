@@ -349,16 +349,42 @@ async fn invalid_alps_is_rejected_before_any_http_bytes_are_sent() {
 #[tokio::test]
 #[ignore = "requires the external Google origin; run explicitly to qualify ALPS interoperability"]
 async fn google_negotiates_alps_and_serves_a_verified_http2_request() {
+    use transmog_core::network_profile::RootStore;
+    for source in [
+        RootStore::Webview2Installed,
+        RootStore::ChromeInstalled,
+        RootStore::ChromiumBundled,
+    ] {
+        google_policy_probe(source).await;
+    }
+}
+
+async fn google_policy_probe(source: transmog_core::network_profile::RootStore) {
     use transmog_core::{HttpLegVersion, performance::PerformanceRecorder};
     use transmog_tls::SystemTrustSource;
+    let mut profile = NetworkProfileSnapshot::default();
+    profile.settings.root_store = source;
+    // Qualification is deterministic: wait for explicit read-only discovery
+    // before starting a connection, rather than racing the background worker.
+    let data = match source {
+        transmog_core::network_profile::RootStore::Webview2Installed => {
+            transmog_tls::verification_data::VerificationDataProvider::installed(true)
+        }
+        transmog_core::network_profile::RootStore::ChromeInstalled => {
+            transmog_tls::verification_data::VerificationDataProvider::installed(false)
+        }
+        _ => Arc::new(transmog_tls::verification_data::VerificationDataProvider::new(None, None)),
+    };
+    data.refresh();
     let recorder =
         PerformanceRecorder::new(std::time::SystemTime::now(), std::time::Instant::now());
     let factory = UpstreamTlsContextFactory::new(
         Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap()),
         UpstreamTlsPolicy::default(),
     )
-    .with_network_profile(NetworkProfileSnapshot::default())
-    .unwrap();
+    .with_network_profile(profile)
+    .unwrap()
+    .with_verification_data(data);
     let client = HyperOriginClient::new(&factory)
         .unwrap()
         .with_performance(Some(recorder.clone()));
@@ -391,6 +417,9 @@ async fn google_negotiates_alps_and_serves_a_verified_http2_request() {
         Some(transmog_core::VerificationResult::Verified)
     );
     println!("Google TLS evidence: {:?}", tls.details);
+    assert_eq!(tls.details["Certificate Transparency"], "Compliant");
+    assert!(tls.details["Verified SCTs"].parse::<u32>().unwrap() >= 2);
+    assert!(tls.details.contains_key("CRLSet result"));
     let alps = tls.http2_alps.as_ref().unwrap();
     assert!(alps.negotiated);
     assert!(!alps.peer_settings.is_empty());

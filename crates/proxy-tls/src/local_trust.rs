@@ -15,9 +15,11 @@ pub use transmog_windows_trust::{LocalCertificates, LocalTrustError, LocalTrustM
 /// Pool admission identity. Public components and local notifications are independent.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
 pub struct TrustEpoch {
+    /// CT and revocation data digest, independent of root versions.
+    pub security: [u8; 32],
     /// Configured embedding trust generation.
     pub configured: u64,
-    /// Public component major version (zero for OS trust).
+    /// Public component major version, including OS public-program classification.
     pub public: i64,
     /// Local notification generation (zero when the overlay is disabled).
     pub local: u64,
@@ -202,6 +204,7 @@ fn build(
             anchor_only: public_policy.anchor_only.clone(),
             known_public_roots: public_policy.known_public_roots.clone(),
             root_constraints: public_policy.root_constraints.clone(),
+            security: public_policy.security.clone(),
             constrained_anchors: Arc::new(constrained_anchors),
             ignore_anchor_expiry: public_policy.ignore_anchor_expiry.clone(),
             local_anchors: Arc::new(inventory.anchors.iter().cloned().collect()),

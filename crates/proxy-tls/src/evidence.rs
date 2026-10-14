@@ -216,11 +216,7 @@ impl TlsCapture {
                     }
                 }
             }
-            insert_detail(
-                &mut data,
-                "Session resumed",
-                if ssl.session_reused() { "Yes" } else { "No" },
-            );
+            collect_resumption(&mut data, ssl, server);
             if !server
                 && ssl.session_reused()
                 && data.details.contains_key("Requested Trust Anchor IDs")
@@ -312,6 +308,25 @@ fn collect_alps(data: &mut TlsEvidence, ssl: &SslRef) {
     }
 }
 
+fn collect_resumption(data: &mut TlsEvidence, ssl: &SslRef, server: bool) {
+    insert_detail(
+        data,
+        "Session resumed",
+        if ssl.session_reused() { "Yes" } else { "No" },
+    );
+    if !server
+        && ssl.session_reused()
+        && data
+            .details
+            .get("Certificate Transparency")
+            .is_none_or(|status| status == "Not reached")
+    {
+        for label in ["Certificate Transparency", "CRLSet result", "Stapled OCSP"] {
+            insert_detail(data, label, "Not rechecked: resumed validated session");
+        }
+    }
+}
+
 // Both Hyper's per-SSL data and quiche's per-connection context use this hook.
 // Reading public facts here also preserves signatures before BoringSSL releases
 // handshake-only state, and never installs a verification override.
@@ -345,6 +360,7 @@ impl TlsCapture {
         let capture = self;
         let mut data = capture.data();
         insert_detail(&mut data, "Certificate verifier", "Chromium BoringSSL PKI");
+        collect_verification(&mut data, &result.security);
         insert_detail(
             &mut data,
             "Public trust program",
@@ -425,6 +441,28 @@ impl TlsCapture {
                 data.errors.push(message);
             }
         }
+    }
+}
+
+fn collect_verification(
+    data: &mut TlsEvidence,
+    result: &transmog_tls_native::SecurityVerification,
+) {
+    insert_detail(data, "Certificate Transparency", result.ct);
+    insert_detail(data, "Verified SCTs", &result.valid_scts.to_string());
+    insert_detail(
+        data,
+        "Invalid or unknown SCTs",
+        &result.invalid_scts.to_string(),
+    );
+    insert_detail(data, "CRLSet result", result.crl);
+    insert_detail(data, "Stapled OCSP", result.ocsp);
+    if result.known_interception {
+        insert_detail(
+            data,
+            "Known interception key",
+            "Present in selected verification path",
+        );
     }
 }
 

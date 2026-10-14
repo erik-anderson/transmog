@@ -537,6 +537,8 @@ async fn local_removal_retires_h1_h2_pools_and_preserves_admitted_work_and_evide
                 .is_ok()
         );
         let old = recorder.snapshot().transports[0].tls.clone().unwrap();
+        let frozen = factory.for_connection();
+        let frozen_epoch = frozen.trust_epoch();
         let mut slow = request.clone();
         slow.head.target.path = "/slow".into();
         let admitted = client.clone();
@@ -549,6 +551,8 @@ async fn local_removal_retires_h1_h2_pools_and_preserves_admitted_work_and_evide
             .await
             .unwrap();
         publisher.replace(LocalCertificates::default());
+        assert_eq!(frozen.trust_epoch(), frozen_epoch);
+        assert_ne!(factory.trust_epoch(), frozen_epoch);
         assert!(
             client
                 .execute(request.clone(), mode, 1024, Duration::from_secs(3))
@@ -590,6 +594,15 @@ async fn local_removal_retires_h1_h2_pools_and_preserves_admitted_work_and_evide
 
 #[tokio::test]
 async fn cached_tls_session_cannot_bypass_a_local_root_removal() {
+    cached_session_probe(false).await;
+}
+
+#[tokio::test]
+async fn cached_tls_session_cannot_bypass_a_crlset_update() {
+    cached_session_probe(true).await;
+}
+
+async fn cached_session_probe(use_crlset: bool) {
     use http_body_util::BodyExt;
     let public = ProxyCa::generate("public root", 2).unwrap();
     let local = ProxyCa::generate("local session root", 2).unwrap();
@@ -603,10 +616,22 @@ async fn cached_tls_session_cannot_bypass_a_local_root_removal() {
     profile.settings.tls_versions = transmog_core::network_profile::TlsVersions::Tls12Only;
     profile.settings.protocols.http3 = false;
     profile.settings.trust_anchor_ids = false;
-    let factory = factory(&public, inventory)
+    let mut factory = factory(&public, inventory)
         .with_local_trust_monitor(monitor)
         .with_network_profile(profile)
         .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let data = Arc::new(
+        transmog_tls::verification_data::VerificationDataProvider::new(
+            None,
+            Some(directory.path().into()),
+        ),
+    );
+    if use_crlset {
+        publish_crl(directory.path(), 1, None);
+        data.refresh();
+        factory = factory.with_verification_data(data.clone());
+    }
     factory.prepare_trust().await.unwrap();
     let captures = Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded = captures.clone();
@@ -642,7 +667,12 @@ async fn cached_tls_session_cannot_bypass_a_local_root_removal() {
         captures.lock().unwrap()[1].snapshot().details["Session resumed"],
         "Yes"
     );
-    publisher.replace(LocalCertificates::default());
+    if use_crlset {
+        publish_crl(directory.path(), 2, Some(local.certificate()));
+        data.refresh();
+    } else {
+        publisher.replace(LocalCertificates::default());
+    }
     assert!(
         tokio::time::timeout(Duration::from_secs(3), client.get(uri))
             .await
@@ -655,8 +685,131 @@ async fn cached_tls_session_cannot_bypass_a_local_root_removal() {
         evidence[2].snapshot().verification,
         Some(transmog_core::VerificationResult::Rejected { .. })
     ));
-    assert_eq!(
-        evidence[2].snapshot().details["Local trust generation"],
-        "2"
+    if use_crlset {
+        assert_eq!(evidence[2].snapshot().details["CRLSet result"], "Revoked");
+        assert_eq!(
+            evidence[2].snapshot().details["Local trust generation"],
+            "1"
+        );
+    } else {
+        assert_eq!(
+            evidence[2].snapshot().details["Local trust generation"],
+            "2"
+        );
+    }
+}
+
+fn publish_crl(directory: &std::path::Path, sequence: u32, root: Option<&X509>) {
+    let blocked = root.map(|root| {
+        boring::base64::encode_block(&boring::sha::sha256(
+            &root.public_key().unwrap().public_key_to_der().unwrap(),
+        ))
+    });
+    let hashes = blocked.map_or_else(String::new, |hash| format!("\"{hash}\""));
+    let header = format!(
+        "{{\"ContentType\":\"CRLSet\",\"Version\":0,\"Sequence\":{sequence},\"BlockedSPKIs\":[{hashes}]}}"
     );
+    let data = [
+        u16::try_from(header.len())
+            .unwrap()
+            .to_le_bytes()
+            .as_slice(),
+        header.as_bytes(),
+    ]
+    .concat();
+    std::fs::create_dir_all(directory.join("1")).unwrap();
+    std::fs::write(directory.join("1/crl-set"), data).unwrap();
+}
+
+#[tokio::test]
+async fn crlset_updates_retire_h1_h2_without_changing_roots_or_admitted_work() {
+    use transmog_tls::verification_data::VerificationDataProvider;
+    let public = ProxyCa::generate("public fixture root", 2).unwrap();
+    let local = ProxyCa::generate("CRLSet fixture root", 2).unwrap();
+    for h2 in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        publish_crl(directory.path(), 1, None);
+        let data = Arc::new(VerificationDataProvider::new(
+            None,
+            Some(directory.path().into()),
+        ));
+        data.refresh();
+        let origin = origin(&local, h2).await;
+        let factory = factory(
+            &public,
+            LocalCertificates {
+                anchors: vec![local.certificate().to_der().unwrap()],
+                ..Default::default()
+            },
+        )
+        .with_verification_data(data.clone());
+        let original = factory.for_connection();
+        let epoch = original.trust_epoch();
+        let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+        let client = HyperOriginClient::new(&factory)
+            .unwrap()
+            .with_performance(Some(recorder.clone()));
+        let mode = if h2 {
+            HyperEgressMode::Http2Only
+        } else {
+            HyperEgressMode::Http1Only
+        };
+        let request = support::request(origin.port);
+        assert!(
+            client
+                .execute(request.clone(), mode, 1024, Duration::from_secs(3))
+                .await
+                .is_ok()
+        );
+        let mut slow = request.clone();
+        slow.head.target.path = "/slow".into();
+        let admitted = client.clone();
+        let running = tokio::spawn(async move {
+            admitted
+                .execute(slow, mode, 1024, Duration::from_secs(5))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(3), origin.started.notified())
+            .await
+            .unwrap();
+        publish_crl(directory.path(), 2, Some(local.certificate()));
+        data.refresh();
+        let updated = factory.trust_epoch();
+        assert_eq!(updated.public, epoch.public);
+        assert_eq!(updated.local, epoch.local);
+        assert_ne!(updated.security, epoch.security);
+        assert_eq!(original.trust_epoch(), epoch);
+        assert!(
+            client
+                .execute(request.clone(), mode, 1024, Duration::from_secs(3))
+                .await
+                .is_err()
+        );
+        origin.release.notify_one();
+        assert!(running.await.unwrap().is_ok());
+        publish_crl(directory.path(), 3, None);
+        data.refresh();
+        assert!(
+            client
+                .execute(request, mode, 1024, Duration::from_secs(3))
+                .await
+                .is_ok()
+        );
+        assert_eq!(origin.count.load(Ordering::SeqCst), 2);
+        let evidence = recorder.snapshot();
+        assert_eq!(
+            evidence.transports[0].tls.as_ref().unwrap().details["CRLSet sequence"],
+            "1"
+        );
+        assert!(
+            evidence
+                .transports
+                .iter()
+                .filter_map(|t| t.tls.as_ref())
+                .any(|t| t
+                    .details
+                    .get("CRLSet result")
+                    .is_some_and(|v| v == "Revoked"))
+        );
+    }
 }

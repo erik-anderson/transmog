@@ -590,6 +590,9 @@ fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {
         ),
     ))
     .with_private_test_roots()
+    .with_verification_data(Arc::new(
+        transmog_tls::verification_data::VerificationDataProvider::new(None, None),
+    ))
 }
 
 #[test]

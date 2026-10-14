@@ -20,6 +20,13 @@ changes concern MTC error handling and OCSP parsing. Transmog does not enable
 MTC anchors. This is shared PKI behavior, not a claim of complete Chrome browser
 certificate-verification parity.
 
+The shared pin is stricter than Chromium 154's OCSP parser about the required
+empty payload of GOOD/UNKNOWN status NULLs. Transmog retains the unmodified
+upstream parser: malformed status encodings soft-fail as invalid/unknown under
+the default policy. Valid stapled responses use the same signature, issuer and
+freshness checks. This malformed-input difference is not full byte-for-byte
+browser parity.
+
 ## Implemented core policy
 
 - Chromium parse options, RSA minimum 1024 bits and `kStrong` certificate
@@ -50,6 +57,17 @@ certificate-verification parity.
   Every condition within a group must pass; any passing group suffices. Eligible
   local ROOT trust bypasses metadata constraints. MTC serial bounds are ignored
   for ordinary X.509. Conflicting duplicate anchor policies fail decoding.
+- SCT signatures from certificate and TLS extensions, with reconstructed
+  precertificate TBS, log-key binding, SHA-256 RSA/ECDSA signatures and Chromium's
+  60-second future-timestamp grace. CT policy applies to public roots, with
+  operator diversity, lifetime-based embedded quorum, retirement and Static CT
+  API leaf-index rules. SCT-based metadata constraints use verified timestamps
+  from currently qualified logs, and are skipped when CT is disabled or stale.
+- CRLSet SPKI, raw-subject and issuer/serial checks across the selected candidate
+  path, including anchors. Expired sets keep blocking records; only positive
+  leaf coverage expires. A valid revoked stapled OCSP response rejects the path
+  even with online checks disabled. Missing, invalid or unknown staples soft fail
+  under the normal Chromium policy; optional online checking is not enabled.
 
 Recovery uses these same trust inputs and path builder. A candidate CA must
 terminate at anchor trust and be capable of issuing a TLS leaf; it cannot gain
@@ -68,13 +86,8 @@ legacy fallback:
   buffered TLS method lets PKI ignore. Changing methods requires adapting the
   crate integration's X.509-dependent configuration and accessors. This is a
   deferred maintenance decision, not a second certificate verifier.
-- CT signature/log verification and Chrome's CT policy, which need a maintained
-  log list and policy data. Requesting SCTs is not CT enforcement.
-- CRLSet, built-in blocked-key/name policy and revocation processing, including
-  stapled OCSP and Chrome's optional online-revocation policy.
-- SCT-based root metadata constraints await validated CT timestamps. They fail
-  conservatively until CT integration; the other constraint groups are evaluated
-  per path rather than excluding constrained anchors from the catalog.
+- Chrome's optional online-revocation modes and EV-specific hard-fail checks.
+  The ordinary policy matches Chrome's default offline CRLSet/stapled-OCSP use.
 - AIA issuer fetching and intermediate caching. Path building currently uses
   peer-supplied certificates, metadata helpers and the monitored local stores.
 - EV classification, Chrome's clock-recovery retry, MTC and QWAC policy.
@@ -82,6 +95,49 @@ legacy fallback:
 These gaps must stay visible when describing Chromium matching. Do not treat
 the verifier name or a successful PKI path as evidence that CT/revocation was
 checked.
+
+## CT and revocation components
+
+Installed Chrome and WebView2 use the same parser and policy. The root-source
+profile selects the browser's `PKIMetadata/ct_config.pb` and
+`CertificateRevocation/crl-set` directories beside its root-store directory.
+OS and bundled root profiles use the bundled verification data. An explicit
+root protobuf changes roots; it does not implicitly replace CT or revocation
+inputs. Embedders can supply explicit directories with
+`VerificationDataProvider::new` and `with_verification_data`.
+
+CT accepts compatibility versions through 4 and lists no older than the
+compiled baseline; the emergency disable switch precedes those checks. The
+newest supported installed component is considered first. A list is timely
+while its age is less than 70 days. Stale lists soft-disable CT enforcement and
+SCT-based root constraints, matching Chromium; they never masquerade as a
+successful CT check. Valid empty newer lists remain empty and fail CT for public
+paths. Chromium 154 ignores OCSP-delivered SCTs by default and does not require
+an RFC6962 log alongside Static CT API logs; these pinned feature defaults are
+shared across sources.
+
+CRLSet freshness follows its embedded sequence, not its folder version. Each
+browser keeps its own selected component and last-good data; a newer Chrome
+sequence cannot replace WebView2's list. Missing, corrupt, partial or unsupported
+updates retain the last-good snapshot. Background workers scan once per minute
+without filesystem IO in the SSL callback. New physical connections freeze both
+datasets; a data change retires TCP/QUIC pool admission and cached TLS sessions,
+while previously admitted work finishes with its original evidence.
+
+The bundled CTConfig is generated from the licensed public Chromium log JSON;
+the built-in CRLSet is sequence 0 plus Chromium's compiled key lists. Signed
+browser updater packages are not redistributed or downloaded. Captures retain
+source, digest, UTC timestamps, CRLSet sequence and actual per-path CT/CRLSet/OCSP
+outcomes. The certificate inspector's existing **Connection and recorded policy**
+disclosure presents these facts; resumed sessions explicitly report that checks
+were not rerun. Native captures and both SAZ profiles preserve the evidence.
+
+To roll the baseline, run `python scripts/update-chromium-certificate-policy.py
+--chromium-version FOUR.PART.RELEASE.VERSION`, then the same script with `--check`
+and `python scripts/test-chromium-certificate-policy.py`. Review the source receipt,
+generated protobuf and verifier feature/policy changes; this data roll does not
+automatically change the static network profiles. Requalify the cryptographic,
+pool-refresh, saved-capture, Google interoperability and UI checks.
 
 ## Rolling the Public Suffix List
 

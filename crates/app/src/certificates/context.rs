@@ -85,7 +85,22 @@ fn negotiated<'a>(
     Some(value)
 }
 
-const POLICY_DETAILS: [&str; 12] = [
+const POLICY_DETAILS: &[&str] = &[
+    "Certificate verifier",
+    "Public trust program",
+    "Certificate Transparency",
+    "Verified SCTs",
+    "Invalid or unknown SCTs",
+    "CRLSet result",
+    "Stapled OCSP",
+    "Known interception key",
+    "CT log list source",
+    "CT log list updated",
+    "CT log list SHA-256",
+    "CRLSet source",
+    "CRLSet sequence",
+    "CRLSet expires",
+    "CRLSet SHA-256",
     "Verified trust role",
     "Local certificate trust",
     "Local trust generation",
@@ -138,7 +153,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
     if let Some(value) = details.get("Trust Anchor IDs") {
         connection.fields.push(field("Trust Anchor IDs", value));
     }
-    for label in POLICY_DETAILS {
+    for &label in POLICY_DETAILS {
         if let Some(value) = details.get(label) {
             connection.policy_fields.push(field(label, value));
         }
@@ -162,6 +177,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
             .iter()
             .filter(|(label, _)| {
                 !ORDERED_DETAILS.contains(&label.as_str())
+                    && !POLICY_DETAILS.contains(&label.as_str())
                     && !matches!(
                         label.as_str(),
                         "Negotiated TLS version"

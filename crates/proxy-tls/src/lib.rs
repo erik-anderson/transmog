@@ -19,6 +19,8 @@ mod resolver;
 mod trust;
 /// Public Chromium PKI metadata and its selectable public root store.
 pub mod trust_anchors;
+/// Shared Chromium CT and CRLSet component inputs.
+pub mod verification_data;
 /// Current-user Windows software CNG identity inventory and change monitoring.
 #[cfg(windows)]
 pub mod windows_client_certificates;

@@ -19,8 +19,10 @@ brotli.workspace = true
 rustls-native-certs.workspace = true
 prost.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+time.workspace = true
 
 [lints]
 workspace = true

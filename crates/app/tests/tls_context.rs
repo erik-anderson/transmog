@@ -165,6 +165,29 @@ fn negotiation_details(leg: &str, state: u8) -> BTreeMap<String, String> {
         ]);
     }
     if leg == "upstream" {
+        details.extend([
+            (
+                "Certificate Transparency".into(),
+                if resumed {
+                    "Not rechecked: resumed validated session"
+                } else {
+                    "Compliant"
+                }
+                .into(),
+            ),
+            (
+                "CT log list source".into(),
+                "Installed WebView2 PKIMetadata/ct_config.pb".into(),
+            ),
+            ("CT log list updated".into(), "2026-10-04T12:00:00Z".into()),
+            ("CRLSet result".into(), "Inconclusive".into()),
+            ("CRLSet sequence".into(), "187".into()),
+            (
+                "CRLSet source".into(),
+                "Installed WebView2 CertificateRevocation/crl-set".into(),
+            ),
+            ("Stapled OCSP".into(), "Not provided".into()),
+        ]);
         details.insert(
             "Peer handshake signature".into(),
             if resumed {
@@ -238,6 +261,14 @@ fn write_capture(path: &Path, samples: &[PerformanceEvidence]) {
     }
     append(CaptureRecordKind::Completed);
     writer.seal().unwrap();
+}
+
+#[test]
+#[ignore = "materializes a public fixture for isolated native WebView2 inspection"]
+fn write_native_certificate_policy_fixture() {
+    let path =
+        std::env::var_os("TRANSMOG_TLS_CONTEXT_FIXTURE").expect("Set the fixture output path");
+    write_capture(Path::new(&path), &[evidence(0)]);
 }
 
 async fn open(path: &Path, cache: &Path, encrypted: bool) -> Application {
@@ -399,6 +430,9 @@ fn assert_inspection(
                 .as_ref()
                 .and_then(|tls| tls.network_profile.as_ref())
         );
+        if original.leg == "upstream" {
+            assert_security_fields(connection);
+        }
     }
     if format != TraceSaveFormat::SazStrict {
         assert!(
@@ -410,6 +444,33 @@ fn assert_inspection(
         assert_eq!(
             inspection.certificates.len(),
             if state == 2 { 2 } else { 3 }
+        );
+    }
+}
+
+fn assert_security_fields(connection: &transmog_app::CertificateConnection) {
+    for label in [
+        "Certificate Transparency",
+        "CT log list source",
+        "CT log list updated",
+        "CRLSet result",
+        "CRLSet sequence",
+        "CRLSet source",
+        "Stapled OCSP",
+    ] {
+        assert!(
+            connection
+                .policy_fields
+                .iter()
+                .any(|field| field.label == label),
+            "Missing policy field {label}"
+        );
+        assert!(
+            !connection
+                .diagnostic_fields
+                .iter()
+                .any(|field| field.label == label),
+            "Duplicated policy field {label}"
         );
     }
 }

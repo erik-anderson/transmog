@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime, timezone
 import json
+import hashlib
 from pathlib import Path
 from urllib.parse import quote
 from repo_tools import ROOT, command, main_guard, write_json
@@ -48,7 +49,7 @@ def artifacts(metadata, npm, version):
     snapshot = json.loads((ROOT / "third_party/chromium-root-store/snapshot.json").read_text(encoding="utf-8"))
     policy = json.loads((ROOT / "third_party/chromium-certificate-policy/snapshot.json").read_text(encoding="utf-8"))
     lines += ["", "## Chromium certificate policy data", "",
-              f"Chromium {policy['chromiumVersion']} certificate blocklist and public CT data/schema source snapshots are in `third_party/chromium-certificate-policy`.", "",
+              f"Chromium {policy['chromiumVersion']} certificate blocklist, public CT log list and wire schemas are in `third_party/chromium-certificate-policy`. The generated ct_config.pb supplies the shared verifier's CT baseline; installed browser component packages are not bundled.", "",
               (ROOT / "third_party/chromium-certificate-policy/LICENSE").read_text(encoding="utf-8").rstrip()]
     lines += ["", "## Chromium root-store data", "",
               f"The bundled crs.pb is generated from public Chromium source revision {snapshot['sourceRevision']} (root-store version {snapshot['rootStoreVersion']}). It supplies certificate-based Trust Anchor IDs and public certificates. Network profiles can select these public TLS anchors for verification; OS mode uses them as untrusted chain-building helpers.", "",
@@ -83,7 +84,8 @@ def artifacts(metadata, npm, version):
                     "externalReferences": [{"type": "vcs", "url": psl["source"]}]}]
     components.append({"type": "data", "bom-ref": "chromium-certificate-policy", "name": "Chromium certificate policy data",
                        "version": policy["chromiumVersion"], "licenses": [{"license": {"id": "BSD-3-Clause"}}],
-                       "hashes": [{"alg": "SHA-256", "content": policy["sha256"]["cert_verify_proc_blocklist.inc"]}],
+                       "hashes": [{"alg": "SHA-256", "content": hashlib.sha256((ROOT / "third_party/chromium-certificate-policy/ct_config.pb").read_bytes()).hexdigest()},
+                                  {"alg": "SHA-256", "content": policy["sha256"]["cert_verify_proc_blocklist.inc"]}],
                        "externalReferences": [{"type": "vcs", "url": f"https://github.com/chromium/chromium/tree/{policy['chromiumVersion']}/net/cert"}]})
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
             "metadata": {"timestamp": datetime.now(timezone.utc).isoformat(),

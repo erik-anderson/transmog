@@ -4,6 +4,11 @@
 mod application_settings;
 mod credentials;
 mod hostname;
+mod security;
+pub use security::{
+    CrlSet, CtConfig, CtLog, IssuerRevocations, LogOperator, SecurityPolicy, SecurityVerification,
+    SubjectLimit,
+};
 mod trust_anchors;
 mod verifier;
 pub use application_settings::{configure_h2_application_settings, peer_application_settings};

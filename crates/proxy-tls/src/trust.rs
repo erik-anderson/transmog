@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::SystemTime,
 };
 
@@ -14,10 +14,32 @@ use boring::{
 use thiserror::Error;
 
 type ContextTrustIndex = boring::ex_data::Index<SslContext, Arc<TrustSnapshot>>;
+type PolicyCache = Arc<
+    Mutex<
+        Option<(
+            crate::local_trust::TrustEpoch,
+            Arc<transmog_tls_native::CertificatePolicy>,
+        )>,
+    >,
+>;
 fn context_trust_index() -> Result<ContextTrustIndex, boring::error::ErrorStack> {
     static INDEX: OnceLock<Result<ContextTrustIndex, boring::error::ErrorStack>> = OnceLock::new();
     INDEX
         .get_or_init(SslContext::new_ex_index::<Arc<TrustSnapshot>>)
+        .clone()
+}
+fn context_epoch_index() -> Result<
+    boring::ex_data::Index<SslContext, crate::local_trust::TrustEpoch>,
+    boring::error::ErrorStack,
+> {
+    static INDEX: OnceLock<
+        Result<
+            boring::ex_data::Index<SslContext, crate::local_trust::TrustEpoch>,
+            boring::error::ErrorStack,
+        >,
+    > = OnceLock::new();
+    INDEX
+        .get_or_init(SslContext::new_ex_index::<crate::local_trust::TrustEpoch>)
         .clone()
 }
 
@@ -297,7 +319,13 @@ impl Default for UpstreamTlsPolicy {
 
 /// Produces every upstream `BoringSSL` context from one snapshot and policy.
 #[derive(Clone, Debug)]
+// Independent embedding/test source overrides; these are not mutually exclusive states.
+#[allow(clippy::struct_excessive_bools)]
 pub struct UpstreamTlsContextFactory {
+    verification_policy_cache: PolicyCache,
+    verification_data: Arc<crate::verification_data::VerificationDataProvider>,
+    verification_data_override: bool,
+    connection_verification_data: Option<Arc<crate::verification_data::VerificationData>>,
     snapshot: Arc<TrustSnapshot>,
     policy: UpstreamTlsPolicy,
     profile: Option<transmog_core::network_profile::NetworkProfileSnapshot>,
@@ -335,6 +363,12 @@ impl UpstreamTlsContextFactory {
     /// Creates a factory. Replacing trust requires constructing a new factory and pools.
     pub fn new(snapshot: Arc<TrustSnapshot>, policy: UpstreamTlsPolicy) -> Self {
         Self {
+            verification_policy_cache: Arc::default(),
+            verification_data: Arc::new(crate::verification_data::VerificationDataProvider::new(
+                None, None,
+            )),
+            verification_data_override: false,
+            connection_verification_data: None,
             snapshot,
             policy,
             profile: None,
@@ -364,6 +398,7 @@ impl UpstreamTlsContextFactory {
     #[doc(hidden)]
     #[must_use]
     pub fn with_private_test_roots(mut self) -> Self {
+        self.verification_policy_cache = Arc::default();
         self.private_test_roots = true;
         self
     }
@@ -376,10 +411,26 @@ impl UpstreamTlsContextFactory {
         profile: transmog_core::network_profile::NetworkProfileSnapshot,
     ) -> Result<Self, TrustError> {
         use transmog_core::network_profile::TlsVersions;
+        self.verification_policy_cache = Arc::default();
         profile
             .settings
             .validate()
             .map_err(TrustError::NetworkProfile)?;
+        if !self.verification_data_override {
+            use transmog_core::network_profile::RootStore;
+            self.verification_data = match profile.settings.root_store {
+                RootStore::Webview2Installed => {
+                    crate::verification_data::VerificationDataProvider::installed(true)
+                }
+                RootStore::ChromeInstalled => {
+                    crate::verification_data::VerificationDataProvider::installed(false)
+                }
+                RootStore::Os | RootStore::ChromiumBundled => Arc::new(
+                    crate::verification_data::VerificationDataProvider::new(None, None),
+                ),
+            };
+        }
+        self.connection_verification_data = None;
         if !self.metadata_override {
             use transmog_core::network_profile::RootStore;
             self.metadata = match profile.settings.root_store {
@@ -456,6 +507,7 @@ impl UpstreamTlsContextFactory {
         mut self,
         provider: Arc<crate::trust_anchors::PkiMetadataProvider>,
     ) -> Self {
+        self.verification_policy_cache = Arc::default();
         self.metadata = provider;
         self.metadata_override = true;
         self.connection_metadata = None;
@@ -469,6 +521,7 @@ impl UpstreamTlsContextFactory {
     pub fn for_connection(&self) -> Self {
         let mut factory = self.clone();
         if factory.connection_metadata.is_none() {
+            factory.connection_verification_data = Some(self.verification_data.current());
             factory.connection_metadata = Some(self.metadata());
             factory.connection_local = self.local_trust.as_ref().map(|local| {
                 local
@@ -479,12 +532,34 @@ impl UpstreamTlsContextFactory {
         factory
     }
 
+    /// Uses explicit CT/revocation component directories for embedding or isolated verification.
+    #[must_use]
+    pub fn with_verification_data(
+        mut self,
+        provider: Arc<crate::verification_data::VerificationDataProvider>,
+    ) -> Self {
+        self.verification_policy_cache = Arc::default();
+        self.verification_data = provider;
+        self.verification_data_override = true;
+        self.connection_verification_data = None;
+        self.connection_metadata = None;
+        self.connection_local = None;
+        self
+    }
+
+    fn verification_data(&self) -> Arc<crate::verification_data::VerificationData> {
+        self.connection_verification_data
+            .clone()
+            .unwrap_or_else(|| self.verification_data.current())
+    }
+
     /// Overrides automatic local inventory for embedding or isolated tests.
     #[must_use]
     pub fn with_local_trust_monitor(
         mut self,
         monitor: crate::local_trust::LocalTrustMonitor,
     ) -> Self {
+        self.verification_policy_cache = Arc::default();
         self.local_trust_override =
             Some(Arc::new(crate::local_trust::LocalTrust::new(Ok(monitor))));
         self.local_trust = self
@@ -511,23 +586,36 @@ impl UpstreamTlsContextFactory {
     /// Current trust identity for new-request pool admission, including dirty epochs.
     pub fn trust_epoch(&self) -> crate::local_trust::TrustEpoch {
         crate::local_trust::TrustEpoch {
-            configured: self.snapshot.generation(),
-            public: if self.profile.as_ref().is_some_and(|p| {
-                p.settings.root_store != transmog_core::network_profile::RootStore::Os
-            }) {
-                self.metadata().version
-            } else {
-                0
+            security: {
+                let data = self.verification_data();
+                boring::sha::sha256(format!("{}:{}", data.ct_sha256, data.crl_sha256).as_bytes())
             },
-            local: self
-                .local_trust
-                .as_ref()
-                .map_or(0, |local| local.generation()),
+            configured: self.snapshot.generation(),
+            // Public-program classification and issuer helpers also affect OS trust.
+            public: self.metadata().version,
+            local: match &self.connection_local {
+                Some(Ok(local)) => local.inventory.generation,
+                _ => self
+                    .local_trust
+                    .as_ref()
+                    .map_or(0, |local| local.generation()),
+            },
         }
     }
     fn certificate_policy(
         &self,
     ) -> Result<Arc<transmog_tls_native::CertificatePolicy>, TrustError> {
+        let epoch = self.trust_epoch();
+        let mut cache = self
+            .verification_policy_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !matches!(&self.connection_local, Some(Err(_)))
+            && let Some((cached_epoch, policy)) = &*cache
+            && *cached_epoch == epoch
+        {
+            return Ok(policy.clone());
+        }
         let policy = match &self.connection_local {
             Some(Ok(local)) => Ok(local.policy.clone()),
             Some(Err(_)) if self.bootstrap_trust_failure => {
@@ -571,11 +659,15 @@ impl UpstreamTlsContextFactory {
                 ..Default::default()
             })),
         }?;
+        let mut policy = (*policy).clone();
+        policy.security = Some(self.verification_data().policy.clone());
         #[cfg(feature = "test-fixtures")]
         if self.private_test_roots {
-            let mut policy = (*policy).clone();
             policy.known_public_roots = Arc::default();
-            return Ok(Arc::new(policy));
+        }
+        let policy = Arc::new(policy);
+        if !policy.unavailable {
+            *cache = Some((epoch, policy.clone()));
         }
         Ok(policy)
     }
@@ -634,6 +726,10 @@ impl UpstreamTlsContextFactory {
             .ssl_context()
             .ex_data(context_trust_index()?)
             .is_some_and(|original| !Arc::ptr_eq(original, &trust))
+            || ssl
+                .ssl_context()
+                .ex_data(context_epoch_index()?)
+                .is_some_and(|epoch| *epoch != self.trust_epoch())
         {
             // Hyper applies its cached session before this callback. A session
             // validated against an older root store must not bypass new trust.
@@ -751,6 +847,32 @@ impl UpstreamTlsContextFactory {
             ..transmog_core::TlsEvidence::default()
         });
         self.capture_local_trust(&capture);
+        for label in ["Certificate Transparency", "CRLSet result", "Stapled OCSP"] {
+            capture.authentication_detail(label, "Not reached");
+        }
+        let verification = self.verification_data();
+        capture.authentication_detail("CT log list source", &verification.ct_source);
+        capture.authentication_detail(
+            "CT log list updated",
+            &if verification.policy.ct.disabled {
+                "Not provided (CT disabled by component)".into()
+            } else {
+                crate::verification_data::timestamp(verification.policy.ct.timestamp_ms)
+            },
+        );
+        capture.authentication_detail("CT log list SHA-256", &verification.ct_sha256);
+        capture.authentication_detail("CRLSet source", &verification.crl_source);
+        capture.authentication_detail(
+            "CRLSet sequence",
+            &verification.policy.crl.sequence.to_string(),
+        );
+        capture.authentication_detail(
+            "CRLSet expires",
+            &crate::verification_data::expiry(verification.policy.crl.not_after),
+        );
+        if !verification.crl_sha256.is_empty() {
+            capture.authentication_detail("CRLSet SHA-256", &verification.crl_sha256);
+        }
         if self
             .profile
             .as_ref()
@@ -759,7 +881,7 @@ impl UpstreamTlsContextFactory {
             let metadata = self.metadata();
             capture.authentication_detail("Root store version", &metadata.version.to_string());
             capture.authentication_detail("Root store SHA-256", &metadata.sha256);
-            capture.authentication_detail("Root store policy", "Chromium BoringSSL PKI; anchor flags and per-path Chromium metadata constraints enforced; SCT-dependent constraints require verified CT data");
+            capture.authentication_detail("Root store policy", "Chromium BoringSSL PKI; anchor flags and per-path metadata constraints; CT and CRLSet policies with Chromium freshness rules");
             if let Some(diagnostic) = trust.diagnostics().first() {
                 capture.authentication_detail("Root store exclusions", diagnostic);
             }
@@ -940,6 +1062,7 @@ impl UpstreamTlsContextFactory {
         }
         let trust = self.effective_trust();
         builder.set_ex_data(context_trust_index()?, trust);
+        builder.set_ex_data(context_epoch_index()?, self.trust_epoch());
         if settings.trust_anchor_ids && context_offer {
             let metadata = self.metadata();
             transmog_tls_native::configure_context_trust_anchors(

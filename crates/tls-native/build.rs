@@ -18,6 +18,7 @@ fn main() {
     );
     println!("cargo:rerun-if-changed={}", vendor.display());
     println!("cargo:rerun-if-changed=native/verifier.cc");
+    println!("cargo:rerun-if-changed=native/security.h");
     println!("cargo:rerun-if-changed=../../third_party/chromium-certificate-policy");
     let mut build = cc::Build::new();
     build

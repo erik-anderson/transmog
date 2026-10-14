@@ -1981,6 +1981,97 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn crlset_update_retires_h3_without_changing_the_root_snapshot() {
+        use std::time::{Duration, SystemTime};
+        use transmog_tls::verification_data::VerificationDataProvider;
+        let root = ProxyCa::generate("CRLSet H3 root", 2).unwrap();
+        let leaf = root
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) =
+            spawn_origin_with_requests(leaf, "127.0.0.1".parse().unwrap(), 2).await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![root.certificate().to_der().unwrap()]), 1)
+                .unwrap(),
+        );
+        let directory = std::env::temp_dir().join(format!(
+            "transmog-h3-crl-{}-{}",
+            std::process::id(),
+            origin.port()
+        ));
+        std::fs::create_dir_all(directory.join("1")).unwrap();
+        let data = Arc::new(VerificationDataProvider::new(None, Some(directory.clone())));
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default())
+            .with_verification_data(data.clone());
+        let epoch = tls.trust_epoch();
+        let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+        let client = H3OriginClient::new(
+            tls.clone(),
+            H3TransportLimits {
+                idle_timeout: Duration::from_millis(700),
+                ..Default::default()
+            },
+        )
+        .with_performance(Some(recorder.clone()));
+        let mut request = h3_request(origin, "/proof");
+        request.head.target.host = "localhost".into();
+        request.head.target.authority = format!("localhost:{}", origin.port());
+        assert!(
+            client
+                .execute(request.clone(), origin.port(), 1024)
+                .await
+                .is_ok()
+        );
+        let hash = boring::base64::encode_block(&boring::sha::sha256(
+            &root
+                .certificate()
+                .public_key()
+                .unwrap()
+                .public_key_to_der()
+                .unwrap(),
+        ));
+        let header = format!(
+            "{{\"ContentType\":\"CRLSet\",\"Version\":0,\"Sequence\":1,\"BlockedSPKIs\":[\"{hash}\"]}}"
+        );
+        let bytes = [
+            u16::try_from(header.len())
+                .unwrap()
+                .to_le_bytes()
+                .as_slice(),
+            header.as_bytes(),
+        ]
+        .concat();
+        std::fs::write(directory.join("1/crl-set"), bytes).unwrap();
+        data.refresh();
+        assert_ne!(tls.trust_epoch().security, epoch.security);
+        assert_eq!(tls.trust_epoch().configured, epoch.configured);
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                client.execute(request, origin.port(), 1024)
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            recorder
+                .snapshot()
+                .transports
+                .iter()
+                .filter_map(|t| t.tls.as_ref())
+                .any(|tls| tls
+                    .details
+                    .get("CRLSet result")
+                    .is_some_and(|value| value == "Revoked"))
+        );
+        server.abort();
+        std::fs::remove_file(directory.join("1/crl-set")).unwrap();
+        std::fs::remove_dir(directory.join("1")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
     struct StaticTrust(Vec<Vec<u8>>);
 
     impl TrustSource for StaticTrust {
