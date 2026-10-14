@@ -21,10 +21,18 @@ pub struct EchOffer {
 }
 /// Owned asynchronous service discovery result.
 pub type EchLookup = Pin<Box<dyn Future<Output = Option<EchOffer>> + Send>>;
+/// Owned ordered alternatives, with each endpoint's own ECH configuration.
+pub type EchCandidatesLookup = Pin<Box<dyn Future<Output = Vec<EchOffer>> + Send>>;
 /// Embedding DNS source. Returned service bindings never confer certificate trust.
 pub trait EchConfigSource: fmt::Debug + Send + Sync {
     /// Resolves a service binding compatible with the requested protocols.
     fn lookup(&self, host: String, port: u16, alpn: Vec<String>) -> EchLookup;
+    /// Resolves alternatives in preferred order. Existing embedding sources may
+    /// continue implementing only the single-endpoint method.
+    fn lookup_candidates(&self, host: String, port: u16, alpn: Vec<String>) -> EchCandidatesLookup {
+        let lookup = self.lookup(host, port, alpn);
+        Box::pin(async move { lookup.await.into_iter().collect() })
+    }
 }
 #[derive(Debug, Default)]
 pub(crate) struct SystemEchSource {
@@ -38,12 +46,16 @@ struct SystemResolver {
 }
 impl EchConfigSource for SystemEchSource {
     fn lookup(&self, host: String, port: u16, alpn: Vec<String>) -> EchLookup {
+        let lookup = self.lookup_candidates(host, port, alpn);
+        Box::pin(async move { lookup.await.into_iter().next() })
+    }
+    fn lookup_candidates(&self, host: String, port: u16, alpn: Vec<String>) -> EchCandidatesLookup {
         let cell = self.resolver.clone();
         Box::pin(async move {
             if host.parse::<std::net::IpAddr>().is_ok() || !host.contains('.') {
-                return None;
+                return Vec::new();
             }
-            let resolver = {
+            let resolver = async {
                 let mut state = cell.lock().await;
                 if state
                     .as_ref()
@@ -78,28 +90,26 @@ impl EchConfigSource for SystemEchSource {
                         state.checked = std::time::Instant::now();
                     }
                 }
-                state.as_ref()?.resolver.clone()
+                Some(state.as_ref()?.resolver.clone())
+            }
+            .await;
+            let Some(resolver) = resolver else {
+                return Vec::new();
             };
             lookup(&resolver, &host, port, &alpn).await
         })
     }
 }
-async fn lookup(
-    resolver: &TokioResolver,
-    host: &str,
-    port: u16,
-    alpn: &[String],
-) -> Option<EchOffer> {
+async fn lookup(resolver: &TokioResolver, host: &str, port: u16, alpn: &[String]) -> Vec<EchOffer> {
     let mut owner = if port == 443 {
         format!("{}.", host.trim_end_matches('.'))
     } else {
         format!("_{port}._https.{}.", host.trim_end_matches('.'))
     };
     for _ in 0..8 {
-        let records = resolver
-            .lookup(owner.clone(), RecordType::HTTPS)
-            .await
-            .ok()?;
+        let Ok(records) = resolver.lookup(owner.clone(), RecordType::HTTPS).await else {
+            return Vec::new();
+        };
         let services = records
             .answers()
             .iter()
@@ -114,21 +124,21 @@ async fn lookup(
             .find(|(_, service)| service.svc_priority == 0)
         {
             if alias.target_name.is_root() {
-                return None;
+                return Vec::new();
             }
             owner = alias.target_name.to_utf8();
             continue;
         }
         let mut services = services;
         services.sort_by_key(|(_, service)| service.svc_priority);
-        for (record_owner, service) in services {
-            if let Some(offer) = select(service, &record_owner.to_utf8(), port, alpn) {
-                return Some(offer);
-            }
-        }
-        return None;
+        return services
+            .into_iter()
+            .filter_map(|(record_owner, service)| {
+                select(service, &record_owner.to_utf8(), port, alpn)
+            })
+            .collect();
     }
-    None
+    Vec::new()
 }
 fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<EchOffer> {
     let params = &service.svc_params;
@@ -217,23 +227,32 @@ impl UpstreamTlsContextFactory {
     }
     /// Discovers a bounded ECH offer when the profile and TLS version permit it.
     pub async fn ech_offer(&self, host: &str, port: u16, alpn: Vec<String>) -> Option<EchOffer> {
+        self.ech_offers(host, port, alpn).await.into_iter().next()
+    }
+    /// Discovers up to 64 ordered alternatives within the one discovery deadline.
+    /// Once ECH is selected, transport fallback retains ECH on every alternative.
+    pub async fn ech_offers(&self, host: &str, port: u16, alpn: Vec<String>) -> Vec<EchOffer> {
         if let Some(offer) = &self.ech_retry {
-            return Some(offer.clone());
+            return vec![offer.clone()];
         }
         if self.policy.maximum_version != boring::ssl::SslVersion::TLS1_3
             || self
                 .network_profile()
                 .is_some_and(|p| !p.settings.encrypted_client_hello)
         {
-            return None;
+            return Vec::new();
         }
         tokio::time::timeout(
             Duration::from_secs(3),
-            self.ech_source.lookup(host.to_owned(), port, alpn),
+            self.ech_source
+                .lookup_candidates(host.to_owned(), port, alpn),
         )
         .await
-        .ok()
-        .flatten()
+        .unwrap_or_default()
+        .into_iter()
+        .take(64)
+        .filter(|offer| port != 0 && offer.port == port)
+        .collect()
     }
     /// Creates exactly one pre-HTTP retry from an authenticated ECH rejection.
     pub fn ech_recovery(&self, capture: &crate::TlsCapture) -> Option<Self> {
@@ -272,7 +291,7 @@ pub fn record_ech_service(ssl: &boring::ssl::SslRef, offer: &EchOffer) {
 mod tests {
     use super::*;
     use hickory_resolver::proto::rr::{
-        Name,
+        Name, Record,
         rdata::svcb::{Alpn, EchConfigList, Mandatory},
     };
 
@@ -286,15 +305,47 @@ mod tests {
         }
     }
     async fn dns_fixture(cname: bool) -> DnsFixture {
+        dns_answers(move |query| {
+            use hickory_resolver::proto::rr::rdata::{CNAME, HTTPS};
+            let owner = if cname {
+                Name::from_ascii("canonical.example.test.").unwrap()
+            } else {
+                query.name().clone()
+            };
+            let mut records = Vec::new();
+            if cname {
+                records.push(Record::from_rdata(
+                    query.name().clone(),
+                    60,
+                    RData::CNAME(CNAME(owner.clone())),
+                ));
+            }
+            let service = SVCB::new(
+                1,
+                Name::root(),
+                vec![
+                    (
+                        SvcParamKey::Alpn,
+                        SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
+                    ),
+                    (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
+                    (
+                        SvcParamKey::EchConfigList,
+                        SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
+                    ),
+                ],
+            );
+            records.push(Record::from_rdata(owner, 60, RData::HTTPS(HTTPS(service))));
+            records
+        })
+        .await
+    }
+    async fn dns_answers(
+        answers: impl Fn(&hickory_resolver::proto::op::Query) -> Vec<Record> + Send + 'static,
+    ) -> DnsFixture {
         use hickory_resolver::{
             config::{NameServerConfig, ResolverConfig},
-            proto::{
-                op::{Message, OpCode},
-                rr::{
-                    Record,
-                    rdata::{CNAME, HTTPS},
-                },
-            },
+            proto::op::{Message, OpCode},
         };
         let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let address = socket.local_addr().unwrap();
@@ -306,34 +357,9 @@ mod tests {
                 let mut response = Message::response(request.metadata.id, OpCode::Query);
                 let query = request.queries[0].clone();
                 response.add_query(query.clone());
-                let owner = if cname {
-                    Name::from_ascii("canonical.example.test.").unwrap()
-                } else {
-                    query.name().clone()
-                };
-                if cname {
-                    response.add_answer(Record::from_rdata(
-                        query.name().clone(),
-                        60,
-                        RData::CNAME(CNAME(owner.clone())),
-                    ));
+                for record in answers(&query) {
+                    response.add_answer(record);
                 }
-                let service = SVCB::new(
-                    1,
-                    Name::root(),
-                    vec![
-                        (
-                            SvcParamKey::Alpn,
-                            SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
-                        ),
-                        (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
-                        (
-                            SvcParamKey::EchConfigList,
-                            SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
-                        ),
-                    ],
-                );
-                response.add_answer(Record::from_rdata(owner, 60, RData::HTTPS(HTTPS(service))));
                 socket
                     .send_to(&response.to_vec().unwrap(), peer)
                     .await
@@ -351,11 +377,69 @@ mod tests {
         DnsFixture { resolver, task }
     }
     #[tokio::test]
+    async fn discovery_retains_priority_order_and_each_endpoints_config() {
+        use hickory_resolver::proto::rr::rdata::HTTPS;
+        let dns = dns_answers(|query| {
+            [
+                (3, "third.example.test.", 443),
+                (1, "first.example.test.", 443),
+                (2, "redirect.example.test.", 8443),
+                (2, "second.example.test.", 443),
+            ]
+            .into_iter()
+            .map(|(priority, endpoint, port)| {
+                let service = SVCB::new(
+                    priority,
+                    Name::from_ascii(endpoint).unwrap(),
+                    vec![
+                        (
+                            SvcParamKey::Alpn,
+                            SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
+                        ),
+                        (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
+                        (SvcParamKey::Port, SvcParamValue::Port(port)),
+                        (
+                            SvcParamKey::EchConfigList,
+                            SvcParamValue::EchConfigList(EchConfigList(vec![
+                                0,
+                                2,
+                                0,
+                                u8::try_from(priority).unwrap(),
+                            ])),
+                        ),
+                    ],
+                );
+                Record::from_rdata(query.name().clone(), 60, RData::HTTPS(HTTPS(service)))
+            })
+            .collect()
+        })
+        .await;
+        let offers = lookup(&dns.resolver, "origin.example.test", 443, &["h2".into()]).await;
+        assert_eq!(
+            offers
+                .iter()
+                .map(|o| o.endpoint.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "first.example.test",
+                "second.example.test",
+                "third.example.test"
+            ]
+        );
+        assert_eq!(
+            offers.iter().map(|o| o.config[3]).collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(offers.iter().all(|o| o.port == 443));
+    }
+    #[tokio::test]
     async fn dot_targets_use_the_resolved_record_owner_after_cname() {
         let dns = dns_fixture(true).await;
         for port in [443, 8443] {
             let offer = lookup(&dns.resolver, "origin.example.test", port, &["h2".into()])
                 .await
+                .into_iter()
+                .next()
                 .unwrap();
             assert_eq!(offer.endpoint, "canonical.example.test");
             assert_eq!(offer.port, port);
@@ -366,6 +450,8 @@ mod tests {
         let dns = dns_fixture(false).await;
         let offer = lookup(&dns.resolver, "origin.example.test", 8443, &["h2".into()])
             .await
+            .into_iter()
+            .next()
             .unwrap();
         assert_eq!(offer.endpoint, "_8443._https.origin.example.test");
     }

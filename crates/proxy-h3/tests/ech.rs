@@ -16,7 +16,7 @@ use transmog_h3::{H3OriginClient, H3TransportLimits};
 use transmog_tls::{
     EndpointIdentity, PemTrustSource, ProxyCa, TrustSnapshot, UpstreamTlsContextFactory,
     UpstreamTlsPolicy,
-    ech::{EchConfigSource, EchLookup, EchOffer},
+    ech::{EchCandidatesLookup, EchConfigSource, EchLookup, EchOffer},
 };
 #[derive(Debug)]
 struct Fixed {
@@ -35,6 +35,19 @@ impl EchConfigSource for Fixed {
             port: self.port,
         };
         Box::pin(async move { Some(offer) })
+    }
+}
+#[derive(Debug)]
+struct Alternatives(Vec<EchOffer>);
+impl EchConfigSource for Alternatives {
+    fn lookup(&self, _: String, _: u16, _: Vec<String>) -> EchLookup {
+        let offer = self.0.first().cloned();
+        Box::pin(async move { offer })
+    }
+    fn lookup_candidates(&self, _: String, port: u16, _: Vec<String>) -> EchCandidatesLookup {
+        assert!(self.0.iter().all(|o| o.port == port));
+        let offers = self.0.clone();
+        Box::pin(async move { offers })
     }
 }
 fn configs(seed: u8) -> (Vec<u8>, SslEchKeys) {
@@ -74,24 +87,26 @@ fn server(ca: &ProxyCa, name: &str, keys: Option<&SslEchKeys>) -> quiche::Config
 async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retry() {
     for scenario in [
         "accepted",
+        "alternatives",
         "alternative-port",
         "rotation",
         "rollback",
         "untrusted",
+        "untrusted-alternatives",
         "repeat",
+        "repeat-alternatives",
     ] {
-        let direct_acceptance = matches!(scenario, "accepted" | "alternative-port");
+        let direct_acceptance =
+            matches!(scenario, "accepted" | "alternative-port" | "alternatives");
+        let untrusted = scenario.starts_with("untrusted");
+        let repeat = scenario.starts_with("repeat");
         let fixture = support::Fixture::new();
         let wrong = ProxyCa::generate("Untrusted public name", 2).unwrap();
         let (initial, _) = configs(7);
         let (_, current) = configs(if direct_acceptance { 7 } else { 8 });
         let (_, newer) = configs(9);
         let first = server(
-            if scenario == "untrusted" {
-                &wrong
-            } else {
-                &fixture.ca
-            },
+            if untrusted { &wrong } else { &fixture.ca },
             if direct_acceptance {
                 "hidden.example.test"
             } else {
@@ -103,12 +118,12 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         if !direct_acceptance {
             servers.push(server(
                 &fixture.ca,
-                if scenario == "repeat" {
+                if repeat {
                     "public.example.test"
                 } else {
                     "hidden.example.test"
                 },
-                if scenario == "repeat" {
+                if repeat {
                     Some(&newer)
                 } else {
                     (scenario != "rollback").then_some(&current)
@@ -118,17 +133,54 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         let origin = quic::origin_configs(servers, "127.0.0.1:0", true).await;
         let trust = PemTrustSource::from_pem(&fixture.ca.certificate_pem().unwrap(), "ECH fixture")
             .unwrap();
+        let source: Arc<dyn EchConfigSource> = if scenario.ends_with("alternatives") {
+            let (other, _) = configs(8);
+            let port = origin.port;
+            let offers = if direct_acceptance {
+                vec![
+                    EchOffer {
+                        config: other.into(),
+                        endpoint: "127.0.0.2".into(),
+                        port,
+                    },
+                    EchOffer {
+                        config: initial.clone().into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                ]
+            } else {
+                vec![
+                    EchOffer {
+                        config: initial.clone().into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                    EchOffer {
+                        config: other.into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                ]
+            };
+            Arc::new(Alternatives(offers))
+        } else {
+            Arc::new(Fixed {
+                config: initial.into(),
+                port: origin.port,
+            })
+        };
         let factory = UpstreamTlsContextFactory::new(
             Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
             UpstreamTlsPolicy::default(),
         )
-        .with_ech_config_source(Arc::new(Fixed {
-            config: initial.into(),
-            port: origin.port,
-        }));
+        .with_ech_config_source(source);
         let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
-        let client = H3OriginClient::new(factory, H3TransportLimits::default())
-            .with_performance(Some(recorder.clone()));
+        let limits = H3TransportLimits {
+            idle_timeout: Duration::from_millis(700),
+            ..H3TransportLimits::default()
+        };
+        let client = H3OriginClient::new(factory, limits).with_performance(Some(recorder.clone()));
         let mut request = support::request(origin.port);
         request.head.target.host = "hidden.example.test".into();
         request.head.target.authority = format!("hidden.example.test:{}", origin.port);
@@ -142,7 +194,7 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         )
         .await
         .unwrap();
-        let accepted = !matches!(scenario, "untrusted" | "repeat");
+        let accepted = !untrusted && !repeat;
         assert_eq!(
             result.is_ok(),
             accepted,
@@ -156,14 +208,21 @@ async fn h3_ech_accepts_rotates_rolls_back_and_stops_after_an_authenticated_retr
         );
         assert_eq!(
             origin.count.load(Ordering::SeqCst),
-            if direct_acceptance || scenario == "untrusted" {
-                1
-            } else {
-                2
-            },
+            if direct_acceptance || untrusted { 1 } else { 2 },
             "{scenario}"
         );
         if accepted {
+            assert!(
+                recorder
+                    .snapshot()
+                    .transports
+                    .iter()
+                    .filter_map(|t| t.tls.as_ref())
+                    .any(|tls| tls
+                        .details
+                        .get("ECH service endpoint")
+                        .is_some_and(|v| v == "127.0.0.1"))
+            );
             assert!(
                 recorder
                     .snapshot()

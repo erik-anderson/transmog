@@ -710,6 +710,7 @@ struct H3ConnectionDriver {
 
 impl H3ConnectionDriver {
     #[allow(clippy::too_many_arguments)] // Transport setup and its isolated ticket partition.
+    #[allow(clippy::too_many_lines)] // Ordered service alternatives, each with address racing and correct timing.
     async fn connect(
         host: String,
         origin_port: u16,
@@ -723,54 +724,84 @@ impl H3ConnectionDriver {
         let dns_begin = Instant::now();
         // Alt-Svc destinations also resolve HTTPS metadata. Identity remains the
         // logical origin; discovery uses the actual destination's service port.
-        let ech = tls.ech_offer(&host, peer_port, vec!["h3".into()]).await;
-        let endpoint = ech
-            .as_ref()
-            .map_or(host.as_str(), |offer| offer.endpoint.as_str());
-        let endpoint_port = ech.as_ref().map_or(peer_port, |offer| offer.port);
-        let candidates = resolve_candidates(endpoint, endpoint_port, happy_eyeballs).await?;
-        let dns_done = Instant::now();
-        let dns_micros =
-            u64::try_from(dns_done.duration_since(dns_begin).as_micros()).unwrap_or(u64::MAX);
-        if candidates.is_empty() {
-            return Err(H3OriginError::DnsNoAddresses(host));
-        }
-        match race_candidates_with_retry(
-            candidates,
-            happy_eyeballs,
-            |peer_addr| {
-                Self::connect_address(
-                    host.clone(),
-                    origin_port,
-                    peer_addr,
-                    tls.clone(),
-                    limits,
-                    performance.clone(),
-                    tickets.clone(),
-                    ech.clone(),
-                )
-            },
-            |error| !matches!(error, H3OriginError::ClientAuthenticationFailed),
-        )
-        .await
-        {
-            Ok((mut driver, _)) => {
-                if host.parse::<std::net::IpAddr>().is_err() {
-                    driver.transport.dns_micros = Some(dns_micros);
-                    driver.setup_timings.insert(
-                        0,
-                        ConnectionSetupTime {
-                            phase: "dns",
-                            began: dns_begin,
-                            ended: dns_done,
-                        },
-                    );
+        let offers = tls.ech_offers(&host, peer_port, vec!["h3".into()]).await;
+        let discovery_done = Instant::now();
+        let mut dns_elapsed = discovery_done.duration_since(dns_begin);
+        let mut dns_timings = vec![ConnectionSetupTime {
+            phase: "dns",
+            began: dns_begin,
+            ended: discovery_done,
+        }];
+        let offers = if offers.is_empty() {
+            vec![None]
+        } else {
+            offers.into_iter().map(Some).collect()
+        };
+        let mut last_error = H3OriginError::DnsNoAddresses(host.clone());
+        for ech in offers {
+            let endpoint = ech
+                .as_ref()
+                .map_or(host.as_str(), |offer| offer.endpoint.as_str());
+            let endpoint_port = ech.as_ref().map_or(peer_port, |offer| offer.port);
+            let resolution_begin = Instant::now();
+            let resolved = resolve_candidates(endpoint, endpoint_port, happy_eyeballs).await;
+            let dns_done = Instant::now();
+            dns_elapsed += dns_done.duration_since(resolution_begin);
+            dns_timings.push(ConnectionSetupTime {
+                phase: "dns",
+                began: resolution_begin,
+                ended: dns_done,
+            });
+            let candidates = match resolved {
+                Ok(candidates) if !candidates.is_empty() => candidates,
+                Ok(_) => {
+                    last_error = H3OriginError::DnsNoAddresses(endpoint.to_owned());
+                    continue;
                 }
-                Ok(driver)
+                Err(error) => {
+                    last_error = error.into();
+                    continue;
+                }
+            };
+            match race_candidates_with_retry(
+                candidates,
+                happy_eyeballs,
+                |peer_addr| {
+                    Self::connect_address(
+                        host.clone(),
+                        origin_port,
+                        peer_addr,
+                        tls.clone(),
+                        limits,
+                        performance.clone(),
+                        tickets.clone(),
+                        ech.clone(),
+                    )
+                },
+                H3OriginError::permits_endpoint_fallback,
+            )
+            .await
+            {
+                Ok((mut driver, _)) => {
+                    if host.parse::<std::net::IpAddr>().is_err() {
+                        driver.transport.dns_micros =
+                            Some(u64::try_from(dns_elapsed.as_micros()).unwrap_or(u64::MAX));
+                        driver.setup_timings.splice(0..0, dns_timings);
+                    }
+                    return Ok(driver);
+                }
+                Err(HappyEyeballsError::NoCandidates) => {
+                    last_error = H3OriginError::DnsNoAddresses(endpoint.to_owned());
+                }
+                Err(HappyEyeballsError::AttemptsFailed(error)) => {
+                    if !error.permits_endpoint_fallback() {
+                        return Err(error);
+                    }
+                    last_error = error;
+                }
             }
-            Err(HappyEyeballsError::NoCandidates) => Err(H3OriginError::DnsNoAddresses(host)),
-            Err(HappyEyeballsError::AttemptsFailed(error)) => Err(error),
         }
+        Err(last_error)
     }
 
     #[allow(clippy::too_many_arguments)] // Physical endpoint plus frozen TLS, tickets and service binding.
@@ -947,7 +978,14 @@ impl H3ConnectionDriver {
                     self.tickets.clone(),
                     ech,
                 ))
-                .await;
+                .await
+                .map_err(|error| {
+                    if matches!(error, H3OriginError::ClientAuthenticationFailed) {
+                        error
+                    } else {
+                        H3OriginError::HandshakeRecoveryFailed(Box::new(error))
+                    }
+                });
             }
             return Err(
                 if authentication
@@ -1912,6 +1950,9 @@ pub enum H3OriginError {
     /// Authentication failed or was cancelled; never automatically replay via another protocol.
     #[error("HTTP/3 client authentication failed or was cancelled")]
     ClientAuthenticationFailed,
+    /// An authenticated TLS recovery failed; do not restart it on another endpoint.
+    #[error(transparent)]
+    HandshakeRecoveryFailed(Box<Self>),
     /// HTTP/3 is disabled for new physical connections; existing sessions remain usable.
     #[error("outbound HTTP/3 is disabled for new connections")]
     ProtocolDisabled,
@@ -1990,6 +2031,17 @@ pub enum H3OriginError {
         /// Configured maximum response bytes.
         limit: usize,
     },
+}
+
+impl H3OriginError {
+    fn permits_endpoint_fallback(&self) -> bool {
+        // Alternate endpoints recover transport failures, not failed certificate
+        // verification, credential authorization or authenticated TLS recovery.
+        matches!(
+            self,
+            Self::Io(_) | Self::DnsNoAddresses(_) | Self::ClosedBeforeResponse
+        ) || matches!(self, Self::Quiche(error) if *error != quiche::Error::TlsFail)
+    }
 }
 
 fn quic_observation(

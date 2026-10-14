@@ -57,7 +57,7 @@ struct SetupValues {
     facts: TransportObservation,
     tls_capture: Option<TlsCapture>,
     tls_begin: Option<Instant>,
-    dns_begin: Option<Instant>,
+    dns_timings: Vec<ConnectionSetupTime>,
     dns_done: Option<Instant>,
     tcp_begin: Option<Instant>,
     tcp_done: Option<Instant>,
@@ -103,20 +103,21 @@ impl ConnectionObservation {
         let mut facts = values.facts.clone();
         facts.tls = values.tls_capture.as_ref().map(TlsCapture::snapshot);
         if let Some(performance) = performance {
-            let phases = [
-                ("dns", values.dns_begin, values.dns_done),
-                ("tcp", values.tcp_begin, values.tcp_done),
-                ("tls", values.tls_begin, values.tls_done),
-            ]
-            .into_iter()
-            .filter_map(|(phase, begin, end)| {
-                Some(ConnectionSetupTime {
-                    phase,
-                    began: begin?,
-                    ended: end?,
-                })
-            })
-            .collect::<Vec<_>>();
+            let mut phases = values.dns_timings.clone();
+            phases.extend(
+                [
+                    ("tcp", values.tcp_begin, values.tcp_done),
+                    ("tls", values.tls_begin, values.tls_done),
+                ]
+                .into_iter()
+                .filter_map(|(phase, begin, end)| {
+                    Some(ConnectionSetupTime {
+                        phase,
+                        began: begin?,
+                        ended: end?,
+                    })
+                }),
+            );
             performance.project_connection_setup(&mut facts, &phases);
         }
         if let Some(performance) = performance {
@@ -166,10 +167,19 @@ pub(crate) fn dns_finished(started: Instant, succeeded: bool) {
     let _ = SETUP.try_with(|setup| {
         let mut values = setup.values();
         let done = Instant::now();
-        let started = values.dns_begin.map_or(started, |prior| prior.min(started));
-        values.dns_begin = Some(started);
+        values.dns_timings.push(ConnectionSetupTime {
+            phase: "dns",
+            began: started,
+            ended: done,
+        });
         values.dns_done = Some(done);
-        values.facts.dns_micros = Some(micros(done.duration_since(started)));
+        values.facts.dns_micros = Some(
+            values
+                .facts
+                .dns_micros
+                .unwrap_or(0)
+                .saturating_add(micros(done.duration_since(started))),
+        );
         values.dns_failed = !succeeded;
     });
 }
@@ -194,6 +204,13 @@ impl Service<Uri> for MeasuredTcpConnector {
         Box::pin(async move {
             let setup = SETUP.with(Arc::clone);
             let started = Instant::now();
+            {
+                let mut values = setup.values();
+                // A failed service endpoint's DNS status must not hide the next
+                // endpoint's TCP timing, particularly when it is an IP literal.
+                values.dns_failed = false;
+                values.dns_done = None;
+            }
             let result = connection.await;
             {
                 let mut values = setup.values();
@@ -676,5 +693,35 @@ fn observe_paused_peer(setup: &ConnectionSetup, cx: &mut Context<'_>) {
     drop(state);
     if let Some(reason) = reason {
         attempt.cancel(reason);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn dns_timing_excludes_waiting_for_an_unavailable_service_endpoint() {
+        let setup = ConnectionSetup::new(AllowedHttpProtocols::default());
+        let before = || {
+            Instant::now()
+                .checked_sub(std::time::Duration::from_millis(10))
+                .unwrap()
+        };
+        let performance = PerformanceRecorder::new(std::time::SystemTime::now(), before());
+        SETUP
+            .scope(setup.clone(), async {
+                dns_finished(before(), true);
+                // Model a failed transport attempt between independent lookups.
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                dns_finished(before(), true);
+            })
+            .await;
+        let observation = ConnectionObservation(setup).snapshot(false, Some(&performance));
+        let dns = observation.dns_micros.unwrap();
+        assert!(
+            (20_000..100_000).contains(&dns),
+            "DNS incorrectly included a connection attempt: {dns} us"
+        );
     }
 }

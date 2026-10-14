@@ -108,11 +108,12 @@ impl TransportOutcome {
 pub struct ConnectionTiming {
     /// dns, tcp, tls, or quic (QUIC transport and TLS together).
     pub phase: String,
-    /// Original connection phase start relative to this request's header clock.
+    /// First interval's start relative to this request's header clock.
     pub began_offset_micros: i64,
-    /// Original phase end on that same monotonic clock.
+    /// Last interval's end on that same monotonic clock.
     pub ended_offset_micros: i64,
-    /// Time this request actually overlapped the phase after upstream admission.
+    /// Time this request overlapped the phase's intervals after upstream admission;
+    /// gaps between repeated lookups or connection attempts are excluded.
     pub request_wait_micros: u64,
 }
 
@@ -529,28 +530,51 @@ impl PerformanceRecorder {
             .iter()
             .find(|point| point.milestone == Milestone::UpstreamBegin)
             .map_or(0, |point| point.offset_micros);
-        observation.setup_timings = timings
-            .iter()
-            .take(4)
-            .map(|timing| {
-                let began = self.offset_micros(timing.began);
-                let ended = self.offset_micros(timing.ended);
-                let wait = ended
-                    .saturating_sub(began.max(admitted).max(0))
-                    .max(0)
-                    .cast_unsigned();
-                match timing.phase {
+        // Keep four phase disclosures while allowing bounded repeated intervals
+        // (for example, service-binding DNS and each alternative's address DNS).
+        let mut phases: Vec<(&str, Vec<(i64, i64)>)> = Vec::new();
+        for timing in timings.iter().take(128) {
+            let interval = (
+                self.offset_micros(timing.began),
+                self.offset_micros(timing.ended),
+            );
+            if interval.1 < interval.0 {
+                continue;
+            }
+            if let Some((_, intervals)) =
+                phases.iter_mut().find(|(phase, _)| *phase == timing.phase)
+            {
+                intervals.push(interval);
+            } else if phases.len() < 4 {
+                phases.push((timing.phase, vec![interval]));
+            }
+        }
+        observation.setup_timings = phases
+            .into_iter()
+            .filter_map(|(phase, mut intervals)| {
+                intervals.sort_unstable();
+                let &(began, _) = intervals.first()?;
+                let ended = intervals.iter().map(|interval| interval.1).max()?;
+                let mut cursor = admitted.max(0);
+                let mut wait = 0_u64;
+                for (start, end) in intervals {
+                    wait = wait.saturating_add(
+                        end.saturating_sub(start.max(cursor)).max(0).cast_unsigned(),
+                    );
+                    cursor = cursor.max(end);
+                }
+                match phase {
                     "dns" => observation.dns_micros = Some(wait),
                     "tcp" => observation.tcp_micros = Some(wait),
                     "tls" | "quic" => observation.tls_micros = Some(wait),
                     _ => {}
                 }
-                ConnectionTiming {
-                    phase: timing.phase.into(),
+                Some(ConnectionTiming {
+                    phase: phase.into(),
                     began_offset_micros: began,
                     ended_offset_micros: ended,
                     request_wait_micros: wait,
-                }
+                })
             })
             .collect();
     }
@@ -791,6 +815,54 @@ mod tests {
         assert_eq!(connection.tls_micros, Some(0));
         assert_eq!(connection.setup_timings[0].began_offset_micros, -40_000);
         assert_eq!(connection.setup_timings[0].ended_offset_micros, -25_000);
+    }
+
+    #[test]
+    fn repeated_dns_intervals_exclude_connection_waits_and_keep_later_phases() {
+        let zero = Instant::now();
+        let recorder = PerformanceRecorder::new(SystemTime::now(), zero);
+        let at = |micros| zero + std::time::Duration::from_micros(micros);
+        let mut phases = (0..5)
+            .map(|i| ConnectionSetupTime {
+                phase: "dns",
+                began: at(i * 1000),
+                ended: at(i * 1000 + 100),
+            })
+            .collect::<Vec<_>>();
+        // Overlapping observations of the same lookup must not double-charge it.
+        phases.push(ConnectionSetupTime {
+            phase: "dns",
+            began: at(50),
+            ended: at(150),
+        });
+        phases.push(ConnectionSetupTime {
+            phase: "tcp",
+            began: at(5000),
+            ended: at(5500),
+        });
+        phases.push(ConnectionSetupTime {
+            phase: "tls",
+            began: at(5500),
+            ended: at(6000),
+        });
+        let mut observation = TransportObservation {
+            leg: "upstream".into(),
+            connection_id: "service-alternatives".into(),
+            ..Default::default()
+        };
+        recorder.project_connection_setup(&mut observation, &phases);
+        assert_eq!(observation.dns_micros, Some(550));
+        assert_eq!(observation.tcp_micros, Some(500));
+        assert_eq!(observation.tls_micros, Some(500));
+        assert_eq!(observation.setup_timings.len(), 3);
+        recorder.transport(observation);
+        assert!(recorder.snapshot().valid());
+        let reused = PerformanceRecorder::new(SystemTime::now(), at(7000));
+        let mut observation = TransportObservation::default();
+        reused.project_connection_setup(&mut observation, &phases);
+        assert_eq!(observation.dns_micros, Some(0));
+        assert_eq!(observation.tcp_micros, Some(0));
+        assert_eq!(observation.tls_micros, Some(0));
     }
 
     #[test]

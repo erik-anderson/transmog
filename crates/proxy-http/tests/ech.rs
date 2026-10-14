@@ -15,7 +15,7 @@ use transmog_http::{HyperEgressMode, HyperOriginClient};
 use transmog_tls::{
     EndpointIdentity, PemTrustSource, ProxyCa, TrustSnapshot, UpstreamTlsContextFactory,
     UpstreamTlsPolicy,
-    ech::{EchConfigSource, EchLookup, EchOffer},
+    ech::{EchCandidatesLookup, EchConfigSource, EchLookup, EchOffer},
 };
 mod support;
 
@@ -34,6 +34,18 @@ impl EchConfigSource for Fixed {
         Box::pin(async move { Some(offer) })
     }
 }
+#[derive(Debug)]
+struct Alternatives(Vec<EchOffer>);
+impl EchConfigSource for Alternatives {
+    fn lookup(&self, _: String, _: u16, _: Vec<String>) -> EchLookup {
+        let offer = self.0.first().cloned();
+        Box::pin(async move { offer })
+    }
+    fn lookup_candidates(&self, _: String, _: u16, _: Vec<String>) -> EchCandidatesLookup {
+        let offers = self.0.clone();
+        Box::pin(async move { offers })
+    }
+}
 fn configs(seed: u8) -> (Vec<u8>, SslEchKeys) {
     let key = HpkeKey::dhkem_p256_sha256(&[seed; 32]).unwrap();
     let config =
@@ -50,27 +62,30 @@ fn configs(seed: u8) -> (Vec<u8>, SslEchKeys) {
 async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
     for scenario in [
         "accepted",
+        "alternatives",
         "rotation",
         "rollback",
         "rollback-tls12",
         "untrusted",
+        "untrusted-alternatives",
     ] {
         let ca = ProxyCa::generate("ECH fixture", 2).unwrap();
         let wrong = ProxyCa::generate("Untrusted public name", 2).unwrap();
         let (initial, _) = configs(7);
-        let (_, current) = configs(if scenario == "accepted" { 7 } else { 8 });
+        let (_, current) = configs(if matches!(scenario, "accepted" | "alternatives") {
+            7
+        } else {
+            8
+        });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let connections = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(AtomicUsize::new(0));
         let mut servers = Vec::new();
-        let rejected = scenario != "accepted";
+        let untrusted = scenario.starts_with("untrusted");
+        let rejected = !matches!(scenario, "accepted" | "alternatives");
         for phase in 0..if rejected { 2 } else { 1 } {
-            let root = if scenario == "untrusted" && phase == 0 {
-                &wrong
-            } else {
-                &ca
-            };
+            let root = if untrusted && phase == 0 { &wrong } else { &ca };
             let name = if rejected && phase == 0 {
                 "public.example.test"
             } else {
@@ -100,7 +115,7 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
         let server = tokio::spawn(async move {
             for tls in servers {
                 let Ok(Ok((socket, _))) =
-                    tokio::time::timeout(Duration::from_millis(500), listener.accept()).await
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept()).await
                 else {
                     break;
                 };
@@ -132,14 +147,47 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
         });
         let trust =
             PemTrustSource::from_pem(&ca.certificate_pem().unwrap(), "ECH fixture").unwrap();
+        let source: Arc<dyn EchConfigSource> = if scenario.ends_with("alternatives") {
+            let (other, _) = configs(8);
+            let offers = if untrusted {
+                vec![
+                    EchOffer {
+                        config: initial.clone().into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                    EchOffer {
+                        config: other.into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                ]
+            } else {
+                vec![
+                    EchOffer {
+                        config: other.into(),
+                        endpoint: "127.0.0.2".into(),
+                        port,
+                    },
+                    EchOffer {
+                        config: initial.clone().into(),
+                        endpoint: "127.0.0.1".into(),
+                        port,
+                    },
+                ]
+            };
+            Arc::new(Alternatives(offers))
+        } else {
+            Arc::new(Fixed {
+                config: initial.into(),
+                port,
+            })
+        };
         let factory = UpstreamTlsContextFactory::new(
             Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
             UpstreamTlsPolicy::default(),
         )
-        .with_ech_config_source(Arc::new(Fixed {
-            config: initial.into(),
-            port,
-        }));
+        .with_ech_config_source(source);
         let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
         let client = HyperOriginClient::new(&factory)
             .unwrap()
@@ -157,13 +205,13 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
             .await;
         assert_eq!(
             result.is_ok(),
-            scenario != "untrusted",
+            !untrusted,
             "{scenario}: {:?}",
             result.as_ref().err().map(ToString::to_string)
         );
         assert_eq!(
             requests.load(Ordering::SeqCst),
-            usize::from(scenario != "untrusted"),
+            usize::from(!untrusted),
             "HTTP reached the rejection connection"
         );
         assert_eq!(
@@ -176,7 +224,7 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
             "{scenario}"
         );
         let evidence = recorder.snapshot();
-        if scenario == "untrusted" {
+        if untrusted {
             assert!(
                 evidence
                     .transports
@@ -188,6 +236,16 @@ async fn ech_acceptance_rotation_rollback_and_unauthenticated_rejection() {
                         .any(|value| value.contains("authenticated retry available")))
             );
         } else {
+            assert!(
+                evidence
+                    .transports
+                    .iter()
+                    .filter_map(|t| t.tls.as_ref())
+                    .any(|tls| tls
+                        .details
+                        .get("ECH service endpoint")
+                        .is_some_and(|v| v == "127.0.0.1"))
+            );
             assert!(
                 evidence
                     .transports

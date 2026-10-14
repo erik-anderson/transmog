@@ -154,34 +154,54 @@ where
                 _ => false,
             });
             let discovery_start = std::time::Instant::now();
-            let mut offer = if https {
+            let offers = if https {
                 factory
-                    .ech_offer(host, uri.port_u16().unwrap_or(443), alpn)
+                    .ech_offers(host, uri.port_u16().unwrap_or(443), alpn)
                     .await
             } else {
-                None
+                Vec::new()
             };
             if https && host.contains('.') && host.parse::<std::net::IpAddr>().is_err() {
                 crate::metrics::dns_finished(discovery_start, true);
             }
-            for attempt in 0..2 {
-                let routed = if let Some(offer) = &offer {
-                    Uri::builder()
-                        .scheme(uri.scheme_str().unwrap_or("https"))
-                        .authority(if offer.endpoint.parse::<std::net::Ipv6Addr>().is_ok() {
-                            format!("[{}]:{}", offer.endpoint, offer.port)
-                        } else {
-                            format!("{}:{}", offer.endpoint, offer.port)
-                        })
-                        .path_and_query("/")
-                        .build()?
-                } else {
-                    uri.clone()
+            let candidates = if offers.is_empty() {
+                vec![None]
+            } else {
+                offers.into_iter().map(Some).collect()
+            };
+            let mut connected = None;
+            let mut last_error: BoxError = "No usable ECH service endpoint".into();
+            for candidate in candidates {
+                let routed = match destination_uri(&uri, candidate.as_ref()) {
+                    Ok(uri) => uri,
+                    Err(error) => {
+                        last_error = error.into();
+                        continue;
+                    }
                 };
                 std::future::poll_fn(|cx| tcp.poll_ready(cx))
                     .await
                     .map_err(Into::into)?;
-                let socket = tcp.call(routed).await.map_err(Into::into)?.into_inner();
+                match tcp.call(routed).await {
+                    Ok(socket) => {
+                        connected = Some((candidate, socket.into_inner()));
+                        break;
+                    }
+                    Err(error) => last_error = error.into(),
+                }
+            }
+            let (mut offer, socket) = connected.ok_or(last_error)?;
+            let mut first_socket = Some(socket);
+            for attempt in 0..2 {
+                let socket = if let Some(socket) = first_socket.take() {
+                    socket
+                } else {
+                    let routed = destination_uri(&uri, offer.as_ref())?;
+                    std::future::poll_fn(|cx| tcp.poll_ready(cx))
+                        .await
+                        .map_err(Into::into)?;
+                    tcp.call(routed).await.map_err(Into::into)?.into_inner()
+                };
                 if !https {
                     return Ok(MaybeHttpsStream::Http(socket));
                 }
@@ -248,6 +268,23 @@ where
             Err("ECH retry limit reached".into())
         })
     }
+}
+fn destination_uri(
+    uri: &Uri,
+    offer: Option<&transmog_tls::ech::EchOffer>,
+) -> Result<Uri, http::Error> {
+    let Some(offer) = offer else {
+        return Ok(uri.clone());
+    };
+    Uri::builder()
+        .scheme(uri.scheme_str().unwrap_or("https"))
+        .authority(if offer.endpoint.parse::<std::net::Ipv6Addr>().is_ok() {
+            format!("[{}]:{}", offer.endpoint, offer.port)
+        } else {
+            format!("{}:{}", offer.endpoint, offer.port)
+        })
+        .path_and_query("/")
+        .build()
 }
 fn decode_alpn(mut wire: &[u8]) -> Vec<String> {
     let mut protocols = Vec::new();
