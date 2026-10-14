@@ -44,6 +44,31 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+/// Whether `BoringSSL` requires consuming this ticket on its first offer.
+pub fn session_should_be_single_use(session: &boring::ssl::SslSessionRef) -> bool {
+    // SAFETY: session is live for the synchronous read.
+    unsafe { boring_sys::SSL_SESSION_should_be_single_use(session.as_ptr()) != 0 }
+}
+
+/// Chromium caps TLS 1.2 tickets at one hour; TLS 1.3 retains native lifetimes.
+pub fn configure_session_lifetime(context: &mut SslContextBuilder) {
+    // SAFETY: exclusively borrowed live context; this setter retains no pointers.
+    unsafe { boring_sys::SSL_CTX_set_timeout(context.as_ptr(), 3600) };
+}
+
+/// Offers an owned client ticket selected from the transport's origin/policy partition.
+/// The shared custom verifier still rechecks its stored chain on resumption.
+/// # Errors
+/// Returns a native session installation failure.
+pub fn restore_client_session(
+    ssl: &mut SslRef,
+    session: &boring::ssl::SslSessionRef,
+) -> Result<(), ErrorStack> {
+    // SAFETY: both objects remain live during the synchronous setter. Production
+    // callers select tickets from their own context and authentication partition.
+    unsafe { ssl.set_session(session) }
+}
+
 /// Configures a reserved GREASE entry in outgoing `ClientHello` signature algorithms.
 ///
 /// This is independent of ordinary GREASE and does not change the real signature

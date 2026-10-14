@@ -22,6 +22,7 @@ transmog-network = { version = "=0.1.4", path = "../network" }
 transmog-tls = { version = "=0.1.4", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true
+tokio-boring.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
 
@@ -32,4 +33,3 @@ workspace = true
 transmog-tls = { version = "=0.1.4", path = "../proxy-tls", features = ["test-fixtures"] }
 tempfile.workspace = true
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
-tokio-boring.workspace = true

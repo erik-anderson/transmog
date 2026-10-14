@@ -33,6 +33,7 @@ fn config(f: &Fixture) -> quiche::Config {
     let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
     tls.set_certificate(&identity.certificate).unwrap();
     tls.set_private_key(&identity.private_key).unwrap();
+    tls.set_session_id_context(b"quic-integration").unwrap();
     let mut trust = X509StoreBuilder::new().unwrap();
     trust
         .add_cert(f.source.credential.chain.last().unwrap().clone())
@@ -57,6 +58,11 @@ fn config(f: &Fixture) -> quiche::Config {
 }
 pub async fn origin(f: &Fixture) -> Origin {
     origin_at(f, "127.0.0.1:0").await
+}
+pub async fn origin_without_client_authentication(f: &Fixture) -> Origin {
+    let mut config = config(f);
+    config.verify_peer(false);
+    origin_configs(vec![config], "127.0.0.1:0", true).await
 }
 pub async fn origin_at(f: &Fixture, bind: &str) -> Origin {
     origin_options(f, bind, true).await

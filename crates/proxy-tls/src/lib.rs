@@ -16,6 +16,8 @@ mod evidence;
 /// Monitored local certificate roles and pool admission identity.
 pub mod local_trust;
 mod resolver;
+/// Bounded TLS tickets shared by the TCP and QUIC adapters.
+pub mod session_cache;
 mod trust;
 /// Public Chromium PKI metadata and its selectable public root store.
 pub mod trust_anchors;
@@ -34,6 +36,7 @@ pub use evidence::TlsCapture;
 pub use resolver::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
 };
+pub use transmog_tls_native::restore_client_session;
 pub use transmog_tls_native::{configure_h2_application_settings, peer_application_settings};
 pub use trust::{
     CompositeTrustSource, LoadedTrust, PemTrustSource, SystemTrustSource, TrustError,

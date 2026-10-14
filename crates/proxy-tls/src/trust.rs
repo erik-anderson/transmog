@@ -731,7 +731,7 @@ impl UpstreamTlsContextFactory {
                 .ex_data(context_epoch_index()?)
                 .is_some_and(|epoch| *epoch != self.trust_epoch())
         {
-            // Hyper applies its cached session before this callback. A session
+            // The TCP adapter applies its cached session before this callback. A session
             // validated against an older root store must not bypass new trust.
             crate::client_connections::clear_cached_session(ssl)?;
         }
@@ -1053,6 +1053,7 @@ impl UpstreamTlsContextFactory {
         context_offer: bool,
     ) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
+        transmog_tls_native::configure_session_lifetime(builder);
         let settings = self.profile.as_ref().map_or_else(
             transmog_core::network_profile::NetworkProfileSettings::default,
             |profile| profile.settings.clone(),

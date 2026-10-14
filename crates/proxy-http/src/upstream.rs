@@ -7,7 +7,7 @@ use std::{
     vec,
 };
 
-use hyper_boring::HttpsConnector;
+use crate::tls_connector::ChromiumHttpsConnector;
 use hyper_util::client::legacy::connect::{
     HttpConnector,
     dns::{GaiResolver, Name},
@@ -61,7 +61,7 @@ impl Service<Name> for HappyEyeballsResolver {
 }
 
 /// HTTPS origin connector using Transmog's bounded DNS and connection policy.
-pub type HttpsOriginConnector = HttpsConnector<HttpConnector<HappyEyeballsResolver>>;
+pub type HttpsOriginConnector = ChromiumHttpsConnector<HttpConnector<HappyEyeballsResolver>>;
 
 /// Protocols advertised by one Hyper origin connector.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,7 +89,7 @@ impl HyperEgressMode {
 /// # Errors
 ///
 /// Returns [`TrustError`] when the common TLS policy, ALPN list, or
-/// `hyper-boring` session configuration cannot be applied.
+/// bounded session configuration cannot be applied.
 pub fn build_https_connector(
     factory: &UpstreamTlsContextFactory,
     mode: HyperEgressMode,
@@ -102,7 +102,7 @@ pub fn build_https_connector(
 /// # Errors
 ///
 /// Returns [`TrustError`] when the common TLS policy, ALPN list, or
-/// `hyper-boring` session configuration cannot be applied.
+/// bounded session configuration cannot be applied.
 pub fn build_https_connector_with_happy_eyeballs(
     factory: &UpstreamTlsContextFactory,
     mode: HyperEgressMode,
@@ -113,7 +113,7 @@ pub fn build_https_connector_with_happy_eyeballs(
     tcp.enforce_http(false);
     tcp.set_happy_eyeballs_timeout(Some(happy_eyeballs.attempt_delay()));
     let tls = factory.hyper_pool_connector_builder(mode.alpn())?;
-    let mut connector = HttpsConnector::with_connector(tcp, tls)?;
+    let mut connector = ChromiumHttpsConnector::new(tcp, tls, factory.clone())?;
     let factory = factory.clone();
     connector.set_ssl_callback(move |ssl, uri| {
         factory

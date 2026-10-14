@@ -1,7 +1,8 @@
 //! Physical connection instrumentation underneath Hyper's existing pools.
+use crate::tls_connector::ChromiumHttpsConnector;
 use crate::{HappyEyeballsResolver, HyperEgressMode};
 use http::Uri;
-use hyper_boring::{HttpsConnector, MaybeHttpsStream};
+use hyper_boring::MaybeHttpsStream;
 use hyper_util::{
     client::legacy::connect::{Connected, Connection, HttpConnector},
     rt::TokioIo,
@@ -331,7 +332,7 @@ impl AsyncWrite for MeasuredTcp {
 #[derive(Clone)]
 pub(crate) struct MeasuredHttpsConnector {
     authorization: UpstreamTlsContextFactory,
-    inner: HttpsConnector<MeasuredTcpConnector>,
+    inner: ChromiumHttpsConnector<MeasuredTcpConnector>,
     mode: HyperEgressMode,
     protocols: OutboundProtocolPolicy,
     happy: HappyEyeballsConfig,
@@ -530,7 +531,8 @@ pub(crate) fn connector(
     tcp.set_nodelay(true);
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
     let tls = factory.hyper_pool_connector_builder(mode.alpn())?;
-    let mut connector = HttpsConnector::with_connector(MeasuredTcpConnector(tcp), tls)?;
+    let mut connector =
+        ChromiumHttpsConnector::new(MeasuredTcpConnector(tcp), tls, factory.clone())?;
     let authorization = factory.clone();
     let factory = factory.clone();
     let generation = factory.client_certificate_admission_generation();
@@ -577,8 +579,7 @@ pub(crate) fn connector(
             generation,
             capture.clone(),
         ) {
-            // Hyper's own cache overwrites context cache settings. Clear any
-            // cached session after it has been applied, before sending ClientHello.
+            // A fresh CertificateRequest must authorize request-driven identities.
             transmog_tls::client_connections::clear_cached_session(ssl)?;
             attempt.attach_ssl(ssl)?;
             let _ = SETUP.try_with(|setup| {

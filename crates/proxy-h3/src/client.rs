@@ -26,6 +26,7 @@ use transmog_core::{
 use transmog_network::{
     HappyEyeballsConfig, HappyEyeballsError, race_candidates_with_retry, resolve_candidates,
 };
+use transmog_tls::session_cache::{SessionCache, SessionLifetime};
 use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 use crate::{H3ConfigError, H3TransportLimits};
@@ -80,6 +81,7 @@ pub struct H3OriginClient {
     happy_eyeballs: HappyEyeballsConfig,
     pool: Arc<Mutex<HashMap<PoolKey, PoolEntry>>>,
     connections: Arc<tokio::sync::Semaphore>,
+    tickets: Arc<SessionCache<TicketKey, Vec<u8>>>,
 }
 
 impl H3OriginClient {
@@ -88,6 +90,7 @@ impl H3OriginClient {
     pub fn with_tls_factory(mut self, tls: UpstreamTlsContextFactory) -> Self {
         self.tls = tls;
         self.pool = Arc::new(Mutex::new(HashMap::new()));
+        self.tickets = Arc::new(SessionCache::default());
         self
     }
 
@@ -140,6 +143,7 @@ impl H3OriginClient {
     ) -> Self {
         self.tls = self.tls.with_client_certificate_resolver(resolver, caller);
         self.pool = Arc::new(Mutex::new(HashMap::new()));
+        self.tickets = Arc::new(SessionCache::default());
         self.connections = connection_slots(self.limits);
         self
     }
@@ -164,6 +168,7 @@ impl H3OriginClient {
             pool: Arc::new(Mutex::new(HashMap::new())),
             connections: connection_slots(limits),
             performance: None,
+            tickets: Arc::new(SessionCache::default()),
         }
     }
 
@@ -411,6 +416,13 @@ impl H3OriginClient {
             .clone()
             .for_client_certificate_epoch(key.authentication_generation);
         let key = key.clone();
+        let mut ticket_key = key.clone();
+        // Physical no-reuse scopes do not forbid TLS session resumption.
+        ticket_key.scope = 0;
+        let tickets = (!tls.has_client_certificate_resolver()).then(|| TicketPartition {
+            cache: self.tickets.clone(),
+            key: ticket_key,
+        });
         let limits = self.limits;
         let happy = self.happy_eyeballs;
         let performance = self.performance.clone();
@@ -435,6 +447,7 @@ impl H3OriginClient {
                     limits,
                     happy,
                     performance,
+                    tickets,
                 );
                 tokio::pin!(connect);
                 loop {
@@ -576,6 +589,17 @@ struct PoolKey {
     trust_epoch: transmog_tls::local_trust::TrustEpoch,
 }
 
+#[derive(Clone)]
+struct TicketPartition {
+    cache: Arc<SessionCache<TicketKey, Vec<u8>>>,
+    key: PoolKey,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TicketKey {
+    partition: PoolKey,
+    peer: std::net::IpAddr,
+}
+
 struct DriverCommand {
     performance: Option<PerformanceRecorder>,
     request: PreparedRequest,
@@ -665,9 +689,13 @@ struct H3ConnectionDriver {
     transport: TransportObservation,
     setup_timings: Vec<ConnectionSetupTime>,
     uses: u64,
+    tickets: Option<TicketPartition>,
+    ticket_generation: u64,
+    last_ticket: Option<Vec<u8>>,
 }
 
 impl H3ConnectionDriver {
+    #[allow(clippy::too_many_arguments)] // Transport setup and its isolated ticket partition.
     async fn connect(
         host: String,
         origin_port: u16,
@@ -676,6 +704,7 @@ impl H3ConnectionDriver {
         limits: H3TransportLimits,
         happy_eyeballs: HappyEyeballsConfig,
         performance: Option<PerformanceRecorder>,
+        tickets: Option<TicketPartition>,
     ) -> Result<Self, H3OriginError> {
         let dns_begin = Instant::now();
         let candidates = resolve_candidates(&host, peer_port, happy_eyeballs).await?;
@@ -696,6 +725,7 @@ impl H3ConnectionDriver {
                     tls.clone(),
                     limits,
                     performance.clone(),
+                    tickets.clone(),
                 )
             },
             |error| !matches!(error, H3OriginError::ClientAuthenticationFailed),
@@ -728,6 +758,7 @@ impl H3ConnectionDriver {
         tls: UpstreamTlsContextFactory,
         limits: H3TransportLimits,
         performance: Option<PerformanceRecorder>,
+        tickets: Option<TicketPartition>,
     ) -> Result<Self, H3OriginError> {
         let setup_begin = Instant::now();
         tls.prepare_trust().await?;
@@ -763,13 +794,24 @@ impl H3ConnectionDriver {
         let mut source_connection_id = [0_u8; quiche::MAX_CONN_ID_LEN];
         rand_bytes(&mut source_connection_id)?;
         let source_connection_id = quiche::ConnectionId::from_ref(&source_connection_id);
-        let connection = quiche::connect(
+        let mut connection = quiche::connect(
             Some(host.as_str()),
             &source_connection_id,
             local_addr,
             peer_addr,
             &mut config,
         )?;
+        let ticket_generation = tickets
+            .as_ref()
+            .map_or(0, |tickets| tickets.cache.generation());
+        if let Some(tickets) = &tickets
+            && let Some(ticket) = tickets.cache.take(&TicketKey {
+                partition: tickets.key.clone(),
+                peer: peer_addr.ip(),
+            })
+        {
+            connection.set_session(&ticket)?;
+        }
         Box::pin(
             Self {
                 host,
@@ -795,6 +837,9 @@ impl H3ConnectionDriver {
                 },
                 setup_timings: Vec::new(),
                 uses: 0,
+                tickets,
+                ticket_generation,
+                last_ticket: None,
             }
             .establish(setup_begin, performance.as_ref()),
         )
@@ -841,6 +886,7 @@ impl H3ConnectionDriver {
                     recovery,
                     self.limits,
                     performance.cloned(),
+                    self.tickets.clone(),
                 ))
                 .await;
             }
@@ -856,13 +902,54 @@ impl H3ConnectionDriver {
             );
         }
         self.capture.completed(self.connection.as_mut(), false);
+        self.transport.tls_resumed = Some(self.connection.is_resumed());
         self.transport.cipher = self
             .connection
             .as_mut()
             .current_cipher()
             .map(|cipher| cipher.name().into());
         self.transport.tls = Some(self.capture.snapshot());
+        self.cache_ticket();
         Ok(self)
+    }
+
+    fn cache_ticket(&mut self) {
+        let Some(partition) = &self.tickets else {
+            return;
+        };
+        if !self.connection.is_established() {
+            return;
+        }
+        let Some(ticket) = self.connection.session() else {
+            return;
+        };
+        if self.last_ticket.as_deref() == Some(ticket) {
+            return;
+        }
+        // quiche prefixes its native DER session with an eight-byte length.
+        let Some(der) = ticket
+            .get(..8)
+            .and_then(|length| <[u8; 8]>::try_from(length).ok())
+            .and_then(|length| usize::try_from(u64::from_be_bytes(length)).ok())
+            .and_then(|length| 8usize.checked_add(length))
+            .and_then(|end| ticket.get(8..end))
+        else {
+            return;
+        };
+        let Ok(session) = boring::ssl::SslSession::from_der(der) else {
+            return;
+        };
+        let ticket = ticket.to_vec();
+        partition.cache.insert(
+            self.ticket_generation,
+            TicketKey {
+                partition: partition.key.clone(),
+                peer: self.peer_addr.ip(),
+            },
+            ticket.clone(),
+            SessionLifetime::from_session(&session),
+        );
+        self.last_ticket = Some(ticket);
     }
 
     async fn establish_inner(&mut self, setup_begin: Instant) -> Result<(), H3OriginError> {
@@ -988,6 +1075,8 @@ impl H3ConnectionDriver {
                 flush_streaming_outputs(&mut self.connection, active);
             }
             flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
+
+            self.cache_ticket();
 
             if receiver.is_closed() && pending.is_empty() && active.is_empty() {
                 return Ok(());
@@ -2259,6 +2348,7 @@ mod tests {
                     peer_addr,
                     tls.clone(),
                     limits,
+                    None,
                     None,
                 )
             }),
