@@ -29,6 +29,15 @@ browser parity.
 
 ## Implemented core policy
 
+- Production TCP and QUIC use buffered TLS certificates, allowing PKI to ignore
+  malformed unused issuer entries while rejecting malformed leaves and required
+  issuers. Certificate credentials and evidence use the corresponding buffer APIs.
+- Missing issuers can be retrieved through bounded AIA HTTP requests. A bounded
+  intermediate cache retains only intermediates from fully accepted paths; they
+  remain untrusted candidates on every subsequent verification. Production
+  verification runs on workers with owned inputs and cancellation. See the
+  [negotiation contract](chromium-negotiation.md#missing-issuers) for fetch bounds,
+  parsing, caching and embedding details.
 - Chromium parse options, RSA minimum 1024 bits and `kStrong` certificate
   signature policy; supported curves and signatures are decided by PKI.
 - RFC 5280 path building and validation, including alternate paths, name
@@ -85,17 +94,8 @@ conditions are evaluated against the retry's actual TLS leaf and verified SCTs.
 These are additional work on the same verifier, not reasons to maintain a
 legacy fallback:
 
-- Buffered TLS transport integration. The callback consumes raw TLS buffers and
-  PKI-parsed SANs, but the current Rust connector/quiche integration uses
-  BoringSSL's legacy TLS method, which eagerly caches X.509 objects before the
-  callback. It can reject malformed unused wire intermediates that Chromium's
-  buffered TLS method lets PKI ignore. Changing methods requires adapting the
-  crate integration's X.509-dependent configuration and accessors. This is a
-  deferred maintenance decision, not a second certificate verifier.
 - Chrome's optional online-revocation modes and EV-specific hard-fail checks.
   The ordinary policy matches Chrome's default offline CRLSet/stapled-OCSP use.
-- AIA issuer fetching and intermediate caching. Path building currently uses
-  peer-supplied certificates, metadata helpers and the monitored local stores.
 - EV classification, Chrome's clock-recovery retry, MTC and QWAC policy.
 
 These gaps must stay visible when describing Chromium matching. Do not treat
