@@ -106,6 +106,12 @@ pub(crate) fn build_quiche_config_authenticated(
 ) -> Result<quiche::Config, H3ConfigError> {
     limits.validate()?;
     let mut tls = factory.quiche_context_builder()?;
+    // Production driver owns a waker for certificate worker completion. The public
+    // low-level fixture/embedding configuration remains synchronous.
+    if capture.is_some() {
+        transmog_tls::issuer_source::enable_async_certificate_verification(&mut tls)
+            .map_err(TrustError::from)?;
+    }
     if let Some(capture) = capture {
         capture.attach_context(&mut tls).map_err(TrustError::from)?;
     }

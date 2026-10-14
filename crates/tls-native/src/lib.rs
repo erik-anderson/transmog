@@ -8,6 +8,8 @@ pub use ech::{
     authenticated_ech_retry, configure_ech, ech_configured, marshal_ech_config, record_ech_exit,
 };
 mod hostname;
+mod issuer_source;
+pub use issuer_source::{IssuerRequest, IssuerSource};
 mod security;
 pub use security::{
     CrlSet, CtConfig, CtLog, IssuerRevocations, LogOperator, SecurityPolicy, SecurityVerification,
@@ -22,10 +24,11 @@ pub use credentials::{
     selected_credential_chain, set_client_chain_and_private_key_method, set_context_chain_and_key,
 };
 pub use trust_anchors::{
-    CertificatePolicy, RootConstraint, TrustAnchorOfferError, certificate_is_ca,
-    configure_available_trust_anchors, configure_context_certificate_policy,
-    configure_context_peer_name, configure_context_trust_anchors, configure_ssl_certificate_policy,
-    configure_ssl_peer_name, configure_ssl_trust_anchors, observe_context_verification,
+    CertificatePolicy, CompletedVerification, RootConstraint, TrustAnchorOfferError,
+    VerificationInput, certificate_is_ca, configure_available_trust_anchors,
+    configure_context_certificate_policy, configure_context_peer_name,
+    configure_context_trust_anchors, configure_ssl_certificate_policy, configure_ssl_peer_name,
+    configure_ssl_trust_anchors, enable_async_verification, observe_context_verification,
     observe_ssl_verification, peer_trust_anchors, peer_verification_succeeded,
     peer_verified_for_name,
 };

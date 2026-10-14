@@ -7434,10 +7434,16 @@ dependencies = [
 name = "transmog-tls"
 version = "0.1.4"
 dependencies = [
+ "async-compression",
  "boring",
  "boring-sys",
  "brotli",
+ "bytes",
  "hickory-resolver",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "prost",
  "quiche",
  "rustls-native-certs",
@@ -7453,6 +7459,7 @@ dependencies = [
  "transmog-tls",
  "transmog-tls-native",
  "transmog-windows-trust",
+ "url",
 ]
 
 [[package]]

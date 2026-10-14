@@ -5,7 +5,7 @@ use foreign_types::ForeignTypeRef;
 use std::{
     ffi::c_void,
     ptr::NonNull,
-    sync::{Arc, Mutex, OnceLock, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak, atomic::AtomicBool},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -62,6 +62,7 @@ unsafe extern "C" {
         scts_len: usize,
         ocsp: *const u8,
         ocsp_len: usize,
+        hooks: *const crate::issuer_source::Hooks,
     ) -> *mut c_void;
     fn transmog_pki_result_free(result: *mut c_void);
     fn transmog_pki_result_code(result: *const c_void) -> i32;
@@ -96,6 +97,10 @@ pub fn certificate_is_parseable(bytes: &[u8]) -> bool {
 /// Result of a single PKI path-building operation, including failed paths.
 #[derive(Clone, Debug)]
 pub struct Verification {
+    /// Number of valid AIA URLs admitted by the path builder (including unsupported schemes).
+    pub issuer_fetch_attempts: usize,
+    /// A cached untrusted candidate occurred in the path selected by the builder.
+    pub cached_issuer_used: bool,
     /// CT and revocation checks on PKI's chosen path.
     pub security: crate::SecurityVerification,
     /// Whether the requested certificate use passed verification.
@@ -122,6 +127,8 @@ impl Verification {
     /// receive results by shared reference and cannot authorize certificates.
     pub fn failure(message: &str) -> Self {
         Self {
+            issuer_fetch_attempts: 0,
+            cached_issuer_used: false,
             security: crate::SecurityVerification::default(),
             accepted: false,
             error_code: 28,
@@ -366,12 +373,7 @@ pub(crate) fn verify(
     verify_evidence(compiled, policy, certificates, authority, &[], &[])
 }
 
-pub(crate) fn verify_peer(
-    compiled: &CompiledPolicy,
-    policy: &CertificatePolicy,
-    certificates: &[Vec<u8>],
-    ssl: &SslRef,
-) -> Verification {
+pub(crate) fn peer_security_evidence(ssl: &SslRef) -> Result<(Vec<u8>, Vec<u8>), ()> {
     let evidence = |kind| {
         let mut len = 0;
         // SAFETY: SSL is borrowed for the copy; native getter exposes handshake-owned bytes.
@@ -385,19 +387,36 @@ pub(crate) fn verify_peer(
         // SAFETY: getter returned len valid bytes owned by the live SSL object.
         Ok(unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec())
     };
-    let (Ok(scts), Ok(ocsp)) = (evidence(0), evidence(1)) else {
-        return Verification::failure("TLS verification evidence exceeds supported bounds");
-    };
-    verify_evidence(compiled, policy, certificates, false, &scts, &ocsp)
+    Ok((evidence(0)?, evidence(1)?))
 }
 
-fn verify_evidence(
+pub(crate) fn verify_evidence(
     compiled: &CompiledPolicy,
     policy: &CertificatePolicy,
     certificates: &[Vec<u8>],
     authority: bool,
     scts: &[u8],
     ocsp: &[u8],
+) -> Verification {
+    verify_owned(
+        compiled,
+        policy,
+        certificates,
+        authority,
+        scts,
+        ocsp,
+        Arc::default(),
+    )
+}
+#[allow(clippy::too_many_arguments)] // Owned TLS evidence and cancellation for the single verifier.
+pub(crate) fn verify_owned(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    authority: bool,
+    scts: &[u8],
+    ocsp: &[u8],
+    cancelled: Arc<AtomicBool>,
 ) -> Verification {
     if policy.unavailable {
         return Verification::failure("Current certificate trust is unavailable");
@@ -412,7 +431,16 @@ fn verify_evidence(
     else {
         return Verification::failure("Cannot determine certificate verification time");
     };
-    verify_time(compiled, policy, certificates, authority, time, scts, ocsp)
+    verify_time_with_cancel(
+        compiled,
+        policy,
+        certificates,
+        authority,
+        time,
+        scts,
+        ocsp,
+        cancelled,
+    )
 }
 
 #[cfg(test)]
@@ -434,6 +462,7 @@ fn verify_at(
     )
 }
 
+#[cfg(test)]
 fn verify_time(
     compiled: &CompiledPolicy,
     policy: &CertificatePolicy,
@@ -443,8 +472,53 @@ fn verify_time(
     scts: &[u8],
     ocsp: &[u8],
 ) -> Verification {
-    let pointers: Vec<_> = certificates.iter().map(Vec::as_ptr).collect();
-    let lengths: Vec<_> = certificates.iter().map(Vec::len).collect();
+    verify_time_with_cancel(
+        compiled,
+        policy,
+        certificates,
+        authority,
+        time,
+        scts,
+        ocsp,
+        Arc::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Testable verification instant plus owned cancellation.
+#[allow(clippy::too_many_lines)] // One native result translated into capture evidence.
+fn verify_time_with_cancel(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    authority: bool,
+    time: i64,
+    scts: &[u8],
+    ocsp: &[u8],
+    cancelled: Arc<AtomicBool>,
+) -> Verification {
+    if certificates.is_empty() {
+        return Verification::failure("No peer certificate");
+    }
+    let cached = if authority {
+        Vec::new()
+    } else {
+        policy.issuer_source.as_ref().map_or_else(Vec::new, |s| {
+            s.cached_issuers()
+                .into_iter()
+                .filter(|cert| !cert.is_empty() && cert.len() <= 65536)
+                .take(256)
+                .collect()
+        })
+    };
+    let chain: Vec<_> = certificates.iter().chain(&cached).collect();
+    let pointers: Vec<_> = chain.iter().map(|c| c.as_ptr()).collect();
+    let lengths: Vec<_> = chain.iter().map(|c| c.len()).collect();
+    let mut fetch = crate::issuer_source::FetchContext {
+        source: policy.issuer_source.clone(),
+        cancelled,
+        attempts: 0,
+    };
+    let hooks = fetch.hooks();
     // SAFETY: immutable compiled inputs and borrowed peer buffers live through
     // this synchronous call. Native output is a newly owned independent result.
     let result = unsafe {
@@ -452,13 +526,14 @@ fn verify_time(
             compiled.0.as_ptr(),
             pointers.as_ptr(),
             lengths.as_ptr(),
-            certificates.len(),
+            chain.len(),
             time,
             authority,
             scts.as_ptr(),
             scts.len(),
             ocsp.as_ptr(),
             ocsp.len(),
+            &raw const hooks,
         )
     };
     let Some(result) = NonNull::new(result).map(NativeResult) else {
@@ -514,7 +589,10 @@ fn verify_time(
         11 => 20,
         _ => 28,
     };
+    let cached_issuer_used = path.iter().any(|cert| cached.contains(cert));
     Verification {
+        issuer_fetch_attempts: fetch.attempts,
+        cached_issuer_used,
         security: security_result(&result),
         accepted,
         error_code,

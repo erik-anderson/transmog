@@ -78,6 +78,7 @@ impl<S> ChromiumHttpsConnector<S> {
         factory: UpstreamTlsContextFactory,
         alpn: &[u8],
     ) -> Result<Self, ErrorStack> {
+        transmog_tls::issuer_source::enable_async_certificate_verification(&mut builder)?;
         let cache = Arc::new(SessionCache::default());
         let index = owner_index()?;
         let tickets = cache.clone();

@@ -323,6 +323,7 @@ impl Default for UpstreamTlsPolicy {
 // Independent embedding/test source overrides; these are not mutually exclusive states.
 #[allow(clippy::struct_excessive_bools)]
 pub struct UpstreamTlsContextFactory {
+    issuer_source: Arc<dyn transmog_tls_native::IssuerSource>,
     pub(crate) ech_source: Arc<dyn crate::ech::EchConfigSource>,
     pub(crate) ech_retry: Option<crate::ech::EchOffer>,
     verification_policy_cache: PolicyCache,
@@ -363,9 +364,20 @@ impl fmt::Debug for ClientAuthentication {
 }
 
 impl UpstreamTlsContextFactory {
+    /// Overrides issuer retrieval while preserving the one verifier and configured trust.
+    #[must_use]
+    pub fn with_issuer_source(
+        mut self,
+        source: Arc<dyn transmog_tls_native::IssuerSource>,
+    ) -> Self {
+        self.issuer_source = source;
+        self.verification_policy_cache = Arc::default();
+        self
+    }
     /// Creates a factory. Replacing trust requires constructing a new factory and pools.
     pub fn new(snapshot: Arc<TrustSnapshot>, policy: UpstreamTlsPolicy) -> Self {
         Self {
+            issuer_source: Arc::new(crate::issuer_source::HttpIssuerSource::default()),
             ech_source: Arc::new(crate::ech::SystemEchSource::default()),
             ech_retry: None,
             verification_policy_cache: Arc::default(),
@@ -666,6 +678,7 @@ impl UpstreamTlsContextFactory {
         }?;
         let mut policy = (*policy).clone();
         policy.security = Some(self.verification_data().policy.clone());
+        policy.issuer_source = Some(self.issuer_source.clone());
         #[cfg(feature = "test-fixtures")]
         if self.private_test_roots {
             policy.known_public_roots = Arc::default();

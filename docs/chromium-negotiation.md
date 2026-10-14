@@ -79,3 +79,31 @@ rollback. Its certificate must verify for the original origin. Origin client
 identities and HTTP requests are never sent on a rejection connection. Untrusted
 public-name certificates, damaged handshakes and repeated rejections fail closed.
 Both attempted connections and their actual ECH outcomes remain in captures.
+
+## Missing issuers
+
+The single PKI path builder consults supplied issuers and the intermediate cache
+first, then retrieves AIA CA-issuer URLs when it needs additional candidates.
+Like Chromium's issuer source, it starts at most five valid URLs per certificate,
+waits for their results in order, accepts individual DER, CMS/PKCS#7, or the first
+PEM certificate, limits decoded responses to 64 KiB, and bounds each batch to 10
+seconds. HTTP content encodings are decoded within that bound; encoded input is
+additionally limited to 256 KiB.
+Only HTTP is supported, including after redirects. Fetches send no cookies,
+caller headers or authentication and bypass the proxy's TLS machinery to avoid
+recursive verification. The path builder retains its 60-second and 20-iteration
+limits. Cancellation stops outstanding fetches.
+
+Production TCP and QUIC verification runs on bounded workers. Only owned DER,
+expected identity, SCT/OCSP evidence and frozen trust inputs cross threads; the
+TLS object and capture publication stay on their owning thread. Low-level
+synchronous embedding contexts retain synchronous verification; async adapters
+install the worker callback and must supply a TLS task waker.
+
+Only intermediates from fully accepted paths enter the bounded cache: up to 256
+certificates and 4 MiB, with seven days of inactivity expiry. Leaf certificates
+and anchors are excluded. Cached certificates remain untrusted candidates;
+every new path rechecks trust, expiry, constraints, hostname, CT and revocation.
+Capture details report AIA retrieval attempts and whether a cached candidate was
+used. This is a process-local intermediate cache, not Chromium's complete HTTP
+cache or browser-level certificate-verification cache.

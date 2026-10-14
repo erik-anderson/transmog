@@ -56,6 +56,8 @@ pub struct RootConstraint {
 /// Frozen ordinary verification inputs. Helpers never confer certificate trust.
 #[derive(Clone, Debug, Default)]
 pub struct CertificatePolicy {
+    /// Optional untrusted issuer discovery; never changes the configured roots.
+    pub issuer_source: Option<Arc<dyn crate::IssuerSource>>,
     /// A bootstrap context has no current local inventory and must reject TLS.
     pub unavailable: bool,
     /// Untrusted issuer candidates.
@@ -98,6 +100,130 @@ static SSL_OBSERVER: OnceLock<Result<Index<Ssl, Observer>, ErrorStack>> = OnceLo
 static CTX_OBSERVER: OnceLock<Result<Index<SslContext, Observer>, ErrorStack>> = OnceLock::new();
 static SSL_OFFER: OnceLock<Result<Index<Ssl, bool>, ErrorStack>> = OnceLock::new();
 static CTX_OFFER: OnceLock<Result<Index<SslContext, bool>, ErrorStack>> = OnceLock::new();
+static ASYNC_CONTEXT: OnceLock<Result<Index<SslContext, ()>, ErrorStack>> = OnceLock::new();
+
+/// Owned inputs for the single verifier. Contains no TLS object or borrowed pointer.
+pub struct VerificationInput {
+    policy: Policy,
+    certificates: Vec<Vec<u8>>,
+    scts: Vec<u8>,
+    ocsp: Vec<u8>,
+    name: Option<String>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+/// Opaque completed verification, published only on the TLS owning thread.
+pub struct CompletedVerification {
+    result: Verification,
+    name: Option<String>,
+}
+impl CompletedVerification {
+    /// Creates a rejection if a verification worker cannot complete.
+    pub fn failure(message: &str) -> Self {
+        Self {
+            result: Verification::failure(message),
+            name: None,
+        }
+    }
+}
+impl VerificationInput {
+    fn from_ssl(ssl: &SslRef) -> Result<Self, SslAlert> {
+        let policy = SSL_INDEX
+            .get()
+            .and_then(|i| i.as_ref().ok())
+            .and_then(|i| ssl.ex_data(*i))
+            .or_else(|| {
+                CTX_INDEX
+                    .get()
+                    .and_then(|i| i.as_ref().ok())
+                    .and_then(|i| ssl.ssl_context().ex_data(*i))
+            })
+            .ok_or(SslAlert::INTERNAL_ERROR)?
+            .clone();
+        let (scts, ocsp) =
+            crate::verifier::peer_security_evidence(ssl).map_err(|()| SslAlert::BAD_CERTIFICATE)?;
+        Ok(Self {
+            policy,
+            certificates: crate::verifier::peer_certificate_chain(ssl),
+            scts,
+            ocsp,
+            name: expected_name(ssl).map(str::to_owned),
+            cancelled: Arc::default(),
+        })
+    }
+    /// Cancellation signal checked by path building and issuer fetches.
+    pub fn cancellation(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.cancelled.clone()
+    }
+    /// Runs the same PKI builder, hostname and public-program checks as synchronous TLS.
+    pub fn verify(self) -> CompletedVerification {
+        let mut result = crate::verifier::verify_owned(
+            &self.policy.compiled,
+            &self.policy.input,
+            &self.certificates,
+            false,
+            &self.scts,
+            &self.ocsp,
+            self.cancelled.clone(),
+        );
+        check_peer_name(&mut result, self.name.as_deref());
+        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            result = Verification::failure("Certificate verification cancelled");
+        }
+        if result.accepted
+            && let Some(source) = &self.policy.input.issuer_source
+        {
+            source.cache_verified_path(&result.path);
+        }
+        CompletedVerification {
+            name: result.accepted.then_some(self.name).flatten(),
+            result,
+        }
+    }
+}
+/// Runs verification futures while retaining all TLS access on the owning thread.
+/// The TLS driver must install its task waker before starting the handshake.
+/// # Errors
+/// Returns a native callback-data allocation failure.
+pub fn enable_async_verification(
+    context: &mut SslContextBuilder,
+    execute: impl Fn(
+        VerificationInput,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = CompletedVerification> + Send>,
+    > + Send
+    + Sync
+    + 'static,
+) -> Result<(), ErrorStack> {
+    context.set_ex_data(
+        ASYNC_CONTEXT
+            .get_or_init(SslContext::new_ex_index::<()>)
+            .clone()?,
+        (),
+    );
+    context.set_async_custom_verify_callback(SslVerifyMode::PEER, move |ssl| {
+        let mut future = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            VerificationInput::from_ssl(ssl).map(&execute)
+        }))
+        .map_err(|_| SslAlert::INTERNAL_ERROR)??;
+        Ok(Box::pin(std::future::poll_fn(move |cx| {
+            let polled =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(cx)));
+            let completed = match polled {
+                Ok(std::task::Poll::Pending) => return std::task::Poll::Pending,
+                Ok(std::task::Poll::Ready(result)) => result,
+                Err(_) => CompletedVerification::failure("Certificate verifier panicked"),
+            };
+            let finish: boring::ssl::BoxCustomVerifyFinish = Box::new(move |ssl| {
+                finish_verification(ssl, completed).map_err(|error| match error {
+                    SslVerifyError::Invalid(alert) => alert,
+                    SslVerifyError::Retry => SslAlert::INTERNAL_ERROR,
+                })
+            });
+            std::task::Poll::Ready(Ok(finish))
+        })))
+    });
+    Ok(())
+}
 
 /// A Trust Anchor ID offer could not be applied to this TLS object.
 #[derive(Debug)]
@@ -180,6 +306,14 @@ pub fn configure_ssl_certificate_policy(
             compiled,
         }),
     );
+    // Keep the context's async callback when updating per-connection frozen trust.
+    if ASYNC_CONTEXT
+        .get()
+        .and_then(|i| i.as_ref().ok())
+        .is_some_and(|i| ssl.ssl_context().ex_data(*i).is_some())
+    {
+        return Ok(());
+    }
     // SAFETY: SSL-owned ex-data holds the policy; no borrowed callback data escapes.
     unsafe {
         boring_sys::SSL_set_custom_verify(
@@ -276,18 +410,25 @@ pub fn observe_context_verification(
 }
 
 fn verify_peer(ssl: &mut SslRef) -> Result<(), SslVerifyError> {
+    let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        VerificationInput::from_ssl(ssl).map(VerificationInput::verify)
+    }))
+    .map_err(|_| SslVerifyError::Invalid(SslAlert::INTERNAL_ERROR))?
+    .map_err(SslVerifyError::Invalid)?;
+    finish_verification(ssl, completed)
+}
+fn finish_verification(
+    ssl: &mut SslRef,
+    completed: CompletedVerification,
+) -> Result<(), SslVerifyError> {
     // Never allow Rust panics to cross the TLS callback boundary.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let result = verify_peer_inner(ssl);
+        let result = completed.result;
         let verified = VERIFIED
             .get_or_init(Ssl::new_ex_index::<Option<String>>)
             .clone()
             .map_err(|_| SslVerifyError::Invalid(SslAlert::INTERNAL_ERROR))?;
-        let name = result
-            .accepted
-            .then(|| expected_name(ssl).map(str::to_owned))
-            .flatten();
-        ssl.set_ex_data(verified, name);
+        ssl.set_ex_data(verified, completed.name);
         let observer = SSL_OBSERVER
             .get()
             .and_then(|i| i.as_ref().ok())
@@ -331,24 +472,7 @@ fn expected_name(ssl: &SslRef) -> Option<&str> {
         .map(String::as_str)
         .or_else(|| ssl.servername(NameType::HOST_NAME))
 }
-fn verify_peer_inner(ssl: &SslRef) -> Verification {
-    let policy = SSL_INDEX
-        .get()
-        .and_then(|i| i.as_ref().ok())
-        .and_then(|i| ssl.ex_data(*i))
-        .or_else(|| {
-            CTX_INDEX
-                .get()
-                .and_then(|i| i.as_ref().ok())
-                .and_then(|i| ssl.ssl_context().ex_data(*i))
-        });
-    let Some(policy) = policy else {
-        return Verification::failure("No PKI verifier inputs configured");
-    };
-    let certificates = crate::verifier::peer_certificate_chain(ssl);
-    let mut result =
-        crate::verifier::verify_peer(&policy.compiled, &policy.input, &certificates, ssl);
-    let name = expected_name(ssl);
+fn check_peer_name(result: &mut Verification, name: Option<&str>) {
     if result
         .names
         .as_ref()
@@ -383,7 +507,6 @@ fn verify_peer_inner(ssl: &SslRef) -> Verification {
             "Certificate violates Chromium's fixed public-key name restrictions".into();
         result.trust_role = None;
     }
-    result
 }
 
 /// Whether DER declares certificate-authority capability. This is an import

@@ -12,6 +12,33 @@ use boring::{
     },
 };
 
+#[derive(Debug)]
+struct CachedOnly;
+impl crate::IssuerSource for CachedOnly {
+    fn start(
+        &self,
+        _: &[String],
+        _: std::time::Duration,
+        _: Arc<AtomicBool>,
+    ) -> Box<dyn crate::IssuerRequest> {
+        panic!("Missing peer cannot trigger AIA")
+    }
+    fn cached_issuers(&self) -> Vec<Vec<u8>> {
+        panic!("Missing peer cannot substitute a cached certificate")
+    }
+}
+#[test]
+fn missing_peer_rejects_before_consulting_cached_or_network_issuers() {
+    let policy = Arc::new(CertificatePolicy {
+        issuer_source: Some(Arc::new(CachedOnly)),
+        ..Default::default()
+    });
+    let result = verify(&compile(&policy).unwrap(), &policy, &[], false);
+    assert!(!result.accepted);
+    assert!(result.path.is_empty());
+    assert_eq!(result.diagnostic, "No peer certificate");
+}
+
 fn certificate(key: &PKey<Private>, issuer: Option<&X509>, start: i64, expiry: i64) -> X509 {
     certificate_extra(key, issuer, start, expiry, None)
 }

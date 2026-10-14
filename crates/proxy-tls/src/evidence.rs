@@ -447,7 +447,7 @@ impl TlsCapture {
                 insert_detail(&mut data, "ECH rejection public name", name);
             }
         }
-        insert_detail(&mut data, "Certificate verifier", "Chromium BoringSSL PKI");
+        collect_issuer_source(&mut data, result);
         collect_verification(&mut data, &result.security);
         insert_detail(
             &mut data,
@@ -534,6 +534,23 @@ impl TlsCapture {
     }
 }
 
+fn collect_issuer_source(data: &mut TlsEvidence, result: &transmog_tls_native::Verification) {
+    insert_detail(data, "Certificate verifier", "Chromium BoringSSL PKI");
+    insert_detail(
+        data,
+        "AIA issuer retrieval attempts",
+        &result.issuer_fetch_attempts.to_string(),
+    );
+    insert_detail(
+        data,
+        "Intermediate cache",
+        if result.cached_issuer_used {
+            "Used an untrusted cached issuer candidate"
+        } else {
+            "No cached issuer used"
+        },
+    );
+}
 fn collect_verification(
     data: &mut TlsEvidence,
     result: &transmog_tls_native::SecurityVerification,

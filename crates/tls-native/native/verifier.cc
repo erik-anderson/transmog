@@ -3,6 +3,9 @@
 #include <openssl/pool.h>
 #include <openssl/sha.h>
 #include <openssl/ssl.h>
+#include <openssl/pkcs7.h>
+#include <openssl/bytestring.h>
+#include <openssl/err.h>
 
 #include <chrono>
 #include <ctime>
@@ -19,6 +22,7 @@
 #include "pki/general_names.h"
 #include "pki/name_constraints.h"
 #include "pki/path_builder.h"
+#include "pki/pem.h"
 #include "pki/simple_path_builder_delegate.h"
 #include "pki/trust_store_in_memory.h"
 #include "security.h"
@@ -29,6 +33,14 @@ constexpr size_t kSha256Size = SHA256_DIGEST_LENGTH;
 }
 namespace {
 using namespace bssl;
+struct IssuerHooks {
+  void *context;
+  bool (*valid_url)(const uint8_t *, size_t);
+  void *(*start)(void *, const uint8_t *const *, const size_t *, size_t, uint64_t);
+  bool (*next)(void *, void (*)(void *, const uint8_t *, size_t), void *);
+  void (*destroy)(void *);
+  bool (*cancelled)(void *);
+};
 #include "cert_verify_proc_blocklist.inc"
 
 DEFINE_CERT_ERROR_ID(
@@ -191,20 +203,101 @@ struct Policy : TrustStore {
   }
 };
 
+// The path builder alone decides when to fetch. Responses are untrusted issuers.
+class NetworkIssuers : public CertIssuerSource {
+ public:
+  NetworkIssuers(const IssuerHooks *hooks,
+                 std::chrono::steady_clock::time_point deadline)
+      : hooks_(hooks), deadline_(deadline) {}
+  void SyncGetIssuersOf(const ParsedCertificate *, ParsedCertificateList *) override {}
+  void AsyncGetIssuersOf(const ParsedCertificate *cert,
+                        std::unique_ptr<Request> *out) override {
+    out->reset();
+    if (!hooks_ || hooks_->cancelled(hooks_->context)) return;
+    std::vector<const uint8_t *> urls;
+    std::vector<size_t> lengths;
+    for (auto uri : cert->ca_issuers_uris()) {
+      auto *bytes = reinterpret_cast<const uint8_t *>(uri.data());
+      if (hooks_->valid_url(bytes, uri.size())) {
+        urls.push_back(bytes);
+        lengths.push_back(uri.size());
+        if (urls.size() == 5) break;
+      }
+    }
+    auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline_ - std::chrono::steady_clock::now()).count();
+    if (urls.empty() || remaining <= 0) return;
+    void *request = hooks_->start(hooks_->context, urls.data(), lengths.data(),
+                                 urls.size(), std::min<int64_t>(10000, remaining));
+    if (request) *out = std::make_unique<Pending>(hooks_, request);
+  }
+ private:
+  class Pending : public Request {
+   public:
+    Pending(const IssuerHooks *hooks, void *request) : hooks_(hooks), request_(request) {}
+    ~Pending() override { hooks_->destroy(request_); }
+    void GetNext(ParsedCertificateList *issuers) override {
+      while (!hooks_->cancelled(hooks_->context) &&
+             hooks_->next(request_, ParseResponse, issuers)) {
+        if (!issuers->empty()) return;
+      }
+    }
+   private:
+    static void ParseResponse(void *output, const uint8_t *bytes, size_t len) noexcept {
+      try {
+        if (len > 65536) return;
+        auto *issuers = static_cast<ParsedCertificateList *>(output);
+        if (auto cert = Parse(bytes, len)) {
+          issuers->push_back(std::move(cert));
+          return;
+        }
+        CBS cbs;
+        CBS_init(&cbs, bytes, len);
+        UniquePtr<STACK_OF(CRYPTO_BUFFER)> buffers(sk_CRYPTO_BUFFER_new_null());
+        bool cms = buffers && PKCS7_get_raw_certificates(buffers.get(), &cbs, nullptr);
+        // Format probing must not leave ASN.1 errors on the TLS thread in sync mode.
+        ERR_clear_error();
+        if (cms) {
+          for (size_t i = 0; i < sk_CRYPTO_BUFFER_num(buffers.get()); ++i) {
+            auto *buffer = sk_CRYPTO_BUFFER_value(buffers.get(), i);
+            if (auto cert = Parse(CRYPTO_BUFFER_data(buffer), CRYPTO_BUFFER_len(buffer)))
+              issuers->push_back(std::move(cert));
+          }
+          if (!issuers->empty()) return;
+        }
+        PEMTokenizer pem(std::string_view(reinterpret_cast<const char *>(bytes), len),
+                         std::vector<std::string>{"CERTIFICATE"});
+        if (pem.GetNext()) {
+          if (auto cert = Parse(reinterpret_cast<const uint8_t *>(pem.data().data()),
+                                pem.data().size()))
+            issuers->push_back(std::move(cert));
+        }
+      } catch (...) {}
+    }
+    const IssuerHooks *hooks_;
+    void *request_;
+  };
+  const IssuerHooks *hooks_;
+  std::chrono::steady_clock::time_point deadline_;
+};
+
 struct Delegate : SimplePathBuilderDelegate {
   bool authority;
   const Policy *policy;
   int64_t now;
   std::string_view tls_scts, staple;
   std::chrono::steady_clock::time_point deadline;
+  const IssuerHooks *hooks;
   explicit Delegate(bool authority, const Policy *policy, int64_t now,
-                    std::string_view tls_scts, std::string_view staple)
+                    std::string_view tls_scts, std::string_view staple,
+                    const IssuerHooks *hooks)
       : SimplePathBuilderDelegate(1024, DigestPolicy::kStrong),
         authority(authority), policy(policy), now(now), tls_scts(tls_scts),
         staple(staple),
-        deadline(std::chrono::steady_clock::now() + std::chrono::seconds(60)) {}
+        deadline(std::chrono::steady_clock::now() + std::chrono::seconds(60)), hooks(hooks) {}
   bool IsDeadlineExpired() override {
-    return std::chrono::steady_clock::now() >= deadline;
+    return std::chrono::steady_clock::now() >= deadline ||
+           (hooks && hooks->cancelled(hooks->context));
   }
   void CheckPathAfterVerification(const CertPathBuilder &,
                                   CertPathBuilderResultPath *path) override {
@@ -471,7 +564,8 @@ int transmog_pki_policy_add(void *pointer, const uint8_t *data, size_t len,
 void *transmog_pki_verify(void *pointer, const uint8_t *const *certificates,
                           const size_t *lengths, size_t count, int64_t time_ms,
                           bool authority, const uint8_t *scts, size_t scts_len,
-                          const uint8_t *ocsp, size_t ocsp_len) noexcept {
+                          const uint8_t *ocsp, size_t ocsp_len,
+                          const IssuerHooks *hooks) noexcept {
   try {
     auto result = std::make_unique<Result>();
     if (count == 0) {
@@ -505,13 +599,15 @@ void *transmog_pki_verify(void *pointer, const uint8_t *const *certificates,
     Delegate delegate(
         authority, policy, time_ms,
         std::string_view(reinterpret_cast<const char *>(scts), scts_len),
-        std::string_view(reinterpret_cast<const char *>(ocsp), ocsp_len));
+        std::string_view(reinterpret_cast<const char *>(ocsp), ocsp_len), hooks);
+    NetworkIssuers network(hooks, delegate.deadline);
     CertPathBuilder builder(
         target, policy, &delegate, time, KeyPurpose::SERVER_AUTH,
         InitialExplicitPolicy::kFalse, {der::Input(kAnyPolicyOid)},
         InitialPolicyMappingInhibit::kFalse, InitialAnyPolicyInhibit::kFalse);
     builder.AddCertIssuerSource(&peers);
     builder.AddCertIssuerSource(&policy->helpers);
+    if (hooks && !authority) builder.AddCertIssuerSource(&network);
     builder.SetIterationLimit(20);
     auto built = builder.Run();
     // CertVerifyProc applies the public lifetime policy to the selected path,

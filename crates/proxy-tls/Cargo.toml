@@ -23,6 +23,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+url = "=2.5.8"
+async-compression.workspace = true
 time.workspace = true
 
 [lints]

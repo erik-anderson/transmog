@@ -193,6 +193,7 @@ fn build(
         inventory: inventory.clone(),
         monitored: false,
         policy: Arc::new(CertificatePolicy {
+            issuer_source: None,
             unavailable: false,
             issuers: Arc::new(issuers),
             anchors: Arc::new(

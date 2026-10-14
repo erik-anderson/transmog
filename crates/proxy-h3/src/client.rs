@@ -677,7 +677,17 @@ impl ResponseTarget {
     }
 }
 
+struct VerificationWake(Arc<tokio::sync::Notify>);
+impl std::task::Wake for VerificationWake {
+    fn wake(self: Arc<Self>) {
+        self.0.notify_one();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.notify_one();
+    }
+}
 struct H3ConnectionDriver {
+    verification_ready: Arc<tokio::sync::Notify>,
     host: String,
     origin_port: u16,
     authentication: Option<transmog_tls::client_authentication::ClientAuthenticationAttempt>,
@@ -819,6 +829,12 @@ impl H3ConnectionDriver {
             &mut config,
         )?;
         transmog_tls::configure_quic_server_name(connection.as_mut(), &host)?;
+        let verification_ready = Arc::new(tokio::sync::Notify::new());
+        connection
+            .as_mut()
+            .set_task_waker(Some(std::task::Waker::from(Arc::new(VerificationWake(
+                verification_ready.clone(),
+            )))));
         if let Some(offer) = &ech {
             if !offer.config.is_empty() {
                 transmog_tls::configure_ech(connection.as_mut(), &offer.config)?;
@@ -846,6 +862,7 @@ impl H3ConnectionDriver {
         }
         Box::pin(
             Self {
+                verification_ready,
                 host,
                 origin_port,
                 authentication,
@@ -1009,6 +1026,7 @@ impl H3ConnectionDriver {
         flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         loop {
             if self.connection.is_established() {
+                self.connection.as_mut().set_task_waker(None);
                 self.setup_timings.push(ConnectionSetupTime {
                     phase: "quic",
                     began: setup_begin,
@@ -1026,6 +1044,7 @@ impl H3ConnectionDriver {
                 .timeout()
                 .unwrap_or(self.limits.idle_timeout);
             tokio::select! {
+                () = self.verification_ready.notified() => {},
                 packet = self.socket.recv(&mut recv_buffer) => {
                     let read = packet?;
                     let info = quiche::RecvInfo {

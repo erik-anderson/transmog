@@ -15,6 +15,8 @@ mod downstream;
 /// HTTPS service-binding discovery for encrypted ClientHello.
 pub mod ech;
 mod evidence;
+/// Bounded HTTP issuer discovery and untrusted intermediate caching.
+pub mod issuer_source;
 /// Monitored local certificate roles and pool admission identity.
 pub mod local_trust;
 mod resolver;
