@@ -123,7 +123,7 @@ def main():
                "source": f"https://chromium.googlesource.com/chromium/src/+/{REVISION}/",
                "inputSha256": inputs, "protobufSha256": hashlib.sha256(output).hexdigest(),
                "protobufBytes": len(output)}
-    (DATA / "snapshot.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    (DATA / "snapshot.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps(receipt, indent=2))
 
 

@@ -1,3 +1,5 @@
 fuzz/*.sh text eol=lf
 fuzz/corpus/** binary
 fuzz/seeds/** -text
+third_party/chromium-root-store/* text eol=lf
+third_party/chromium-root-store/crs.pb binary

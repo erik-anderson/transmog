@@ -14,8 +14,10 @@ class SnapshotTests(unittest.TestCase):
     def test_reproducible_snapshot_and_pinned_inputs(self):
         receipt = json.loads((generator.DATA / "snapshot.json").read_text(encoding="utf-8"))
         output = (generator.DATA / "crs.pb").read_bytes()
+        receipt_bytes = (generator.DATA / "snapshot.json").read_bytes()
         generator.main()
         self.assertEqual(output, (generator.DATA / "crs.pb").read_bytes())
+        self.assertEqual(receipt_bytes, (generator.DATA / "snapshot.json").read_bytes())
         self.assertEqual(receipt, json.loads((generator.DATA / "snapshot.json").read_text(encoding="utf-8")))
         self.assertEqual(hashlib.sha256(output).hexdigest(), receipt["protobufSha256"])
 
