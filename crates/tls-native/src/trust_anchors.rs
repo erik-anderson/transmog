@@ -15,6 +15,27 @@ use std::{
     sync::{Arc, OnceLock},
 };
 type Issuers = Arc<Vec<X509>>;
+static VERIFIED: OnceLock<Result<Index<Ssl, Option<String>>, ErrorStack>> = OnceLock::new();
+/// Whether this SSL's last invocation of the shared PKI verifier succeeded.
+pub fn peer_verification_succeeded(ssl: &SslRef) -> bool {
+    VERIFIED
+        .get()
+        .and_then(|index| index.as_ref().ok())
+        .and_then(|index| ssl.ex_data(*index))
+        .is_some_and(Option::is_some)
+}
+/// Whether the shared verifier accepted this exact authentication origin.
+pub fn peer_verified_for_name(ssl: &SslRef, host: &str) -> bool {
+    VERIFIED
+        .get()
+        .and_then(|index| index.as_ref().ok())
+        .and_then(|index| ssl.ex_data(*index))
+        .and_then(Option::as_deref)
+        .is_some_and(|name| {
+            name.trim_matches(['[', ']'])
+                .eq_ignore_ascii_case(host.trim_matches(['[', ']']))
+        })
+}
 /// One AND group of root metadata. At least one group must pass. MTC serial
 /// constraints do not apply to ordinary X.509 certificates.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -128,7 +149,15 @@ pub fn configure_context_certificate_policy(
             compiled,
         }),
     );
-    context.set_custom_verify_callback(SslVerifyMode::PEER, verify_peer);
+    // SAFETY: typed ex-data owns all callback inputs. This callback supports
+    // buffered contexts without the wrapper's legacy X.509 guard.
+    unsafe {
+        boring_sys::SSL_CTX_set_custom_verify(
+            context.as_ptr(),
+            SslVerifyMode::PEER.bits(),
+            Some(raw_verify),
+        );
+    };
     // Chromium revalidates the stored peer chain on every resumed handshake.
     // Trust epochs alone cannot detect expiry or other time-dependent policy.
     // SAFETY: the exclusively borrowed context uses the required custom verifier.
@@ -151,8 +180,43 @@ pub fn configure_ssl_certificate_policy(
             compiled,
         }),
     );
-    ssl.set_custom_verify_callback(SslVerifyMode::PEER, verify_peer);
+    // SAFETY: SSL-owned ex-data holds the policy; no borrowed callback data escapes.
+    unsafe {
+        boring_sys::SSL_set_custom_verify(
+            ssl.as_ptr(),
+            SslVerifyMode::PEER.bits(),
+            Some(raw_verify),
+        );
+    };
     Ok(())
+}
+
+unsafe extern "C" fn raw_verify(
+    pointer: *mut boring_sys::SSL,
+    alert: *mut u8,
+) -> boring_sys::ssl_verify_result_t {
+    // SAFETY: native custom verification supplies a live, exclusively borrowed
+    // SSL and writable alert for the synchronous callback. verify_peer catches panics.
+    let ssl = unsafe { SslRef::from_ptr_mut(pointer) };
+    match verify_peer(ssl) {
+        Ok(()) => boring_sys::ssl_verify_result_t::ssl_verify_ok,
+        Err(SslVerifyError::Retry) => boring_sys::ssl_verify_result_t::ssl_verify_retry,
+        Err(SslVerifyError::Invalid(value)) => {
+            let code = if value == SslAlert::CERTIFICATE_EXPIRED {
+                45
+            } else if value == SslAlert::UNKNOWN_CA {
+                48
+            } else if value == SslAlert::CERTIFICATE_REVOKED {
+                44
+            } else if value == SslAlert::INTERNAL_ERROR {
+                80
+            } else {
+                42
+            };
+            unsafe { *alert = code };
+            boring_sys::ssl_verify_result_t::ssl_verify_invalid
+        }
+    }
 }
 /// Supplies the expected canonical hostname independently of SNI. Required for
 /// TCP IP literals, which do not send SNI; DNS connections may use SNI fallback.
@@ -215,6 +279,15 @@ fn verify_peer(ssl: &mut SslRef) -> Result<(), SslVerifyError> {
     // Never allow Rust panics to cross the TLS callback boundary.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let result = verify_peer_inner(ssl);
+        let verified = VERIFIED
+            .get_or_init(Ssl::new_ex_index::<Option<String>>)
+            .clone()
+            .map_err(|_| SslVerifyError::Invalid(SslAlert::INTERNAL_ERROR))?;
+        let name = result
+            .accepted
+            .then(|| expected_name(ssl).map(str::to_owned))
+            .flatten();
+        ssl.set_ex_data(verified, name);
         let observer = SSL_OBSERVER
             .get()
             .and_then(|i| i.as_ref().ok())
@@ -241,6 +314,20 @@ fn verify_peer(ssl: &mut SslRef) -> Result<(), SslVerifyError> {
     }))
     .unwrap_or(Err(SslVerifyError::Invalid(SslAlert::INTERNAL_ERROR)))
 }
+fn expected_name(ssl: &SslRef) -> Option<&str> {
+    SSL_NAME
+        .get()
+        .and_then(|i| i.as_ref().ok())
+        .and_then(|i| ssl.ex_data(*i))
+        .or_else(|| {
+            CTX_NAME
+                .get()
+                .and_then(|i| i.as_ref().ok())
+                .and_then(|i| ssl.ssl_context().ex_data(*i))
+        })
+        .map(String::as_str)
+        .or_else(|| ssl.servername(NameType::HOST_NAME))
+}
 fn verify_peer_inner(ssl: &SslRef) -> Verification {
     let policy = SSL_INDEX
         .get()
@@ -258,18 +345,7 @@ fn verify_peer_inner(ssl: &SslRef) -> Verification {
     let certificates = crate::verifier::peer_certificate_chain(ssl);
     let mut result =
         crate::verifier::verify_peer(&policy.compiled, &policy.input, &certificates, ssl);
-    let name = SSL_NAME
-        .get()
-        .and_then(|i| i.as_ref().ok())
-        .and_then(|i| ssl.ex_data(*i))
-        .or_else(|| {
-            CTX_NAME
-                .get()
-                .and_then(|i| i.as_ref().ok())
-                .and_then(|i| ssl.ssl_context().ex_data(*i))
-        })
-        .map(String::as_str)
-        .or_else(|| ssl.servername(NameType::HOST_NAME));
+    let name = expected_name(ssl);
     if result
         .names
         .as_ref()

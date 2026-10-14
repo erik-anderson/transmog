@@ -262,8 +262,16 @@ impl TlsCapture {
             for certificate in &chain {
                 collect_certificate(&mut local, certificate);
             }
-        } else if let Some(certificate) = ssl.certificate() {
-            collect_certificate(&mut local, certificate);
+        } else if ssl.ssl_context().has_x509_support() {
+            if let Some(certificate) = ssl.certificate() {
+                collect_certificate(&mut local, certificate);
+            }
+        } else {
+            for der in transmog_tls_native::local_buffer_chain(ssl) {
+                if let Some(certificate) = certificate_der_evidence(&der) {
+                    local.push(certificate);
+                }
+            }
         }
         // Boring's extra_chain_certs() asserts when an empty context returns a
         // null stack. Configured issuer paths are supplied explicitly by their
@@ -305,7 +313,11 @@ impl TlsCapture {
                     }
                 }
             }
-            data.client_chain = local;
+            // Buffered credentials can be discarded after HANDSHAKE_DONE. Keep
+            // the chain recorded by that callback or the actual wire observer.
+            if !local.is_empty() || data.client_chain.is_empty() {
+                data.client_chain = local;
+            }
             data.verification = Some(VerificationResult::Verified);
         }
     }

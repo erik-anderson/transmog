@@ -7,7 +7,8 @@ use std::{
 use boring::{
     pkey::{PKey, Private},
     ssl::{
-        SslConnector, SslConnectorBuilder, SslContext, SslContextBuilder, SslMethod, SslVersion,
+        SslConnector, SslConnectorBuilder, SslContext, SslContextBuilder, SslMethod, SslMode,
+        SslVersion,
     },
     x509::X509,
 };
@@ -1039,8 +1040,30 @@ impl UpstreamTlsContextFactory {
     ///
     /// Returns [`TrustError`] when the configured TLS policy cannot be applied.
     pub fn quiche_context_builder(&self) -> Result<SslContextBuilder, TrustError> {
-        let mut builder = SslContext::builder(SslMethod::tls())?;
+        let mut builder = transmog_tls_native::buffered_context_builder()?;
         self.configure(&mut builder)?;
+        Ok(builder)
+    }
+
+    /// Creates a buffered TCP context for the production HTTPS adapter.
+    /// Install fresh per-SSL metadata before starting each pooled handshake.
+    /// # Errors
+    /// Returns native TLS, ALPN or frozen trust configuration errors.
+    pub fn tcp_context_builder(&self, alpn: &[u8]) -> Result<SslContextBuilder, TrustError> {
+        let mut builder = transmog_tls_native::buffered_context_builder()?;
+        builder.set_mode(
+            SslMode::AUTO_RETRY
+                | SslMode::ACCEPT_MOVING_WRITE_BUFFER
+                | SslMode::ENABLE_PARTIAL_WRITE
+                | SslMode::RELEASE_BUFFERS,
+        );
+        let mut frozen = self.for_connection();
+        if matches!(frozen.connection_local, Some(Err(_))) {
+            frozen.bootstrap_trust_failure = true;
+        }
+        frozen.configure_frozen(&mut builder, false)?;
+        transmog_tls_native::enable_false_start(&mut builder);
+        builder.set_alpn_protos(alpn)?;
         Ok(builder)
     }
 
@@ -1103,12 +1126,14 @@ impl UpstreamTlsContextFactory {
         );
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {
-            builder.set_certificate(&authentication.certificate)?;
-            builder.set_private_key(&authentication.private_key)?;
-            builder.check_private_key()?;
-            for issuer in &authentication.issuers {
-                builder.add_extra_chain_cert(issuer.clone())?;
-            }
+            let chain = std::iter::once(authentication.certificate.clone())
+                .chain(authentication.issuers.iter().cloned())
+                .collect::<Vec<_>>();
+            transmog_tls_native::add_client_credential(
+                builder,
+                &chain,
+                &authentication.private_key,
+            )?;
         }
         Ok(())
     }

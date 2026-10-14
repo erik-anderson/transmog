@@ -569,13 +569,14 @@ async fn quic_resumes_certificate_lookup_and_server_verifies_client_signature() 
     let client_id = quiche::ConnectionId::from_ref(b"client-fixture-id");
     let server_id = quiche::ConnectionId::from_ref(b"server-fixture-id");
     let mut client = quiche::connect(
-        Some("localhost"),
+        None,
         &client_id,
         client_address,
         server_address,
         &mut client_config,
     )
     .unwrap();
+    transmog_tls_native::configure_quic_server_name(client.as_mut(), "localhost").unwrap();
     let mut server = quiche::accept(
         &server_id,
         None,

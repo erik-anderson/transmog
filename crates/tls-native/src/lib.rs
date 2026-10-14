@@ -13,15 +13,17 @@ mod trust_anchors;
 mod verifier;
 pub use application_settings::{configure_h2_application_settings, peer_application_settings};
 pub use credentials::{
-    MlDsaVariant, add_server_credential, add_server_credential_for_trust_anchor,
-    selected_credential_chain,
+    MlDsaVariant, add_client_credential, add_server_credential,
+    add_server_credential_for_trust_anchor, local_buffer_chain, selected_credential_chain,
+    set_client_chain_and_private_key_method, set_context_chain_and_key,
 };
 pub use trust_anchors::{
     CertificatePolicy, RootConstraint, TrustAnchorOfferError, certificate_is_ca,
     configure_available_trust_anchors, configure_context_certificate_policy,
     configure_context_peer_name, configure_context_trust_anchors, configure_ssl_certificate_policy,
     configure_ssl_peer_name, configure_ssl_trust_anchors, observe_context_verification,
-    observe_ssl_verification, peer_trust_anchors,
+    observe_ssl_verification, peer_trust_anchors, peer_verification_succeeded,
+    peer_verified_for_name,
 };
 pub use verifier::{
     Verification, certificate_is_parseable, peer_certificate_chain, verify_certificate_authority,
@@ -34,9 +36,19 @@ use boring::{
         PrivateKeyMethod, PrivateKeyMethodError, Ssl, SslContext, SslContextBuilder, SslRef,
         SslVerifyMode,
     },
-    stack::StackRef,
-    x509::{X509Name, X509Ref},
+    x509::X509Ref,
 };
+
+/// Creates Chromium's buffered TLS context. Install credentials with buffer APIs
+/// and verify peer buffers with the custom PKI verifier; legacy X.509 context/
+/// SSL getters must not be called on this context.
+/// # Errors
+/// Returns native context allocation failure.
+pub fn buffered_context_builder() -> Result<SslContextBuilder, ErrorStack> {
+    // SAFETY: all production users install buffer credentials/custom verification;
+    // Boring's X.509 flag remains false, guarding accidental legacy access.
+    SslContext::builder(unsafe { boring::ssl::SslMethod::tls_with_buffer() })
+}
 use foreign_types::ForeignTypeRef;
 use std::{
     ffi::c_void,
@@ -70,6 +82,19 @@ pub fn enable_false_start(context: &mut SslContextBuilder) {
 pub fn in_false_start(ssl: &SslRef) -> bool {
     // SAFETY: synchronous read on the borrowed live SSL object.
     unsafe { boring_sys::SSL_in_false_start(ssl.as_ptr()) != 0 }
+}
+
+/// Installs SNI and the expected peer identity on a buffered QUIC SSL object.
+/// Create it with `quiche::connect(None, ...)`, avoiding quiche's legacy
+/// X.509 hostname-parameter setter.
+/// # Errors
+/// Returns native SNI or expected-name installation failure.
+pub fn configure_quic_server_name(ssl: &mut SslRef, host: &str) -> Result<(), ErrorStack> {
+    configure_ssl_peer_name(ssl, host.to_owned())?;
+    if host.parse::<std::net::IpAddr>().is_err() {
+        ssl.set_hostname(host)?;
+    }
+    Ok(())
 }
 
 /// Offers an owned client ticket selected from the transport's origin/policy partition.
@@ -174,9 +199,10 @@ unsafe extern "C" fn trampoline(pointer: *mut boring_sys::SSL, _: *mut c_void) -
         // The reference and all constraint pointers are confined to this call.
         let ssl = unsafe { SslRef::from_ptr_mut(pointer) };
         if ssl.is_server()
-            || !ssl.verify_mode().contains(SslVerifyMode::PEER)
-            || ssl.verify_result().is_err()
-            || ssl.peer_certificate().is_none()
+            // SAFETY: mode bits are available on both native TLS methods.
+            || unsafe { boring_sys::SSL_get_verify_mode(pointer) } & SslVerifyMode::PEER.bits() == 0
+            || !peer_verification_succeeded(ssl)
+            || peer_certificate_chain(ssl).is_empty()
         {
             return 0;
         }
@@ -199,7 +225,7 @@ unsafe extern "C" fn trampoline(pointer: *mut boring_sys::SSL, _: *mut c_void) -
             (
                 boring_sys::SSL_get0_peer_verify_algorithms(pointer, &raw mut algorithms),
                 boring_sys::SSL_get0_certificate_types(pointer, &raw mut types),
-                boring_sys::SSL_get_client_CA_list(pointer),
+                boring_sys::SSL_get0_server_requested_CAs(pointer),
             )
         };
         let mut request = CertificateRequest {
@@ -217,25 +243,11 @@ unsafe extern "C" fn trampoline(pointer: *mut boring_sys::SSL, _: *mut c_void) -
             request.certificate_types =
                 unsafe { std::slice::from_raw_parts(types, type_count) }.to_vec();
         }
-        if !issuers.is_null() {
-            // SAFETY: the borrowed stack is owned by SSL for this callback and
-            // contains X509_NAME entries. It is neither mutated nor freed.
-            let issuers = unsafe { StackRef::<X509Name>::from_ptr(issuers) };
-            if issuers.len() > 256 {
-                request.constraints_omitted = true;
-            } else {
-                for name in issuers {
-                    let Ok(der) = name.to_der() else {
-                        request.constraints_omitted = true;
-                        break;
-                    };
-                    if der.len() > 64 * 1024 {
-                        request.constraints_omitted = true;
-                        break;
-                    }
-                    request.issuers.push(der);
-                }
-            }
+        // SAFETY: the callback owns the native CA buffers throughout this copy.
+        if let Some(issuers) = unsafe { credentials::copy_buffer_stack(issuers.cast()) } {
+            request.issuers = issuers;
+        } else {
+            request.constraints_omitted = true;
         }
         match callback(ssl, &request) {
             SelectionResult::Ready => 1,

@@ -38,3 +38,17 @@ Capture details record **TLS False Start: Used** and **Handshake completion:
 Waiting for server Finished**, then change completion to **Complete** when the
 native handshake-done callback fires. Connection setup timing ends when the
 connection becomes usable for writes, as it does in Chromium.
+
+## Buffered certificates
+
+Production TCP and QUIC contexts use `TLS_with_buffers_method`, as Chromium does.
+The shared PKI verifier parses the leaf and candidate issuers rather than having
+the TLS compatibility layer eagerly parse every wire entry. An irrelevant malformed
+issuer can be ignored when another valid trusted path exists; a malformed leaf or
+unusable required issuer still fails. H3 telemetry hashes raw certificate bytes and
+does not impose a second parse requirement on unused entries.
+
+Credentials and requested CA names use buffer APIs. QUIC connections are created
+without quiche's legacy hostname setter; SNI and expected identity are installed
+separately before the first packet. The older `hyper_connector*` embedding helpers
+retain their legacy return types; the production adapter uses `tcp_context_builder`.

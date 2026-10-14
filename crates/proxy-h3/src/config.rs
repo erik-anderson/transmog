@@ -76,6 +76,9 @@ impl H3TransportLimits {
 ///
 /// Peer verification is enabled, active migration is disabled, and 0-RTT is
 /// left disabled. Flow-control values are finite and explicit.
+/// Create connections with `quiche::connect(None, ...)`, then call
+/// [`transmog_tls::configure_quic_server_name`] before sending packets. Quiche's
+/// built-in hostname setter uses an incompatible legacy X.509 parameter API.
 ///
 /// # Errors
 ///

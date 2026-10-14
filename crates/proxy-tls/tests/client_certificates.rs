@@ -202,7 +202,10 @@ fn mutual_tls_retains_full_client_path_on_both_connection_legs() {
     }
     // QUIC uses the same configured identity and evidence, without a nullable chain getter.
     let context = upstream.quiche_context_builder().unwrap().build();
-    assert_eq!(context.extra_chain_certs().len(), 2);
+    assert_eq!(
+        transmog_tls_native::local_buffer_chain(&Ssl::new(&context).unwrap()).len(),
+        3
+    );
     let capture = upstream.capture(None, vec!["h3".into()]);
     capture.verified();
     assert_eq!(capture.snapshot().client_chain.len(), 3);

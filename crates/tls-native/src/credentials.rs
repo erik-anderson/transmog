@@ -106,6 +106,117 @@ pub fn add_server_credential(
     add_credential(context, chain, key, None)
 }
 
+/// Installs an owned client credential through the buffer-compatible API.
+/// # Errors
+/// Returns a native chain/key mismatch or allocation failure.
+pub fn add_client_credential(
+    context: &mut SslContextBuilder,
+    chain: &[X509],
+    key: &PKeyRef<Private>,
+) -> Result<(), ErrorStack> {
+    let chain = chain
+        .iter()
+        .map(|certificate| certificate.to_der())
+        .collect::<Result<Vec<_>, _>>()?;
+    set_context_chain_and_key(context, &chain, key)
+}
+
+/// Installs raw public certificate buffers without parsing unused issuers.
+/// # Errors
+/// Returns a native leaf/key mismatch or allocation failure.
+pub fn set_context_chain_and_key(
+    context: &mut SslContextBuilder,
+    chain: &[Vec<u8>],
+    key: &PKeyRef<Private>,
+) -> Result<(), ErrorStack> {
+    let buffers = chain
+        .iter()
+        .map(|der| PublicBuffer::new(der))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pointers: Vec<_> = buffers.iter().map(|buffer| buffer.0.as_ptr()).collect();
+    // SAFETY: the synchronous set1 operation retains references to owned buffers/key.
+    if unsafe {
+        boring_sys::SSL_CTX_set_chain_and_key(
+            context.as_ptr(),
+            pointers.as_ptr(),
+            pointers.len(),
+            key.as_ptr(),
+            std::ptr::null(),
+        )
+    } == 1
+    {
+        Ok(())
+    } else {
+        Err(ErrorStack::get())
+    }
+}
+
+/// Installs a public client chain with an asynchronous external signing provider.
+/// # Errors
+/// Returns native credential or provider installation errors.
+pub fn set_client_chain_and_private_key_method(
+    ssl: &mut SslRef,
+    chain: &[X509],
+    method: std::sync::Arc<dyn boring::ssl::PrivateKeyMethod>,
+) -> Result<(), ErrorStack> {
+    crate::set_private_key_method(ssl, method)?;
+    let buffers = chain
+        .iter()
+        .map(|cert| PublicBuffer::new(&cert.to_der()?))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pointers: Vec<_> = buffers.iter().map(|buffer| buffer.0.as_ptr()).collect();
+    // SAFETY: owned buffers and static provider table outlive this copying setter;
+    // SSL ex-data owns the per-connection provider throughout suspended signing.
+    if unsafe {
+        boring_sys::SSL_set_chain_and_key(
+            ssl.as_ptr(),
+            pointers.as_ptr(),
+            pointers.len(),
+            std::ptr::null_mut(),
+            &raw const crate::KEY_METHOD,
+        )
+    } == 1
+    {
+        Ok(())
+    } else {
+        Err(ErrorStack::get())
+    }
+}
+
+/// Copies the configured buffer chain while the handshake still retains it.
+pub fn local_buffer_chain(ssl: &SslRef) -> Vec<Vec<u8>> {
+    // SAFETY: exclusively read SSL-owned buffers during the borrow; no raw pointers escape.
+    unsafe { copy_buffer_stack(boring_sys::SSL_get0_chain(ssl.as_ptr()).cast()) }
+        .unwrap_or_default()
+}
+pub(crate) unsafe fn copy_buffer_stack(stack: *const std::ffi::c_void) -> Option<Vec<Vec<u8>>> {
+    if stack.is_null() {
+        return Some(Vec::new());
+    }
+    // SAFETY: callers supply a live stack of CRYPTO_BUFFER objects from native getters.
+    let count = unsafe { boring_sys::OPENSSL_sk_num(stack.cast()) };
+    if count > 256 {
+        return None;
+    }
+    let mut result = Vec::with_capacity(count);
+    for index in 0..count {
+        // SAFETY: index is in the borrowed native stack.
+        let buffer = unsafe { boring_sys::OPENSSL_sk_value(stack.cast(), index) }
+            .cast::<boring_sys::CRYPTO_BUFFER>();
+        if buffer.is_null() {
+            return None;
+        }
+        // SAFETY: live buffer, synchronously copied before the native getter expires.
+        let length = unsafe { boring_sys::CRYPTO_BUFFER_len(buffer) };
+        if length > 64 * 1024 {
+            return None;
+        }
+        let bytes = unsafe { boring_sys::CRYPTO_BUFFER_data(buffer) };
+        result.push(unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec());
+    }
+    Some(result)
+}
+
 /// Adds a server credential whose final certificate's issuer has this classical
 /// Trust Anchor ID, enabling `BoringSSL`'s normal matching and available-ID list.
 /// # Errors

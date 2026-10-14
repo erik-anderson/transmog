@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use boring::{hash::MessageDigest, rand::rand_bytes, x509::X509};
+use boring::{hash::MessageDigest, rand::rand_bytes};
 use bytes::Bytes;
 use quiche::h3::NameValue;
 use thiserror::Error;
@@ -795,12 +795,13 @@ impl H3ConnectionDriver {
         rand_bytes(&mut source_connection_id)?;
         let source_connection_id = quiche::ConnectionId::from_ref(&source_connection_id);
         let mut connection = quiche::connect(
-            Some(host.as_str()),
+            None,
             &source_connection_id,
             local_addr,
             peer_addr,
             &mut config,
         )?;
+        transmog_tls::configure_quic_server_name(connection.as_mut(), &host)?;
         let ticket_generation = tickets
             .as_ref()
             .map_or(0, |tickets| tickets.cache.generation());
@@ -1812,8 +1813,10 @@ fn telemetry(
     }
     let mut peer_chain_sha256 = Vec::new();
     for der in connection.peer_cert_chain().unwrap_or_default() {
-        let certificate = X509::from_der(der)?;
-        peer_chain_sha256.push(hex_lower(&certificate.digest(MessageDigest::sha256())?));
+        peer_chain_sha256.push(hex_lower(&boring::hash::hash(
+            MessageDigest::sha256(),
+            der,
+        )?));
     }
     Ok(H3Telemetry {
         alpn,

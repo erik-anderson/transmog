@@ -36,6 +36,7 @@ pub use evidence::TlsCapture;
 pub use resolver::{
     CachedMitmCertificateResolver, CertificateResolverError, DownstreamCertificateResolver,
 };
+pub use transmog_tls_native::configure_quic_server_name;
 pub use transmog_tls_native::restore_client_session;
 pub use transmog_tls_native::{configure_h2_application_settings, peer_application_settings};
 pub use trust::{

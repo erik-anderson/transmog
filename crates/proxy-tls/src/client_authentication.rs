@@ -728,13 +728,7 @@ impl ClientAuthenticationAttempt {
         clear_client_credentials(ssl);
         let host = &self.0.context.host;
         let host_is_ip = host.parse::<std::net::IpAddr>().is_ok();
-        let matches_peer = ssl.peer_certificate().is_some_and(|certificate| {
-            if host_is_ip {
-                certificate.check_ip_asc(host).unwrap_or(false)
-            } else {
-                certificate.check_host(host).unwrap_or(false)
-            }
-        });
+        let matches_peer = transmog_tls_native::peer_verified_for_name(ssl, host);
         let matches_sni = ssl
             .servername(boring::ssl::NameType::HOST_NAME)
             .map_or(host_is_ip, |name| name.eq_ignore_ascii_case(host));
@@ -919,7 +913,7 @@ impl ClientAuthenticationAttempt {
             ClientAuthenticationDecision::Certificate(credential)
                 if credential.public_compatible(request) =>
             {
-                let Some(leaf) = credential.chain.first() else {
+                let Some(_) = credential.chain.first() else {
                     return SelectionResult::Failed;
                 };
                 // Preserve the complete local path for issuer matching and
@@ -934,14 +928,6 @@ impl ClientAuthenticationAttempt {
                     }
                     _ => chain,
                 };
-                if ssl.set_certificate(leaf).is_err()
-                    || chain
-                        .iter()
-                        .skip(1)
-                        .any(|issuer| ssl.add_chain_cert(issuer).is_err())
-                {
-                    return SelectionResult::Failed;
-                }
                 if transmog_tls_native::set_signing_algorithms(
                     ssl,
                     &credential.signing_algorithms(request),
@@ -955,7 +941,9 @@ impl ClientAuthenticationAttempt {
                     result: Arc::new(Mutex::new(None)),
                     waker: self.0.clone(),
                 });
-                if transmog_tls_native::set_private_key_method(ssl, signer).is_err() {
+                if transmog_tls_native::set_client_chain_and_private_key_method(ssl, chain, signer)
+                    .is_err()
+                {
                     return SelectionResult::Failed;
                 }
                 *self

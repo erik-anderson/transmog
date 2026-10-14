@@ -760,7 +760,9 @@ fn production_clients_verify_brotli_compressed_certificates_over_tcp_and_quic() 
         quic_config(factory(&ca).quiche_context_builder().unwrap()),
         quic_config(server),
     );
-    assert!(client.as_mut().verify_result().is_ok());
+    assert!(transmog_tls_native::peer_verification_succeeded(
+        client.as_mut()
+    ));
     assert_eq!(compressed.load(Ordering::SeqCst), 2);
 }
 
@@ -1049,7 +1051,9 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         }
         let (mut client, _) = quic_handshake(quic_config(client), quic_config(server));
         assert_eq!(client.as_mut().curve(), Some(HYBRID_GROUP));
-        assert!(client.as_mut().verify_result().is_ok());
+        assert!(transmog_tls_native::peer_verification_succeeded(
+            client.as_mut()
+        ));
         let observed = observed.lock().unwrap();
         assert_eq!(observed.len(), 1);
         let advertised = signature_algorithms(&observed[0][0]);
@@ -1100,13 +1104,14 @@ fn quic_pair(
     let client_address = "127.0.0.1:10000".parse().unwrap();
     let server_address = "127.0.0.1:10001".parse().unwrap();
     let mut client = quiche::connect(
-        Some("localhost"),
+        None,
         &quiche::ConnectionId::from_ref(&[1; 16]),
         client_address,
         server_address,
         client_config,
     )
     .unwrap();
+    transmog_tls_native::configure_quic_server_name(client.as_mut(), "localhost").unwrap();
     if let Some(session) = session {
         client.set_session(session).unwrap();
     }

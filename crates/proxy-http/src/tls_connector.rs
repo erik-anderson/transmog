@@ -2,7 +2,7 @@
 use boring::{
     error::ErrorStack,
     ex_data::Index,
-    ssl::{Ssl, SslConnectorBuilder, SslContext, SslRef, SslSession, SslSessionCacheMode},
+    ssl::{Ssl, SslContext, SslContextBuilder, SslRef, SslSession, SslSessionCacheMode},
 };
 use http::Uri;
 use hyper_boring::MaybeHttpsStream;
@@ -23,6 +23,24 @@ use transmog_tls::{
 };
 
 type BoxError = Box<dyn Error + Send + Sync>;
+// The pinned boring wrapper's Ssl Debug getter still assumes legacy X.509.
+// Preserve its source chain, but keep error Debug formatting buffer-compatible.
+struct HandshakeFailure(BoxError);
+impl std::fmt::Display for HandshakeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+impl std::fmt::Debug for HandshakeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+impl Error for HandshakeFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source()
+    }
+}
 type Callback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Send + Sync>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Key {
@@ -53,7 +71,7 @@ pub struct ChromiumHttpsConnector<S> {
 impl<S> ChromiumHttpsConnector<S> {
     pub(crate) fn new(
         tcp: S,
-        mut builder: SslConnectorBuilder,
+        mut builder: SslContextBuilder,
         factory: UpstreamTlsContextFactory,
     ) -> Result<Self, ErrorStack> {
         let cache = Arc::new(SessionCache::default());
@@ -71,7 +89,7 @@ impl<S> ChromiumHttpsConnector<S> {
         });
         Ok(Self {
             tcp,
-            context: builder.build().into_context(),
+            context: builder.build(),
             factory,
             cache,
             callback: None,
@@ -141,7 +159,8 @@ where
             }
             let stream = tokio_boring::SslStreamBuilder::new(ssl, socket)
                 .connect()
-                .await?;
+                .await
+                .map_err(|error| Box::new(HandshakeFailure(Box::new(error))) as BoxError)?;
             Ok(MaybeHttpsStream::Https(stream))
         })
     }

@@ -112,7 +112,7 @@ pub fn build_https_connector_with_happy_eyeballs(
     let mut tcp = HttpConnector::new_with_resolver(resolver);
     tcp.enforce_http(false);
     tcp.set_happy_eyeballs_timeout(Some(happy_eyeballs.attempt_delay()));
-    let tls = factory.hyper_pool_connector_builder(mode.alpn())?;
+    let tls = factory.tcp_context_builder(mode.alpn())?;
     let mut connector = ChromiumHttpsConnector::new(tcp, tls, factory.clone())?;
     let factory = factory.clone();
     connector.set_ssl_callback(move |ssl, uri| {
