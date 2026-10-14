@@ -104,12 +104,15 @@ async fn lookup(
             .answers()
             .iter()
             .filter_map(|record| match &record.data {
-                RData::HTTPS(record) => Some(&record.0),
+                RData::HTTPS(service) => Some((&record.name, &service.0)),
                 _ => None,
             })
             .take(64)
             .collect::<Vec<_>>();
-        if let Some(alias) = services.iter().find(|record| record.svc_priority == 0) {
+        if let Some((_, alias)) = services
+            .iter()
+            .find(|(_, service)| service.svc_priority == 0)
+        {
             if alias.target_name.is_root() {
                 return None;
             }
@@ -117,15 +120,9 @@ async fn lookup(
             continue;
         }
         let mut services = services;
-        services.sort_by_key(|service| service.svc_priority);
-        for service in services {
-            let prefix = format!("_{port}._https.");
-            if let Some(offer) = select(
-                service,
-                owner.strip_prefix(&prefix).unwrap_or(&owner),
-                port,
-                alpn,
-            ) {
+        services.sort_by_key(|(_, service)| service.svc_priority);
+        for (record_owner, service) in services {
+            if let Some(offer) = select(service, &record_owner.to_utf8(), port, alpn) {
                 return Some(offer);
             }
         }
@@ -276,6 +273,100 @@ mod tests {
         Name,
         rdata::svcb::{Alpn, EchConfigList, Mandatory},
     };
+
+    struct DnsFixture {
+        resolver: TokioResolver,
+        task: tokio::task::JoinHandle<()>,
+    }
+    impl Drop for DnsFixture {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+    async fn dns_fixture(cname: bool) -> DnsFixture {
+        use hickory_resolver::{
+            config::{NameServerConfig, ResolverConfig},
+            proto::{
+                op::{Message, OpCode},
+                rr::{
+                    Record,
+                    rdata::{CNAME, HTTPS},
+                },
+            },
+        };
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let mut buffer = vec![0; 65535];
+            loop {
+                let (count, peer) = socket.recv_from(&mut buffer).await.unwrap();
+                let request = Message::from_vec(&buffer[..count]).unwrap();
+                let mut response = Message::response(request.metadata.id, OpCode::Query);
+                let query = request.queries[0].clone();
+                response.add_query(query.clone());
+                let owner = if cname {
+                    Name::from_ascii("canonical.example.test.").unwrap()
+                } else {
+                    query.name().clone()
+                };
+                if cname {
+                    response.add_answer(Record::from_rdata(
+                        query.name().clone(),
+                        60,
+                        RData::CNAME(CNAME(owner.clone())),
+                    ));
+                }
+                let service = SVCB::new(
+                    1,
+                    Name::root(),
+                    vec![
+                        (
+                            SvcParamKey::Alpn,
+                            SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
+                        ),
+                        (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
+                        (
+                            SvcParamKey::EchConfigList,
+                            SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
+                        ),
+                    ],
+                );
+                response.add_answer(Record::from_rdata(owner, 60, RData::HTTPS(HTTPS(service))));
+                socket
+                    .send_to(&response.to_vec().unwrap(), peer)
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut server = NameServerConfig::udp(address.ip());
+        server.connections[0].port = address.port();
+        let resolver = TokioResolver::builder_with_config(
+            ResolverConfig::from_name_servers(vec![server]),
+            hickory_resolver::net::runtime::TokioRuntimeProvider::default(),
+        )
+        .build()
+        .unwrap();
+        DnsFixture { resolver, task }
+    }
+    #[tokio::test]
+    async fn dot_targets_use_the_resolved_record_owner_after_cname() {
+        let dns = dns_fixture(true).await;
+        for port in [443, 8443] {
+            let offer = lookup(&dns.resolver, "origin.example.test", port, &["h2".into()])
+                .await
+                .unwrap();
+            assert_eq!(offer.endpoint, "canonical.example.test");
+            assert_eq!(offer.port, port);
+        }
+    }
+    #[tokio::test]
+    async fn dot_targets_keep_the_port_prefixed_record_owner() {
+        let dns = dns_fixture(false).await;
+        let offer = lookup(&dns.resolver, "origin.example.test", 8443, &["h2".into()])
+            .await
+            .unwrap();
+        assert_eq!(offer.endpoint, "_8443._https.origin.example.test");
+    }
     #[test]
     fn service_bindings_require_compatible_alpn_and_complete_mandatory_keys() {
         let mut service = SVCB::new(

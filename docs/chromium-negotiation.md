@@ -65,8 +65,11 @@ retain false. TLS 1.2-only profiles do not attempt ECH.
 The pinned Hickory resolver reads the configured system DNS servers. HTTPS records
 are bounded by a three-second discovery deadline, eight aliases, 64 service records
 and native configuration size limits. Service priority, ALPN, no-default-ALPN,
-mandatory keys, target name and port select a compatible endpoint. A/AAAA resolution
-uses the existing system resolver and Happy Eyeballs policy. DNS-cache TTLs apply;
+mandatory keys, target name and port select a compatible endpoint. For a `.` target,
+discovery uses the actual HTTPS record owner, including after CNAME
+resolution and for port-prefixed owners. The original origin remains the
+certificate and HTTP authority.
+A/AAAA resolution uses the existing system resolver and Happy Eyeballs policy. DNS-cache TTLs apply;
 configuration changes refresh the resolver on subsequent lookups. This supplies
 ECH discovery, rather than Chromium's complete browser secure-DNS/DoH policy.
 
