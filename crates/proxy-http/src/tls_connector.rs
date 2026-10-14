@@ -81,12 +81,15 @@ impl<S> ChromiumHttpsConnector<S> {
         let cache = Arc::new(SessionCache::default());
         let index = owner_index()?;
         let tickets = cache.clone();
-        // Request-driven identity selection requires a fresh CertificateRequest.
-        let enabled = !factory.has_client_certificate_resolver();
+        // Interactive and automatic identity selection require a fresh request;
+        // explicit anonymous policy cannot disclose any cached identity.
+        let authorization = factory.clone();
         builder
             .set_session_cache_mode(SslSessionCacheMode::CLIENT | SslSessionCacheMode::NO_INTERNAL);
         builder.set_new_session_callback(move |ssl, session| {
-            if enabled && let Some(owner) = ssl.ex_data(index) {
+            if let Some(owner) = ssl.ex_data(index)
+                && authorization.permits_session_resumption(&owner.key.host, owner.key.port)
+            {
                 let lifetime = SessionLifetime::from_session(&session);
                 tickets.insert(owner.generation, owner.key.clone(), session, lifetime);
             }
@@ -211,7 +214,7 @@ where
                         generation: cache.generation(),
                     },
                 );
-                if !factory.has_client_certificate_resolver()
+                if factory.permits_session_resumption(host, uri.port_u16().unwrap_or(443))
                     && let Some(session) = cache.take(&key)
                 {
                     transmog_tls::restore_client_session(&mut ssl, &session)?;

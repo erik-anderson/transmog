@@ -84,6 +84,13 @@ impl UpstreamTlsContextFactory {
             s.generation.unwrap_or_else(|| s.resolver.generation())
         })
     }
+    /// Whether a ticket can be offered without bypassing current identity decisions.
+    pub fn permits_session_resumption(&self, host: &str, port: u16) -> bool {
+        self.authentication.as_ref().is_none_or(|scope| {
+            scope.resolver.generation() == self.client_certificate_admission_generation()
+                && scope.resolver.permits_anonymous_session_reuse(host, port)
+        })
+    }
     /// Whether an origin may reuse its physical connection within the current epoch.
     pub fn permits_client_certificate_reuse(&self, host: &str, port: u16) -> bool {
         self.authentication

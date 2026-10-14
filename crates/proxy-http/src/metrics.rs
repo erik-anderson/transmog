@@ -597,7 +597,12 @@ pub(crate) fn connector(
             capture.clone(),
         ) {
             // A fresh CertificateRequest must authorize request-driven identities.
-            transmog_tls::client_connections::clear_cached_session(ssl)?;
+            if !factory.permits_session_resumption(
+                uri.host().unwrap_or("").trim_matches(['[', ']']),
+                uri.port_u16().unwrap_or(443),
+            ) {
+                transmog_tls::client_connections::clear_cached_session(ssl)?;
+            }
             attempt.attach_ssl(ssl)?;
             let _ = SETUP.try_with(|setup| {
                 let waker = setup.values().waker.clone();

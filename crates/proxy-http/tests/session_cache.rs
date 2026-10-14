@@ -16,6 +16,17 @@ async fn closed_tcp_connections_resume_but_new_caller_pools_do_not() {
     let factory = UpstreamTlsContextFactory::new(
         Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
         UpstreamTlsPolicy::default(),
+    )
+    .with_client_certificate_resolver(
+        Arc::new(
+            transmog_tls::client_authentication::PolicyClientAuthenticationResolver::new(
+                transmog_core::client_authentication::ClientCertificatePolicy::default(),
+                fixture.source.clone(),
+                None,
+            )
+            .unwrap(),
+        ),
+        "default app caller",
     );
     let client = HyperOriginClient::new(&factory).unwrap();
     for _ in 0..3 {
@@ -31,6 +42,8 @@ async fn closed_tcp_connections_resume_but_new_caller_pools_do_not() {
     }
     assert_eq!(origin.count.load(Ordering::SeqCst), 3);
     assert_eq!(origin.resumed.load(Ordering::SeqCst), 2);
+    assert_eq!(fixture.source.reads.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
     let isolated = client
         .for_client_certificate_caller("different caller")
         .unwrap();

@@ -20,6 +20,17 @@ async fn retired_quic_connections_resume_only_in_the_same_caller_partition() {
     let factory = UpstreamTlsContextFactory::new(
         Arc::new(TrustSnapshot::load(&trust, 1).unwrap()),
         UpstreamTlsPolicy::default(),
+    )
+    .with_client_certificate_resolver(
+        Arc::new(
+            transmog_tls::client_authentication::PolicyClientAuthenticationResolver::new(
+                transmog_core::client_authentication::ClientCertificatePolicy::default(),
+                fixture.source.clone(),
+                None,
+            )
+            .unwrap(),
+        ),
+        "default app caller",
     );
     let client = H3OriginClient::new(factory, H3TransportLimits::default());
     let mut resumed = Vec::new();

@@ -249,6 +249,11 @@ pub trait ClientAuthenticationResolver: Send + Sync + 'static {
     fn permits_connection_reuse(&self, _host: &str, _port: u16) -> bool {
         false
     }
+    /// Allows anonymous ticket reuse only when this origin can never select an
+    /// identity in the current generation. Embeddings conservatively require a request.
+    fn permits_anonymous_session_reuse(&self, _host: &str, _port: u16) -> bool {
+        false
+    }
     /// Confirms that the actual selected identity may enter this origin's reusable pool.
     fn permits_selected_connection_reuse(
         &self,
@@ -367,6 +372,16 @@ impl PolicyClientAuthenticationResolver {
     }
 }
 impl ClientAuthenticationResolver for PolicyClientAuthenticationResolver {
+    fn permits_anonymous_session_reuse(&self, host: &str, port: u16) -> bool {
+        let state = self
+            .policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.1.matching_rule(host, port).map_or(
+            state.1.default == ClientCertificateDefault::NoCertificate,
+            |rule| rule.mode == ClientCertificateAction::NoCertificate,
+        )
+    }
     fn permits_connection_reuse(&self, host: &str, port: u16) -> bool {
         let state = self
             .policy

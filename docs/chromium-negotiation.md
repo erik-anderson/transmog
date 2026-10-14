@@ -23,8 +23,11 @@ Post-handshake QUIC tickets are retained after establishment and packet progress
 Quiche exposes the latest serialized ticket after each receive; two tickets
 processed in the same receive may collapse to the latest one.
 
-Request-driven client-certificate controllers require a fresh CertificateRequest
+Prompt and automatic client-certificate selection require a fresh CertificateRequest
 and disable ticket caching, preserving their existing authorization contract.
+The default explicit no-certificate policy permits anonymous tickets; installing
+a controller alone does not disable normal resumption. Authorization epochs and
+caller partitions still separate tickets, and anonymous reuse never queries keys.
 Physical connection reuse and TLS session resumption are separate policies.
 Zero-RTT remains disabled: enabling it requires a separate request/replay policy.
 

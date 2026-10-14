@@ -419,10 +419,12 @@ impl H3OriginClient {
         let mut ticket_key = key.clone();
         // Physical no-reuse scopes do not forbid TLS session resumption.
         ticket_key.scope = 0;
-        let tickets = (!tls.has_client_certificate_resolver()).then(|| TicketPartition {
-            cache: self.tickets.clone(),
-            key: ticket_key,
-        });
+        let tickets = tls
+            .permits_session_resumption(&key.host, key.origin_port)
+            .then(|| TicketPartition {
+                cache: self.tickets.clone(),
+                key: ticket_key,
+            });
         let limits = self.limits;
         let happy = self.happy_eyeballs;
         let performance = self.performance.clone();
