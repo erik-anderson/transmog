@@ -1028,6 +1028,7 @@ impl UpstreamTlsContextFactory {
             frozen.bootstrap_trust_failure = true;
         }
         frozen.configure_frozen(&mut builder, context_offer)?;
+        transmog_tls_native::enable_false_start(&mut builder);
         builder.set_alpn_protos(alpn_wire_format)?;
         Ok(builder)
     }

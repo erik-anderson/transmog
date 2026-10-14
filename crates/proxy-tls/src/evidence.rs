@@ -192,8 +192,23 @@ impl TlsCapture {
     /// Completes evidence from a successful handshake, including resumed sessions.
     /// `server` is true for the browser-facing proxy acceptor.
     pub fn completed(&self, ssl: &SslRef, server: bool) {
+        self.completed_with_state(ssl, server, false);
+    }
+    #[allow(clippy::too_many_lines)] // Atomically records one handshake's public evidence.
+    fn completed_with_state(&self, ssl: &SslRef, server: bool, handshake_done: bool) {
         let mut data = self.data();
-        if ssl.is_init_finished() {
+        let finished = handshake_done || ssl.is_init_finished();
+        if !finished && transmog_tls_native::in_false_start(ssl) {
+            insert_detail(&mut data, "TLS False Start", "Used");
+            insert_detail(
+                &mut data,
+                "Handshake completion",
+                "Waiting for server Finished",
+            );
+        } else if finished {
+            insert_detail(&mut data, "Handshake completion", "Complete");
+        }
+        if finished {
             collect_key_exchange(&mut data, ssl);
             // The local signature is available only at HANDSHAKE_DONE. A later
             // completed() call must preserve the value collected by the callback.
@@ -338,7 +353,9 @@ pub(crate) fn configure_completion(context: &mut SslContextBuilder) {
         if mode == SslInfoCallbackMode::HANDSHAKE_DONE
             && let Some(capture) = capture_for(ssl)
         {
-            capture.completed(ssl, ssl.is_server());
+            // BoringSSL emits HANDSHAKE_DONE before clearing handshake state;
+            // is_init_finished() can still be false during this callback.
+            capture.completed_with_state(ssl, ssl.is_server(), true);
         }
     });
 }

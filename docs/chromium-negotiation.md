@@ -27,3 +27,14 @@ Request-driven client-certificate controllers require a fresh CertificateRequest
 and disable ticket caching, preserving their existing authorization contract.
 Physical connection reuse and TLS session resumption are separate policies.
 Zero-RTT remains disabled: enabling it requires a separate request/replay policy.
+
+## TLS 1.2 False Start
+
+TCP contexts enable BoringSSL's False Start mode. The native library permits it
+only for eligible full TLS 1.2 handshakes (ECDHE, AEAD, negotiated ALPN), after
+certificate verification. Writes may begin before the server's Finished;
+reads still wait for it. TLS 1.3, CBC and connections without ALPN do not use it.
+Capture details record **TLS False Start: Used** and **Handshake completion:
+Waiting for server Finished**, then change completion to **Complete** when the
+native handshake-done callback fires. Connection setup timing ends when the
+connection becomes usable for writes, as it does in Chromium.

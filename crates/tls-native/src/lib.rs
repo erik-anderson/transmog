@@ -56,6 +56,22 @@ pub fn configure_session_lifetime(context: &mut SslContextBuilder) {
     unsafe { boring_sys::SSL_CTX_set_timeout(context.as_ptr(), 3600) };
 }
 
+/// Enables Chromium's TLS 1.2 False Start mode with native eligibility checks.
+pub fn enable_false_start(context: &mut SslContextBuilder) {
+    // SAFETY: this sets a mode bit on an exclusively borrowed live context.
+    unsafe {
+        boring_sys::SSL_CTX_set_mode(
+            context.as_ptr(),
+            boring_sys::SSL_MODE_ENABLE_FALSE_START as _,
+        )
+    };
+}
+/// True only while a client may write before receiving the server's Finished.
+pub fn in_false_start(ssl: &SslRef) -> bool {
+    // SAFETY: synchronous read on the borrowed live SSL object.
+    unsafe { boring_sys::SSL_in_false_start(ssl.as_ptr()) != 0 }
+}
+
 /// Offers an owned client ticket selected from the transport's origin/policy partition.
 /// The shared custom verifier still rechecks its stored chain on resumption.
 /// # Errors
