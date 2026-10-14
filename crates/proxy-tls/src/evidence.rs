@@ -411,6 +411,8 @@ impl TlsCapture {
             let (chain, source) = if result.path.is_empty() {
                 peer_chain = transmog_tls_native::peer_certificate_chain(ssl);
                 (&peer_chain, "peer-presented")
+            } else if ssl.session_reused() {
+                (&result.path, "resumed-session-verification-path")
             } else {
                 (&result.path, "verification-path")
             };

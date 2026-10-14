@@ -1217,7 +1217,18 @@ fn resumed_quic_records_the_new_group_and_the_original_signature_separately() {
             evidence.details["Original peer handshake signature"],
             "mldsa44"
         );
-        assert_eq!(evidence.chain_source.as_deref(), Some("resumed-session"));
+        assert_eq!(
+            evidence.chain_source.as_deref(),
+            Some("resumed-session-verification-path")
+        );
+        assert_eq!(
+            evidence.details["Certificate Transparency"],
+            "Not required for private trust"
+        );
+        assert_ne!(
+            evidence.details["CRLSet result"],
+            "Not rechecked: resumed validated session"
+        );
         assert_eq!(evidence.details["Session resumed"], "Yes");
     }
 }

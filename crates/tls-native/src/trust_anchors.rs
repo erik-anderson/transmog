@@ -129,6 +129,10 @@ pub fn configure_context_certificate_policy(
         }),
     );
     context.set_custom_verify_callback(SslVerifyMode::PEER, verify_peer);
+    // Chromium revalidates the stored peer chain on every resumed handshake.
+    // Trust epochs alone cannot detect expiry or other time-dependent policy.
+    // SAFETY: the exclusively borrowed context uses the required custom verifier.
+    unsafe { boring_sys::SSL_CTX_set_reverify_on_resume(context.as_ptr(), 1) };
     Ok(())
 }
 /// Overrides frozen PKI inputs on a fresh physical TCP handshake.

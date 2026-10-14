@@ -135,8 +135,10 @@ the built-in CRLSet is sequence 0 plus Chromium's compiled key lists. Signed
 browser updater packages are not redistributed or downloaded. Captures retain
 source, digest, UTC timestamps, CRLSet sequence and actual per-path CT/CRLSet/OCSP
 outcomes. The certificate inspector's existing **Connection and recorded policy**
-disclosure presents these facts; resumed sessions explicitly report that checks
-were not rerun. Native captures and both SAZ profiles preserve the evidence.
+disclosure presents these facts. Resumed upstream handshakes reverify the stored
+chain and security evidence against current policy and time, as Chromium does;
+the path is labeled as restored from the session rather than newly sent by the
+server. Native captures and both SAZ profiles preserve the evidence.
 
 To roll the baseline, run `python scripts/update-chromium-certificate-policy.py
 --chromium-version FOUR.PART.RELEASE.VERSION`, then the same script with `--check`
