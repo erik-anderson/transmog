@@ -26,10 +26,17 @@ class SnapshotTests(unittest.TestCase):
         self.assertIn("*.kawasaki.jp", rules)
         self.assertIn("!city.kawasaki.jp", rules)
         self.assertNotIn("appspot.com", rules)
+        full = (psl.DEST / "all-rules.txt").read_text().splitlines()
+        self.assertIn("appspot.com", full)
+        self.assertIn("co.uk", full)
+        self.assertIn("!city.kawasaki.jp", full)
+        self.assertTrue(set(rules).issubset(full))
         # A-label conversion must not use IDNA2003's sharp-s mapping.
         data = ("// ===BEGIN ICANN DOMAINS===\n" + "\n".join(f"r{i}.com" for i in range(1000))
                 + "\n!faß.de\n// ===END ICANN DOMAINS===\n").encode()
         self.assertIn(b"!xn--fa-hia.de\n", psl.generate_rules(data))
+        with self.assertRaises(ValueError):
+            psl.generate_rules(data, include_private=True)
 
     def test_rejects_unexpected_source_and_moving_versions(self):
         for data in [b"<html>not a list</html>", b"// ===BEGIN ICANN DOMAINS===\ncom\n// ===END ICANN DOMAINS==="]:

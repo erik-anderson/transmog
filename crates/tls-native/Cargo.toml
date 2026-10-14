@@ -11,6 +11,9 @@ repository.workspace = true
 boring.workspace = true
 boring-sys.workspace = true
 foreign-types.workspace = true
+idna = "=1.1.0"
+percent-encoding.workspace = true
+url = "=2.5.8"
 
 [build-dependencies]
 cc = "=1.6.0"

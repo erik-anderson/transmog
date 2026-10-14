@@ -44,7 +44,7 @@ def artifacts(metadata, npm, version):
               f"The unmodified PKI target from BoringSSL {pki['revision']} is compiled against the same boring-sys crypto instance. Source hashes and licenses: `third_party/boringssl-pki`.", "",
               (ROOT / "third_party/boringssl-pki/LICENSE").read_text(encoding="utf-8").rstrip(),
               "", "## Chromium Public Suffix List", "",
-              f"Chromium {psl['chromiumVersion']}'s Public Suffix List is used for ICANN wildcard boundaries. Original source, generated ICANN rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.", "",
+              f"Chromium {psl['chromiumVersion']}'s Public Suffix List is used for ICANN wildcard boundaries and fixed CA domain restrictions. Original source, generated ICANN and full rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.", "",
               (ROOT / "third_party/chromium-suffix-list/LICENSE").read_text(encoding="utf-8").rstrip()]
     snapshot = json.loads((ROOT / "third_party/chromium-root-store/snapshot.json").read_text(encoding="utf-8"))
     policy = json.loads((ROOT / "third_party/chromium-certificate-policy/snapshot.json").read_text(encoding="utf-8"))

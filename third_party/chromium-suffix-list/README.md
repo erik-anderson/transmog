@@ -4,6 +4,9 @@
 Chromium 154.0.8037.99. Only its ICANN section is used by certificate hostname
 verification, matching Chromium's EXCLUDE_PRIVATE_REGISTRIES policy.
 `icann-rules.txt` is generated from that section with IDNA A-label conversion.
+`all-rules.txt` includes private registries for Chromium's fixed CA domain
+restriction, whose registry check uses INCLUDE_PRIVATE_REGISTRIES. It does not
+change certificate hostname wildcard matching.
 The original notices and full MPL-2.0 license accompany the data.
 
 To roll the snapshot, run:
@@ -16,7 +19,7 @@ python scripts/dev-env.py --run cargo test -p transmog-tls-native hostname
 ```
 
 Replace the version with the new exact four-part Chromium release. Review the
-source diff, generated ICANN rules and `snapshot.json` receipt before committing.
+source diff, generated rules and `snapshot.json` receipt before committing.
 The script supports `--input PATH` for a previously downloaded source file;
 normal updates fetch directly from the Chromium source mirror. `--check` is
 offline and does not change files. Updating the PSL does not itself roll the

@@ -7297,7 +7297,10 @@ dependencies = [
  "boring-sys",
  "cc",
  "foreign-types",
+ "idna",
+ "percent-encoding",
  "serde_json",
+ "url",
 ]
 
 [[package]]

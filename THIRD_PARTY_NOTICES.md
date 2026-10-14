@@ -1036,7 +1036,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Chromium Public Suffix List
 
-Chromium 154.0.8037.99's Public Suffix List is used for ICANN wildcard boundaries. Original source, generated ICANN rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.
+Chromium 154.0.8037.99's Public Suffix List is used for ICANN wildcard boundaries and fixed CA domain restrictions. Original source, generated ICANN and full rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.
 
 Mozilla Public License Version 2.0
 ==================================

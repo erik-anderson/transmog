@@ -47,11 +47,14 @@ browser parity.
   Chromium's hostname check. Captures preserve PKI's chosen path and bounded
   failure diagnostics; capture observers cannot grant trust.
 - Public-program leaf lifetime limits (398/200/100/47 days by issuance date),
-  non-unique names and Chromium's fixed SPKI domain restriction. Root-program
-  identity is separate from local trust; public-only restrictions do not apply
-  to private roots. Chromium's compiled SPKI blocklist applies at every path
-  depth, including locally trusted paths. Test fixture catalogs are explicitly
-  private test roots; production component catalogs retain public classification.
+  non-unique names and Chromium's fixed SPKI domain restriction.
+  SANs are host-canonicalized before the fixed restriction's registry lookup,
+  including escaped bytes and IDNA mappings. That lookup includes private PSL
+  registries, while TLS hostname wildcard matching retains ICANN-only rules.
+  Root-program identity is separate from local trust; public-only restrictions
+  do not apply to private roots. Chromium's compiled SPKI blocklist applies at
+  every path depth, including locally trusted paths. Test fixture catalogs are
+  explicitly private test roots; production component catalogs retain public classification.
 - Root metadata constraint groups are evaluated on candidate paths, including
   version bounds, leaf issuance-time bounds and RFC 5280 permitted DNS subtrees.
   Every condition within a group must pass; any passing group suffices. Eligible
@@ -142,7 +145,9 @@ pool-refresh, saved-capture, Google interoperability and UI checks.
 ## Rolling the Public Suffix List
 
 The exact PSL snapshot, generated ICANN rules and MPL-2.0 license live in
-`third_party/chromium-suffix-list`. To update to an exact Chromium release:
+`third_party/chromium-suffix-list`. The generated full rule set also supplies
+private registries to the fixed CA domain restriction. To update to an exact
+Chromium release:
 
 ```powershell
 python scripts/update-chromium-psl.py --chromium-version 154.0.8037.99

@@ -1,4 +1,4 @@
-"""Update or verify the PSL snapshot and ICANN rules for a Chromium release.
+"""Update or verify the PSL snapshot and certificate policy rules for a Chromium release.
 
 Update: python scripts/update-chromium-psl.py --chromium-version 154.0.8037.99
 Offline: python scripts/update-chromium-psl.py --check
@@ -17,13 +17,19 @@ DEST = ROOT / "third_party/chromium-suffix-list"
 MAX_BYTES = 2 * 1024 * 1024
 
 
-def generate_rules(data: bytes) -> bytes:
+def generate_rules(data: bytes, *, include_private: bool = False) -> bytes:
     text = data.decode("utf-8")
     begin = "// ===BEGIN ICANN DOMAINS==="
     end = "// ===END ICANN DOMAINS==="
     if text.count(begin) != 1 or text.count(end) != 1:
         raise ValueError("PSL must contain exactly one ICANN section")
     section = text.split(begin, 1)[1].split(end, 1)[0]
+    if include_private:
+        private_begin = "// ===BEGIN PRIVATE DOMAINS==="
+        private_end = "// ===END PRIVATE DOMAINS==="
+        if text.count(private_begin) != 1 or text.count(private_end) != 1:
+            raise ValueError("PSL must contain exactly one private section")
+        section += text.split(private_begin, 1)[1].split(private_end, 1)[0]
     rules = []
     for line in section.splitlines():
         line = line.strip()
@@ -37,7 +43,7 @@ def generate_rules(data: bytes) -> bytes:
                   for label in body.split(".")]
         rules.append(prefix + ".".join(labels).lower())
     if len(rules) < 1000 or len(rules) != len(set(rules)):
-        raise ValueError("Unexpected ICANN rule set")
+        raise ValueError("Unexpected PSL rule set")
     return ("\n".join(sorted(rules)) + "\n").encode("ascii")
 
 
@@ -64,7 +70,9 @@ def main() -> None:
         rules = (DEST / "icann-rules.txt").read_bytes()
         if rules != generate_rules(data):
             raise SystemExit("Generated ICANN rules are stale; rerun the update script")
-        for name in ("effective_tld_names.dat", "icann-rules.txt", "LICENSE"):
+        if (DEST / "all-rules.txt").read_bytes() != generate_rules(data, include_private=True):
+            raise SystemExit("Generated full PSL rules are stale; rerun the update script")
+        for name in ("effective_tld_names.dat", "icann-rules.txt", "all-rules.txt", "LICENSE"):
             if hashlib.sha256((DEST / name).read_bytes()).hexdigest() != manifest["sha256"][name]:
                 raise SystemExit(f"Hash mismatch: {name}")
         print(f"Verified Chromium {manifest['chromiumVersion']} PSL and {len(rules.splitlines())} ICANN rules")
@@ -79,7 +87,8 @@ def main() -> None:
     rules = generate_rules(data)
     # Validate and prepare everything before replacing the checked-in snapshot.
     license_data = (DEST / "LICENSE").read_bytes()
-    outputs = {"effective_tld_names.dat": data, "icann-rules.txt": rules, "LICENSE": license_data}
+    outputs = {"effective_tld_names.dat": data, "icann-rules.txt": rules,
+               "all-rules.txt": generate_rules(data, include_private=True), "LICENSE": license_data}
     manifest = {"chromiumVersion": args.chromium_version, "source": source,
                 "sha256": {name: hashlib.sha256(value).hexdigest() for name, value in outputs.items()}}
     DEST.mkdir(parents=True, exist_ok=True)
