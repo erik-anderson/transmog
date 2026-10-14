@@ -1,0 +1,30 @@
+[package]
+name = "transmog-windows-trust"
+description = "Read-only Windows local certificate collections and change monitoring"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Security_Cryptography"] }
+
+[dev-dependencies]
+boring.workspace = true
+windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
+
+[lints.rust]
+# This small adapter owns the Windows certificate-store/event boundary. Public
+# callers receive copied DER and typed state, never native handles or pointers.
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

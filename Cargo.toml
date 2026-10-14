@@ -6,6 +6,7 @@ members = [
     "crates/app-webui",
     "crates/client-identity",
     "crates/client-certificates",
+    "crates/windows-trust",
     "crates/host-windows",
     "crates/key-protection",
     "crates/network",
