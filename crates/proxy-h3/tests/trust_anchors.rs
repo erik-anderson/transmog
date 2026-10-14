@@ -54,7 +54,7 @@ fn config(ca: &ProxyCa, id: Option<u8>, available: Option<u8>) -> quiche::Config
 }
 #[tokio::test]
 async fn quic_uses_an_omitted_intermediate_and_records_a_server_match() {
-    let root = ProxyCa::generate("QUIC configured root", 2).unwrap();
+    let root = anchors::issuer_root("QUIC configured root");
     let issuer = anchors::intermediate(&root);
     let factory = anchors::factory(&root, anchors::catalog(&[(issuer.certificate(), 1)], 42));
     let origin =
@@ -68,7 +68,7 @@ async fn quic_uses_an_omitted_intermediate_and_records_a_server_match() {
     )
     .await
     .unwrap()
-    .unwrap();
+    .unwrap_or_else(|error| panic!("{error}; capture: {:?}", recorder.snapshot()));
     assert_eq!(result.response.head.status, 200);
     let evidence = recorder.snapshot();
     let tls = evidence
@@ -109,7 +109,7 @@ async fn quic_uses_selected_public_trust_instead_of_configured_os_roots() {
     )
     .await
     .unwrap()
-    .unwrap();
+    .unwrap_or_else(|error| panic!("{error}; capture: {:?}", recorder.snapshot()));
     assert_eq!(response.response.head.status, 200);
     let evidence = recorder.snapshot();
     let tls = evidence

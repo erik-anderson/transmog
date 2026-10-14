@@ -100,6 +100,8 @@ python ./scripts/test-saz-interop.py
 cargo deny check
 cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
 python ./scripts/check-crypto-graph.py
+python ./scripts/vendor-boringssl-pki.py --check
+python ./scripts/test-chromium-psl.py
 python ./scripts/generate-supply-chain-artifacts.py
 ```
 

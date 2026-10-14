@@ -21,6 +21,8 @@ try {
     } finally { Pop-Location }
     Write-Host '::group::Repository analysis and tests (development profile)'
     try {
+        Invoke-TransmogPython 'vendor-boringssl-pki.py' @('--check') | Out-Host
+        Invoke-TransmogPython 'test-chromium-psl.py' @() | Out-Host
         & cargo fmt --all -- --check
         & cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         & cargo test --workspace --all-features --locked

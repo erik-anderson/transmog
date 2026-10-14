@@ -220,7 +220,7 @@ async fn exact_local_leaf_trust_compares_canonical_names_and_checks_self_signatu
             cert.issuer_name().to_der().unwrap()
         );
         assert_eq!(
-            transmog_tls_native::certificate_is_self_signed(&cert),
+            cert.verify(&cert.public_key().unwrap()).unwrap_or(false),
             signer.is_none()
         );
         assert_eq!(cert.verify(&key).unwrap(), signer.is_none());

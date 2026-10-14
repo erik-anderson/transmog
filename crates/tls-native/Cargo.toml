@@ -12,6 +12,10 @@ boring.workspace = true
 boring-sys.workspace = true
 foreign-types.workspace = true
 
+[build-dependencies]
+cc = "=1.6.0"
+serde_json.workspace = true
+
 [lints.rust]
 # Native certificate hooks use the same BoringSSL instance, owned credential
 # references and synchronous borrowed callback pointers.

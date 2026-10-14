@@ -1,9 +1,5 @@
 //! Certificate-based Chrome Trust Anchor IDs and selectable public root stores.
-use boring::{
-    hash::MessageDigest,
-    stack::Stack,
-    x509::{X509, X509StoreContext, store::X509StoreBuilder, verify::X509VerifyFlags},
-};
+use boring::{hash::MessageDigest, x509::X509};
 use prost::Message;
 use std::{
     fs::File,
@@ -37,6 +33,10 @@ struct Anchor {
     certificate: Option<Certificate>,
     #[prost(message, repeated, tag = "4")]
     constraints: Vec<ConstraintSet>,
+    #[prost(bool, optional, tag = "8")]
+    enforce_anchor_expiry: Option<bool>,
+    #[prost(bool, optional, tag = "9")]
+    enforce_anchor_constraints: Option<bool>,
     #[prost(bool, optional, tag = "10")]
     tls_trust_anchor: Option<bool>,
     #[prost(bytes, optional, tag = "11")]
@@ -114,6 +114,7 @@ pub struct PkiMetadata {
     wire: Vec<u8>,
     trust: Arc<crate::TrustSnapshot>,
     trusted_anchors: Arc<Vec<X509>>,
+    policy: Arc<transmog_tls_native::CertificatePolicy>,
 }
 
 /// Invalid or inaccessible metadata. Automatic discovery retains the last good copy.
@@ -143,34 +144,15 @@ impl PkiMetadata {
     /// # Errors
     /// Rejects malformed or oversized inputs and invalid certificate/ID material.
     pub fn decode(bytes: &[u8], source: String) -> Result<Self, MetadataError> {
-        if bytes.len() as u64 > MAX_BYTES || source.len() > 1024 {
-            return Err(MetadataError::Invalid("size limit"));
-        }
-        preflight_store(bytes)?;
-        let store = RootStore::decode(bytes).map_err(|_| MetadataError::Invalid("protobuf"))?;
-        if store.version_major <= 0
-            || store.trust_anchors.len() + store.additional_certs.len() == 0
-            || store.trust_anchors.len() + store.additional_certs.len() > MAX_CERTIFICATES
-        {
-            return Err(MetadataError::Invalid("version or certificate count"));
-        }
+        let store = decode_store(bytes, &source)?;
         let mut ids = Vec::new();
         let mut issuers = Vec::new();
-        let mut trusted = X509StoreBuilder::new()
-            .map_err(|_| MetadataError::Invalid("trust store allocation"))?;
-        trusted.set_flags(X509VerifyFlags::PARTIAL_CHAIN);
         let mut root_count = 0;
         let mut trusted_anchors = Vec::new();
+        let mut anchor_only = std::collections::HashSet::new();
+        let mut constrained_anchors = std::collections::HashSet::new();
+        let mut ignore_anchor_expiry = std::collections::HashSet::new();
         let mut excluded = 0;
-        if store
-            .trust_anchors
-            .iter()
-            .any(|a| a.tls_trust_anchor.is_some())
-        {
-            return Err(MetadataError::Invalid(
-                "trust_anchors must not override the TLS role",
-            ));
-        }
         for (anchor, tls) in store.trust_anchors.iter().map(|a| (a, true)).chain(
             store
                 .additional_certs
@@ -185,11 +167,18 @@ impl PkiMetadata {
                         .iter()
                         .any(ConstraintSet::unrestricted_for_reference)
                 {
-                    trusted
-                        .add_cert(&cert)
-                        .map_err(|_| MetadataError::Invalid("trust anchor"))?;
                     root_count += 1;
                     trusted_anchors.push(cert.clone());
+                    let der = cert
+                        .to_der()
+                        .map_err(|_| MetadataError::Invalid("anchor DER"))?;
+                    anchor_only.insert(der.clone());
+                    if anchor.enforce_anchor_constraints == Some(true) {
+                        constrained_anchors.insert(der.clone());
+                    }
+                    if anchor.enforce_anchor_expiry != Some(true) {
+                        ignore_anchor_expiry.insert(der);
+                    }
                 } else {
                     excluded += 1;
                 }
@@ -223,14 +212,21 @@ impl PkiMetadata {
                 .and_then(|bytes| bytes.try_into().ok())
                 .ok_or(MetadataError::Invalid("digest size"))?,
         ) & 0x001f_ffff_ffff_ffff;
-        let trust = Arc::new(crate::trust::TrustSnapshot::from_public_store(
-            trusted.build(),
+        let trust = Arc::new(crate::trust::TrustSnapshot::from_public_roots(
             generation,
             source.clone(),
             store.version_major,
-            root_count,
             excluded,
+            Arc::new(trusted_anchors.clone()),
         ));
+        let policy = Arc::new(transmog_tls_native::CertificatePolicy {
+            anchors: Arc::new(anchor_only.clone()),
+            anchor_only: Arc::new(anchor_only),
+            constrained_anchors: Arc::new(constrained_anchors),
+            ignore_anchor_expiry: Arc::new(ignore_anchor_expiry),
+            issuers: Arc::new(issuers.clone()),
+            ..Default::default()
+        });
         Ok(Self {
             version: store.version_major,
             source,
@@ -240,6 +236,7 @@ impl PkiMetadata {
             wire,
             trust,
             trusted_anchors: Arc::new(trusted_anchors),
+            policy,
         })
     }
 
@@ -281,28 +278,17 @@ impl PkiMetadata {
         self.trusted_anchors.clone()
     }
 
+    pub(crate) fn certificate_policy(&self) -> Arc<transmog_tls_native::CertificatePolicy> {
+        self.policy.clone()
+    }
+
     /// Recovery requests only IDs whose associated CA chains to configured trust.
     /// The peer's decreasing preference order is retained, with no invented IDs.
     pub(crate) fn recovery_ids(
         &self,
         available: &[u8],
-        trust: &crate::TrustSnapshot,
-        local_policy: Option<&transmog_tls_native::CertificatePolicy>,
+        policy: &Arc<transmog_tls_native::CertificatePolicy>,
     ) -> Vec<u8> {
-        let Ok(mut chain) = Stack::new() else {
-            return Vec::new();
-        };
-        for cert in self.issuers.iter() {
-            if local_policy.is_some_and(|policy| {
-                cert.to_der()
-                    .is_ok_and(|der| policy.disallowed.contains(&der))
-            }) {
-                continue;
-            }
-            if chain.push(cert.clone()).is_err() {
-                return Vec::new();
-            }
-        }
         let mut selected = Vec::new();
         let mut remaining = available;
         while let Some((&length, tail)) = remaining.split_first() {
@@ -315,28 +301,7 @@ impl PkiMetadata {
             let Some((_, certificate)) = self.ids.iter().find(|(known, _)| known == id) else {
                 continue;
             };
-            let Ok(mut context) = X509StoreContext::new() else {
-                continue;
-            };
-            if context
-                .init(&trust.store, certificate, &chain, |context| {
-                    if !context.verify_cert()? {
-                        return Ok(false);
-                    }
-                    let Some(policy) = local_policy else {
-                        return Ok(true);
-                    };
-                    let Some(path) = context.chain() else {
-                        return Ok(false);
-                    };
-                    // A stored TrustedPeople leaf can verify as an exact match,
-                    // but that does not make it an eligible CA selection anchor.
-                    Ok(transmog_tls_native::certificate_authority_path_is_allowed(
-                        policy, path,
-                    ))
-                })
-                .unwrap_or(false)
-            {
+            if transmog_tls_native::verify_certificate_authority(policy, certificate) {
                 selected.extend_from_slice(&tail[..length]);
                 let start = selected.len() - length;
                 selected.insert(start, u8::try_from(length).expect("validated identifier"));
@@ -344,6 +309,30 @@ impl PkiMetadata {
         }
         selected
     }
+}
+
+fn decode_store(bytes: &[u8], source: &str) -> Result<RootStore, MetadataError> {
+    if bytes.len() as u64 > MAX_BYTES || source.len() > 1024 {
+        return Err(MetadataError::Invalid("size limit"));
+    }
+    preflight_store(bytes)?;
+    let store = RootStore::decode(bytes).map_err(|_| MetadataError::Invalid("protobuf"))?;
+    if store.version_major <= 0
+        || store.trust_anchors.len() + store.additional_certs.len() == 0
+        || store.trust_anchors.len() + store.additional_certs.len() > MAX_CERTIFICATES
+    {
+        return Err(MetadataError::Invalid("version or certificate count"));
+    }
+    if store
+        .trust_anchors
+        .iter()
+        .any(|anchor| anchor.tls_trust_anchor.is_some())
+    {
+        return Err(MetadataError::Invalid(
+            "trust_anchors must not override the TLS role",
+        ));
+    }
+    Ok(store)
 }
 
 fn parse_ca(anchor: &Anchor) -> Result<X509, MetadataError> {
@@ -354,6 +343,9 @@ fn parse_ca(anchor: &Anchor) -> Result<X509, MetadataError> {
     };
     if der.is_empty() || der.len() > 65_536 {
         return Err(MetadataError::Invalid("certificate size"));
+    }
+    if !transmog_tls_native::certificate_is_parseable(der) {
+        return Err(MetadataError::Invalid("PKI certificate DER"));
     }
     let cert = X509::from_der(der).map_err(|_| MetadataError::Invalid("certificate DER"))?;
     if !transmog_tls_native::certificate_is_ca(&cert) {
@@ -648,6 +640,8 @@ mod tests {
                 }],
                 tls_trust_anchor: None,
                 trust_anchor_id: Some(vec![3]),
+                enforce_anchor_expiry: None,
+                enforce_anchor_constraints: None,
             });
             let metadata = PkiMetadata::decode(
                 &store.encode_to_vec(),
@@ -659,8 +653,7 @@ mod tests {
                 ..Default::default()
             })));
             let effective = local.current(&metadata).unwrap();
-            let selected =
-                metadata.recovery_ids(&[1, 3], &effective.trust, Some(&effective.policy));
+            let selected = metadata.recovery_ids(&[1, 3], &effective.policy);
             assert_eq!(selected, if limit == 0 { vec![] } else { vec![1, 3] });
         }
     }
@@ -719,6 +712,8 @@ mod tests {
             constraints: vec![],
             tls_trust_anchor: None,
             trust_anchor_id: Some(vec![3]),
+            enforce_anchor_expiry: None,
+            enforce_anchor_constraints: None,
         };
         store.trust_anchors.push(usable);
         let metadata =
@@ -728,13 +723,9 @@ mod tests {
             ..Default::default()
         })));
         let effective = local.current(&metadata).unwrap();
-        assert_eq!(
-            metadata.recovery_ids(&[2, 1, 2], &effective.trust, None),
-            [2, 1, 2]
-        );
         assert!(
             metadata
-                .recovery_ids(&[2, 1, 2], &effective.trust, Some(&effective.policy))
+                .recovery_ids(&[2, 1, 2], &effective.policy)
                 .is_empty()
         );
     }
@@ -747,6 +738,8 @@ mod tests {
                 tls_trust_anchor: None,
                 trust_anchor_id: Some(vec![1, 2]),
                 constraints: vec![],
+                enforce_anchor_expiry: None,
+                enforce_anchor_constraints: None,
             }],
             additional_certs: vec![],
         }

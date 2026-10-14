@@ -231,6 +231,7 @@ fn registry_collections_notify_add_remove_property_changes_and_stop_cleanly() {
     let restricted = await_inventory(&monitor, |s| {
         s.generation > added.generation && s.anchors.is_empty()
     });
+    assert_eq!(restricted.issuer_roots, std::slice::from_ref(&der));
     let blocked_writer = disallowed.writer();
     let blocked = add(&blocked_writer, &der);
     commit(&blocked_writer);

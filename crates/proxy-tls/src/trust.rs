@@ -1,6 +1,5 @@
 use std::{
     fmt,
-    net::IpAddr,
     sync::{Arc, OnceLock},
     time::SystemTime,
 };
@@ -8,10 +7,9 @@ use std::{
 use boring::{
     pkey::{PKey, Private},
     ssl::{
-        NameType, SslConnector, SslConnectorBuilder, SslContext, SslContextBuilder, SslMethod,
-        SslVerifyMode, SslVersion,
+        SslConnector, SslConnectorBuilder, SslContext, SslContextBuilder, SslMethod, SslVersion,
     },
-    x509::{X509, X509StoreContext, X509VerifyError, store::X509StoreBuilder},
+    x509::X509,
 };
 use thiserror::Error;
 
@@ -159,7 +157,7 @@ impl TrustSource for SystemTrustSource {
     }
 }
 
-/// One immutable `BoringSSL` trust-store generation.
+/// One immutable trust-input generation for the shared PKI verifier.
 #[derive(Clone)]
 pub struct TrustSnapshot {
     generation: u64,
@@ -167,7 +165,7 @@ pub struct TrustSnapshot {
     source_description: String,
     source_version: Option<String>,
     root_count: usize,
-    pub(crate) store: Arc<boring::x509::store::X509Store>,
+    pub(crate) roots: Arc<Vec<X509>>,
     pub(crate) diagnostics: Arc<[String]>,
 }
 
@@ -186,47 +184,47 @@ impl fmt::Debug for TrustSnapshot {
 }
 
 impl TrustSnapshot {
-    pub(crate) fn from_public_store(
-        store: boring::x509::store::X509Store,
+    pub(crate) fn from_public_roots(
         generation: u64,
         source: String,
         version: i64,
-        root_count: usize,
         excluded: usize,
+        roots: Arc<Vec<X509>>,
     ) -> Self {
         Self {
             generation, loaded_at: SystemTime::now(), source_description: source,
-            source_version: Some(version.to_string()), root_count, store: Arc::new(store),
+            source_version: Some(version.to_string()), root_count: roots.len(), roots,
             diagnostics: if excluded == 0 { Vec::new() } else {
                 vec![format!("{excluded} anchors excluded: their Chromium constraints require verification policy unavailable in Transmog")]
             }.into(),
         }
     }
-    /// Parses source bytes with `BoringSSL` and creates a new immutable store.
+    /// Parses source bytes and creates immutable trust inputs for the PKI verifier.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] if the source cannot load, no valid roots remain,
-    /// or the native trust-store builder fails.
+    /// Returns [`TrustError`] if the source cannot load or no valid roots remain.
     pub fn load(source: &dyn TrustSource, generation: u64) -> Result<Self, TrustError> {
         let loaded = source.load()?;
-        let mut builder = X509StoreBuilder::new()?;
-        let mut valid = 0_usize;
+        let mut roots = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut diagnostics = loaded.diagnostics;
         for (index, der) in loaded.certificates_der.into_iter().enumerate() {
+            if !transmog_tls_native::certificate_is_parseable(&der) {
+                diagnostics.push(format!(
+                    "root {index} cannot be parsed by Chromium's PKI verifier"
+                ));
+                continue;
+            }
             match X509::from_der(&der) {
-                Ok(certificate) => match builder.add_cert(&certificate) {
-                    Ok(()) => valid += 1,
-                    Err(error) => diagnostics.push(format!(
-                        "root {index} was rejected by the BoringSSL store: {error}"
-                    )),
-                },
+                Ok(certificate) if seen.insert(der) => roots.push(certificate),
+                Ok(_) => {}
                 Err(error) => diagnostics.push(format!(
                     "root {index} is not valid DER according to BoringSSL: {error}"
                 )),
             }
         }
-        if valid == 0 {
+        if roots.is_empty() {
             return Err(TrustError::EmptyStore {
                 diagnostics,
                 source_description: loaded.source_description,
@@ -237,8 +235,8 @@ impl TrustSnapshot {
             loaded_at: SystemTime::now(),
             source_description: loaded.source_description,
             source_version: loaded.source_version,
-            root_count: valid,
-            store: Arc::new(builder.build()),
+            root_count: roots.len(),
+            roots: Arc::new(roots),
             diagnostics: diagnostics.into(),
         })
     }
@@ -263,7 +261,7 @@ impl TrustSnapshot {
         self.source_version.as_deref()
     }
 
-    /// Number of roots accepted into `BoringSSL`'s store.
+    /// Number of parseable roots retained in this trust snapshot.
     pub fn root_count(&self) -> usize {
         self.root_count
     }
@@ -524,7 +522,27 @@ impl UpstreamTlsContextFactory {
                 }))
             }
             Some(Err(error)) => Err(TrustError::LocalPolicy(error.clone())),
+            None if self.profile.as_ref().is_some_and(|p| {
+                p.settings.root_store != transmog_core::network_profile::RootStore::Os
+            }) =>
+            {
+                Ok(self.metadata().certificate_policy())
+            }
             None => Ok(Arc::new(transmog_tls_native::CertificatePolicy {
+                anchors: Arc::new(
+                    self.snapshot
+                        .roots
+                        .iter()
+                        .map(|cert| cert.to_der())
+                        .collect::<Result<_, _>>()?,
+                ),
+                constrained_anchors: Arc::new(
+                    self.snapshot
+                        .roots
+                        .iter()
+                        .map(|cert| cert.to_der())
+                        .collect::<Result<_, _>>()?,
+                ),
                 issuers: if self.trust_anchor_ids_enabled() {
                     self.metadata().issuers()
                 } else {
@@ -564,6 +582,19 @@ impl UpstreamTlsContextFactory {
         })
     }
 
+    /// Sets the expected canonical peer name and frozen PKI inputs independently
+    /// of SNI and capture collection. Use this for embedding IP-literal origins.
+    /// # Errors
+    /// Returns native configuration or trust input failures.
+    pub fn configure_ssl_metadata_for_peer(
+        &self,
+        ssl: &mut boring::ssl::SslRef,
+        peer_name: &str,
+    ) -> Result<(), TrustError> {
+        transmog_tls_native::configure_ssl_peer_name(ssl, peer_name.to_owned())?;
+        self.configure_ssl_metadata(ssl)
+    }
+
     /// Applies the frozen offer and untrusted helpers to fresh TCP SSL objects.
     /// # Errors
     /// Returns native configuration errors.
@@ -581,7 +612,6 @@ impl UpstreamTlsContextFactory {
             // validated against an older root store must not bypass new trust.
             crate::client_connections::clear_cached_session(ssl)?;
         }
-        ssl.set_verify_cert_store((*trust.store).clone())?;
         if self.trust_anchor_ids_enabled() {
             let metadata = self.metadata();
             transmog_tls_native::configure_ssl_trust_anchors(
@@ -589,7 +619,6 @@ impl UpstreamTlsContextFactory {
                 self.recovery_ids
                     .as_deref()
                     .unwrap_or_else(|| metadata.requested_ids()),
-                metadata.issuers(),
             )?;
         }
         let policy = self.certificate_policy()?;
@@ -623,16 +652,8 @@ impl UpstreamTlsContextFactory {
         factory.connection_local = None;
         factory = factory.for_connection();
         let metadata = factory.metadata();
-        let local_policy = match &factory.connection_local {
-            Some(Ok(local)) => Some(local.policy.as_ref()),
-            Some(Err(_)) => return None,
-            None => None,
-        };
-        let ids = metadata.recovery_ids(
-            &capture.available_trust_anchors(),
-            &factory.effective_trust(),
-            local_policy,
-        );
+        let policy = factory.certificate_policy().ok()?;
+        let ids = metadata.recovery_ids(&capture.available_trust_anchors(), &policy);
         if ids.is_empty() || ids == metadata.requested_ids() {
             return None;
         }
@@ -706,7 +727,7 @@ impl UpstreamTlsContextFactory {
             let metadata = self.metadata();
             capture.authentication_detail("Root store version", &metadata.version.to_string());
             capture.authentication_detail("Root store SHA-256", &metadata.sha256);
-            capture.authentication_detail("Root store policy", "BoringSSL certificate verification; unsupported Chromium constraints exclude affected anchors");
+            capture.authentication_detail("Root store policy", "Chromium BoringSSL PKI; public anchor expiry and constraints follow metadata flags; unsupported Chrome metadata constraints exclude affected anchors");
             if let Some(diagnostic) = trust.diagnostics().first() {
                 capture.authentication_detail("Root store exclusions", diagnostic);
             }
@@ -738,7 +759,7 @@ impl UpstreamTlsContextFactory {
                     &inventory.generation.to_string(),
                 );
                 capture.authentication_detail("Local trust SHA-256", &inventory.sha256);
-                capture.authentication_detail("Local certificate roles", &format!("{} eligible ROOT entries; {} issuer helpers; {} eligible TrustedPeople entries; {} Disallowed entries", inventory.anchors.len(), inventory.intermediates.len(), inventory.trusted_leaves.len(), inventory.disallowed.len()));
+                capture.authentication_detail("Local certificate roles", &format!("{} eligible ROOT entries; {} issuer helpers; {} eligible TrustedPeople entries; {} Disallowed entries", inventory.anchors.len(), inventory.intermediates.len() + inventory.issuer_roots.len(), inventory.trusted_leaves.len(), inventory.disallowed.len()));
             }
             Some(Err(error)) => capture.authentication_detail("Local certificate trust", error),
             None => capture.authentication_detail(
@@ -854,13 +875,7 @@ impl UpstreamTlsContextFactory {
             crate::client_hello::enable_ech_grease(builder)?;
         }
         let trust = self.effective_trust();
-        builder.set_cert_store((*trust.store).clone());
         builder.set_ex_data(context_trust_index()?, trust);
-        builder.set_verify_callback(SslVerifyMode::PEER, |accepted, context| {
-            let accepted = verify_peer_identity(accepted, context);
-            crate::evidence::verification(context, accepted);
-            accepted
-        });
         if settings.trust_anchor_ids {
             let metadata = self.metadata();
             transmog_tls_native::configure_context_trust_anchors(
@@ -868,7 +883,6 @@ impl UpstreamTlsContextFactory {
                 self.recovery_ids
                     .as_deref()
                     .unwrap_or_else(|| metadata.requested_ids()),
-                metadata.issuers(),
             )?;
         }
         transmog_tls_native::configure_context_certificate_policy(
@@ -909,35 +923,6 @@ impl UpstreamTlsContextFactory {
         }
         Ok(())
     }
-}
-
-fn verify_peer_identity(
-    preverify_ok: bool,
-    context: &mut boring::x509::X509StoreContextRef,
-) -> bool {
-    if preverify_ok {
-        return true;
-    }
-    if context.verify_result() != Err(X509VerifyError::HOSTNAME_MISMATCH)
-        || context.error_depth() != 0
-    {
-        return false;
-    }
-    let Ok(ssl_index) = X509StoreContext::ssl_idx() else {
-        return false;
-    };
-    let Some(ssl) = context.ex_data(ssl_index) else {
-        return false;
-    };
-    let Some(peer_name) = ssl.servername(NameType::HOST_NAME) else {
-        return false;
-    };
-    if peer_name.parse::<IpAddr>().is_err() {
-        return false;
-    }
-    context
-        .current_cert()
-        .is_some_and(|certificate| certificate.check_ip_asc(peer_name).unwrap_or(false))
 }
 
 /// Trust loading or `BoringSSL` context failure.

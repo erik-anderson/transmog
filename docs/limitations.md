@@ -25,9 +25,9 @@ extensions belong in the [roadmap](roadmap.md), not in completed phase plans.
 ## TLS and identity
 
 - Certificate-pinned clients fail; Transmog never bypasses pinning.
-- BoringSSL verification over roots enumerated from the operating system does
-  not reproduce every OS or Chrome Root Store constraint, revocation mechanism,
-  certificate-transparency rule, or metadata feed.
+- The shared Chromium BoringSSL PKI verifier does not yet reproduce all Chrome
+  policies around that core, including CT, revocation, AIA and public-certificate
+  policy. See [the verifier contract](chromium-verifier.md) for the precise gaps.
 - Caller-process attribution is diagnostic and best effort. Windows and Linux
   have bounded system resolvers. Local callers on macOS and other unsupported
   platforms are reported as unknown unless an embedder supplies a resolver;

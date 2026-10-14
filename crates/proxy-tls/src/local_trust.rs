@@ -2,7 +2,7 @@
 use crate::{TrustError, TrustSnapshot, trust_anchors::PkiMetadata};
 use boring::{
     hash::{MessageDigest, hash},
-    x509::{X509, store::X509StoreBuilder, verify::X509VerifyFlags},
+    x509::X509,
 };
 use std::{
     collections::HashSet,
@@ -118,13 +118,12 @@ fn build(
     let mut anchors = Vec::new();
     let mut leaves = Vec::new();
     let mut issuers = Vec::new();
-    let mut builder = X509StoreBuilder::new()?;
-    builder.set_flags(X509VerifyFlags::PARTIAL_CHAIN);
     let mut seen = HashSet::new();
+    let public_policy = metadata.certificate_policy();
+    let mut constrained_anchors = (*public_policy.constrained_anchors).clone();
     for cert in metadata.trusted_anchors().iter() {
         let der = cert.to_der()?;
         if !blocked.contains(&der) && seen.insert(der) {
-            builder.add_cert(cert)?;
             anchors.push(cert.clone());
         }
     }
@@ -135,31 +134,21 @@ fn build(
         let Ok(cert) = X509::from_der(der) else {
             continue;
         };
-        if transmog_tls_native::certificate_is_ca(&cert) {
-            if seen.insert(der.clone()) {
-                builder.add_cert(&cert)?;
-                anchors.push(cert);
-            }
-        } else if transmog_tls_native::certificate_is_self_signed(&cert) {
-            leaves.push(cert);
+        // Chromium's collection resolves a duplicate public/local anchor
+        // using the public store's trust flags, while local distrust wins.
+        if !public_policy.anchor_only.contains(der) {
+            constrained_anchors.insert(der.clone());
+        }
+        if seen.insert(der.clone()) {
+            anchors.push(cert);
         }
     }
     for der in &inventory.trusted_leaves {
         if blocked.contains(der) {
             continue;
         }
-        if let Ok(cert) = X509::from_der(der)
-            && transmog_tls_native::certificate_is_self_signed(&cert)
-        {
+        if let Ok(cert) = X509::from_der(der) {
             leaves.push(cert);
-        }
-    }
-    // Exact self-signed leaf trust needs ordinary store lookup (BoringSSL's
-    // PARTIAL_CHAIN exact-match path). The verification callback rejects these
-    // certificates at issuer depths unless they also have a normal ROOT role.
-    for cert in &leaves {
-        if seen.insert(cert.to_der()?) {
-            builder.add_cert(cert)?;
         }
     }
     for cert in metadata.issuers().iter() {
@@ -167,7 +156,11 @@ fn build(
             issuers.push(cert.clone());
         }
     }
-    for der in &inventory.intermediates {
+    for der in inventory
+        .intermediates
+        .iter()
+        .chain(&inventory.issuer_roots)
+    {
         if !blocked.contains(der)
             && let Ok(cert) = X509::from_der(der)
         {
@@ -185,14 +178,12 @@ fn build(
     let mut generation_bytes = [0; 8];
     generation_bytes.copy_from_slice(&digest[..8]);
     let generation = u64::from_be_bytes(generation_bytes) & 0x001f_ffff_ffff_ffff;
-    let root_count = anchors.len();
-    let mut trust = TrustSnapshot::from_public_store(
-        builder.build(),
+    let mut trust = TrustSnapshot::from_public_roots(
         generation,
         source_description(&metadata.source),
         metadata.version,
-        root_count,
         0,
+        Arc::new(anchors.clone()),
     );
     trust.diagnostics = metadata.trust().diagnostics.clone();
     Ok(EffectiveLocalTrust {
@@ -208,6 +199,9 @@ fn build(
                     .map(|cert| cert.to_der())
                     .collect::<Result<_, _>>()?,
             ),
+            anchor_only: public_policy.anchor_only.clone(),
+            constrained_anchors: Arc::new(constrained_anchors),
+            ignore_anchor_expiry: public_policy.ignore_anchor_expiry.clone(),
             local_anchors: Arc::new(inventory.anchors.iter().cloned().collect()),
             trusted_leaves: Arc::new(leaves),
             disallowed: Arc::new(blocked),

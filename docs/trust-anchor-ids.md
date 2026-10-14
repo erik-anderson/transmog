@@ -66,9 +66,12 @@ This excludes the aggregate SYSTEM provider and automatically managed AuthRoot
 public roots. An explicitly installed ROOT entry remains a local trust choice,
 even when its certificate is also public.
 
-ROOT entries anchor paths. Non-CA ROOT entries and TrustedPeople entries trust
-only the exact self-signed server certificate; they cannot authorize issued
-certificates. CA entries remain untrusted issuer helpers. Eligibility intersects
+ROOT uses Chromium's anchor-or-leaf trust with enforced anchor expiry and
+constraints and required leaf self-signatures. TrustedPeople uses exact leaf
+trust with a required self-signature and is not searched for issuers. The PKI
+verifier decides whether a ROOT entry can authorize an issuer path. CA entries
+and all ROOT entries, including entries ineligible for server trust, remain
+untrusted issuer candidates. Eligibility intersects
 DER EKU and Windows usage properties, requiring serverAuth or any-purpose when
 restricted. Disallowed rejects a certificate at any path depth regardless of
 purpose, including public anchors. Normal hostname, expiry, server usage and
@@ -95,8 +98,9 @@ selected public PKIMetadata.
 
 ## Verification limits and recovery
 
-Transmog uses BoringSSL's X.509 verifier, including hostname, purpose, validity,
-signature and certificate constraints. Chromium metadata's additional TLS anchors
+Transmog uses one Chromium BoringSSL PKI path builder, including purpose,
+validity, strong certificate signatures and RFC 5280 constraints. Hostnames
+follow Chromium's SAN-only policy and ICANN wildcard boundary. Metadata's additional TLS anchors
 can terminate a verified path, enabling omitted-intermediate handling. OS mode
 keeps metadata certificates as untrusted helpers.
 
@@ -104,9 +108,12 @@ This is root-store selection, not a complete implementation of Chrome's verifier
 An anchor with metadata ConstraintSets is admitted only if at least one set is
 unrestricted for the measured Chromium version. Sets requiring Chrome's SCT/CT,
 DNS, serial or issuance-time policy are conservatively excluded. This can reject
-some certificates Chrome would accept. Root certificate expiry and X.509
-constraints remain enforced by BoringSSL, including for additional TLS anchors.
-Chrome's EV, CT log policy, revocation lists and MTC verification remain gaps.
+some certificates Chrome would accept. Public anchors use the protobuf's
+`enforce_anchor_expiry` and `enforce_anchor_constraints` flags (both default to
+false), including additional TLS anchors. Eligible public trust overrides
+duplicate local trust flags; exact local distrust still wins. Windows local ROOT
+enforces expiry and X.509 constraints, including certificate policies.
+Chrome's additional policies remain tracked in [the verifier contract](chromium-verifier.md).
 Excluded-anchor counts and the applied policy are retained in connection evidence.
 
 A server matching marker never authorizes a chain. After certificate rejection,

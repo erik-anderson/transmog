@@ -202,13 +202,19 @@ impl Collections {
             ..Default::default()
         };
         let mut budget = Budget::default();
+        enumerate(
+            &self.roots,
+            &mut result.anchors,
+            true,
+            &mut budget,
+            Some(&mut result.issuer_roots),
+        )?;
         for (store, output, check_usage) in [
-            (&self.roots, &mut result.anchors, true),
             (&self.intermediates, &mut result.intermediates, false),
             (&self.leaves, &mut result.trusted_leaves, true),
             (&self.blocked, &mut result.disallowed, false),
         ] {
-            enumerate(store, output, check_usage, &mut budget)?;
+            enumerate(store, output, check_usage, &mut budget, None)?;
         }
         Ok(result.canonical())
     }
@@ -234,6 +240,7 @@ fn enumerate(
     out: &mut Vec<Vec<u8>>,
     usage: bool,
     budget: &mut Budget,
+    mut issuer_roots: Option<&mut Vec<Vec<u8>>>,
 ) -> Result<(), LocalTrustError> {
     let mut cert = Certificate(ptr::null());
     loop {
@@ -270,9 +277,13 @@ fn enumerate(
         {
             return Err(LocalTrustError::Limit);
         }
+        // SAFETY: CERT_CONTEXT owns this bounded public DER allocation.
+        let der = unsafe { std::slice::from_raw_parts(context.pbCertEncoded, length) };
+        if let Some(issuers) = &mut issuer_roots {
+            issuers.push(der.to_vec());
+        }
         if !usage || server_auth(cert.0).unwrap_or(false) {
-            // SAFETY: CERT_CONTEXT owns this bounded public DER allocation.
-            out.push(unsafe { std::slice::from_raw_parts(context.pbCertEncoded, length) }.to_vec());
+            out.push(der.to_vec());
         }
     }
 }

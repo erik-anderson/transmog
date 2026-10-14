@@ -37,6 +37,14 @@ def artifacts(metadata, npm, version):
     lines += [f"| {p['name']} | {p['version']} | {p['license']} | {p['source']} |" for p in npm]
     lines += ["", "## Bundled native code", "",
               "`boring-sys` and `quiche` compile bundled BoringSSL/quiche source. Their upstream license files and notices remain part of the Cargo source distribution and must be retained in binary distribution materials."]
+    pki = json.loads((ROOT / "third_party/boringssl-pki/manifest.json").read_text(encoding="utf-8"))
+    psl = json.loads((ROOT / "third_party/chromium-suffix-list/snapshot.json").read_text(encoding="utf-8"))
+    lines += ["", "## BoringSSL PKI", "",
+              f"The unmodified PKI target from BoringSSL {pki['revision']} is compiled against the same boring-sys crypto instance. Source hashes and licenses: `third_party/boringssl-pki`.", "",
+              (ROOT / "third_party/boringssl-pki/LICENSE").read_text(encoding="utf-8").rstrip(),
+              "", "## Chromium Public Suffix List", "",
+              f"Chromium {psl['chromiumVersion']}'s Public Suffix List is used for ICANN wildcard boundaries. Original source, generated ICANN rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.", "",
+              (ROOT / "third_party/chromium-suffix-list/LICENSE").read_text(encoding="utf-8").rstrip()]
     snapshot = json.loads((ROOT / "third_party/chromium-root-store/snapshot.json").read_text(encoding="utf-8"))
     lines += ["", "## Chromium root-store data", "",
               f"The bundled crs.pb is generated from public Chromium source revision {snapshot['sourceRevision']} (root-store version {snapshot['rootStoreVersion']}). It supplies certificate-based Trust Anchor IDs and public certificates. Network profiles can select these public TLS anchors for verification; OS mode uses them as untrusted chain-building helpers.", "",
@@ -62,13 +70,20 @@ def artifacts(metadata, npm, version):
                        "licenses": [{"license": {"id": "BSD-3-Clause"}}],
                        "hashes": [{"alg": "SHA-256", "content": snapshot["protobufSha256"]}],
                        "externalReferences": [{"type": "vcs", "url": snapshot["source"]}]})
+    components += [{"type": "library", "bom-ref": "boringssl-pki", "name": "BoringSSL PKI",
+                    "version": pki["revision"], "licenses": [{"license": {"id": "Apache-2.0"}}],
+                    "externalReferences": [{"type": "vcs", "url": "https://boringssl.googlesource.com/boringssl/+/" + pki["revision"]}]},
+                   {"type": "data", "bom-ref": "chromium-public-suffix-list", "name": "Chromium Public Suffix List",
+                    "version": psl["chromiumVersion"], "licenses": [{"license": {"id": "MPL-2.0"}}],
+                    "hashes": [{"alg": "SHA-256", "content": psl["sha256"]["effective_tld_names.dat"]}],
+                    "externalReferences": [{"type": "vcs", "url": psl["source"]}]}]
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
             "metadata": {"timestamp": datetime.now(timezone.utc).isoformat(),
                          "tools": [{"vendor": "Transmog", "name": "generate-supply-chain-artifacts.py"}],
                          "component": {"type": "application", "name": "transmog", "version": version}},
             "components": components,
             "dependencies": [{"ref": node["id"], "dependsOn": node["dependencies"]} for node in metadata["resolve"]["nodes"]]}
-    return "\n".join(lines) + "\n", sbom
+    return "\n".join(line.rstrip() for line in "\n".join(lines).splitlines()) + "\n", sbom
 
 
 def main():

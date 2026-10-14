@@ -3,18 +3,23 @@
 
 mod application_settings;
 mod credentials;
+mod hostname;
 mod trust_anchors;
+mod verifier;
 pub use application_settings::{configure_h2_application_settings, peer_application_settings};
 pub use credentials::{
     MlDsaVariant, add_server_credential, add_server_credential_for_trust_anchor,
     selected_credential_chain,
 };
 pub use trust_anchors::{
-    CertificatePolicy, certificate_authority_path_is_allowed, certificate_is_allowed,
-    certificate_is_ca, certificate_is_self_signed, configure_available_trust_anchors,
-    configure_context_certificate_policy, configure_context_trust_anchors,
-    configure_ssl_certificate_policy, configure_ssl_trust_anchors, peer_trust_anchors,
-    verified_trust_role,
+    CertificatePolicy, certificate_is_ca, configure_available_trust_anchors,
+    configure_context_certificate_policy, configure_context_peer_name,
+    configure_context_trust_anchors, configure_ssl_certificate_policy, configure_ssl_peer_name,
+    configure_ssl_trust_anchors, observe_context_verification, observe_ssl_verification,
+    peer_trust_anchors,
+};
+pub use verifier::{
+    Verification, certificate_is_parseable, peer_certificate_chain, verify_certificate_authority,
 };
 
 use boring::{

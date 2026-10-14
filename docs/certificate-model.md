@@ -3,18 +3,24 @@
 Upstream verification and downstream signing are deliberately separate.
 
 Upstream root bytes are enumerated once from the operating system, parsed by
-BoringSSL, and placed in an immutable `TrustSnapshot`. Each reload creates a new
+the Chromium PKI parser, and placed in an immutable `TrustSnapshot`. Each reload creates a new
 generation, context factory, and connection-pool generation. Hyper and quiche
 receive contexts from the same factory. The operating system does not perform
-path building; v1 semantics are BoringSSL path and hostname verification over a
-snapshot of OS-enumerated roots.
+path building. One verifier based on Chromium's BoringSSL PKI path builder
+handles TCP, QUIC and Trust Anchor ID recovery for every root-source choice.
+The native bridge compiles the unmodified PKI target against the existing
+BoringSSL crypto instance; the legacy X.509 verifier and hand-written parallel
+certificate checks are removed from upstream verification. The adapters' TLS
+method still pre-parses wire certificates; moving to buffered TLS remains a
+separate integration gap described in the verifier contract.
 
-The shared verifier also handles literal-IP origins with BoringSSL's dedicated
-IP-SAN matcher. This is intentionally narrow: only BoringSSL's hostname-mismatch
-result for a syntactically valid IP is reconsidered, and it succeeds only when
-the leaf has that exact IP SAN. Chain, validity, usage, and every other
-verification failure remain fail-closed. DNS names continue through the normal
-BoringSSL hostname verifier.
+The shared hostname check follows Chromium 154: SANs are mandatory; DNS
+wildcards match only a whole first label and respect ICANN registry boundaries;
+IP literals require the exact IP SAN. The pinned Chromium Public Suffix List
+and its maintenance script are described in [the verifier contract](chromium-verifier.md).
+Expected peer names are independent of SNI and capture collection. Embedders
+using raw TCP SSL objects should call `configure_ssl_metadata_for_peer`,
+particularly for IP origins or when disabling SNI.
 
 Live reload is exposed through `ProxyServer::control().reload_trust(...)`. A
 reload must use a strictly increasing generation number. The runtime constructs
@@ -65,8 +71,9 @@ ROOT, CA, machine TrustedPeople and Disallowed collections. The OS public-root
 program is excluded. CA entries only help build chains; self-signed TrustedPeople
 entries authorize only the exact server certificate, and explicit distrust wins.
 Custom profiles can disable the overlay for public-only debugging.
-This does not implement Chrome's complete verifier: anchors with unsupported
-metadata constraints are excluded. See [root-store selection](trust-anchor-ids.md).
+Chrome's policies around this PKI core are not all implemented yet. The exact
+remaining differences are listed in [the verifier contract](chromium-verifier.md);
+anchors with unsupported metadata constraints remain excluded.
 
 Upstream TLS 1.3 clients also advertise Brotli certificate decompression
 (`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing

@@ -4,7 +4,7 @@ use boring::{
     ex_data::Index,
     hash::MessageDigest,
     ssl::{Ssl, SslContext, SslContextBuilder, SslInfoCallbackMode, SslRef, SslVersion},
-    x509::{X509Ref, X509StoreContext, X509StoreContextRef},
+    x509::X509Ref,
 };
 use std::sync::{Arc, Mutex, OnceLock};
 use transmog_core::{PublicCertificate, TlsEvidence, VerificationResult};
@@ -48,6 +48,13 @@ impl TlsCapture {
             .map(|cipher| cipher.name().to_owned())
             .collect();
         ssl.set_ex_data(ssl_index()?, self.clone());
+        if let Some(name) = self.data().server_name.clone() {
+            transmog_tls_native::configure_ssl_peer_name(ssl, name)?;
+        }
+        let capture = self.clone();
+        transmog_tls_native::observe_ssl_verification(ssl, move |ssl, result| {
+            capture.verification(ssl, result);
+        })?;
         Ok(())
     }
     /// Installs collection on a connection-specific quiche context.
@@ -61,6 +68,13 @@ impl TlsCapture {
                 .collect()
         });
         context.set_ex_data(context_index()?, self.clone());
+        if let Some(name) = self.data().server_name.clone() {
+            transmog_tls_native::configure_context_peer_name(context, name)?;
+        }
+        let capture = self.clone();
+        transmog_tls_native::observe_context_verification(context, move |ssl, result| {
+            capture.verification(ssl, result);
+        })?;
         configure_completion(context);
         Ok(())
     }
@@ -244,12 +258,12 @@ impl TlsCapture {
         // null stack. Configured issuer paths are supplied explicitly by their
         // owner; peer chains below use the nullable handshake API.
         let mut peer = Vec::new();
-        if let Some(certificate) = ssl.peer_certificate() {
-            collect_certificate(&mut peer, &certificate);
-        }
-        if let Some(chain) = ssl.peer_cert_chain() {
-            for certificate in chain {
-                collect_certificate(&mut peer, certificate);
+        for bytes in transmog_tls_native::peer_certificate_chain(ssl)
+            .iter()
+            .take(32)
+        {
+            if let Some(certificate) = certificate_der_evidence(bytes) {
+                peer.push(certificate);
             }
         }
         if server {
@@ -326,79 +340,81 @@ fn capture_for(ssl: &SslRef) -> Option<TlsCapture> {
         .cloned()
 }
 
-pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
-    let Ok(index) = X509StoreContext::ssl_idx() else {
-        return;
-    };
-    let Some(ssl) = context.ex_data(index) else {
-        return;
-    };
-    let capture = capture_for(ssl);
-    let Some(capture) = capture else {
-        return;
-    };
-    let mut data = capture.data();
-    if accepted
-        && context.error_depth() == 0
-        && let Some(role) = transmog_tls_native::verified_trust_role(context)
-    {
-        insert_detail(&mut data, "Verified trust role", role);
-    }
-    if data.details.contains_key("Requested Trust Anchor IDs") {
-        let (matched, available) = transmog_tls_native::peer_trust_anchors(ssl);
+impl TlsCapture {
+    fn verification(&self, ssl: &SslRef, result: &transmog_tls_native::Verification) {
+        let capture = self;
+        let mut data = capture.data();
+        insert_detail(&mut data, "Certificate verifier", "Chromium BoringSSL PKI");
         insert_detail(
             &mut data,
-            "Trust Anchor IDs",
-            if matched {
-                "Server reported a matching certificate chain"
-            } else {
-                "Offered; server did not report a match"
-            },
+            "PKI verification status",
+            &result.pki_status.to_string(),
         );
-        if !available.is_empty() {
-            let value = crate::trust_anchors::hex(&available);
+        if let Some(role) = result.trust_role {
+            insert_detail(&mut data, "Verified trust role", role);
+        }
+        if data.details.contains_key("Requested Trust Anchor IDs") {
+            let (matched, available) = transmog_tls_native::peer_trust_anchors(ssl);
             insert_detail(
                 &mut data,
-                "Server available Trust Anchor IDs",
-                if value.len() <= 2048 {
-                    &value
+                "Trust Anchor IDs",
+                if matched {
+                    "Server reported a matching certificate chain"
                 } else {
-                    "List exceeds display limit; retained for bounded connection recovery"
+                    "Offered; server did not report a match"
                 },
             );
-            *capture
-                .1
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = available;
+            if !available.is_empty() {
+                let value = crate::trust_anchors::hex(&available);
+                insert_detail(
+                    &mut data,
+                    "Server available Trust Anchor IDs",
+                    if value.len() <= 2048 {
+                        &value
+                    } else {
+                        "List exceeds display limit; retained for bounded connection recovery"
+                    },
+                );
+                *capture
+                    .1
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = available;
+            }
         }
-    }
-    if let Some(chain) = context.chain() {
-        let mut certificates = Vec::new();
-        for certificate in chain {
-            collect_certificate(&mut certificates, certificate);
+        {
+            let peer_chain;
+            let (chain, source) = if result.path.is_empty() {
+                peer_chain = transmog_tls_native::peer_certificate_chain(ssl);
+                (&peer_chain, "peer-presented")
+            } else {
+                (&result.path, "verification-path")
+            };
+            let certificates: Vec<_> = chain
+                .iter()
+                .filter_map(|bytes| certificate_der_evidence(bytes))
+                .collect();
+            if !certificates.is_empty() {
+                data.server_chain = certificates;
+                data.chain_source = Some(source.into());
+            }
         }
-        if !certificates.is_empty() {
-            data.server_chain = certificates;
-            data.chain_source = Some("verification-path".into());
+        if let Some(cipher) = ssl.current_cipher() {
+            insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
+            insert_detail(&mut data, "Negotiated cipher", cipher.name());
         }
-    }
-    if let Some(cipher) = ssl.current_cipher() {
-        insert_detail(&mut data, "Negotiated TLS version", ssl.version_str());
-        insert_detail(&mut data, "Negotiated cipher", cipher.name());
-    }
-    if !accepted && let Err(error) = context.verify_result() {
-        data.verification = Some(VerificationResult::Rejected {
-            error_code: error.as_raw(),
-            depth: Some(context.error_depth()),
-        });
-        let message = format!(
-            "Certificate verification: {} (code {}, depth {})",
-            error.error_string(),
-            error.as_raw(),
-            context.error_depth()
-        );
-        if data.errors.len() < 16 && !data.errors.contains(&message) {
-            data.errors.push(message);
+        if !result.accepted {
+            data.verification = Some(VerificationResult::Rejected {
+                error_code: result.error_code,
+                depth: result.depth,
+            });
+            let message = format!(
+                "Certificate verification: {} (PKI status {}, depth {:?})",
+                result.diagnostic, result.pki_status, result.depth
+            );
+            let message = bounded_text(&message, 2048).to_owned();
+            if data.errors.len() < 16 && !data.errors.contains(&message) {
+                data.errors.push(message);
+            }
         }
     }
 }
@@ -451,28 +467,48 @@ fn bounded_text(value: &str, limit: usize) -> &str {
 }
 
 fn collect_certificate(chain: &mut Vec<PublicCertificate>, certificate: &X509Ref) {
-    let (Ok(der), Ok(digest)) = (
-        certificate.to_der(),
-        certificate.digest(MessageDigest::sha256()),
-    ) else {
-        return;
-    };
+    if let Some(certificate) = certificate_evidence(certificate)
+        && !chain
+            .iter()
+            .any(|existing| existing.sha256 == certificate.sha256)
+    {
+        chain.push(certificate);
+    }
+}
+
+fn certificate_evidence(certificate: &X509Ref) -> Option<PublicCertificate> {
+    certificate_der_evidence(&certificate.to_der().ok()?)
+}
+
+fn certificate_der_evidence(der: &[u8]) -> Option<PublicCertificate> {
+    let digest = boring::hash::hash(MessageDigest::sha256(), der).ok()?;
     let sha256 = digest.iter().fold(String::new(), |mut output, byte| {
         use std::fmt::Write as _;
         let _ = write!(output, "{byte:02x}");
         output
     });
-    if !chain.iter().any(|certificate| certificate.sha256 == sha256) {
-        chain.push(PublicCertificate {
-            sha256,
-            der: Arc::from(der),
-        });
-    }
+    Some(PublicCertificate {
+        sha256,
+        der: Arc::from(der),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pki_rejections_keep_unicode_diagnostics_within_capture_bounds() {
+        let capture = TlsCapture::new(TlsEvidence::default());
+        let context = SslContext::builder(boring::ssl::SslMethod::tls())
+            .unwrap()
+            .build();
+        let ssl = Ssl::new(&context).unwrap();
+        let result = transmog_tls_native::Verification::failure(&"🦀".repeat(2000));
+        capture.verification(&ssl, &result);
+        assert!(capture.snapshot().valid());
+        assert!(capture.snapshot().errors[0].contains("🦀"));
+    }
 
     #[test]
     fn authentication_details_bound_utf8_bytes_and_entry_count() {

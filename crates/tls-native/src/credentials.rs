@@ -239,6 +239,23 @@ mod tests {
     }
 
     #[test]
+    fn pki_ignores_unused_malformed_issuers_and_supplies_parsed_sans() {
+        let (cert, _) = certificate();
+        let der = cert.to_der().unwrap();
+        let policy = Arc::new(crate::CertificatePolicy {
+            anchors: Arc::new([der.clone()].into_iter().collect()),
+            ..Default::default()
+        });
+        let compiled = crate::verifier::compile(&policy).unwrap();
+        let result =
+            crate::verifier::verify(&compiled, &policy, &[der, b"\x30\x00".to_vec()], false);
+        assert!(result.accepted, "{result:?}");
+        let names = result.names.unwrap();
+        assert!(crate::hostname::matches(&names, "localhost"));
+        assert!(!crate::hostname::matches(&names, "wrong.test"));
+    }
+
+    #[test]
     fn resumed_tls13_reports_current_group_and_original_authentication() {
         let (cert, key) = certificate();
         let mut server = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();

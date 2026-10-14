@@ -37,6 +37,8 @@ its actual effect on the user's task. For a short per-change workflow, follow
   Windows certificates. Keep one local trust switch beside the root selector in
   Customize; OS mode already includes local roots. New work revalidates after
   changes while admitted streams finish. Retain original local trust provenance.
+  Use one Chromium verifier across root choices; the selector changes trust
+  inputs, not verification rules. Record the actual selected path and PKI errors.
 
 - Start from the user's next action. Keep the ordinary path direct: captured
   responses are the main source for auto-response rules; scratch authoring is

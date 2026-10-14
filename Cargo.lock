@@ -7293,7 +7293,9 @@ version = "0.1.4"
 dependencies = [
  "boring",
  "boring-sys",
+ "cc",
  "foreign-types",
+ "serde_json",
 ]
 
 [[package]]

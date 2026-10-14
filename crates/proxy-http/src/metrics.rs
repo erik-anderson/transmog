@@ -565,10 +565,12 @@ pub(crate) fn connector(
         let capture = factory.capture(uri.host().map(str::to_owned), offered_alpn);
         capture.attach_ssl(ssl)?;
         let _ = SETUP.try_with(|setup| setup.values().tls_capture = Some(capture.clone()));
-        factory.configure_ssl_metadata(ssl).map_err(|error| {
-            capture.failure(&error.to_string());
-            boring::error::ErrorStack::get()
-        })?;
+        factory
+            .configure_ssl_metadata_for_peer(ssl, uri.host().unwrap_or(""))
+            .map_err(|error| {
+                capture.failure(&error.to_string());
+                boring::error::ErrorStack::get()
+            })?;
         if let Some(attempt) = factory.client_certificate_attempt(
             uri.host().unwrap_or("").trim_matches(['[', ']']),
             uri.port_u16().unwrap_or(443),

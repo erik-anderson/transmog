@@ -271,7 +271,7 @@ async fn discovered_root_removal_revalidates_fresh_connections_and_retains_old_e
 
 #[tokio::test]
 async fn server_can_omit_an_advertised_intermediate_without_gaining_trust() {
-    let root = ProxyCa::generate("configured root", 2).unwrap();
+    let root = anchors::issuer_root("configured root");
     let issuer = anchors::intermediate(&root);
     let metadata = anchors::catalog(&[(issuer.certificate(), 1)], 42);
     let factory = anchors::factory(&root, metadata);

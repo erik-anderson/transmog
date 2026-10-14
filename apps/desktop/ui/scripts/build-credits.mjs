@@ -44,6 +44,15 @@ export async function buildCredits(uiRoot, output) {
     if(!files.length)throw new Error('Missing bundled license text for '+name);
     entries.push({id:name+'@'+pkg.version,name,version:pkg.version,license:pkg.license??'',text:files.map(file=>file.text).join('\n\n')});
   }
+  for(const [directory,name,versionFile,versionField,license] of [
+    ['boringssl-pki','BoringSSL PKI','manifest.json','revision','Apache-2.0'],
+    ['chromium-suffix-list','Chromium Public Suffix List','snapshot.json','chromiumVersion','MPL-2.0'],
+    ['chromium-root-store','Chromium root-store data','snapshot.json','rootStoreVersion','BSD-3-Clause'],
+  ]) {
+    const base=join(repository,'third_party',directory);
+    const receipt=JSON.parse(await readFile(join(base,versionFile),'utf8'));
+    entries.push({id:directory,name,version:String(receipt[versionField]),license,text:await readFile(join(base,'LICENSE'),'utf8')});
+  }
   entries.sort((a,b)=>a.name.localeCompare(b.name)||a.version.localeCompare(b.version));
   await writeFile(output,JSON.stringify({summary:'Transmog includes third-party libraries and bundled native code. Their license and copyright notices are available below.',entries}));
 }

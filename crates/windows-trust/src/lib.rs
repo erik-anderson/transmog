@@ -21,6 +21,8 @@ pub struct LocalCertificates {
     pub sha256: String,
     /// ROOT entries eligible for TLS server authentication.
     pub anchors: Vec<Vec<u8>>,
+    /// All local ROOT entries, also available as untrusted issuer candidates.
+    pub issuer_roots: Vec<Vec<u8>>,
     /// CA entries used only to find issuers.
     pub intermediates: Vec<Vec<u8>>,
     /// Machine `TrustedPeople` entries; trusted only as exact server leaves.
@@ -38,6 +40,7 @@ impl LocalCertificates {
             &mut self.intermediates,
             &mut self.trusted_leaves,
             &mut self.disallowed,
+            &mut self.issuer_roots,
         ]
         .into_iter()
         .zip(0_u8..)

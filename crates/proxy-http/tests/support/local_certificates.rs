@@ -5,7 +5,7 @@ use boring::{
     hash::MessageDigest,
     pkey::{PKey, Private},
     x509::{
-        X509, X509NameBuilder,
+        X509, X509Extension, X509NameBuilder,
         extension::{
             AuthorityKeyIdentifier, BasicConstraints, ExtendedKeyUsage, KeyUsage,
             SubjectAlternativeName, SubjectKeyIdentifier,
@@ -13,6 +13,33 @@ use boring::{
     },
 };
 use transmog_tls::ProxyCa;
+
+pub struct CertificateOptions<'a> {
+    pub name: &'a str,
+    pub ca: bool,
+    pub expired: bool,
+    pub issuer: Option<&'a ProxyCa>,
+    pub path_length: Option<u32>,
+    pub issuer_name: Option<&'a str>,
+    pub dns_name: Option<&'a str>,
+    pub signing_digest: MessageDigest,
+    pub extensions: Vec<X509Extension>,
+}
+impl<'a> CertificateOptions<'a> {
+    pub fn new(name: &'a str) -> Self {
+        Self {
+            name,
+            ca: false,
+            expired: false,
+            issuer: None,
+            path_length: None,
+            issuer_name: None,
+            dns_name: Some(name),
+            signing_digest: MessageDigest::sha256(),
+            extensions: vec![],
+        }
+    }
+}
 
 pub fn certificate(
     name: &str,
@@ -22,6 +49,29 @@ pub fn certificate(
     path_length: Option<u32>,
     issuer_name: Option<&str>,
 ) -> (X509, PKey<Private>) {
+    configured_certificate(CertificateOptions {
+        name,
+        ca,
+        expired,
+        issuer,
+        path_length,
+        issuer_name,
+        ..CertificateOptions::new(name)
+    })
+}
+
+pub fn configured_certificate(options: CertificateOptions<'_>) -> (X509, PKey<Private>) {
+    let CertificateOptions {
+        name,
+        ca,
+        expired,
+        issuer,
+        path_length,
+        issuer_name,
+        dns_name,
+        signing_digest,
+        extensions,
+    } = options;
     let key = super::key();
     let mut subject = X509NameBuilder::new().unwrap();
     subject.append_entry_by_text("CN", name).unwrap();
@@ -68,11 +118,16 @@ pub fn certificate(
     cert.append_extension(&usage.build().unwrap()).unwrap();
     cert.append_extension(&ExtendedKeyUsage::new().server_auth().build().unwrap())
         .unwrap();
-    let san = SubjectAlternativeName::new()
-        .dns(name)
-        .build(&cert.x509v3_context(None, None))
-        .unwrap();
-    cert.append_extension(&san).unwrap();
+    if let Some(name) = dns_name {
+        let san = SubjectAlternativeName::new()
+            .dns(name)
+            .build(&cert.x509v3_context(None, None))
+            .unwrap();
+        cert.append_extension(&san).unwrap();
+    }
+    for extension in extensions {
+        cert.append_extension(&extension).unwrap();
+    }
     cert.append_extension(
         &SubjectKeyIdentifier::new()
             .build(&cert.x509v3_context(None, None))
@@ -92,6 +147,6 @@ pub fn certificate(
         || key.clone(),
         |issuer| PKey::private_key_from_pem(&issuer.private_key_pem_pkcs8().unwrap()).unwrap(),
     );
-    cert.sign(&signer, MessageDigest::sha256()).unwrap();
+    cert.sign(&signer, signing_digest).unwrap();
     (cert.build(), key)
 }

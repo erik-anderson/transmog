@@ -30,6 +30,16 @@ pub fn catalog(certificates: &[(&X509, u8)], version: u8) -> Arc<PkiMetadata> {
 }
 
 pub fn catalog_bytes(certificates: &[(&X509, u8)], version: u8) -> Vec<u8> {
+    catalog_bytes_with_flags(
+        &certificates
+            .iter()
+            .map(|(cert, id)| (*cert, *id, false, false))
+            .collect::<Vec<_>>(),
+        version,
+    )
+}
+
+pub fn catalog_bytes_with_flags(certificates: &[(&X509, u8, bool, bool)], version: u8) -> Vec<u8> {
     fn varint(mut value: usize) -> Vec<u8> {
         let mut bytes = vec![];
         while value >= 128 {
@@ -40,12 +50,13 @@ pub fn catalog_bytes(certificates: &[(&X509, u8)], version: u8) -> Vec<u8> {
         bytes
     }
     let mut bytes = vec![0x10, version];
-    for (cert, id) in certificates {
+    for (cert, id, expiry, constraints) in certificates {
         let der = cert.to_der().unwrap();
         let mut anchor = vec![0x0a];
         anchor.extend(varint(der.len()));
         anchor.extend(der);
         anchor.extend([0x5a, 1, *id]);
+        anchor.extend([0x40, u8::from(*expiry), 0x48, u8::from(*constraints)]);
         bytes.push(0x0a);
         bytes.extend(varint(anchor.len()));
         bytes.extend(anchor);
@@ -61,6 +72,16 @@ pub fn factory(root: &ProxyCa, metadata: Arc<PkiMetadata>) -> UpstreamTlsContext
         UpstreamTlsPolicy::default(),
     )
     .with_pki_metadata(Arc::new(PkiMetadataProvider::new(metadata, None)))
+}
+
+pub fn issuer_root(name: &str) -> ProxyCa {
+    let (cert, key) =
+        crate::support::local_certificates::certificate(name, true, false, None, None, None);
+    ProxyCa::from_pem(
+        &cert.to_pem().unwrap(),
+        &key.private_key_to_pem_pkcs8().unwrap(),
+    )
+    .unwrap()
 }
 
 pub fn intermediate(root: &ProxyCa) -> ProxyCa {
