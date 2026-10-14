@@ -415,8 +415,8 @@ impl PerformanceEvidence {
                 if transport.sampled_offset_micros >= existing.sampled_offset_micros {
                     *existing = transport.clone();
                 }
-            } else if self.transports.len() < 16 {
-                self.transports.push(transport.clone());
+            } else {
+                retain_transport(&mut self.transports, transport.clone());
             }
         }
         for work in &incoming.work {
@@ -442,6 +442,39 @@ impl PerformanceEvidence {
                 self.protocols.push(protocol.clone());
             }
         }
+    }
+}
+
+fn retain_transport(transports: &mut Vec<TransportObservation>, observation: TransportObservation) {
+    if transports.len() < 16 {
+        transports.push(observation);
+        return;
+    }
+    // Keep the other leg and established connections. A long run of failed
+    // service alternatives must not hide the successful endpoint or its retry.
+    let replace = transports
+        .iter()
+        .enumerate()
+        .filter(|(_, old)| old.leg == observation.leg && old.outcome != TransportOutcome::Connected)
+        .min_by_key(|(_, old)| old.sampled_offset_micros)
+        .or_else(|| {
+            (observation.outcome == TransportOutcome::Connected)
+                .then(|| {
+                    transports
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, old)| old.leg == observation.leg)
+                        .min_by_key(|(_, old)| old.sampled_offset_micros)
+                })
+                .flatten()
+        });
+    if let Some((index, old)) = replace
+        && (observation.sampled_offset_micros >= old.sampled_offset_micros
+            || observation.outcome == TransportOutcome::Connected
+                && old.outcome != TransportOutcome::Connected)
+    {
+        transports.remove(index);
+        transports.push(observation);
     }
 }
 
@@ -641,8 +674,8 @@ impl PerformanceRecorder {
             existing.leg == observation.leg && existing.connection_id == observation.connection_id
         }) {
             *existing = observation;
-        } else if evidence.transports.len() < 16 {
-            evidence.transports.push(observation);
+        } else {
+            retain_transport(&mut evidence.transports, observation);
         }
     }
     /// Updates one actual message boundary protocol.
@@ -863,6 +896,50 @@ mod tests {
         assert_eq!(observation.dns_micros, Some(0));
         assert_eq!(observation.tcp_micros, Some(0));
         assert_eq!(observation.tls_micros, Some(0));
+    }
+
+    #[test]
+    fn bounded_transport_evidence_keeps_success_and_the_latest_rejection_on_merge() {
+        let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
+        let sample = |leg: &str, id: &str, outcome| TransportObservation {
+            leg: leg.into(),
+            connection_id: id.into(),
+            outcome,
+            ..Default::default()
+        };
+        recorder.transport(sample("client", "client", TransportOutcome::Connected));
+        for i in 0..15 {
+            recorder.transport(sample(
+                "upstream",
+                &format!("failed-{i}"),
+                TransportOutcome::TlsFailed,
+            ));
+        }
+        let mut merged = recorder.snapshot();
+        assert_eq!(merged.transports.len(), 16);
+        recorder.transport(sample(
+            "upstream",
+            "authenticated-rejection",
+            TransportOutcome::TlsFailed,
+        ));
+        recorder.transport(sample(
+            "upstream",
+            "selected-endpoint",
+            TransportOutcome::Connected,
+        ));
+        let latest = recorder.snapshot();
+        assert!(latest.valid());
+        merged.merge(&latest);
+        for snapshot in [latest, merged] {
+            assert_eq!(snapshot.transports.len(), 16);
+            for id in ["client", "authenticated-rejection", "selected-endpoint"] {
+                assert!(
+                    snapshot.transports.iter().any(|t| t.connection_id == id),
+                    "Dropped {id} at the evidence limit"
+                );
+            }
+            assert!(snapshot.valid());
+        }
     }
 
     #[test]

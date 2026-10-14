@@ -82,6 +82,9 @@ alternatives fails without falling back to a plaintext origin connection.
 Certificate failures, client-certificate authorization failures and a failed
 authenticated TLS retry stop endpoint fallback. The selected endpoint remains
 visible in the connection evidence.
+The bounded transport history retains the selected successful connection and
+recent failed attempts, preserving the client leg even when many alternatives
+were tried.
 
 TCP and QUIC install the configuration before sending their first flight; ticket
 keys include its digest. The certificate verifier uses the ECH public name only
