@@ -589,6 +589,7 @@ fn factory(ca: &ProxyCa) -> UpstreamTlsContextFactory {
             None,
         ),
     ))
+    .with_private_test_roots()
 }
 
 #[test]

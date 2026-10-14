@@ -347,6 +347,15 @@ impl TlsCapture {
         insert_detail(&mut data, "Certificate verifier", "Chromium BoringSSL PKI");
         insert_detail(
             &mut data,
+            "Public trust program",
+            if result.known_public_root {
+                "Selected path ends at a known public root"
+            } else {
+                "Selected path does not end at a known public root"
+            },
+        );
+        insert_detail(
+            &mut data,
             "PKI verification status",
             &result.pki_status.to_string(),
         );

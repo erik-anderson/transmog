@@ -5,3 +5,4 @@ third_party/chromium-root-store/* text eol=lf
 third_party/chromium-root-store/crs.pb binary
 third_party/boringssl-pki/** text eol=lf -whitespace
 third_party/chromium-suffix-list/** text eol=lf -whitespace
+third_party/chromium-certificate-policy/** text eol=lf -whitespace

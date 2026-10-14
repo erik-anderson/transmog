@@ -48,6 +48,7 @@ export async function buildCredits(uiRoot, output) {
     ['boringssl-pki','BoringSSL PKI','manifest.json','revision','Apache-2.0'],
     ['chromium-suffix-list','Chromium Public Suffix List','snapshot.json','chromiumVersion','MPL-2.0'],
     ['chromium-root-store','Chromium root-store data','snapshot.json','rootStoreVersion','BSD-3-Clause'],
+    ['chromium-certificate-policy','Chromium certificate policy data','snapshot.json','chromiumVersion','BSD-3-Clause'],
   ]) {
     const base=join(repository,'third_party',directory);
     const receipt=JSON.parse(await readFile(join(base,versionFile),'utf8'));

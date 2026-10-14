@@ -18,6 +18,7 @@ fn main() {
     );
     println!("cargo:rerun-if-changed={}", vendor.display());
     println!("cargo:rerun-if-changed=native/verifier.cc");
+    println!("cargo:rerun-if-changed=../../third_party/chromium-certificate-policy");
     let mut build = cc::Build::new();
     build
         .cpp(true)
@@ -25,6 +26,7 @@ fn main() {
         .warnings(false)
         .include(&vendor)
         .include(vendor.join("include"))
+        .include(root.join("third_party/chromium-certificate-policy"))
         .file("native/verifier.cc");
     // Compile precisely the pinned upstream target, not arbitrary files added
     // to the vendor directory. The portable and release gates check its hashes.

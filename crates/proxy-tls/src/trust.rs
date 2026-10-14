@@ -308,6 +308,8 @@ pub struct UpstreamTlsContextFactory {
     local_trust_override: Option<Arc<crate::local_trust::LocalTrust>>,
     connection_local: Option<Result<Arc<crate::local_trust::EffectiveLocalTrust>, String>>,
     bootstrap_trust_failure: bool,
+    #[cfg(feature = "test-fixtures")]
+    private_test_roots: bool,
     baseline_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
     recovery_ids: Option<Vec<u8>>,
     client_authentication: Option<Arc<ClientAuthentication>>,
@@ -346,11 +348,24 @@ impl UpstreamTlsContextFactory {
             local_trust_override: None,
             connection_local: None,
             bootstrap_trust_failure: false,
+            #[cfg(feature = "test-fixtures")]
+            private_test_roots: false,
             baseline_metadata: None,
             recovery_ids: None,
             client_authentication: None,
             authentication: None,
         }
+    }
+
+    /// Declares synthetic fixture catalogs to be private test roots, like
+    /// Chromium's `TestRootCerts`. Production component sources always classify
+    /// their own public roots and do not call this testing hook.
+    #[cfg(feature = "test-fixtures")]
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_private_test_roots(mut self) -> Self {
+        self.private_test_roots = true;
+        self
     }
 
     /// Resolves an immutable recipe for fresh TCP and QUIC contexts.
@@ -513,7 +528,7 @@ impl UpstreamTlsContextFactory {
     fn certificate_policy(
         &self,
     ) -> Result<Arc<transmog_tls_native::CertificatePolicy>, TrustError> {
-        match &self.connection_local {
+        let policy = match &self.connection_local {
             Some(Ok(local)) => Ok(local.policy.clone()),
             Some(Err(_)) if self.bootstrap_trust_failure => {
                 Ok(Arc::new(transmog_tls_native::CertificatePolicy {
@@ -529,6 +544,11 @@ impl UpstreamTlsContextFactory {
                 Ok(self.metadata().certificate_policy())
             }
             None => Ok(Arc::new(transmog_tls_native::CertificatePolicy {
+                known_public_roots: self
+                    .metadata()
+                    .certificate_policy()
+                    .known_public_roots
+                    .clone(),
                 anchors: Arc::new(
                     self.snapshot
                         .roots
@@ -550,7 +570,14 @@ impl UpstreamTlsContextFactory {
                 },
                 ..Default::default()
             })),
+        }?;
+        #[cfg(feature = "test-fixtures")]
+        if self.private_test_roots {
+            let mut policy = (*policy).clone();
+            policy.known_public_roots = Arc::default();
+            return Ok(Arc::new(policy));
         }
+        Ok(policy)
     }
 
     fn effective_trust(&self) -> Arc<TrustSnapshot> {

@@ -7283,6 +7283,7 @@ dependencies = [
  "tokio-boring",
  "transmog-client-certificates",
  "transmog-core",
+ "transmog-tls",
  "transmog-tls-native",
  "transmog-windows-trust",
 ]

@@ -2,6 +2,7 @@
 // No X509_verify_cert path or alternate verifier exists here.
 #include <openssl/pool.h>
 #include <openssl/ssl.h>
+#include <openssl/sha.h>
 
 #include <chrono>
 #include <ctime>
@@ -14,12 +15,53 @@
 #include "pki/common_cert_errors.h"
 #include "pki/encode_values.h"
 #include "pki/general_names.h"
+#include "pki/name_constraints.h"
 #include "pki/path_builder.h"
 #include "pki/simple_path_builder_delegate.h"
 #include "pki/trust_store_in_memory.h"
 
+// Compatibility name used by the unmodified Chromium blocklist snapshot.
+namespace crypto::hash { constexpr size_t kSha256Size = SHA256_DIGEST_LENGTH; }
 namespace {
 using namespace bssl;
+#include "cert_verify_proc_blocklist.inc"
+
+DEFINE_CERT_ERROR_ID(kPublicLifetime, "Public certificate validity exceeds Chromium's lifetime policy");
+
+std::string SpkiHash(const ParsedCertificate& cert) {
+  uint8_t hash[SHA256_DIGEST_LENGTH];
+  const auto spki = cert.tbs().spki_tlv;
+  SHA256(spki.data(), spki.size(), hash);
+  return std::string(reinterpret_cast<const char*>(hash), sizeof(hash));
+}
+
+void CheckStaticPolicy(CertPathBuilderResultPath* path) {
+  if (!path->IsValid()) return;
+  for (size_t i = 0; i < path->certs.size(); ++i) {
+    const auto hash = SpkiHash(*path->certs[i]);
+    for (const auto& blocked : kSPKIBlockList) {
+      if (hash == std::string(reinterpret_cast<const char*>(blocked), sizeof(blocked))) {
+        path->errors.GetErrorsForCert(i)->AddError(cert_errors::kCertificateRevoked);
+      }
+    }
+  }
+}
+
+void CheckPublicLifetime(CertPathBuilderResultPath* path, bool known_root,
+                         bool authority) {
+  if (authority || !known_root || path->certs.empty()) return;
+  int64_t start, expiry;
+  const auto& validity = path->certs.front()->tbs();
+  if (!der::GeneralizedTimeToPosixTime(validity.validity_not_before, &start) ||
+      !der::GeneralizedTimeToPosixTime(validity.validity_not_after, &expiry) ||
+      start > expiry) {
+    path->errors.GetErrorsForCert(0)->AddError(kPublicLifetime);
+    return;
+  }
+  const int64_t days = start >= 1868227200 ? 47 : start >= 1805068800 ? 100 : start >= 1773532800 ? 200 : 398;
+  if (expiry - start > days * 86400)
+    path->errors.GetErrorsForCert(0)->AddError(kPublicLifetime);
+}
 
 std::shared_ptr<const ParsedCertificate> Parse(const uint8_t* data,
                                                size_t len) {
@@ -37,6 +79,10 @@ struct Policy : TrustStore {
   std::set<std::string, std::less<>> blocked;
   // TrustedPeople is exact leaf trust and is never searched for issuers.
   std::set<std::string, std::less<>> leaf_only;
+  std::set<std::string, std::less<>> known_roots;
+  bool KnownRoot(const ParsedCertificate* cert) const {
+    return cert && known_roots.count(std::string(BytesAsStringView(cert->der_cert())));
+  }
 
   CertificateTrust GetTrust(const ParsedCertificate* cert) override {
     if (blocked.count(std::string(BytesAsStringView(cert->der_cert())))) {
@@ -63,16 +109,19 @@ struct Policy : TrustStore {
 
 struct Delegate : SimplePathBuilderDelegate {
   bool authority;
+  const Policy* policy;
   std::chrono::steady_clock::time_point deadline;
-  explicit Delegate(bool authority)
+  explicit Delegate(bool authority, const Policy* policy)
       : SimplePathBuilderDelegate(1024, DigestPolicy::kStrong),
         authority(authority),
+        policy(policy),
         deadline(std::chrono::steady_clock::now() + std::chrono::seconds(60)) {}
   bool IsDeadlineExpired() override {
     return std::chrono::steady_clock::now() >= deadline;
   }
   void CheckPathAfterVerification(const CertPathBuilder&,
                                   CertPathBuilderResultPath* path) override {
+    CheckStaticPolicy(path);
     if (!authority || path->certs.empty()) return;
     // Recovery selects an issuer of a future TLS leaf, rather than using that
     // issuer as an end entity. It must end at anchor trust, not TrustedPeople.
@@ -116,11 +165,13 @@ struct Delegate : SimplePathBuilderDelegate {
 
 struct Result {
   bool valid = false;
+  bool known_root = false;
   bool parsed = false;
   int code = 16;
   int depth = -1;
   std::string diagnostic;
   std::vector<std::string> path;
+  std::vector<std::string> spki_hashes;
   std::vector<std::string> dns_names;
   std::vector<std::string> ip_addresses;
 };
@@ -159,6 +210,12 @@ void* transmog_pki_policy_new() noexcept {
 }
 void transmog_pki_policy_free(void* policy) noexcept {
   delete static_cast<Policy*>(policy);
+}
+bool transmog_pki_policy_known_root(void* pointer, const uint8_t* data, size_t len) noexcept {
+  try {
+    static_cast<Policy*>(pointer)->known_roots.emplace(reinterpret_cast<const char*>(data), len);
+    return true;
+  } catch (...) { return false; }
 }
 // Kind: helper=0, public anchor=1, ROOT=2, TrustedPeople=3, Disallowed=4.
 // The input is copied; no borrowed Rust data survives this call.
@@ -223,7 +280,7 @@ void* transmog_pki_verify(void* pointer, const uint8_t* const* certificates,
     for (size_t i = 1; i < count; ++i) {
       if (auto cert = Parse(certificates[i], lengths[i])) peers.AddCert(cert);
     }
-    Delegate delegate(authority);
+    Delegate delegate(authority, policy);
     CertPathBuilder builder(
         target, policy, &delegate, time, KeyPurpose::SERVER_AUTH,
         InitialExplicitPolicy::kFalse, {der::Input(kAnyPolicyOid)},
@@ -232,14 +289,23 @@ void* transmog_pki_verify(void* pointer, const uint8_t* const* certificates,
     builder.AddCertIssuerSource(&policy->helpers);
     builder.SetIterationLimit(20);
     auto built = builder.Run();
+    // CertVerifyProc applies the public lifetime policy to the selected path,
+    // after path building; it must not trigger a search for a private alternate.
+    if (built.best_result_index < built.paths.size()) {
+      auto* best = built.paths[built.best_result_index].get();
+      CheckPublicLifetime(best, policy->KnownRoot(best->GetTrustedCert()), authority);
+    }
     result->valid = built.HasValidPath();
     const auto error = built.GetBestPathVerifyError();
     result->code = static_cast<int>(error.Code());
     result->depth = static_cast<int>(error.Index());
     result->diagnostic = error.DiagnosticString();
     if (const auto* best = built.GetBestPathPossiblyInvalid()) {
+      result->known_root = policy->KnownRoot(best->GetTrustedCert());
       for (const auto& cert : best->certs)
         result->path.emplace_back(BytesAsStringView(cert->der_cert()));
+      for (const auto& cert : best->certs)
+        result->spki_hashes.emplace_back(SpkiHash(*cert));
     }
     return result.release();
   } catch (...) {
@@ -257,6 +323,13 @@ int transmog_pki_result_depth(const void* result) noexcept {
 }
 bool transmog_pki_result_valid(const void* result) noexcept {
   return static_cast<const Result*>(result)->valid;
+}
+bool transmog_pki_result_known_root(const void* result) noexcept {
+  return static_cast<const Result*>(result)->known_root;
+}
+const uint8_t* transmog_pki_result_spki_hash(const void* pointer, size_t index) noexcept {
+  const auto& hashes = static_cast<const Result*>(pointer)->spki_hashes;
+  return index < hashes.size() ? reinterpret_cast<const uint8_t*>(hashes[index].data()) : nullptr;
 }
 bool transmog_pki_result_parsed(const void* result) noexcept {
   return static_cast<const Result*>(result)->parsed;

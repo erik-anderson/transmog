@@ -29,6 +29,7 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
+transmog-tls = { version = "=0.1.4", path = "../proxy-tls", features = ["test-fixtures"] }
 tempfile.workspace = true
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
 tokio-boring.workspace = true

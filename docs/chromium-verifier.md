@@ -39,6 +39,12 @@ certificate-verification parity.
   the ICANN registry boundary. Private PSL entries are excluded, matching
   Chromium's hostname check. Captures preserve PKI's chosen path and bounded
   failure diagnostics; capture observers cannot grant trust.
+- Public-program leaf lifetime limits (398/200/100/47 days by issuance date),
+  non-unique names and Chromium's fixed SPKI domain restriction. Root-program
+  identity is separate from local trust; public-only restrictions do not apply
+  to private roots. Chromium's compiled SPKI blocklist applies at every path
+  depth, including locally trusted paths. Test fixture catalogs are explicitly
+  private test roots; production component catalogs retain public classification.
 
 Recovery uses these same trust inputs and path builder. A candidate CA must
 terminate at anchor trust and be capable of issuing a TLS leaf; it cannot gain
@@ -61,9 +67,6 @@ legacy fallback:
   log list and policy data. Requesting SCTs is not CT enforcement.
 - CRLSet, built-in blocked-key/name policy and revocation processing, including
   stapled OCSP and Chrome's optional online-revocation policy.
-- Chrome's public-certificate lifetime limits and rejection of non-unique
-  publicly trusted names. These are separate from PKI's certificate validity
-  and hostname-match checks.
 - Full Chrome Root Store metadata ConstraintSets. Unsupported constrained
   anchors are excluded today, which can reject paths Chrome accepts. Eligible
   local installation can independently authorize an excluded public anchor,

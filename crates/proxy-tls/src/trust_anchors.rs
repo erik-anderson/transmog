@@ -220,6 +220,13 @@ impl PkiMetadata {
             Arc::new(trusted_anchors.clone()),
         ));
         let policy = Arc::new(transmog_tls_native::CertificatePolicy {
+            known_public_roots: Arc::new(
+                issuers
+                    .iter()
+                    .map(|cert| cert.to_der())
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| MetadataError::Invalid("public root identity"))?,
+            ),
             anchors: Arc::new(anchor_only.clone()),
             anchor_only: Arc::new(anchor_only),
             constrained_anchors: Arc::new(constrained_anchors),

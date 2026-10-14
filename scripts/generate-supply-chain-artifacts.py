@@ -46,6 +46,10 @@ def artifacts(metadata, npm, version):
               f"Chromium {psl['chromiumVersion']}'s Public Suffix List is used for ICANN wildcard boundaries. Original source, generated ICANN rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.", "",
               (ROOT / "third_party/chromium-suffix-list/LICENSE").read_text(encoding="utf-8").rstrip()]
     snapshot = json.loads((ROOT / "third_party/chromium-root-store/snapshot.json").read_text(encoding="utf-8"))
+    policy = json.loads((ROOT / "third_party/chromium-certificate-policy/snapshot.json").read_text(encoding="utf-8"))
+    lines += ["", "## Chromium certificate policy data", "",
+              f"Chromium {policy['chromiumVersion']} certificate blocklist and public CT data/schema source snapshots are in `third_party/chromium-certificate-policy`.", "",
+              (ROOT / "third_party/chromium-certificate-policy/LICENSE").read_text(encoding="utf-8").rstrip()]
     lines += ["", "## Chromium root-store data", "",
               f"The bundled crs.pb is generated from public Chromium source revision {snapshot['sourceRevision']} (root-store version {snapshot['rootStoreVersion']}). It supplies certificate-based Trust Anchor IDs and public certificates. Network profiles can select these public TLS anchors for verification; OS mode uses them as untrusted chain-building helpers.", "",
               "Source and reproducible generator: `third_party/chromium-root-store` and `scripts/generate-chromium-root-store.py`. Google’s PKIMetadata CRX package is not redistributed.", "",
@@ -77,6 +81,10 @@ def artifacts(metadata, npm, version):
                     "version": psl["chromiumVersion"], "licenses": [{"license": {"id": "MPL-2.0"}}],
                     "hashes": [{"alg": "SHA-256", "content": psl["sha256"]["effective_tld_names.dat"]}],
                     "externalReferences": [{"type": "vcs", "url": psl["source"]}]}]
+    components.append({"type": "data", "bom-ref": "chromium-certificate-policy", "name": "Chromium certificate policy data",
+                       "version": policy["chromiumVersion"], "licenses": [{"license": {"id": "BSD-3-Clause"}}],
+                       "hashes": [{"alg": "SHA-256", "content": policy["sha256"]["cert_verify_proc_blocklist.inc"]}],
+                       "externalReferences": [{"type": "vcs", "url": f"https://github.com/chromium/chromium/tree/{policy['chromiumVersion']}/net/cert"}]})
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
             "metadata": {"timestamp": datetime.now(timezone.utc).isoformat(),
                          "tools": [{"vendor": "Transmog", "name": "generate-supply-chain-artifacts.py"}],

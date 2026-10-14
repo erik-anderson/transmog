@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn transmog_pki_certificate_parseable(bytes: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_new() -> *mut c_void;
     fn transmog_pki_policy_free(policy: *mut c_void);
+    fn transmog_pki_policy_known_root(policy: *mut c_void, data: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_add(
         policy: *mut c_void,
         bytes: *const u8,
@@ -39,6 +40,8 @@ unsafe extern "C" {
     fn transmog_pki_result_code(result: *const c_void) -> i32;
     fn transmog_pki_result_depth(result: *const c_void) -> i32;
     fn transmog_pki_result_valid(result: *const c_void) -> bool;
+    fn transmog_pki_result_known_root(result: *const c_void) -> bool;
+    fn transmog_pki_result_spki_hash(result: *const c_void, index: usize) -> *const u8;
     fn transmog_pki_result_parsed(result: *const c_void) -> bool;
     fn transmog_pki_result_path_len(result: *const c_void) -> usize;
     fn transmog_pki_result_names_len(result: *const c_void, ip: bool) -> usize;
@@ -80,6 +83,9 @@ pub struct Verification {
     pub path: Vec<Vec<u8>>,
     /// Trust role on a successfully verified path.
     pub trust_role: Option<&'static str>,
+    /// The selected path terminates at a root in the public trust program.
+    pub known_public_root: bool,
+    pub(crate) spki_hashes: Vec<[u8; 32]>,
     pub(crate) names: Option<crate::hostname::Names>,
 }
 impl Verification {
@@ -94,6 +100,8 @@ impl Verification {
             diagnostic: message.into(),
             path: Vec::new(),
             trust_role: None,
+            known_public_root: false,
+            spki_hashes: Vec::new(),
             names: None,
         }
     }
@@ -175,6 +183,14 @@ pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPol
     }
     for blocked in policy.disallowed.iter() {
         add(blocked, 4, false, false)?;
+    }
+    for root in policy.known_public_roots.iter() {
+        // SAFETY: unpublished policy copies the borrowed root identity.
+        if !unsafe {
+            transmog_pki_policy_known_root(compiled.0.as_ptr(), root.as_ptr(), root.len())
+        } {
+            return Err(ErrorStack::get());
+        }
     }
     let compiled = Arc::new(compiled);
     if cache.len() == 16 {
@@ -265,6 +281,16 @@ pub(crate) fn verify(
     else {
         return Verification::failure("Cannot determine certificate verification time");
     };
+    verify_at(compiled, policy, certificates, authority, time)
+}
+
+fn verify_at(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+    certificates: &[Vec<u8>],
+    authority: bool,
+    time: i64,
+) -> Verification {
     let pointers: Vec<_> = certificates.iter().map(Vec::as_ptr).collect();
     let lengths: Vec<_> = certificates.iter().map(Vec::len).collect();
     // SAFETY: immutable compiled inputs and borrowed peer buffers live through
@@ -292,6 +318,19 @@ pub(crate) fn verify(
         )
     };
     let path: Vec<_> = (0..count).map(|index| result.bytes(index)).collect();
+    let spki_hashes = (0..count)
+        .map(|index| {
+            // SAFETY: path index is bounded by the native result; each hash is 32 bytes.
+            unsafe {
+                std::slice::from_raw_parts(
+                    transmog_pki_result_spki_hash(result.0.as_ptr(), index),
+                    32,
+                )
+            }
+            .try_into()
+            .expect("fixed native hash width")
+        })
+        .collect();
     let mut diagnostic = String::from_utf8_lossy(&result.bytes(count)).into_owned();
     let mut end = diagnostic.len().min(2048);
     while !diagnostic.is_char_boundary(end) {
@@ -327,6 +366,9 @@ pub(crate) fn verify(
         diagnostic,
         path,
         trust_role,
+        // SAFETY: read-only getter on the live owned result.
+        known_public_root: unsafe { transmog_pki_result_known_root(result.0.as_ptr()) },
+        spki_hashes,
         // SAFETY: getter reads the live immutable result's target parse status.
         names: unsafe { transmog_pki_result_parsed(result.0.as_ptr()) }.then(|| {
             crate::hostname::Names {
@@ -336,6 +378,10 @@ pub(crate) fn verify(
         }),
     }
 }
+
+#[cfg(test)]
+#[path = "static_policy_tests.rs"]
+mod static_policy_tests;
 
 /// Validates a prospective TLS issuer using the same path builder and trust roles.
 /// This confers no new trust and cannot authorize `TrustedPeople` as an issuer.

@@ -94,6 +94,7 @@ pub fn factory(root: &ProxyCa, metadata: Arc<PkiMetadata>) -> UpstreamTlsContext
         UpstreamTlsPolicy::default(),
     )
     .with_pki_metadata(Arc::new(PkiMetadataProvider::new(metadata, None)))
+    .with_private_test_roots()
 }
 
 pub fn issuer_root(name: &str) -> ProxyCa {

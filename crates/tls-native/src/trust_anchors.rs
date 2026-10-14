@@ -26,6 +26,9 @@ pub struct CertificatePolicy {
     pub anchors: Arc<HashSet<Vec<u8>>>,
     /// Public Chromium anchors confer issuer trust, never exact leaf trust.
     pub anchor_only: Arc<HashSet<Vec<u8>>>,
+    /// Roots recognized by the selected public trust program, independently of
+    /// whether local installation also grants trust to the same certificate.
+    pub known_public_roots: Arc<HashSet<Vec<u8>>>,
     /// Anchors whose encoded X.509 constraints must be enforced.
     pub constrained_anchors: Arc<HashSet<Vec<u8>>>,
     /// Public anchors whose validity period is not a trust constraint.
@@ -251,6 +254,27 @@ fn verify_peer_inner(ssl: &SslRef) -> Verification {
             result.diagnostic = "Certificate SAN does not match the expected server name".into();
         }
         result.accepted = false;
+        result.trust_role = None;
+    }
+    if result.accepted && result.known_public_root && name.is_some_and(crate::hostname::non_unique)
+    {
+        result.accepted = false;
+        result.error_code = 28;
+        result.depth = Some(0);
+        result.diagnostic = "Publicly trusted certificate used for a non-unique server name".into();
+        result.trust_role = None;
+    }
+    if result.accepted
+        && result
+            .names
+            .as_ref()
+            .is_some_and(|names| crate::hostname::restricted_key_names(&result.spki_hashes, names))
+    {
+        result.accepted = false;
+        result.error_code = 28;
+        result.depth = Some(0);
+        result.diagnostic =
+            "Certificate violates Chromium's fixed public-key name restrictions".into();
         result.trust_role = None;
     }
     result

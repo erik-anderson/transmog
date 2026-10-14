@@ -1,0 +1,9 @@
+{
+  "chromiumVersion": "154.0.8037.99",
+  "sha256": {
+    "cert_verify_proc_blocklist.inc": "5609dd4d604eeb48d5c7c5734d036cbae318cdfb7d2234d1760f051557d16b44",
+    "log_list.json": "1cee97f63af904825d0373751482feb1d84cda0d749b8f29d26002c548a2194e",
+    "certificate_transparency.proto": "b889a2341351c4f92617313234188b42597d9c0e5584b0d1607a3b7b78c526a4",
+    "LICENSE": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+  }
+}
