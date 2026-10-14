@@ -11,8 +11,10 @@ reproduce `crs.pb` and `snapshot.json` offline. The generator resolves every
 certificate hash against the two public PEM bundles, preserves the represented
 policy fields, and fails on unsupported fields or syntax. `snapshot.json` pins
 the source revision and input/output SHA-256 hashes. When updating the bundle,
-fetch all five inputs from one immutable Chromium revision, update the generator's
-revision, regenerate, and qualify the resulting TLS offer.
+fetch all five inputs from one immutable Chromium revision, record that revision
+in the snapshot receipt, regenerate, and qualify the resulting TLS offer.
+`scripts/roll-chromium-dependencies.py --root-store-revision FULL_SHA --output-dir
+.local/dependency-rolls/NAME` prepares these changes in an isolated candidate.
 
 Version 41 produces the 28 certificate-based Trust Anchor IDs captured from
 Chromium 154.0.8037.99. Network profiles can use its public TLS anchors as their

@@ -13,7 +13,6 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "third_party/chromium-root-store"
-REVISION = "6baa586063d26e723f468ec8f213069fdb2d120c"
 CONSTRAINTS = {
     "sct_not_after_sec": (1, "int"), "sct_all_after_sec": (2, "int"),
     "min_version": (3, "string"), "max_version_exclusive": (4, "string"),
@@ -107,23 +106,31 @@ def encode(fields, schema, certificates):
     return bytes(result)
 
 
-def main():
+def generate_snapshot(data, revision):
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Use an immutable Chromium source revision")
     certificates = {}
     for name in ("root_store.certs", "additional.certs"):
-        text = (DATA / name).read_text(encoding="utf-8")
+        text = (data / name).read_text(encoding="utf-8")
         for pem in re.findall(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", text, re.S):
             der = base64.b64decode(re.sub(r"\s", "", pem), validate=True)
             certificates[hashlib.sha256(der).hexdigest()] = der
-    fields = parse((DATA / "root_store.textproto").read_text(encoding="utf-8"))
+    fields = parse((data / "root_store.textproto").read_text(encoding="utf-8"))
     output = encode(fields, STORE, certificates)
-    (DATA / "crs.pb").write_bytes(output)
-    inputs = {name: hashlib.sha256((DATA / name).read_bytes()).hexdigest() for name in
+    inputs = {name: hashlib.sha256((data / name).read_bytes()).hexdigest() for name in
               ("root_store.proto", "root_store.textproto", "root_store.certs", "additional.certs", "LICENSE")}
-    receipt = {"sourceRevision": REVISION, "rootStoreVersion": int(dict(fields)["version_major"]),
-               "source": f"https://chromium.googlesource.com/chromium/src/+/{REVISION}/",
+    receipt = {"sourceRevision": revision, "rootStoreVersion": int(dict(fields)["version_major"]),
+               "source": f"https://chromium.googlesource.com/chromium/src/+/{revision}/",
                "inputSha256": inputs, "protobufSha256": hashlib.sha256(output).hexdigest(),
                "protobufBytes": len(output)}
-    (DATA / "snapshot.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n")
+    (data / "crs.pb").write_bytes(output)
+    (data / "snapshot.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return receipt
+
+
+def main():
+    revision = json.loads((DATA / "snapshot.json").read_text(encoding="utf-8"))["sourceRevision"]
+    receipt = generate_snapshot(DATA, revision)
     print(json.dumps(receipt, indent=2))
 
 

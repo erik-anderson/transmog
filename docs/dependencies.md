@@ -62,6 +62,21 @@ verification features require a separately qualified native policy. Use the
 portable wrapper for independent embedding builds too; it checks the consumer's
 resolved graph against the embedded dependency's source receipt.
 
+Maintainers can check the complete baseline with
+`python scripts/roll-chromium-dependencies.py --check`. To prepare a roll from a
+clean workspace, use `--boring-source PATH` (or `--boring-revision FULL_SHA`),
+`--chromium-version FOUR.PART.VERSION`, and/or `--root-store-revision FULL_SHA`,
+plus `--output-dir .local/dependency-rolls/NAME`. Only selected inputs change.
+The tool derives the BoringSSL revision from its Git submodule, synchronizes the
+four version/revision pins and Cargo lockfile, regenerates PKI, rolls PSL and CT
+policy data together, and can rebuild roots from five public source inputs.
+It leaves the source workspace unchanged and creates an independent candidate
+checkout, a binary-safe `changes.patch` and `report.json` with source/patch/data
+receipts and required qualification. Review APIs, upstream patches, verifier
+policy, schema and source-label changes, then run the qualification in the
+candidate before applying its patch. Profiles are not automatically activated or
+renamed by a data roll.
+
 ## Content, WebSockets, and file formats
 
 | Responsibility | Key dependencies | Transmog usage |
