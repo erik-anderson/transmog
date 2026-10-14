@@ -45,6 +45,11 @@ certificate-verification parity.
   to private roots. Chromium's compiled SPKI blocklist applies at every path
   depth, including locally trusted paths. Test fixture catalogs are explicitly
   private test roots; production component catalogs retain public classification.
+- Root metadata constraint groups are evaluated on candidate paths, including
+  version bounds, leaf issuance-time bounds and RFC 5280 permitted DNS subtrees.
+  Every condition within a group must pass; any passing group suffices. Eligible
+  local ROOT trust bypasses metadata constraints. MTC serial bounds are ignored
+  for ordinary X.509. Conflicting duplicate anchor policies fail decoding.
 
 Recovery uses these same trust inputs and path builder. A candidate CA must
 terminate at anchor trust and be capable of issuing a TLS leaf; it cannot gain
@@ -67,10 +72,9 @@ legacy fallback:
   log list and policy data. Requesting SCTs is not CT enforcement.
 - CRLSet, built-in blocked-key/name policy and revocation processing, including
   stapled OCSP and Chrome's optional online-revocation policy.
-- Full Chrome Root Store metadata ConstraintSets. Unsupported constrained
-  anchors are excluded today, which can reject paths Chrome accepts. Eligible
-  local installation can independently authorize an excluded public anchor,
-  following Chrome's local trust override.
+- SCT-based root metadata constraints await validated CT timestamps. They fail
+  conservatively until CT integration; the other constraint groups are evaluated
+  per path rather than excluding constrained anchors from the catalog.
 - AIA issuer fetching and intermediate caching. Path building currently uses
   peer-supplied certificates, metadata helpers and the monitored local stores.
 - EV classification, Chrome's clock-recovery retry, MTC and QWAC policy.

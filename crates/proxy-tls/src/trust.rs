@@ -759,7 +759,7 @@ impl UpstreamTlsContextFactory {
             let metadata = self.metadata();
             capture.authentication_detail("Root store version", &metadata.version.to_string());
             capture.authentication_detail("Root store SHA-256", &metadata.sha256);
-            capture.authentication_detail("Root store policy", "Chromium BoringSSL PKI; public anchor expiry and constraints follow metadata flags; unsupported Chrome metadata constraints exclude affected anchors");
+            capture.authentication_detail("Root store policy", "Chromium BoringSSL PKI; anchor flags and per-path Chromium metadata constraints enforced; SCT-dependent constraints require verified CT data");
             if let Some(diagnostic) = trust.diagnostics().first() {
                 capture.authentication_detail("Root store exclusions", diagnostic);
             }

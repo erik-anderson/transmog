@@ -201,6 +201,7 @@ fn build(
             ),
             anchor_only: public_policy.anchor_only.clone(),
             known_public_roots: public_policy.known_public_roots.clone(),
+            root_constraints: public_policy.root_constraints.clone(),
             constrained_anchors: Arc::new(constrained_anchors),
             ignore_anchor_expiry: public_policy.ignore_anchor_expiry.clone(),
             local_anchors: Arc::new(inventory.anchors.iter().cloned().collect()),

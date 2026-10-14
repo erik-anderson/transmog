@@ -11,10 +11,27 @@ use boring::{
 };
 use foreign_types::ForeignTypeRef;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
 };
 type Issuers = Arc<Vec<X509>>;
+/// One AND group of root metadata. At least one group must pass. MTC serial
+/// constraints do not apply to ordinary X.509 certificates.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RootConstraint {
+    /// Whether the pinned Chromium version is allowed by this group.
+    pub version_allowed: bool,
+    /// Inclusive leaf notBefore upper bound in POSIX seconds.
+    pub validity_not_after: Option<i64>,
+    /// Exclusive leaf notBefore lower bound in POSIX seconds.
+    pub validity_after: Option<i64>,
+    /// At least one valid SCT must be at or before this time.
+    pub sct_not_after: Option<i64>,
+    /// Every valid SCT must be after this time, with at least one present.
+    pub sct_all_after: Option<i64>,
+    /// RFC 5280 DNS permitted subtrees for every DNS SAN.
+    pub permitted_dns_names: Vec<String>,
+}
 /// Frozen ordinary verification inputs. Helpers never confer certificate trust.
 #[derive(Clone, Debug, Default)]
 pub struct CertificatePolicy {
@@ -29,6 +46,8 @@ pub struct CertificatePolicy {
     /// Roots recognized by the selected public trust program, independently of
     /// whether local installation also grants trust to the same certificate.
     pub known_public_roots: Arc<HashSet<Vec<u8>>>,
+    /// Root metadata policy, keyed by the exact root certificate DER.
+    pub root_constraints: Arc<HashMap<Vec<u8>, Vec<RootConstraint>>>,
     /// Anchors whose encoded X.509 constraints must be enforced.
     pub constrained_anchors: Arc<HashSet<Vec<u8>>>,
     /// Public anchors whose validity period is not a trust constraint.

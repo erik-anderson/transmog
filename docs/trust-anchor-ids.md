@@ -116,16 +116,19 @@ can terminate a verified path, enabling omitted-intermediate handling. OS mode
 keeps metadata certificates as untrusted helpers.
 
 This is root-store selection, not a complete implementation of Chrome's verifier.
-An anchor with metadata ConstraintSets is admitted only if at least one set is
-unrestricted for the measured Chromium version. Sets requiring Chrome's SCT/CT,
-DNS, serial or issuance-time policy are conservatively excluded. This can reject
-some certificates Chrome would accept. Public anchors use the protobuf's
+Metadata ConstraintSets are evaluated on candidate paths. Conditions within a
+set are combined with AND; any passing set suffices. Version bounds, DNS subtrees
+and leaf issuance-time bounds are enforced. MTC serial bounds are ignored for
+ordinary X.509, as in Chromium. SCT-dependent sets remain conservative until CT
+verification supplies validated timestamps. Public anchors use the protobuf's
 `enforce_anchor_expiry` and `enforce_anchor_constraints` flags (both default to
 false), including additional TLS anchors. Eligible public trust overrides
 duplicate local trust flags; exact local distrust still wins. Windows local ROOT
 enforces expiry and X.509 constraints, including certificate policies.
 Chrome's additional policies remain tracked in [the verifier contract](chromium-verifier.md).
-Excluded-anchor counts and the applied policy are retained in connection evidence.
+The applied policy is retained in connection evidence; constrained anchors are
+no longer excluded as a group during loading. Conflicting duplicate policies
+and malformed version bounds prevent a component update from replacing last-good.
 
 A server matching marker never authorizes a chain. After certificate rejection,
 available server IDs can trigger one retry before HTTP data is sent when the

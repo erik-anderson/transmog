@@ -7,6 +7,8 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -27,6 +29,37 @@ using namespace bssl;
 #include "cert_verify_proc_blocklist.inc"
 
 DEFINE_CERT_ERROR_ID(kPublicLifetime, "Public certificate validity exceeds Chromium's lifetime policy");
+DEFINE_CERT_ERROR_ID(kRootConstraints, "Path does not satisfy Chromium root metadata constraints");
+
+struct RootConstraint {
+  bool version;
+  std::optional<int64_t> validity_not_after, validity_after, sct_not_after, sct_all_after;
+  std::vector<std::string> dns;
+  bool Satisfied(const ParsedCertificate& leaf) const {
+    if (!version) return false;
+    if (validity_not_after || validity_after) {
+      int64_t start;
+      der::GeneralizedTime converted;
+      if ((validity_not_after && !der::EncodePosixTimeAsGeneralizedTime(*validity_not_after, &converted)) ||
+          (validity_after && !der::EncodePosixTimeAsGeneralizedTime(*validity_after, &converted)) ||
+          !der::GeneralizedTimeToPosixTime(leaf.tbs().validity_not_before, &start) ||
+          (validity_not_after && start > *validity_not_after) ||
+          (validity_after && start <= *validity_after)) return false;
+    }
+    // Until CT is integrated, never grant trust from an unverified SCT claim.
+    if (sct_not_after || sct_all_after) return false;
+    if (!dns.empty()) {
+      GeneralNames permitted;
+      for (const auto& name : dns) permitted.dns_names.push_back(name);
+      permitted.present_name_types = GENERAL_NAME_DNS_NAME;
+      auto limits = NameConstraints::CreateFromPermittedSubtrees(std::move(permitted));
+      CertErrors errors;
+      limits->IsPermittedCert(leaf.normalized_subject(), leaf.subject_alt_names(), &errors);
+      if (errors.ContainsAnyErrorWithSeverity(CertError::SEVERITY_HIGH)) return false;
+    }
+    return true;
+  }
+};
 
 std::string SpkiHash(const ParsedCertificate& cert) {
   uint8_t hash[SHA256_DIGEST_LENGTH];
@@ -80,6 +113,8 @@ struct Policy : TrustStore {
   // TrustedPeople is exact leaf trust and is never searched for issuers.
   std::set<std::string, std::less<>> leaf_only;
   std::set<std::string, std::less<>> known_roots;
+  std::set<std::string, std::less<>> local_roots;
+  std::map<std::string, std::vector<RootConstraint>, std::less<>> constraints;
   bool KnownRoot(const ParsedCertificate* cert) const {
     return cert && known_roots.count(std::string(BytesAsStringView(cert->der_cert())));
   }
@@ -121,6 +156,16 @@ struct Delegate : SimplePathBuilderDelegate {
   }
   void CheckPathAfterVerification(const CertPathBuilder&,
                                   CertPathBuilderResultPath* path) override {
+    if (!path->certs.empty()) {
+      const std::string root(BytesAsStringView(path->certs.back()->der_cert()));
+      auto found = policy->constraints.find(root);
+      if (!policy->local_roots.count(root) && found != policy->constraints.end()) {
+        bool satisfied = false;
+        for (const auto& group : found->second)
+          satisfied |= group.Satisfied(*path->certs.front());
+        if (!satisfied) path->errors.GetOtherErrors()->AddError(kRootConstraints);
+      }
+    }
     CheckStaticPolicy(path);
     if (!authority || path->certs.empty()) return;
     // Recovery selects an issuer of a future TLS leaf, rather than using that
@@ -214,6 +259,34 @@ void transmog_pki_policy_free(void* policy) noexcept {
 bool transmog_pki_policy_known_root(void* pointer, const uint8_t* data, size_t len) noexcept {
   try {
     static_cast<Policy*>(pointer)->known_roots.emplace(reinterpret_cast<const char*>(data), len);
+    return true;
+  } catch (...) { return false; }
+}
+bool transmog_pki_policy_local_root(void* pointer, const uint8_t* data, size_t len) noexcept {
+  try { static_cast<Policy*>(pointer)->local_roots.emplace(reinterpret_cast<const char*>(data), len); return true; }
+  catch (...) { return false; }
+}
+size_t transmog_pki_policy_constraint(void* pointer, const uint8_t* der, size_t len,
+  bool version, uint32_t flags, int64_t not_after, int64_t after,
+  int64_t sct_not_after, int64_t sct_after) noexcept {
+  try {
+    RootConstraint constraint;
+    constraint.version = version;
+    if (flags & 1) constraint.validity_not_after = not_after;
+    if (flags & 2) constraint.validity_after = after;
+    if (flags & 4) constraint.sct_not_after = sct_not_after;
+    if (flags & 8) constraint.sct_all_after = sct_after;
+    auto& constraints = static_cast<Policy*>(pointer)->constraints[std::string(reinterpret_cast<const char*>(der), len)];
+    constraints.push_back(std::move(constraint));
+    return constraints.size() - 1;
+  } catch (...) { return SIZE_MAX; }
+}
+bool transmog_pki_policy_constraint_dns(void* pointer, const uint8_t* der, size_t len,
+  size_t index, const uint8_t* dns, size_t dns_len) noexcept {
+  try {
+    auto found = static_cast<Policy*>(pointer)->constraints.find(std::string(reinterpret_cast<const char*>(der), len));
+    if (found == static_cast<Policy*>(pointer)->constraints.end() || index >= found->second.size()) return false;
+    found->second[index].dns.emplace_back(reinterpret_cast<const char*>(dns), dns_len);
     return true;
   } catch (...) { return false; }
 }

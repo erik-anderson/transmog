@@ -64,7 +64,27 @@ struct ConstraintSet {
     validity_starts_after_sec: Option<i64>,
 }
 impl ConstraintSet {
-    fn unrestricted_for_reference(&self) -> bool {
+    fn to_native(&self) -> Result<transmog_tls_native::RootConstraint, MetadataError> {
+        if [&self.min_version, &self.max_version_exclusive]
+            .iter()
+            .any(|value| {
+                value
+                    .as_ref()
+                    .is_some_and(|value| component_version(value).is_none())
+            })
+        {
+            return Err(MetadataError::Invalid("constraint Chromium version"));
+        }
+        Ok(transmog_tls_native::RootConstraint {
+            version_allowed: self.version_allowed_for_reference(),
+            validity_not_after: self.validity_starts_not_after_sec,
+            validity_after: self.validity_starts_after_sec,
+            sct_not_after: self.sct_not_after_sec,
+            sct_all_after: self.sct_all_after_sec,
+            permitted_dns_names: self.permitted_dns_names.clone(),
+        })
+    }
+    fn version_allowed_for_reference(&self) -> bool {
         let Some(reference) =
             component_version(transmog_core::network_profile::CHROMIUM_REFERENCE_VERSION)
         else {
@@ -83,13 +103,6 @@ impl ConstraintSet {
         };
         version_allowed(&self.min_version, true)
             && version_allowed(&self.max_version_exclusive, false)
-            && self.sct_not_after_sec.is_none()
-            && self.sct_all_after_sec.is_none()
-            && self.permitted_dns_names.is_empty()
-            && self.serial_not_after.is_none()
-            && self.serial_after.is_none()
-            && self.validity_starts_not_after_sec.is_none()
-            && self.validity_starts_after_sec.is_none()
     }
 }
 #[derive(Clone, PartialEq, prost::Oneof)]
@@ -147,12 +160,12 @@ impl PkiMetadata {
         let store = decode_store(bytes, &source)?;
         let mut ids = Vec::new();
         let mut issuers = Vec::new();
-        let mut root_count = 0;
         let mut trusted_anchors = Vec::new();
         let mut anchor_only = std::collections::HashSet::new();
         let mut constrained_anchors = std::collections::HashSet::new();
         let mut ignore_anchor_expiry = std::collections::HashSet::new();
-        let mut excluded = 0;
+        let mut root_constraints = std::collections::HashMap::new();
+        let mut declared = std::collections::HashMap::new();
         for (anchor, tls) in store.trust_anchors.iter().map(|a| (a, true)).chain(
             store
                 .additional_certs
@@ -160,27 +173,38 @@ impl PkiMetadata {
                 .map(|a| (a, a.tls_trust_anchor == Some(true))),
         ) {
             let cert = parse_ca(anchor)?;
+            let groups = anchor
+                .constraints
+                .iter()
+                .map(ConstraintSet::to_native)
+                .collect::<Result<Vec<_>, _>>()?;
             if tls {
-                if anchor.constraints.is_empty()
-                    || anchor
-                        .constraints
-                        .iter()
-                        .any(ConstraintSet::unrestricted_for_reference)
+                trusted_anchors.push(cert.clone());
+                let der = cert
+                    .to_der()
+                    .map_err(|_| MetadataError::Invalid("anchor DER"))?;
+                let flags = (
+                    anchor.enforce_anchor_expiry == Some(true),
+                    anchor.enforce_anchor_constraints == Some(true),
+                    groups.clone(),
+                );
+                if declared
+                    .insert(der.clone(), flags.clone())
+                    .is_some_and(|prior| prior != flags)
                 {
-                    root_count += 1;
-                    trusted_anchors.push(cert.clone());
-                    let der = cert
-                        .to_der()
-                        .map_err(|_| MetadataError::Invalid("anchor DER"))?;
-                    anchor_only.insert(der.clone());
-                    if anchor.enforce_anchor_constraints == Some(true) {
-                        constrained_anchors.insert(der.clone());
-                    }
-                    if anchor.enforce_anchor_expiry != Some(true) {
-                        ignore_anchor_expiry.insert(der);
-                    }
-                } else {
-                    excluded += 1;
+                    return Err(MetadataError::Invalid(
+                        "conflicting duplicate anchor policies",
+                    ));
+                }
+                anchor_only.insert(der.clone());
+                if anchor.enforce_anchor_constraints == Some(true) {
+                    constrained_anchors.insert(der.clone());
+                }
+                if anchor.enforce_anchor_expiry != Some(true) {
+                    ignore_anchor_expiry.insert(der.clone());
+                }
+                if !anchor.constraints.is_empty() {
+                    root_constraints.insert(der, groups);
                 }
                 issuers.push(cert.clone());
                 if let Some(id) = &anchor.trust_anchor_id {
@@ -202,9 +226,6 @@ impl PkiMetadata {
         }
         let digest = boring::hash::hash(MessageDigest::sha256(), bytes)
             .map_err(|_| MetadataError::Invalid("digest"))?;
-        if root_count == 0 {
-            return Err(MetadataError::Invalid("no usable TLS trust anchors"));
-        }
         let sha256 = hex(&digest);
         let generation = u64::from_be_bytes(
             digest
@@ -216,24 +237,16 @@ impl PkiMetadata {
             generation,
             source.clone(),
             store.version_major,
-            excluded,
+            0,
             Arc::new(trusted_anchors.clone()),
         ));
-        let policy = Arc::new(transmog_tls_native::CertificatePolicy {
-            known_public_roots: Arc::new(
-                issuers
-                    .iter()
-                    .map(|cert| cert.to_der())
-                    .collect::<Result<_, _>>()
-                    .map_err(|_| MetadataError::Invalid("public root identity"))?,
-            ),
-            anchors: Arc::new(anchor_only.clone()),
-            anchor_only: Arc::new(anchor_only),
-            constrained_anchors: Arc::new(constrained_anchors),
-            ignore_anchor_expiry: Arc::new(ignore_anchor_expiry),
-            issuers: Arc::new(issuers.clone()),
-            ..Default::default()
-        });
+        let policy = Arc::new(make_policy(
+            &issuers,
+            anchor_only,
+            constrained_anchors,
+            ignore_anchor_expiry,
+            root_constraints,
+        )?);
         Ok(Self {
             version: store.version_major,
             source,
@@ -316,6 +329,31 @@ impl PkiMetadata {
         }
         selected
     }
+}
+
+fn make_policy(
+    issuers: &[X509],
+    anchor_only: std::collections::HashSet<Vec<u8>>,
+    constrained_anchors: std::collections::HashSet<Vec<u8>>,
+    ignore_anchor_expiry: std::collections::HashSet<Vec<u8>>,
+    root_constraints: std::collections::HashMap<Vec<u8>, Vec<transmog_tls_native::RootConstraint>>,
+) -> Result<transmog_tls_native::CertificatePolicy, MetadataError> {
+    Ok(transmog_tls_native::CertificatePolicy {
+        root_constraints: Arc::new(root_constraints),
+        known_public_roots: Arc::new(
+            issuers
+                .iter()
+                .map(|cert| cert.to_der())
+                .collect::<Result<_, _>>()
+                .map_err(|_| MetadataError::Invalid("public root identity"))?,
+        ),
+        anchors: Arc::new(anchor_only.clone()),
+        anchor_only: Arc::new(anchor_only),
+        constrained_anchors: Arc::new(constrained_anchors),
+        ignore_anchor_expiry: Arc::new(ignore_anchor_expiry),
+        issuers: Arc::new(issuers.to_vec()),
+        ..Default::default()
+    })
 }
 
 fn decode_store(bytes: &[u8], source: &str) -> Result<RootStore, MetadataError> {
@@ -839,21 +877,29 @@ mod tests {
 
     #[test]
     fn constrained_anchors_are_not_silently_trusted_and_unknown_policy_fails_closed() {
+        let verifies = |store: &RootStore| {
+            let metadata = PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).unwrap();
+            transmog_tls_native::verify_certificate_authority(
+                &metadata.policy,
+                &metadata.trusted_anchors[0],
+            )
+        };
         let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
         store.trust_anchors[0].constraints.push(ConstraintSet {
             sct_not_after_sec: Some(1),
             ..Default::default()
         });
-        assert!(PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).is_err());
+        assert!(!verifies(&store));
         store.trust_anchors[0].constraints.push(ConstraintSet {
             max_version_exclusive: Some("153.0.8010.0".into()),
             ..Default::default()
         });
-        assert!(PkiMetadata::decode(&store.encode_to_vec(), "policy".into()).is_err());
+        assert!(!verifies(&store));
         store.trust_anchors[0].constraints.push(ConstraintSet {
             min_version: Some("154.0.0.0".into()),
             ..Default::default()
         });
+        assert!(verifies(&store));
         assert_eq!(
             PkiMetadata::decode(&store.encode_to_vec(), "policy".into())
                 .unwrap()
@@ -872,5 +918,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn duplicate_identifiers_do_not_allow_conflicting_anchor_policy() {
+        let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+        let mut duplicate = store.trust_anchors[0].clone();
+        duplicate.trust_anchor_id = Some(vec![7]);
+        store.trust_anchors.push(duplicate);
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "duplicate IDs".into()).is_ok());
+        store.trust_anchors[1].enforce_anchor_constraints = Some(true);
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "conflicting flags".into()).is_err());
+        store.trust_anchors[1].enforce_anchor_constraints = None;
+        store.trust_anchors[1].constraints.push(ConstraintSet {
+            min_version: Some("broken".into()),
+            ..Default::default()
+        });
+        assert!(PkiMetadata::decode(&store.encode_to_vec(), "malformed version".into()).is_err());
     }
 }

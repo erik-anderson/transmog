@@ -18,5 +18,6 @@ Version 41 produces the 28 certificate-based Trust Anchor IDs captured from
 Chromium 154.0.8037.99. Network profiles can use its public TLS anchors as their
 trusted store; OS mode uses certificates as untrusted path-building helpers.
 No roots are installed into the OS. Chrome's complete verifier, EV and Merkle
-Tree Certificate trust are not claimed. Anchors requiring unsupported Chrome
-constraints are excluded; see [root-store selection](../../docs/trust-anchor-ids.md).
+Tree Certificate trust are not claimed. Root metadata constraints are checked
+per path; SCT-dependent conditions remain conservative
+until CT verification is available. See [root-store selection](../../docs/trust-anchor-ids.md).

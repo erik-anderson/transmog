@@ -20,6 +20,26 @@ unsafe extern "C" {
     fn transmog_pki_policy_new() -> *mut c_void;
     fn transmog_pki_policy_free(policy: *mut c_void);
     fn transmog_pki_policy_known_root(policy: *mut c_void, data: *const u8, len: usize) -> bool;
+    fn transmog_pki_policy_local_root(policy: *mut c_void, data: *const u8, len: usize) -> bool;
+    fn transmog_pki_policy_constraint(
+        policy: *mut c_void,
+        data: *const u8,
+        len: usize,
+        version: bool,
+        flags: u32,
+        not_after: i64,
+        after: i64,
+        sct_not_after: i64,
+        sct_after: i64,
+    ) -> usize;
+    fn transmog_pki_policy_constraint_dns(
+        policy: *mut c_void,
+        data: *const u8,
+        len: usize,
+        index: usize,
+        dns: *const u8,
+        dns_len: usize,
+    ) -> bool;
     fn transmog_pki_policy_add(
         policy: *mut c_void,
         bytes: *const u8,
@@ -184,6 +204,19 @@ pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPol
     for blocked in policy.disallowed.iter() {
         add(blocked, 4, false, false)?;
     }
+    configure_root_metadata(&compiled, policy)?;
+    let compiled = Arc::new(compiled);
+    if cache.len() == 16 {
+        cache.remove(0);
+    }
+    cache.push((Arc::downgrade(policy), compiled.clone()));
+    Ok(compiled)
+}
+
+fn configure_root_metadata(
+    compiled: &CompiledPolicy,
+    policy: &CertificatePolicy,
+) -> Result<(), ErrorStack> {
     for root in policy.known_public_roots.iter() {
         // SAFETY: unpublished policy copies the borrowed root identity.
         if !unsafe {
@@ -192,12 +225,55 @@ pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPol
             return Err(ErrorStack::get());
         }
     }
-    let compiled = Arc::new(compiled);
-    if cache.len() == 16 {
-        cache.remove(0);
+    for root in policy.local_anchors.iter() {
+        // SAFETY: unpublished policy copies local anchor identities.
+        if !unsafe {
+            transmog_pki_policy_local_root(compiled.0.as_ptr(), root.as_ptr(), root.len())
+        } {
+            return Err(ErrorStack::get());
+        }
     }
-    cache.push((Arc::downgrade(policy), compiled.clone()));
-    Ok(compiled)
+    for (root, groups) in policy.root_constraints.iter() {
+        for group in groups {
+            let flags = u32::from(group.validity_not_after.is_some())
+                | (u32::from(group.validity_after.is_some()) << 1)
+                | (u32::from(group.sct_not_after.is_some()) << 2)
+                | (u32::from(group.sct_all_after.is_some()) << 3);
+            // SAFETY: all scalars and borrowed root bytes are copied before publication.
+            let index = unsafe {
+                transmog_pki_policy_constraint(
+                    compiled.0.as_ptr(),
+                    root.as_ptr(),
+                    root.len(),
+                    group.version_allowed,
+                    flags,
+                    group.validity_not_after.unwrap_or_default(),
+                    group.validity_after.unwrap_or_default(),
+                    group.sct_not_after.unwrap_or_default(),
+                    group.sct_all_after.unwrap_or_default(),
+                )
+            };
+            if index == usize::MAX {
+                return Err(ErrorStack::get());
+            }
+            for dns in &group.permitted_dns_names {
+                // SAFETY: bounded group index; native storage copies the borrowed DNS value.
+                if !unsafe {
+                    transmog_pki_policy_constraint_dns(
+                        compiled.0.as_ptr(),
+                        root.as_ptr(),
+                        root.len(),
+                        index,
+                        dns.as_ptr(),
+                        dns.len(),
+                    )
+                } {
+                    return Err(ErrorStack::get());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 struct NativeResult(NonNull<c_void>);
