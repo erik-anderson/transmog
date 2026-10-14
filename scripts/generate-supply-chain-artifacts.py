@@ -37,6 +37,11 @@ def artifacts(metadata, npm, version):
     lines += [f"| {p['name']} | {p['version']} | {p['license']} | {p['source']} |" for p in npm]
     lines += ["", "## Bundled native code", "",
               "`boring-sys` and `quiche` compile bundled BoringSSL/quiche source. Their upstream license files and notices remain part of the Cargo source distribution and must be retained in binary distribution materials."]
+    snapshot = json.loads((ROOT / "third_party/chromium-root-store/snapshot.json").read_text(encoding="utf-8"))
+    lines += ["", "## Chromium root-store data", "",
+              f"The bundled crs.pb is generated from public Chromium source revision {snapshot['sourceRevision']} (root-store version {snapshot['rootStoreVersion']}). It supplies classical Trust Anchor IDs and untrusted public chain-building certificates; it does not replace configured certificate trust.", "",
+              "Source and reproducible generator: `third_party/chromium-root-store` and `scripts/generate-chromium-root-store.py`. Google’s PKIMetadata CRX package is not redistributed.", "",
+              (ROOT / "third_party/chromium-root-store/LICENSE").read_text(encoding="utf-8").rstrip()]
     components = []
     for package in packages:
         component = {"type": "library" if package.get("source") else "application", "bom-ref": package["id"],
@@ -52,6 +57,11 @@ def artifacts(metadata, npm, version):
             "licenses": [{"license": {"expression": package["license"]}}],
             "purl": f"pkg:npm/{quote(package['name'], safe='/')}@{quote(package['version'], safe='')}",
             "externalReferences": [{"type": "distribution", "url": package["source"]}]})
+    components.append({"type": "data", "bom-ref": "chromium-root-store", "name": "Chromium root-store data",
+                       "version": str(snapshot["rootStoreVersion"]),
+                       "licenses": [{"license": {"id": "BSD-3-Clause"}}],
+                       "hashes": [{"alg": "SHA-256", "content": snapshot["protobufSha256"]}],
+                       "externalReferences": [{"type": "vcs", "url": snapshot["source"]}]})
     sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1,
             "metadata": {"timestamp": datetime.now(timezone.utc).isoformat(),
                          "tools": [{"vendor": "Transmog", "name": "generate-supply-chain-artifacts.py"}],

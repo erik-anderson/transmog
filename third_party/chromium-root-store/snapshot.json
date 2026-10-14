@@ -1,0 +1,14 @@
+{
+  "sourceRevision": "6baa586063d26e723f468ec8f213069fdb2d120c",
+  "rootStoreVersion": 41,
+  "source": "https://chromium.googlesource.com/chromium/src/+/6baa586063d26e723f468ec8f213069fdb2d120c/",
+  "inputSha256": {
+    "root_store.proto": "1ac767106082670f11439f6a9a82a7fa6d628e67807636f5d44f975114989c9f",
+    "root_store.textproto": "302327ee5fd60944851a1cafc75af6163ad1349c02dbb629c3acc249ea5b4c54",
+    "root_store.certs": "653230aea8ce815391eb8a13bc22fb3a0243ba0f09395b61c319aa6d52348102",
+    "additional.certs": "8e054876f8b480600a60165f3b95e9bf850d8fc9b599ea6086b48109290e0384",
+    "LICENSE": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"
+  },
+  "protobufSha256": "bd55faffcbda8a411ef975505bbd0207b4e43ce5b1b7973ecbefce750c497edc",
+  "protobufBytes": 350640
+}
