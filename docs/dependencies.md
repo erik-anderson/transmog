@@ -18,7 +18,7 @@ authoritative version records.
 | Asynchronous I/O | `tokio`, `bytes`, `futures-util`, `tower-service` | Sockets, tasks, timers, bounded channels, byte buffers, and service adapters throughout the transport layers. |
 | Canonical HTTP vocabulary | `http`, `http-body`, `http-body-util` | Standard method, URI, header, status, body-frame, and trailer types at adapter boundaries. Transmog converts these to its own validated canonical exchange model before invoking hooks. |
 | HTTP/1.1 and HTTP/2 | `hyper`, `hyper-util` | Downstream HTTP serving and pooled upstream clients, including HTTP/2 multiplexing and TCP Happy Eyeballs. The integration lives in `transmog-http`. |
-| TLS and cryptography | `boring`, `boring-sys`, `tokio-boring`, `hyper-boring` | One BoringSSL family implements upstream TLS verification, downstream interception TLS, hybrid ML-KEM exchange, ML-DSA handshake authentication, certificate issuance, ALPN, and Hyper's TLS transport. BoringSSL is compiled from source as part of the native build. |
+| TLS and cryptography | `boring`, `boring-sys`, `tokio-boring` | One BoringSSL family implements upstream TLS verification, downstream interception TLS, hybrid ML-KEM exchange, ML-DSA handshake authentication, certificate issuance, ALPN, and Transmog's Hyper TLS transport. BoringSSL is compiled from source as part of the native build. |
 | Operating-system trust roots | `rustls-native-certs` | Enumerates platform root certificates, which Transmog imports into its BoringSSL trust snapshot. Despite its name, it does **not** put rustls in the production TLS data path. |
 | QUIC and HTTP/3 | `quiche` | Pooled HTTP/3 origin egress, QUIC transport, and Alt-Svc upgrades in `transmog-h3`. The crate is built with `boringssl-boring-crate` so HTTP/3 shares the same BoringSSL bindings and trust policy as HTTP/1.1 and HTTP/2. |
 
@@ -33,6 +33,8 @@ all four crates, including quiche's transitive dependencies. The exact revision
 lives in the workspace manifest and lockfile; remove the patch when a published
 release provides the same native API. Dependency policy permits only this Git
 repository, and ordinary registry dependencies remain required elsewhere.
+`hyper-boring` remains a test-only comparison connector; production uses
+Transmog's connector and stream adapter. The crypto-graph check enforces this.
 Cargo applies patches only at the consumer's workspace root, so independent
 embedding workspaces must repeat the same four patch entries. The repository's
 Rust and .NET examples already use the patched root workspace.

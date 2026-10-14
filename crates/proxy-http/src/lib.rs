@@ -6,6 +6,7 @@ mod client;
 mod metrics;
 mod service;
 mod tls_connector;
+mod tls_stream;
 mod upstream;
 
 pub use authority::{AuthorityError, ConnectAuthority};
@@ -14,6 +15,7 @@ pub use client::{
 };
 pub use service::HyperUpstreamService;
 pub use tls_connector::ChromiumHttpsConnector;
+pub use tls_stream::MaybeHttpsStream;
 pub use upstream::{
     HappyEyeballsResolver, HttpsOriginConnector, HyperEgressMode, build_https_connector,
     build_https_connector_with_happy_eyeballs,

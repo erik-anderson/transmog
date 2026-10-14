@@ -6,7 +6,7 @@ from repo_tools import ROOT
 import os
 
 TARGETS = ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
-FORBIDDEN = {"openssl", "openssl-sys", "native-tls", "rustls", "rustls-webpki", "webpki"}
+FORBIDDEN = {"openssl", "openssl-sys", "native-tls", "rustls", "rustls-webpki", "webpki", "hyper-boring"}
 
 
 def check_graph(metadata, target):

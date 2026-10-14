@@ -15,7 +15,6 @@ http-body.workspace = true
 http-body-util.workspace = true
 h2.workspace = true
 hyper.workspace = true
-hyper-boring.workspace = true
 hyper-util.workspace = true
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
 transmog-network = { version = "=0.1.4", path = "../network" }
@@ -30,6 +29,7 @@ tracing.workspace = true
 workspace = true
 
 [dev-dependencies]
+hyper-boring.workspace = true
 transmog-tls = { version = "=0.1.4", path = "../proxy-tls", features = ["test-fixtures"] }
 tempfile.workspace = true
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }

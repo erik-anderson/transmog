@@ -1,11 +1,11 @@
 //! TCP HTTPS adapter with Chromium's externally managed client ticket cache.
+use crate::tls_stream::MaybeHttpsStream;
 use boring::{
     error::ErrorStack,
     ex_data::Index,
     ssl::{Ssl, SslContext, SslContextBuilder, SslRef, SslSession, SslSessionCacheMode},
 };
 use http::Uri;
-use hyper_boring::MaybeHttpsStream;
 use hyper_util::{client::legacy::connect::Connection, rt::TokioIo};
 use std::{
     error::Error,

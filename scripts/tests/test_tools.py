@@ -73,6 +73,18 @@ class CryptoGraphTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS"):
             checker.check_graph(graph, "fixture")
 
+    def test_legacy_hyper_connector_is_allowed_only_as_a_test_dependency(self):
+        checker = load("check-crypto-graph")
+        graph = self.graph()
+        graph["packages"].append({"id": "hyper-boring", "name": "hyper-boring", "version": "5.2.0"})
+        graph["resolve"]["nodes"].append({"id": "hyper-boring", "deps": []})
+        edge = {"pkg": "hyper-boring", "dep_kinds": [{"kind": "dev"}]}
+        graph["resolve"]["nodes"][0]["deps"].append(edge)
+        checker.check_graph(graph, "fixture")
+        edge["dep_kinds"] = [{"kind": None}]
+        with self.assertRaisesRegex(RuntimeError, "Forbidden production TLS.*hyper-boring"):
+            checker.check_graph(graph, "fixture")
+
     def test_same_version_tls_copies_are_distinct_only_in_the_production_graph(self):
         checker = load("check-crypto-graph")
         registry = "registry+https://github.com/rust-lang/crates.io-index"

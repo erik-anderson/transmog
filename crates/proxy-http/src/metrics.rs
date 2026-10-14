@@ -1,8 +1,8 @@
 //! Physical connection instrumentation underneath Hyper's existing pools.
 use crate::tls_connector::ChromiumHttpsConnector;
+use crate::tls_stream::MaybeHttpsStream;
 use crate::{HappyEyeballsResolver, HyperEgressMode};
 use http::Uri;
-use hyper_boring::MaybeHttpsStream;
 use hyper_util::{
     client::legacy::connect::{Connected, Connection, HttpConnector},
     rt::TokioIo,
