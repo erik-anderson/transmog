@@ -34,6 +34,28 @@ fn invalid(message: impl Into<String>) -> AppError {
 }
 
 impl NetworkProfiles {
+    pub(crate) fn migrate_local_trust(&mut self) -> Result<(), AppError> {
+        let Some(builtin) = NetworkProfileSnapshot::builtin(&self.active_profile.id) else {
+            return Ok(());
+        };
+        if self.active_profile == builtin {
+            return Ok(());
+        }
+        let mut previous = builtin.clone();
+        previous.revision -= 1;
+        previous.settings.local_certificates = false;
+        if self.active_profile != previous {
+            return Err(invalid(
+                "The saved built-in network profile is not a supported recipe.",
+            ));
+        }
+        self.active_profile = builtin;
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("Network profile catalog revision is exhausted."))?;
+        Ok(())
+    }
     pub(crate) fn migrate_alps(&mut self) -> Result<(), AppError> {
         if self.active_profile.id == CHROMIUM_154 {
             let previous = NetworkProfileSnapshot {
@@ -242,6 +264,31 @@ fn validate_custom(profile: &NetworkProfileSnapshot) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_trust_qualification_keeps_custom_settings_and_static_recipes() {
+        for id in [CHROMIUM_154, WEBVIEW2_154] {
+            let builtin = NetworkProfileSnapshot::builtin(id).unwrap();
+            let mut prior = builtin.clone();
+            prior.revision -= 1;
+            prior.settings.local_certificates = false;
+            let mut custom = prior.clone();
+            custom.id = "custom-public-only".into();
+            custom.name = "Public only".into();
+            let mut catalog = NetworkProfiles {
+                revision: 3,
+                active_profile: prior,
+                custom_profiles: vec![custom.clone()],
+            };
+            catalog.migrate_local_trust().unwrap();
+            catalog.validate().unwrap();
+            assert_eq!(catalog.active_profile, builtin);
+            assert_eq!(catalog.custom_profiles, [custom.clone()]);
+            catalog.active_profile = custom.clone();
+            catalog.migrate_local_trust().unwrap();
+            assert_eq!(catalog.active_profile, custom);
+            assert_eq!(catalog.revision, 4);
+        }
+    }
 
     #[test]
     fn root_store_migration_keeps_custom_snapshots_and_switches_only_old_builtin() {

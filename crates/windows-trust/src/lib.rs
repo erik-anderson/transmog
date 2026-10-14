@@ -108,7 +108,6 @@ impl State {
             ready: Condvar::new(),
         }
     }
-    #[cfg(any(windows, test))]
     fn changed(&self) {
         let _result = self
             .result
@@ -158,6 +157,25 @@ pub struct LocalTrustMonitor {
     #[cfg(windows)]
     control: Option<Arc<windows::Control>>,
 }
+/// Owner-controlled publication for an embedding's explicit local inventory.
+/// Automatic Windows monitors are read-only and do not expose this capability.
+#[derive(Clone)]
+pub struct LocalTrustPublisher {
+    monitor: LocalTrustMonitor,
+    serial: Arc<Mutex<()>>,
+}
+impl LocalTrustPublisher {
+    /// Replaces explicit embedding trust and invalidates prior pool admissions.
+    pub fn replace(&self, mut certificates: LocalCertificates) {
+        let _serial = self
+            .serial
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.monitor.state.changed();
+        certificates.generation = self.monitor.generation();
+        self.monitor.state.publish(Ok(certificates.canonical()));
+    }
+}
 impl fmt::Debug for LocalTrustMonitor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("LocalTrustMonitor")
@@ -166,6 +184,27 @@ impl fmt::Debug for LocalTrustMonitor {
     }
 }
 impl LocalTrustMonitor {
+    /// Whether Windows collection notifications maintain this inventory.
+    pub fn is_monitored(&self) -> bool {
+        #[cfg(windows)]
+        {
+            self.control.is_some()
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+    /// Creates an explicit dynamic inventory and its separate publication owner.
+    #[must_use]
+    pub fn controlled(certificates: LocalCertificates) -> (Self, LocalTrustPublisher) {
+        let monitor = Self::fixed(certificates);
+        let publisher = LocalTrustPublisher {
+            monitor: monitor.clone(),
+            serial: Arc::new(Mutex::new(())),
+        };
+        (monitor, publisher)
+    }
     /// Starts local Windows collections, or an empty ready inventory on other OSes.
     /// # Errors
     /// Returns event/worker creation failures; inventory errors are exposed by current.

@@ -7284,6 +7284,7 @@ dependencies = [
  "transmog-client-certificates",
  "transmog-core",
  "transmog-tls-native",
+ "transmog-windows-trust",
 ]
 
 [[package]]

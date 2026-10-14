@@ -35,13 +35,21 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     const profileForm=profiles.networkForm;
     if(original.preferences.networkProfiles.activeProfile.id!=='webview2-chromium-154'||original.preferences.networkProfiles.activeProfile.settings.rootStore!=='webview2-installed')throw new Error('WebView2 root store is not the default');
     const rootStore=profileForm.elements.namedItem('rootStore');
+    const localTrust=profileForm.elements.namedItem('localCertificates');
+    if(!original.preferences.networkProfiles.activeProfile.settings.localCertificates||!localTrust.checked)throw new Error('Local trust is not the built-in default');
     for(const value of ['os','chromium-bundled','chrome-installed','webview2-installed']) {
       rootStore.value=value;rootStore.scrollIntoView({block:'center'});rootStore.focus();
       const box=rootStore.getBoundingClientRect();
       if(rootStore.getRootNode().activeElement!==rootStore||rootStore.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==rootStore)throw new Error('Root store choice is unreachable');
       profiles.edit(new Event('change',{bubbles:true}));
+      profiles.$flushUpdates();
+      if(localTrust.disabled!==(value==='os')||!localTrust.checked)throw new Error('Root-store choice lost or enabled the OS local-trust toggle');
       if(profiles.networkDraft.settings.rootStore!==value)throw new Error('Root store choice did not update the draft');
     }
+    localTrust.scrollIntoView({block:'center'});localTrust.focus();
+    const localBox=localTrust.getBoundingClientRect();
+    if(localTrust.getRootNode().activeElement!==localTrust||localTrust.getRootNode().elementFromPoint(localBox.x+localBox.width/2,localBox.y+localBox.height/2)!==localTrust)throw new Error('Local trust is unreachable');
+    localTrust.checked=false;profiles.edit(new Event('change',{bubbles:true}));
     if(!original.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('Chromium ALPS default is disabled');
     const alps=profileForm.elements.namedItem('http2Alps');
     if(!original.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Chromium Trust Anchor IDs default is disabled');
@@ -67,6 +75,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
     if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Trust Anchor IDs toggle did not persist');
+    if(saved.preferences.networkProfiles.activeProfile.settings.localCertificates)throw new Error('Local trust toggle did not persist');
     if(saved.preferences.decryptHttps||saved.preferences.isolateOutboundConnections||saved.preferences.configureSystemProxy||JSON.stringify(saved.preferences.allowedOutboundProtocols)!==JSON.stringify({http1:true,http2:false,http3:false}))throw new Error('Network settings did not persist');
     await settings.startProxy();
     const status=await window.__TAURI_INTERNALS__.invoke('app_status');

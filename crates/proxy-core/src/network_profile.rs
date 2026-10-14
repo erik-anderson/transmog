@@ -87,6 +87,10 @@ pub struct NetworkProfileSettings {
     /// Actual certificate trust source. Historical captures used configured OS trust.
     #[serde(default)]
     pub root_store: RootStore,
+    /// Add Chromium-style local Windows trust to a public Chromium root store.
+    /// OS trust already includes local roots. Historical captures had no overlay.
+    #[serde(default)]
+    pub local_certificates: bool,
 }
 
 impl Default for NetworkProfileSettings {
@@ -105,6 +109,7 @@ impl Default for NetworkProfileSettings {
             trust_anchor_ids: true,
             pki_metadata_file: None,
             root_store: RootStore::Os,
+            local_certificates: false,
         }
     }
 }
@@ -156,8 +161,8 @@ impl NetworkProfileSnapshot {
     #[must_use]
     pub fn builtin(id: &str) -> Option<Self> {
         let (name, revision, root_store) = match id {
-            CHROMIUM_154 => ("Chromium 154", 4, RootStore::ChromeInstalled),
-            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 1, RootStore::Webview2Installed),
+            CHROMIUM_154 => ("Chromium 154", 5, RootStore::ChromeInstalled),
+            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 2, RootStore::Webview2Installed),
             _ => return None,
         };
         Some(Self {
@@ -166,8 +171,24 @@ impl NetworkProfileSnapshot {
             revision,
             base_profile: CHROMIUM_154.into(),
             settings: NetworkProfileSettings {
+                protocols: AllowedHttpProtocols {
+                    http1: true,
+                    http2: true,
+                    http3: true,
+                },
+                reuse_connections: true,
+                tls_versions: TlsVersions::Tls12And13,
+                compatibility_ciphers: true,
+                hybrid_key_exchange: true,
+                grease: TlsGrease::Chromium,
+                randomize_extensions: true,
+                ech_grease: true,
+                certificate_compression: true,
+                http2_alps: true,
+                trust_anchor_ids: true,
+                pki_metadata_file: None,
                 root_store,
-                ..Default::default()
+                local_certificates: true,
             },
         })
     }
@@ -217,10 +238,15 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("rootStore");
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("localCertificates");
         let result: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
         assert!(!result.settings.trust_anchor_ids);
         assert!(result.settings.pki_metadata_file.is_none());
         assert_eq!(result.settings.root_store, RootStore::Os);
+        assert!(!result.settings.local_certificates);
         assert!(result.valid());
     }
 

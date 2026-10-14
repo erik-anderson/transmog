@@ -13,6 +13,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkForm.parentElement.closest('form')),null,'Profile and ordinary settings forms are nested');
   assert.equal(await selector.inputValue(),'webview2-chromium-154');
   assert.equal(await panel.evaluate(element=>element.networkProfiles.activeProfile.settings.rootStore),'webview2-installed');
+  assert.equal(await panel.evaluate(element=>element.networkProfiles.activeProfile.settings.localCertificates),true);
   await selector.selectOption('chromium-154');
   assert.match(await panel.textContent(),/In use: WebView2/,'Selecting Chromium activated it');
   assert.equal(await panel.getByRole('button',{name:'Manage network profile'}).isVisible(),false,'Built-in Chromium can be deleted');
@@ -21,6 +22,9 @@ export async function checkNetworkProfiles(page,root) {
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
   await dialog.waitFor({state:'visible'});
   await dialog.getByLabel('Name',{exact:true}).fill('Debug without H3');
+  const localTrust=dialog.getByLabel('Trust locally installed Windows certificates',{exact:true});
+  assert.equal(await localTrust.isChecked(),true);
+  await localTrust.uncheck();
   assert.equal(await dialog.locator('.profile-handshake').getAttribute('open'),null);
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
@@ -42,6 +46,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.localCertificates),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.pkiMetadataFile),'C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
   await panel.getByRole('button',{name:'Customize…',exact:true}).click();
   await dialog.getByLabel('Profile TLS versions').selectOption('tls12-only');
@@ -57,9 +62,12 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
   const roots=dialog.getByRole('combobox',{name:'Profile root store',exact:true});
+  assert.equal(await localTrust.isChecked(),true,'Reset did not restore local trust');
   for(const choice of ['os','chromium-bundled','webview2-installed','chrome-installed']) {
     await roots.selectOption(choice);
     assert.equal(await roots.inputValue(),choice);
+    assert.equal(await localTrust.isEnabled(),choice!=='os');
+    assert.equal(await localTrust.isChecked(),true,'Root switching lost the local trust choice');
   }
   await dialog.getByLabel('Profile GREASE').selectOption('no-signature');
   await dialog.getByLabel('Send a dummy ECH extension',{exact:true}).uncheck();

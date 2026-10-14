@@ -6,14 +6,14 @@ import type {NetworkProfiles, NetworkProfileSnapshot, NetworkProfileSettings, Pr
 import {describeError} from '../utilities.js';
 
 const webview2:NetworkProfileSnapshot=initialState.networkProfiles.activeProfile as NetworkProfileSnapshot;
-const chromium:NetworkProfileSnapshot={...structuredClone(webview2),id:'chromium-154',name:'Chromium 154',revision:4,settings:{...structuredClone(webview2.settings),rootStore:'chrome-installed'}};
+const chromium:NetworkProfileSnapshot={...structuredClone(webview2),id:'chromium-154',name:'Chromium 154',revision:5,settings:{...structuredClone(webview2.settings),rootStore:'chrome-installed'}};
 const builtins=[webview2,chromium];
 const rootStoreNames:Record<NetworkProfileSettings['rootStore'],string>={os:'Public OS root store','chromium-bundled':'Bundled Chromium root store','chrome-installed':'Installed Chrome root store (fall back to bundled)','webview2-installed':'Installed WebView2 root store (fall back to Chromium bundled)'};
 type ChangeFlags=Record<keyof NetworkProfileSettings,boolean>;
 const differenceLabels:Record<keyof NetworkProfileSettings,string>={
   protocols:'HTTP protocols',reuseConnections:'Connection reuse',tlsVersions:'TLS versions',
   compatibilityCiphers:'Compatibility ciphers',hybridKeyExchange:'Key exchange',grease:'GREASE',
-  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',certificateCompression:'Certificate compression',http2Alps:'HTTP/2 ALPS',trustAnchorIds:'Trust Anchor IDs',pkiMetadataFile:'PKI metadata file',rootStore:'Root store'
+  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',certificateCompression:'Certificate compression',http2Alps:'HTTP/2 ALPS',trustAnchorIds:'Trust Anchor IDs',pkiMetadataFile:'PKI metadata file',rootStore:'Root store',localCertificates:'Local certificate trust'
 };
 
 /** Independent profile saves do not submit or overwrite ordinary preference drafts. */
@@ -36,6 +36,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   @observable networkEditorOpen=false;
   @observable networkDraft:NetworkProfileSnapshot=structuredClone(webview2);
   @observable networkValidation='';
+  @observable networkOsRoots=false;
   @observable networkUndoAvailable=false;
   networkEditor!:HTMLDialogElement;
   networkForm!:HTMLFormElement;
@@ -122,8 +123,9 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     const fields=this.networkForm.elements;
     (fields.namedItem('name') as HTMLInputElement).value=this.networkDraft.name;
     const s=this.networkDraft.settings;
+    this.networkOsRoots=s.rootStore==='os';
     for(const key of ['http1','http2','http3'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s.protocols[key];
-    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','certificateCompression','http2Alps','trustAnchorIds'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
+    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','certificateCompression','http2Alps','trustAnchorIds','localCertificates'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
     (fields.namedItem('pkiMetadataFile') as HTMLInputElement).value=s.pkiMetadataFile??'';
     (fields.namedItem('tlsVersions') as HTMLSelectElement).value=s.tlsVersions;
     (fields.namedItem('grease') as HTMLSelectElement).value=s.grease;
@@ -138,8 +140,10 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
       randomizeExtensions:data.has('randomizeExtensions'),echGrease:data.has('echGrease'),certificateCompression:data.has('certificateCompression'),http2Alps:data.has('http2Alps'),
       trustAnchorIds:data.has('trustAnchorIds'),pkiMetadataFile:String(data.get('pkiMetadataFile')??'').trim()||null,
       rootStore:String(data.get('rootStore')) as NetworkProfileSettings['rootStore'],
+      localCertificates:this.networkOsRoots?s.localCertificates:data.has('localCertificates'),
       tlsVersions:String(data.get('tlsVersions')) as NetworkProfileSettings['tlsVersions'],grease:String(data.get('grease')) as NetworkProfileSettings['grease']};
     this.networkDraft={...this.networkDraft,name:String(data.get('name')),settings};
+    this.networkOsRoots=settings.rootStore==='os';
     this.networkDirty=!this.editorSource||JSON.stringify(this.networkDraft)!==JSON.stringify(this.editorSource);
     this.networkValidation=settings.protocols.http3&&settings.tlsVersions==='tls12-only'?'HTTP/3 requires TLS 1.3. Enable TLS 1.3 or turn off HTTP/3.':'';
     this.differences(settings);

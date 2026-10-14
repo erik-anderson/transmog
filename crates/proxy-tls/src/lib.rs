@@ -13,9 +13,11 @@ mod client_hello;
 pub mod client_prompts;
 mod downstream;
 mod evidence;
+/// Monitored local certificate roles and pool admission identity.
+pub mod local_trust;
 mod resolver;
 mod trust;
-/// Public Chromium PKI metadata; certificates are never installed as trusted roots.
+/// Public Chromium PKI metadata and its selectable public root store.
 pub mod trust_anchors;
 /// Current-user Windows software CNG identity inventory and change monitoring.
 #[cfg(windows)]

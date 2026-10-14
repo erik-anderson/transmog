@@ -10,8 +10,10 @@ pub use credentials::{
     selected_credential_chain,
 };
 pub use trust_anchors::{
-    certificate_is_ca, configure_available_trust_anchors, configure_context_trust_anchors,
-    configure_ssl_trust_anchors, peer_trust_anchors,
+    CertificatePolicy, certificate_is_allowed, certificate_is_ca,
+    configure_available_trust_anchors, configure_context_certificate_policy,
+    configure_context_trust_anchors, configure_ssl_certificate_policy, configure_ssl_trust_anchors,
+    peer_trust_anchors, verified_trust_role,
 };
 
 use boring::{

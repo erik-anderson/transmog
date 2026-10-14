@@ -288,6 +288,14 @@ impl Application {
                             "Installed WebView2 Root Store (fall back to Chromium bundled)"
                         }
                     };
+                    connection.policy_fields.push(field(
+                        "Profile local certificate trust",
+                        if profile.settings.local_certificates {
+                            "Enabled for Chromium stores; OS trust includes local roots"
+                        } else {
+                            "Disabled for Chromium stores; OS trust includes local roots"
+                        },
+                    ));
                     connection
                         .policy_fields
                         .push(field("Selected root store", roots));

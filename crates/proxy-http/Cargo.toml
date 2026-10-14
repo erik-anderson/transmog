@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+boring.workspace = true
 bytes.workspace = true
 http.workspace = true
 http-body.workspace = true
@@ -30,5 +31,4 @@ workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
-boring.workspace = true
 tokio-boring.workspace = true

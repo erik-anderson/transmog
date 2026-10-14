@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 10;
+const CURRENT_SCHEMA: u32 = 11;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -413,6 +413,10 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         state.preferences.network_profiles.migrate_root_stores()?;
         state.schema_version = CURRENT_SCHEMA;
     }
+    if state.schema_version == 10 {
+        state.preferences.network_profiles.migrate_local_trust()?;
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -570,7 +574,7 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    if schema != u64::from(CURRENT_SCHEMA) && !(6..=9).contains(&schema) {
+    if schema != u64::from(CURRENT_SCHEMA) && !(6..=10).contains(&schema) {
         return Err(());
     }
     if schema >= 7

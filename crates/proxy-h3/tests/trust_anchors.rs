@@ -95,6 +95,7 @@ async fn quic_uses_selected_public_trust_instead_of_configured_os_roots() {
     let public = ProxyCa::generate("QUIC public root", 2).unwrap();
     let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
     profile.settings.trust_anchor_ids = false;
+    profile.settings.local_certificates = false;
     let factory = anchors::factory(&os, anchors::catalog(&[(public.certificate(), 1)], 42))
         .with_network_profile(profile)
         .unwrap();

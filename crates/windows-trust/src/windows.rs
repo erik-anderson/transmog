@@ -347,8 +347,8 @@ fn start_with(
     std::thread::Builder::new()
         .name("windows-local-trust".into())
         .spawn(move || {
-            worker(&state, &worker_changed, &worker_stop, &open);
-            state.publish(Err(LocalTrustError::Closed));
+            let result = worker(&state, &worker_changed, &worker_stop, &open);
+            state.publish(Err(result.err().unwrap_or(LocalTrustError::Closed)));
         })
         .map_err(|_| LocalTrustError::Worker)?;
     Ok(Arc::new(Control { changed, stop }))
@@ -358,11 +358,11 @@ fn worker(
     changed: &Event,
     stop: &Event,
     open: &impl Fn() -> Result<Collections, LocalTrustError>,
-) {
+) -> Result<(), LocalTrustError> {
     let mut collections = None;
     loop {
         if stop.is_signaled() {
-            return;
+            return Ok(());
         }
         let refresh = (|| {
             if collections.is_none() {
@@ -388,11 +388,10 @@ fn worker(
             WaitForMultipleObjects(2, handles.as_ptr(), 0, if failed { 1000 } else { INFINITE })
         };
         if result == WAIT_OBJECT_0 {
-            return;
+            return Ok(());
         }
         if result != WAIT_OBJECT_0 + 1 && result != WAIT_TIMEOUT {
-            state.publish(Err(error("event wait")));
-            return;
+            return Err(error("event wait"));
         }
     }
 }

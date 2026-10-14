@@ -26,7 +26,7 @@ use transmog_core::{
 use transmog_network::{
     HappyEyeballsConfig, HappyEyeballsError, race_candidates_with_retry, resolve_candidates,
 };
-use transmog_tls::UpstreamTlsContextFactory;
+use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 use crate::{H3ConfigError, H3TransportLimits};
 
@@ -229,6 +229,7 @@ impl H3OriginClient {
         let host = request.head.target.host.clone();
         let origin_port = request.head.target.port;
         let prepared = PreparedRequest::streaming(request)?;
+        self.tls.prepare_trust().await?;
         let key = self.pool_key(host, origin_port, peer_port);
         let (body_sender, body) = BodyStream::channel(body_channel_capacity);
         let (head_completion, head_result) = oneshot::channel();
@@ -266,6 +267,7 @@ impl H3OriginClient {
         peer_port: u16,
         max_response_bytes: usize,
     ) -> Result<H3OriginResponse, H3OriginError> {
+        self.tls.prepare_trust().await?;
         let key = self.pool_key(host, origin_port, peer_port);
         let (completion, result) = oneshot::channel();
         self.submit(
@@ -302,7 +304,7 @@ impl H3OriginClient {
             authentication_generation: self.tls.client_certificate_generation(),
             network_isolation: self.network_isolation.clone(),
             peer_port,
-            trust_generation: self.tls.snapshot().generation(),
+            trust_epoch: self.tls.trust_epoch(),
         }
     }
 
@@ -327,11 +329,22 @@ impl H3OriginClient {
     ) -> Result<(mpsc::Sender<DriverCommand>, RequestLease), H3OriginError> {
         self.limits.validate()?;
         loop {
+            self.tls.prepare_trust().await?;
             let generation = self.tls.client_certificate_generation();
+            let trust_epoch = self.tls.trust_epoch();
+            if key.trust_epoch != trust_epoch {
+                return Err(TrustError::LocalPolicy(
+                    "Certificate trust changed during HTTP/3 admission; retry the request.".into(),
+                )
+                .into());
+            }
             let mut pool = self.pool.lock().await;
             let mut retired = Vec::new();
             pool.retain(|key, entry| {
-                if entry.sender.is_closed() || key.authentication_generation != generation {
+                if entry.sender.is_closed()
+                    || key.authentication_generation != generation
+                    || key.trust_epoch != trust_epoch
+                {
                     retired.push(entry.clone());
                     false
                 } else {
@@ -560,7 +573,7 @@ struct PoolKey {
     network_isolation: transmog_core::connection_policy::NetworkIsolationKey,
     host: String,
     peer_port: u16,
-    trust_generation: u64,
+    trust_epoch: transmog_tls::local_trust::TrustEpoch,
 }
 
 struct DriverCommand {
@@ -717,6 +730,7 @@ impl H3ConnectionDriver {
         performance: Option<PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
         let setup_begin = Instant::now();
+        tls.prepare_trust().await?;
         let tls = tls.for_connection();
         let bind_addr = if peer_addr.is_ipv4() {
             "0.0.0.0:0"
@@ -1716,7 +1730,7 @@ fn telemetry(
         alpn,
         peer_addr,
         peer_chain_sha256,
-        trust_generation: tls.snapshot().generation(),
+        trust_generation: tls.effective_trust_generation(),
     })
 }
 
@@ -1733,6 +1747,9 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// Direct quiche origin-adapter failure.
 #[derive(Debug, Error)]
 pub enum H3OriginError {
+    /// Current certificate trust could not be prepared safely.
+    #[error(transparent)]
+    Trust(#[from] transmog_tls::TrustError),
     /// Authentication failed or was cancelled; never automatically replay via another protocol.
     #[error("HTTP/3 client authentication failed or was cancelled")]
     ClientAuthenticationFailed,
@@ -1851,6 +1868,118 @@ mod tests {
     };
 
     use super::*;
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One live pool lifecycle retains its original capture.
+    async fn local_windows_trust_accepts_h3_then_retires_the_old_pool_on_removal() {
+        use transmog_tls::local_trust::{LocalCertificates, LocalTrustMonitor};
+        let local = ProxyCa::generate("Local H3 root", 2).unwrap();
+        let leaf = local
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) =
+            spawn_origin_with_requests(leaf, "127.0.0.1".parse().unwrap(), 2).await;
+        let inventory = LocalCertificates {
+            anchors: vec![local.certificate().to_der().unwrap()],
+            ..Default::default()
+        };
+        let (monitor, publisher) = LocalTrustMonitor::controlled(inventory);
+        // Configured OS trust is deliberately unrelated to the selected public store.
+        let unrelated = ProxyCa::generate("Unselected OS root", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(
+                &StaticTrust(vec![unrelated.certificate().to_der().unwrap()]),
+                1,
+            )
+            .unwrap(),
+        );
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default())
+            .with_network_profile(transmog_core::network_profile::NetworkProfileSnapshot::default())
+            .unwrap()
+            .with_local_trust_monitor(monitor);
+        let limits = H3TransportLimits {
+            idle_timeout: std::time::Duration::from_millis(700),
+            ..Default::default()
+        };
+        let recorder = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
+        let client = H3OriginClient::new(tls, limits).with_performance(Some(recorder.clone()));
+        let request = CanonicalRequest {
+            head: transmog_core::RequestHead {
+                method: "GET".into(),
+                target: transmog_core::Target {
+                    scheme: "https".into(),
+                    authority: format!("localhost:{}", origin.port()),
+                    host: "localhost".into(),
+                    port: origin.port(),
+                    path: "/proof".into(),
+                    query: None,
+                },
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("x-h3-proof", "yes").unwrap(),
+                ]),
+                source_version: HttpLegVersion::Http3,
+            },
+            body: vec![],
+        };
+        assert!(
+            client
+                .execute(request.clone(), origin.port(), 1024)
+                .await
+                .is_ok()
+        );
+        let old = recorder.snapshot().transports[0].tls.clone().unwrap();
+        assert_eq!(old.details["Local trust generation"], "1");
+        publisher.replace(LocalCertificates::default());
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                client.execute(request.clone(), origin.port(), 1024)
+            )
+            .await
+            .unwrap()
+            .is_err()
+        );
+        assert!(
+            client
+                .pool
+                .lock()
+                .await
+                .keys()
+                .all(|key| key.trust_epoch.local == 2)
+        );
+        assert_eq!(
+            recorder.snapshot().transports[0]
+                .tls
+                .as_ref()
+                .unwrap()
+                .details["Local trust SHA-256"],
+            old.details["Local trust SHA-256"]
+        );
+        server.abort();
+        let leaf = local
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (fresh, server) = spawn_origin(leaf, "127.0.0.1".parse().unwrap()).await;
+        let mut request = request;
+        request.head.target.port = fresh.port();
+        request.head.target.authority = format!("localhost:{}", fresh.port());
+        assert!(client.execute(request, fresh.port(), 1024).await.is_err());
+        assert!(
+            recorder
+                .snapshot()
+                .transports
+                .iter()
+                .filter_map(|t| t.tls.as_ref())
+                .any(|tls| tls
+                    .details
+                    .get("Local trust generation")
+                    .is_some_and(|value| value == "2")
+                    && matches!(
+                        tls.verification,
+                        Some(transmog_core::VerificationResult::Rejected { .. })
+                    ))
+        );
+        server.abort();
+    }
 
     struct StaticTrust(Vec<Vec<u8>>);
 

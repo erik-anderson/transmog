@@ -23,8 +23,10 @@ the bundled public Chromium snapshot. Customize exposes four root-store choices:
 | Installed WebView2 Root Store (fall back to Chromium bundled) | Newer valid `crs.pb` from `%LocalAppData%\Microsoft\Windows\SharedWebView\EBWebView\PKIMetadata\<component-version>`. |
 
 The root-store setting changes actual origin certificate trust independently of
-whether Trust Anchor IDs are enabled. Public Chromium stores do not merge private
-OS roots. Loading a store never installs certificates into Windows or modifies
+whether Trust Anchor IDs are enabled. Both built-ins also enable **Trust locally
+installed Windows certificates**. Customize can disable it to test the public
+store alone. OS mode already includes local roots, so its switch is disabled.
+Loading a store never installs certificates into Windows or modifies
 Chrome/WebView2 files. Transmog does not download Google's updater package or
 claim to verify a local component's CRX signature.
 
@@ -46,10 +48,46 @@ files prevent activation when used for trust or IDs. If a saved file disappears,
 inspection and Settings remain usable while sends/proxy startup explain repair.
 Save and use reloads a repaired file even if the recipe is unchanged.
 
-Schema 9 state migrates to schema 10: the previous built-in default becomes
-WebView2. Authored profiles retain OS trust and previous offers. Historical
+Schema 9 selects WebView2 for the previous built-in default. Schema 10 migrates
+to schema 11 with Chromium revision 5 and WebView2 revision 2, adding local trust
+to the pre-release built-ins. Authored settings remain fixed; custom support has
+not shipped, so no custom-default updater is introduced. Built-ins declare fixed
+settings explicitly; OS and PKIMetadata updates only refresh certificate data.
+Historical
 captures missing the root-store field retain OS trust; missing Trust Anchor IDs
 remain disabled. Imported evidence is never rewritten to today's defaults.
+
+## Windows local trust
+
+Local trust follows Chromium's read-only `CERT_STORE_PROV_SYSTEM_REGISTRY_W`
+selection. ROOT, CA and Disallowed use machine/user, group-policy and
+machine-enterprise locations. TrustedPeople uses machine locations only.
+This excludes the aggregate SYSTEM provider and automatically managed AuthRoot
+public roots. An explicitly installed ROOT entry remains a local trust choice,
+even when its certificate is also public.
+
+ROOT entries anchor paths. Non-CA ROOT entries and TrustedPeople entries trust
+only the exact self-signed server certificate; they cannot authorize issued
+certificates. CA entries remain untrusted issuer helpers. Eligibility intersects
+DER EKU and Windows usage properties, requiring serverAuth or any-purpose when
+restricted. Disallowed rejects a certificate at any path depth regardless of
+purpose, including public anchors. Normal hostname, expiry, server usage and
+certificate constraints still apply.
+
+A worker owns certificate collections and a shared manual-reset event.
+`CertControlStore(NOTIFY_CHANGE)` registers notifications; reset, `RESYNC` and
+rearming precede enumeration. UI/transport threads never enumerate the registry.
+A signaled event invalidates trust before refresh. New TLS requests wait
+asynchronously for a current bounded inventory or report a monitoring/read
+failure, without using stale local trust. H1/H2/H3 and extended-CONNECT pools
+retire old generations for new work; admitted streams finish. Cached TLS sessions
+cannot bypass changed trust. Tests use temporary registry stores outside system
+certificate locations and never modify the computer's real trusted roots.
+
+Automatic local Windows trust is unavailable on other OSes. Embedders can supply
+`LocalTrustMonitor::fixed` or `controlled`; automatic monitors remain read-only.
+No private-root Trust Anchor IDs are invented: offers still come only from the
+selected public PKIMetadata.
 
 ## Verification limits and recovery
 
@@ -72,12 +110,18 @@ available server IDs can trigger one retry before HTTP data is sent. Only catalo
 IDs whose CA verifies through selected trust are requested, in server preference
 order. Unknown IDs, untrusted CAs, an unchanged offer and a second failure do not
 cause further recovery. Both physical attempts remain captured.
+Recovery freezes current trust again and excludes leaf-only local trust from CA
+selection, including locally trusted self-signed CA certificates in TrustedPeople.
 
 ## Recorded evidence and embedding
 
 Traffic → Details → Connection reports the server's matching marker. Original
 connection settings retain the effective trust source, root-store version/hash,
 policy/exclusions, PKI provenance and requested IDs, even when ID offers are off.
+Local trust adds inventory generation/hash, role counts, monitoring source and
+the verified path's trust role. Capture does not dump the private inventory;
+observed verification-path certificates remain inspectable. Native captures and
+SAZ retain these facts. Missing historical local-trust fields do not claim an overlay.
 Diagnostic metadata retains available server IDs and recovery status. ID lists
 display OIDs alongside wire hex. Resumed sessions identify the absence of a new
 certificate. Native captures and SAZ preserve these bounded public facts; missing

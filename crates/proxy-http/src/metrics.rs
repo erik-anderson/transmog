@@ -536,7 +536,6 @@ pub(crate) fn connector(
     let generation = factory.client_certificate_admission_generation();
     connector.set_ssl_callback(move |ssl, uri| {
         let factory = factory.for_connection();
-        factory.configure_ssl_metadata(ssl)?;
         let _ = SETUP.try_with(|setup| setup.values().metadata_factory = Some(factory.clone()));
         let _ = SETUP.try_with(|setup| setup.values().tls_begin = Some(Instant::now()));
         let allowed = SETUP.try_with(|setup| setup.allowed).unwrap_or_default();
@@ -565,6 +564,11 @@ pub(crate) fn connector(
         };
         let capture = factory.capture(uri.host().map(str::to_owned), offered_alpn);
         capture.attach_ssl(ssl)?;
+        let _ = SETUP.try_with(|setup| setup.values().tls_capture = Some(capture.clone()));
+        factory.configure_ssl_metadata(ssl).map_err(|error| {
+            capture.failure(&error.to_string());
+            boring::error::ErrorStack::get()
+        })?;
         if let Some(attempt) = factory.client_certificate_attempt(
             uri.host().unwrap_or("").trim_matches(['[', ']']),
             uri.port_u16().unwrap_or(443),

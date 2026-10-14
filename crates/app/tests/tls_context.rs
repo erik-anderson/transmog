@@ -195,6 +195,11 @@ fn negotiation_details(leg: &str, state: u8) -> BTreeMap<String, String> {
                 "BoringSSL certificate verification".into(),
             ),
             ("Root store exclusions".into(), "27 anchors excluded".into()),
+            ("Local certificate trust".into(), "Windows registry collections; monitored for changes".into()),
+            ("Local trust generation".into(), "7".into()),
+            ("Local trust SHA-256".into(), "b".repeat(64)),
+            ("Local certificate roles".into(), "2 eligible ROOT entries; 1 issuer helper; 0 TrustedPeople entries; 1 Disallowed entry".into()),
+            ("Verified trust role".into(), "Anchor present in Windows ROOT".into()),
         ]);
     }
     details

@@ -15,7 +15,7 @@ enabled. With HTTPS decryption enabled, both modes validate and protect CA files
 Both always block pending host restoration.
 
 Preferences starts with HTTPS decryption and the network profile in its main
-Network group. The default immutable recipe is Chromium 154. Profile definitions
+Network group. The default immutable recipe is WebView2 (Chromium 154). Profile definitions
 and the active recipe snapshot have independent revisions: Save only does not
 activate edits, even when editing the active profile's definition. Use profile
 and Save and use create fresh TLS contexts and pools for new work across the
@@ -37,6 +37,12 @@ built-in default. Chromium revision 4 and WebView2 revision 1 share transport
 settings but discover separate installed public root stores, falling back to
 bundled Chromium. Older custom recipes and captures retain OS trust when the
 new root-store field is absent.
+Schema 10 migrates to schema 11: the pre-release Chromium revision 5 and WebView2
+revision 2 add monitored local Windows trust. Built-in settings are explicit and
+fixed; certificate updates do not edit recipes. Custom support has not shipped
+and has no automatic-default updater. Missing historical local-trust fields
+remain disabled. The Customize root selector has one local-trust switch, which
+is disabled in OS mode because that source already includes local roots.
 
 Advanced network settings contains remote access, an optional persistent proxy
 port, caller-process isolation and client certificate authorization. Isolation

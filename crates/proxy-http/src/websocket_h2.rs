@@ -20,7 +20,10 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower_service::Service;
 
 type Lease = Arc<tokio::sync::Mutex<Option<Peer>>>;
-type Peers = HashMap<(String, u64), Weak<tokio::sync::Mutex<Option<Peer>>>>;
+type Peers = HashMap<
+    (String, u64, transmog_tls::local_trust::TrustEpoch),
+    Weak<tokio::sync::Mutex<Option<Peer>>>,
+>;
 
 #[derive(Clone, Default)]
 pub(super) struct Pool(Arc<Mutex<Peers>>);
@@ -65,12 +68,15 @@ impl Pool {
                 uri.authority().map_or("", http::uri::Authority::as_str)
             ),
             client.factory.client_certificate_generation(),
+            client.factory.trust_epoch(),
         );
         let mut peers = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        peers.retain(|_, peer| peer.strong_count() != 0);
+        peers.retain(|(_, auth, trust), peer| {
+            peer.strong_count() != 0 && *auth == key.1 && *trust == key.2
+        });
         if let Some(peer) = peers.get(&key).and_then(Weak::upgrade) {
             return peer;
         }
@@ -102,6 +108,9 @@ impl Pool {
                 .unwrap_or_default()
         )
         .parse()?;
+        if uri.scheme_str() == Some("https") {
+            client.factory.prepare_trust().await?;
+        }
         let mut lease = self.lease(client, &uri);
         let mut locked = lease.lock().await;
         // Authorization of the selected certificate can be more restrictive

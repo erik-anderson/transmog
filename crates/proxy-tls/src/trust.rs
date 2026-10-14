@@ -168,7 +168,7 @@ pub struct TrustSnapshot {
     source_version: Option<String>,
     root_count: usize,
     pub(crate) store: Arc<boring::x509::store::X509Store>,
-    diagnostics: Arc<[String]>,
+    pub(crate) diagnostics: Arc<[String]>,
 }
 
 impl fmt::Debug for TrustSnapshot {
@@ -306,6 +306,10 @@ pub struct UpstreamTlsContextFactory {
     metadata: Arc<crate::trust_anchors::PkiMetadataProvider>,
     metadata_override: bool,
     connection_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
+    local_trust: Option<Arc<crate::local_trust::LocalTrust>>,
+    local_trust_override: Option<Arc<crate::local_trust::LocalTrust>>,
+    connection_local: Option<Result<Arc<crate::local_trust::EffectiveLocalTrust>, String>>,
+    bootstrap_trust_failure: bool,
     baseline_metadata: Option<Arc<crate::trust_anchors::PkiMetadata>>,
     recovery_ids: Option<Vec<u8>>,
     client_authentication: Option<Arc<ClientAuthentication>>,
@@ -340,6 +344,10 @@ impl UpstreamTlsContextFactory {
             )),
             metadata_override: false,
             connection_metadata: None,
+            local_trust: None,
+            local_trust_override: None,
+            connection_local: None,
+            bootstrap_trust_failure: false,
             baseline_metadata: None,
             recovery_ids: None,
             client_authentication: None,
@@ -392,6 +400,15 @@ impl UpstreamTlsContextFactory {
             None
         };
         self.connection_metadata = None;
+        self.connection_local = None;
+        self.local_trust = (profile.settings.local_certificates
+            && profile.settings.root_store != transmog_core::network_profile::RootStore::Os)
+            .then(|| {
+                self.local_trust_override
+                    .clone()
+                    .or_else(|| cfg!(windows).then(crate::local_trust::LocalTrust::automatic))
+            })
+            .flatten();
         self.recovery_ids = None;
         self.policy.minimum_version = match profile.settings.tls_versions {
             TlsVersions::Tls13Only => SslVersion::TLS1_3,
@@ -429,6 +446,7 @@ impl UpstreamTlsContextFactory {
         self.metadata = provider;
         self.metadata_override = true;
         self.connection_metadata = None;
+        self.connection_local = None;
         self.recovery_ids = None;
         self
     }
@@ -439,11 +457,88 @@ impl UpstreamTlsContextFactory {
         let mut factory = self.clone();
         if factory.connection_metadata.is_none() {
             factory.connection_metadata = Some(self.metadata());
+            factory.connection_local = self.local_trust.as_ref().map(|local| {
+                local
+                    .current(&factory.metadata())
+                    .map_err(|error| error.to_string())
+            });
         }
         factory
     }
 
+    /// Overrides automatic local inventory for embedding or isolated tests.
+    #[must_use]
+    pub fn with_local_trust_monitor(
+        mut self,
+        monitor: crate::local_trust::LocalTrustMonitor,
+    ) -> Self {
+        self.local_trust_override =
+            Some(Arc::new(crate::local_trust::LocalTrust::new(Ok(monitor))));
+        self.local_trust = self
+            .profile
+            .as_ref()
+            .filter(|p| {
+                p.settings.local_certificates
+                    && p.settings.root_store != transmog_core::network_profile::RootStore::Os
+            })
+            .and(self.local_trust_override.clone());
+        self.connection_local = None;
+        self.connection_metadata = None;
+        self
+    }
+    /// Waits off the async executor for a notified trust refresh before pool admission.
+    /// # Errors
+    /// Returns an actionable local enumeration/monitoring failure.
+    pub async fn prepare_trust(&self) -> Result<(), TrustError> {
+        if let Some(local) = &self.local_trust {
+            local.ready().await?;
+        }
+        Ok(())
+    }
+    /// Current trust identity for new-request pool admission, including dirty epochs.
+    pub fn trust_epoch(&self) -> crate::local_trust::TrustEpoch {
+        crate::local_trust::TrustEpoch {
+            configured: self.snapshot.generation(),
+            public: if self.profile.as_ref().is_some_and(|p| {
+                p.settings.root_store != transmog_core::network_profile::RootStore::Os
+            }) {
+                self.metadata().version
+            } else {
+                0
+            },
+            local: self
+                .local_trust
+                .as_ref()
+                .map_or(0, |local| local.generation()),
+        }
+    }
+    fn certificate_policy(
+        &self,
+    ) -> Result<Arc<transmog_tls_native::CertificatePolicy>, TrustError> {
+        match &self.connection_local {
+            Some(Ok(local)) => Ok(local.policy.clone()),
+            Some(Err(_)) if self.bootstrap_trust_failure => {
+                Ok(Arc::new(transmog_tls_native::CertificatePolicy {
+                    unavailable: true,
+                    ..Default::default()
+                }))
+            }
+            Some(Err(error)) => Err(TrustError::LocalPolicy(error.clone())),
+            None => Ok(Arc::new(transmog_tls_native::CertificatePolicy {
+                issuers: if self.trust_anchor_ids_enabled() {
+                    self.metadata().issuers()
+                } else {
+                    Arc::default()
+                },
+                ..Default::default()
+            })),
+        }
+    }
+
     fn effective_trust(&self) -> Arc<TrustSnapshot> {
+        if let Some(Ok(local)) = &self.connection_local {
+            return local.trust.clone();
+        }
         if self
             .profile
             .as_ref()
@@ -472,10 +567,10 @@ impl UpstreamTlsContextFactory {
     /// Applies the frozen offer and untrusted helpers to fresh TCP SSL objects.
     /// # Errors
     /// Returns native configuration errors.
-    pub fn configure_ssl_metadata(
-        &self,
-        ssl: &mut boring::ssl::SslRef,
-    ) -> Result<(), boring::error::ErrorStack> {
+    pub fn configure_ssl_metadata(&self, ssl: &mut boring::ssl::SslRef) -> Result<(), TrustError> {
+        if self.connection_metadata.is_none() {
+            return self.for_connection().configure_ssl_metadata(ssl);
+        }
         let trust = self.effective_trust();
         if ssl
             .ssl_context()
@@ -497,6 +592,8 @@ impl UpstreamTlsContextFactory {
                 metadata.issuers(),
             )?;
         }
+        let policy = self.certificate_policy()?;
+        transmog_tls_native::configure_ssl_certificate_policy(ssl, policy)?;
         Ok(())
     }
 
@@ -519,13 +616,26 @@ impl UpstreamTlsContextFactory {
         ) {
             return None;
         }
-        let metadata = self.metadata();
-        let ids =
-            metadata.recovery_ids(&capture.available_trust_anchors(), &self.effective_trust());
+        // Recovery is a fresh physical attempt. Recheck current local trust rather
+        // than carrying the failed connection's frozen inventory across a change.
+        let mut factory = self.clone();
+        factory.connection_metadata = None;
+        factory.connection_local = None;
+        factory = factory.for_connection();
+        let metadata = factory.metadata();
+        let local_policy = match &factory.connection_local {
+            Some(Ok(local)) => Some(local.policy.as_ref()),
+            Some(Err(_)) => return None,
+            None => None,
+        };
+        let ids = metadata.recovery_ids(
+            &capture.available_trust_anchors(),
+            &factory.effective_trust(),
+            local_policy,
+        );
         if ids.is_empty() || ids == metadata.requested_ids() {
             return None;
         }
-        let mut factory = self.for_connection();
         factory.recovery_ids = Some(ids);
         Some(factory)
     }
@@ -554,9 +664,16 @@ impl UpstreamTlsContextFactory {
     pub fn snapshot(&self) -> &Arc<TrustSnapshot> {
         &self.snapshot
     }
+    /// Effective immutable trust generation on a frozen physical connection.
+    pub fn effective_trust_generation(&self) -> u64 {
+        self.effective_trust().generation()
+    }
 
     /// Creates connection-specific public evidence before attempting a handshake.
     pub fn capture(&self, server_name: Option<String>, alpn: Vec<String>) -> crate::TlsCapture {
+        if self.connection_metadata.is_none() {
+            return self.for_connection().capture(server_name, alpn);
+        }
         let trust = self.effective_trust();
         let label = |version| {
             if version == SslVersion::TLS1_2 {
@@ -580,6 +697,7 @@ impl UpstreamTlsContextFactory {
             network_profile: self.profile.clone(),
             ..transmog_core::TlsEvidence::default()
         });
+        self.capture_local_trust(&capture);
         if self
             .profile
             .as_ref()
@@ -593,6 +711,56 @@ impl UpstreamTlsContextFactory {
                 capture.authentication_detail("Root store exclusions", diagnostic);
             }
         }
+        self.capture_trust_anchor_ids(&capture);
+        if let Some(authentication) = &self.client_authentication {
+            capture.client_issuers(
+                std::iter::once(authentication.certificate.as_ref())
+                    .chain(authentication.issuers.iter().map(std::ops::Deref::deref)),
+            );
+        }
+        capture
+    }
+
+    fn capture_local_trust(&self, capture: &crate::TlsCapture) {
+        match &self.connection_local {
+            Some(Ok(local)) => {
+                let inventory = &local.inventory;
+                capture.authentication_detail(
+                    "Local certificate trust",
+                    if local.monitored {
+                        "Windows registry collections; monitored for changes"
+                    } else {
+                        "Explicit embedding local certificate inventory"
+                    },
+                );
+                capture.authentication_detail(
+                    "Local trust generation",
+                    &inventory.generation.to_string(),
+                );
+                capture.authentication_detail("Local trust SHA-256", &inventory.sha256);
+                capture.authentication_detail("Local certificate roles", &format!("{} eligible ROOT entries; {} issuer helpers; {} eligible TrustedPeople entries; {} Disallowed entries", inventory.anchors.len(), inventory.intermediates.len(), inventory.trusted_leaves.len(), inventory.disallowed.len()));
+            }
+            Some(Err(error)) => capture.authentication_detail("Local certificate trust", error),
+            None => capture.authentication_detail(
+                "Local certificate trust",
+                if self.profile.as_ref().is_none_or(|p| {
+                    p.settings.root_store == transmog_core::network_profile::RootStore::Os
+                }) {
+                    "Included by configured OS/embedding trust"
+                } else if !cfg!(windows)
+                    && self
+                        .profile
+                        .as_ref()
+                        .is_some_and(|p| p.settings.local_certificates)
+                {
+                    "Windows local trust is unavailable on this OS"
+                } else {
+                    "Disabled by network profile"
+                },
+            ),
+        }
+    }
+    fn capture_trust_anchor_ids(&self, capture: &crate::TlsCapture) {
         if self.trust_anchor_ids_enabled() {
             let metadata = self.metadata();
             capture.authentication_detail(
@@ -624,13 +792,6 @@ impl UpstreamTlsContextFactory {
         } else {
             capture.authentication_detail("Trust Anchor IDs", "Disabled by network profile");
         }
-        if let Some(authentication) = &self.client_authentication {
-            capture.client_issuers(
-                std::iter::once(authentication.certificate.as_ref())
-                    .chain(authentication.issuers.iter().map(std::ops::Deref::deref)),
-            );
-        }
-        capture
     }
 
     /// Creates the connector used by Hyper's HTTP/1.1 and HTTP/2 adapter.
@@ -657,7 +818,13 @@ impl UpstreamTlsContextFactory {
         alpn_wire_format: &[u8],
     ) -> Result<SslConnectorBuilder, TrustError> {
         let mut builder = SslConnector::builder(SslMethod::tls())?;
-        self.configure(&mut builder)?;
+        let mut frozen = self.for_connection();
+        // Bootstrap pool construction may precede the native worker's first read.
+        // Actual TCP handshakes always install current per-SSL policy first.
+        if matches!(frozen.connection_local, Some(Err(_))) {
+            frozen.bootstrap_trust_failure = true;
+        }
+        frozen.configure_frozen(&mut builder)?;
         builder.set_alpn_protos(alpn_wire_format)?;
         Ok(builder)
     }
@@ -704,6 +871,10 @@ impl UpstreamTlsContextFactory {
                 metadata.issuers(),
             )?;
         }
+        transmog_tls_native::configure_context_certificate_policy(
+            builder,
+            self.certificate_policy()?,
+        )?;
         builder.set_min_proto_version(Some(self.policy.minimum_version))?;
         builder.set_max_proto_version(Some(self.policy.maximum_version))?;
         if settings.hybrid_key_exchange {
@@ -772,6 +943,12 @@ fn verify_peer_identity(
 /// Trust loading or `BoringSSL` context failure.
 #[derive(Debug, Error)]
 pub enum TrustError {
+    /// Native local certificate inventory is not safe to use for new handshakes.
+    #[error("{0}")]
+    Local(#[from] crate::local_trust::LocalTrustError),
+    /// A frozen connection could not obtain current local trust.
+    #[error("{0}")]
+    LocalPolicy(String),
     /// An explicitly selected PKI metadata file could not be loaded.
     #[error("{0}")]
     Metadata(#[from] crate::trust_anchors::MetadataError),

@@ -72,6 +72,7 @@ pub struct HyperOriginClient {
 #[derive(Clone)]
 struct GenerationPools {
     epoch: u64,
+    trust_epoch: transmog_tls::local_trust::TrustEpoch,
     h1: OriginClient,
     h2: OriginClient,
     auto: OriginClient,
@@ -152,11 +153,14 @@ impl HyperOriginClient {
             self.protocols.clone(),
         )
     }
-    fn authorized_client(
+    async fn authorized_client(
         &self,
         uri: &http::Uri,
         mode: HyperEgressMode,
     ) -> Result<OriginClient, HyperOriginError> {
+        if matches!(uri.scheme_str(), Some("https" | "wss")) {
+            self.factory.prepare_trust().await?;
+        }
         let reuse = self.protocols.reuse_connections()
             && (!matches!(uri.scheme_str(), Some("https" | "wss"))
                 || self.factory.permits_client_certificate_reuse(
@@ -178,12 +182,13 @@ impl HyperOriginClient {
             return Ok(client);
         }
         let epoch = self.factory.client_certificate_generation();
+        let trust_epoch = self.factory.trust_epoch();
         {
             let pools = self
                 .pools
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if epoch == pools.epoch {
+            if epoch == pools.epoch && trust_epoch == pools.trust_epoch {
                 return Ok(pools.client(mode));
             }
         }
@@ -204,7 +209,15 @@ impl HyperOriginClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Construction and resolver callbacks happen outside the pool lock. A
         // concurrent newer replacement must never be rolled back by this builder.
-        if next.epoch <= pools.epoch {
+        if next.epoch != self.factory.client_certificate_generation()
+            || next.trust_epoch != self.factory.trust_epoch()
+        {
+            return Err(TrustError::LocalPolicy(
+                "Certificate trust changed during connection admission; retry the request.".into(),
+            )
+            .into());
+        }
+        if next.epoch == pools.epoch && next.trust_epoch == pools.trust_epoch {
             return Ok(pools.client(mode));
         }
         let old = std::mem::replace(&mut *pools, next);
@@ -232,7 +245,7 @@ impl HyperOriginClient {
         mut outgoing: Request<CanonicalHttpBody>,
         mode: HyperEgressMode,
     ) -> Result<http::Response<Incoming>, HyperOriginError> {
-        let client = self.authorized_client(outgoing.uri(), mode)?;
+        let client = self.authorized_client(outgoing.uri(), mode).await?;
         let mut captured = hyper_util::client::legacy::connect::capture_connection(&mut outgoing);
         let response = client.request(outgoing);
         tokio::pin!(response);
@@ -390,6 +403,7 @@ impl HyperOriginClient {
         Ok(Self {
             pools: std::sync::Arc::new(std::sync::Mutex::new(GenerationPools {
                 epoch,
+                trust_epoch: factory.trust_epoch(),
                 h1,
                 h2,
                 auto,

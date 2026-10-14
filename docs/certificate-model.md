@@ -60,6 +60,11 @@ acceptance continues to use the configured trust snapshot and identity checks.
 Desktop network profiles select the effective trust source. The default WebView2
 profile discovers its installed public roots, falling back to bundled Chromium;
 custom profiles can select OS, bundled Chromium or installed Chrome roots.
+Both built-ins include monitored Windows local trust, using registry-backed
+ROOT, CA, machine TrustedPeople and Disallowed collections. The OS public-root
+program is excluded. CA entries only help build chains; self-signed TrustedPeople
+entries authorize only the exact server certificate, and explicit distrust wins.
+Custom profiles can disable the overlay for public-only debugging.
 This does not implement Chrome's complete verifier: anchors with unsupported
 metadata constraints are excluded. See [root-store selection](trust-anchor-ids.md).
 

@@ -193,6 +193,7 @@ export interface NetworkProfileSettings {
   randomizeExtensions:boolean; echGrease:boolean; certificateCompression:boolean; http2Alps:boolean;
   trustAnchorIds:boolean; pkiMetadataFile:string|null;
   rootStore:'os'|'chromium-bundled'|'chrome-installed'|'webview2-installed';
+  localCertificates:boolean;
 }
 export interface NetworkProfileSnapshot {
   id:string; name:string; revision:number; baseProfile:string; settings:NetworkProfileSettings;

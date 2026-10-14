@@ -85,6 +85,20 @@ fn negotiated<'a>(
     Some(value)
 }
 
+const POLICY_DETAILS: [&str; 12] = [
+    "Verified trust role",
+    "Local certificate trust",
+    "Local trust generation",
+    "Local trust SHA-256",
+    "Local certificate roles",
+    "Root store version",
+    "Root store SHA-256",
+    "Root store policy",
+    "Root store exclusions",
+    "PKI metadata source",
+    "PKI metadata version",
+    "PKI metadata SHA-256",
+];
 pub(super) fn organize(connection: &mut CertificateConnection, transport: &TransportObservation) {
     let original = std::mem::take(&mut connection.fields);
     connection.policy_fields.splice(
@@ -124,15 +138,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
     if let Some(value) = details.get("Trust Anchor IDs") {
         connection.fields.push(field("Trust Anchor IDs", value));
     }
-    for label in [
-        "Root store version",
-        "Root store SHA-256",
-        "Root store policy",
-        "Root store exclusions",
-        "PKI metadata source",
-        "PKI metadata version",
-        "PKI metadata SHA-256",
-    ] {
+    for label in POLICY_DETAILS {
         if let Some(value) = details.get(label) {
             connection.policy_fields.push(field(label, value));
         }
@@ -169,6 +175,11 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
                             | "Root store SHA-256"
                             | "Root store policy"
                             | "Root store exclusions"
+                            | "Local certificate trust"
+                            | "Local trust generation"
+                            | "Local trust SHA-256"
+                            | "Local certificate roles"
+                            | "Verified trust role"
                             | "Requested Trust Anchor IDs"
                     )
             })

@@ -108,6 +108,7 @@ async fn root_store_selection_changes_actual_trust_even_with_ids_disabled() {
             let mut profile = NetworkProfileSnapshot::default();
             profile.settings.root_store = choice;
             profile.settings.trust_anchor_ids = false;
+            profile.settings.local_certificates = false;
             let factory = anchors::factory(&os, anchors::catalog(&[(public.certificate(), 1)], 42))
                 .with_network_profile(profile)
                 .unwrap();

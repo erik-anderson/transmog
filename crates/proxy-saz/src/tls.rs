@@ -1,7 +1,12 @@
 //! Negotiated facts carried in conventional `SessionFlag` members.
 use std::collections::BTreeMap;
 
-pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 24] = [
+pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 29] = [
+    ("Verified trust role", "verified-trust-role"),
+    ("Local certificate trust", "local-trust"),
+    ("Local trust generation", "local-trust-generation"),
+    ("Local trust SHA-256", "local-trust-sha256"),
+    ("Local certificate roles", "local-trust-roles"),
     ("Root store version", "root-store-version"),
     ("Root store SHA-256", "root-store-sha256"),
     ("Root store policy", "root-store-policy"),

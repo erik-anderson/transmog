@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
 transmog-tls-native = { version = "=0.1.4", path = "../tls-native" }
+transmog-windows-trust = { version = "=0.1.4", path = "../windows-trust" }
 boring.workspace = true
 brotli.workspace = true
 rustls-native-certs.workspace = true

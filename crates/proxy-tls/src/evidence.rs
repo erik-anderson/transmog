@@ -338,6 +338,12 @@ pub(crate) fn verification(context: &X509StoreContextRef, accepted: bool) {
         return;
     };
     let mut data = capture.data();
+    if accepted
+        && context.error_depth() == 0
+        && let Some(role) = transmog_tls_native::verified_trust_role(context)
+    {
+        insert_detail(&mut data, "Verified trust role", role);
+    }
     if data.details.contains_key("Requested Trust Anchor IDs") {
         let (matched, available) = transmog_tls_native::peer_trust_anchors(ssl);
         insert_detail(

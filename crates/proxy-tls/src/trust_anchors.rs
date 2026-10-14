@@ -113,6 +113,7 @@ pub struct PkiMetadata {
     issuers: Arc<Vec<X509>>,
     wire: Vec<u8>,
     trust: Arc<crate::TrustSnapshot>,
+    trusted_anchors: Arc<Vec<X509>>,
 }
 
 /// Invalid or inaccessible metadata. Automatic discovery retains the last good copy.
@@ -159,6 +160,7 @@ impl PkiMetadata {
             .map_err(|_| MetadataError::Invalid("trust store allocation"))?;
         trusted.set_flags(X509VerifyFlags::PARTIAL_CHAIN);
         let mut root_count = 0;
+        let mut trusted_anchors = Vec::new();
         let mut excluded = 0;
         if store
             .trust_anchors
@@ -187,6 +189,7 @@ impl PkiMetadata {
                         .add_cert(&cert)
                         .map_err(|_| MetadataError::Invalid("trust anchor"))?;
                     root_count += 1;
+                    trusted_anchors.push(cert.clone());
                 } else {
                     excluded += 1;
                 }
@@ -236,6 +239,7 @@ impl PkiMetadata {
             issuers: Arc::new(issuers),
             wire,
             trust,
+            trusted_anchors: Arc::new(trusted_anchors),
         })
     }
 
@@ -273,14 +277,28 @@ impl PkiMetadata {
     pub(crate) fn trust(&self) -> Arc<crate::TrustSnapshot> {
         self.trust.clone()
     }
+    pub(crate) fn trusted_anchors(&self) -> Arc<Vec<X509>> {
+        self.trusted_anchors.clone()
+    }
 
     /// Recovery requests only IDs whose associated CA chains to configured trust.
     /// The peer's decreasing preference order is retained, with no invented IDs.
-    pub(crate) fn recovery_ids(&self, available: &[u8], trust: &crate::TrustSnapshot) -> Vec<u8> {
+    pub(crate) fn recovery_ids(
+        &self,
+        available: &[u8],
+        trust: &crate::TrustSnapshot,
+        local_policy: Option<&transmog_tls_native::CertificatePolicy>,
+    ) -> Vec<u8> {
         let Ok(mut chain) = Stack::new() else {
             return Vec::new();
         };
         for cert in self.issuers.iter() {
+            if local_policy.is_some_and(|policy| {
+                cert.to_der()
+                    .is_ok_and(|der| policy.disallowed.contains(&der))
+            }) {
+                continue;
+            }
             if chain.push(cert.clone()).is_err() {
                 return Vec::new();
             }
@@ -301,12 +319,29 @@ impl PkiMetadata {
                 continue;
             };
             if context
-                .init(
-                    &trust.store,
-                    certificate,
-                    &chain,
-                    boring::x509::X509StoreContextRef::verify_cert,
-                )
+                .init(&trust.store, certificate, &chain, |context| {
+                    if !context.verify_cert()? {
+                        return Ok(false);
+                    }
+                    let Some(policy) = local_policy else {
+                        return Ok(true);
+                    };
+                    let Some(path) = context.chain() else {
+                        return Ok(false);
+                    };
+                    let Some(anchor) = path.iter().next_back() else {
+                        return Ok(false);
+                    };
+                    // A stored TrustedPeople leaf can verify as an exact match,
+                    // but that does not make it an eligible CA selection anchor.
+                    Ok(anchor
+                        .to_der()
+                        .is_ok_and(|der| policy.anchors.contains(&der))
+                        && path.iter().all(|cert| {
+                            cert.to_der()
+                                .is_ok_and(|der| !policy.disallowed.contains(&der))
+                        }))
+                })
                 .unwrap_or(false)
             {
                 selected.extend_from_slice(&tail[..length]);
@@ -577,6 +612,43 @@ fn component_version(name: &str) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_does_not_promote_a_locally_trusted_exact_leaf_to_a_ca_anchor() {
+        use crate::local_trust::{LocalCertificates, LocalTrust, LocalTrustMonitor};
+        let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+        let restricted = match &store.trust_anchors[0].certificate {
+            Some(Certificate::Der(der)) => der.clone(),
+            _ => panic!("DER fixture"),
+        };
+        store.trust_anchors[0].constraints.push(ConstraintSet {
+            sct_not_after_sec: Some(1),
+            ..Default::default()
+        });
+        let usable_ca = crate::ProxyCa::generate("Usable public recovery root", 2).unwrap();
+        let usable = Anchor {
+            certificate: Some(Certificate::Der(usable_ca.certificate().to_der().unwrap())),
+            constraints: vec![],
+            tls_trust_anchor: None,
+            trust_anchor_id: Some(vec![3]),
+        };
+        store.trust_anchors.push(usable);
+        let metadata =
+            PkiMetadata::decode(&store.encode_to_vec(), "recovery role fixture".into()).unwrap();
+        let local = LocalTrust::new(Ok(LocalTrustMonitor::fixed(LocalCertificates {
+            trusted_leaves: vec![restricted],
+            ..Default::default()
+        })));
+        let effective = local.current(&metadata).unwrap();
+        assert_eq!(
+            metadata.recovery_ids(&[2, 1, 2], &effective.trust, None),
+            [2, 1, 2]
+        );
+        assert!(
+            metadata
+                .recovery_ids(&[2, 1, 2], &effective.trust, Some(&effective.policy))
+                .is_empty()
+        );
+    }
     fn encoded(version: i64) -> Vec<u8> {
         let ca = crate::ProxyCa::generate("metadata-only CA", 2).unwrap();
         RootStore {
