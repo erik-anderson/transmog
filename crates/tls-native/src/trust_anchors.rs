@@ -3,7 +3,7 @@ use boring::{
     error::ErrorStack,
     ex_data::Index,
     ssl::{Ssl, SslContext, SslContextBuilder, SslRef},
-    stack::Stack,
+    stack::{Stack, StackRef},
     x509::{X509, X509Ref, X509StoreContext, X509StoreContextRef},
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
@@ -106,6 +106,16 @@ pub fn certificate_is_allowed(context: &X509StoreContextRef) -> bool {
     if leaf_only && context.error_depth() > 0 && !anchor {
         return false;
     }
+    if anchor && policy.local_anchors.contains(&der) {
+        let Some(chain) = context.chain() else {
+            return false;
+        };
+        if usize::try_from(context.error_depth()).ok() == chain.len().checked_sub(1)
+            && !local_anchor_allows_chain(cert, chain)
+        {
+            return false;
+        }
+    }
     if leaf_only || anchor {
         // PARTIAL_CHAIN considers stored certificates trusted and skips some
         // extension checks. Explicit local trust still requires appropriate
@@ -118,7 +128,9 @@ pub fn certificate_is_allowed(context: &X509StoreContextRef) -> bool {
                 i32::from(context.error_depth() > 0),
             ) != 1
                 || boring_sys::X509_get_extension_flags(cert.as_ptr())
-                    & u32::from_ne_bytes(boring_sys::EXFLAG_CRITICAL.to_ne_bytes())
+                    & u32::from_ne_bytes(
+                        (boring_sys::EXFLAG_CRITICAL | boring_sys::EXFLAG_INVALID).to_ne_bytes(),
+                    )
                     != 0
             {
                 return false;
@@ -126,6 +138,84 @@ pub fn certificate_is_allowed(context: &X509StoreContextRef) -> bool {
         }
     }
     true
+}
+
+fn certificate_is_self_issued(certificate: &X509Ref) -> bool {
+    // SAFETY: both names belong to the live borrowed certificate. Equality uses
+    // canonical X.509 names and treats a native comparison error as unequal.
+    unsafe {
+        boring_sys::X509_NAME_cmp(
+            certificate.subject_name().as_ptr(),
+            certificate.issuer_name().as_ptr(),
+        ) == 0
+    }
+}
+
+/// Whether canonical subject/issuer names match and the certificate signs itself.
+pub fn certificate_is_self_signed(certificate: &X509Ref) -> bool {
+    certificate_is_self_issued(certificate)
+        && certificate
+            .public_key()
+            .is_ok_and(|key| certificate.verify(&key).unwrap_or(false))
+}
+
+fn local_anchor_allows_chain(certificate: &X509Ref, chain: &StackRef<X509>) -> bool {
+    if chain.len() == 1 {
+        // Windows ROOT grants anchor-or-leaf trust. A direct leaf, including a
+        // CA certificate, must be self-signed; non-self-signed ROOT CAs remain
+        // valid issuer anchors for longer paths.
+        return certificate_is_self_signed(certificate);
+    }
+    local_anchor_path_length_allows(certificate, chain, 1)
+}
+
+fn local_anchor_path_length_allows(
+    certificate: &X509Ref,
+    chain: &StackRef<X509>,
+    first_issuer: usize,
+) -> bool {
+    // PARTIAL_CHAIN skips the stored anchor's pathLenConstraint. Count only
+    // non-self-issued CA certificates below the anchor. TLS skips its target
+    // leaf; selection recovery includes its target CA, which would issue a leaf.
+    // SAFETY: reads extension data owned by the live borrowed certificate.
+    if unsafe { boring_sys::X509_get_extension_flags(certificate.as_ptr()) }
+        & u32::from_ne_bytes(boring_sys::EXFLAG_INVALID.to_ne_bytes())
+        != 0
+    {
+        return false;
+    }
+    let limit = unsafe { boring_sys::X509_get_pathlen(certificate.as_ptr()) };
+    limit == -1
+        || usize::try_from(limit).is_ok_and(|limit| {
+            chain
+                .iter()
+                .take(chain.len().saturating_sub(1))
+                .skip(first_issuer)
+                .filter(|cert| !certificate_is_self_issued(cert))
+                .count()
+                <= limit
+        })
+}
+
+/// Checks local anchor role, distrust and path length for a candidate issuer CA.
+/// The caller must first perform ordinary certificate verification on this path.
+pub fn certificate_authority_path_is_allowed(
+    policy: &CertificatePolicy,
+    chain: &StackRef<X509>,
+) -> bool {
+    let Some(anchor) = chain.iter().next_back() else {
+        return false;
+    };
+    let Ok(der) = anchor.to_der() else {
+        return false;
+    };
+    policy.anchors.contains(&der)
+        && chain.iter().all(|cert| {
+            cert.to_der()
+                .is_ok_and(|der| !policy.disallowed.contains(&der))
+        })
+        && (!policy.local_anchors.contains(&der)
+            || local_anchor_path_length_allows(anchor, chain, 0))
 }
 /// Role of the terminal certificate on the verified path, when local policy exists.
 pub fn verified_trust_role(context: &X509StoreContextRef) -> Option<&'static str> {

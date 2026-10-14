@@ -73,6 +73,10 @@ DER EKU and Windows usage properties, requiring serverAuth or any-purpose when
 restricted. Disallowed rejects a certificate at any path depth regardless of
 purpose, including public anchors. Normal hostname, expiry, server usage and
 certificate constraints still apply.
+Direct ROOT leaf trust requires a verified self-signature even for CA entries.
+Subject and issuer names use canonical X.509 comparison. Local ROOT path-length
+constraints count non-self-issued intermediate CAs, while allowing self-issued
+key rollovers and direct issuance within the constraint.
 
 A worker owns certificate collections and a shared manual-reset event.
 `CertControlStore(NOTIFY_CHANGE)` registers notifications; reset, `RESYNC` and
@@ -112,6 +116,8 @@ order. Unknown IDs, untrusted CAs, an unchanged offer and a second failure do no
 cause further recovery. Both physical attempts remain captured.
 Recovery freezes current trust again and excludes leaf-only local trust from CA
 selection, including locally trusted self-signed CA certificates in TrustedPeople.
+It also enforces local anchor path-length limits, counting the requested CA as
+an issuer because it must be able to authorize the server's leaf certificate.
 
 ## Recorded evidence and embedding
 

@@ -329,18 +329,11 @@ impl PkiMetadata {
                     let Some(path) = context.chain() else {
                         return Ok(false);
                     };
-                    let Some(anchor) = path.iter().next_back() else {
-                        return Ok(false);
-                    };
                     // A stored TrustedPeople leaf can verify as an exact match,
                     // but that does not make it an eligible CA selection anchor.
-                    Ok(anchor
-                        .to_der()
-                        .is_ok_and(|der| policy.anchors.contains(&der))
-                        && path.iter().all(|cert| {
-                            cert.to_der()
-                                .is_ok_and(|der| !policy.disallowed.contains(&der))
-                        }))
+                    Ok(transmog_tls_native::certificate_authority_path_is_allowed(
+                        policy, path,
+                    ))
                 })
                 .unwrap_or(false)
             {
@@ -612,6 +605,102 @@ fn component_version(name: &str) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recovery_respects_local_anchor_path_length_for_the_candidate_ca() {
+        use crate::local_trust::{LocalCertificates, LocalTrust, LocalTrustMonitor};
+        use boring::{pkey::PKey, x509::X509NameBuilder};
+        let template = crate::ProxyCa::generate("limited recovery root", 2).unwrap();
+        let root_key =
+            PKey::private_key_from_pem(&template.private_key_pem_pkcs8().unwrap()).unwrap();
+        for limit in [0, 1] {
+            let root = recovery_ca(
+                template.certificate().subject_name(),
+                &root_key,
+                template.certificate().subject_name(),
+                &root_key,
+                400,
+                Some(limit),
+            );
+            let mut name = X509NameBuilder::new().unwrap();
+            name.append_entry_by_text("CN", "recovery intermediate")
+                .unwrap();
+            let issuer_key = PKey::private_key_from_pem(
+                &crate::ProxyCa::generate("issuer key", 2)
+                    .unwrap()
+                    .private_key_pem_pkcs8()
+                    .unwrap(),
+            )
+            .unwrap();
+            let issuer = recovery_ca(
+                &name.build(),
+                &issuer_key,
+                root.subject_name(),
+                &root_key,
+                401,
+                None,
+            );
+            let mut store = RootStore::decode(encoded(42).as_slice()).unwrap();
+            store.trust_anchors.push(Anchor {
+                certificate: Some(Certificate::Der(issuer.to_der().unwrap())),
+                constraints: vec![ConstraintSet {
+                    sct_not_after_sec: Some(1),
+                    ..Default::default()
+                }],
+                tls_trust_anchor: None,
+                trust_anchor_id: Some(vec![3]),
+            });
+            let metadata = PkiMetadata::decode(
+                &store.encode_to_vec(),
+                "recovery path length fixture".into(),
+            )
+            .unwrap();
+            let local = LocalTrust::new(Ok(LocalTrustMonitor::fixed(LocalCertificates {
+                anchors: vec![root.to_der().unwrap()],
+                ..Default::default()
+            })));
+            let effective = local.current(&metadata).unwrap();
+            let selected =
+                metadata.recovery_ids(&[1, 3], &effective.trust, Some(&effective.policy));
+            assert_eq!(selected, if limit == 0 { vec![] } else { vec![1, 3] });
+        }
+    }
+    fn recovery_ca(
+        subject: &boring::x509::X509NameRef,
+        key: &boring::pkey::PKey<boring::pkey::Private>,
+        issuer: &boring::x509::X509NameRef,
+        signer: &boring::pkey::PKey<boring::pkey::Private>,
+        serial: u32,
+        path_length: Option<u32>,
+    ) -> X509 {
+        use boring::{
+            asn1::Asn1Time,
+            bn::BigNum,
+            hash::MessageDigest,
+            x509::extension::{BasicConstraints, KeyUsage},
+        };
+        let mut cert = X509::builder().unwrap();
+        cert.set_version(2).unwrap();
+        cert.set_serial_number(&BigNum::from_u32(serial).unwrap().to_asn1_integer().unwrap())
+            .unwrap();
+        cert.set_subject_name(subject).unwrap();
+        cert.set_issuer_name(issuer).unwrap();
+        cert.set_pubkey(key).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        let mut constraints = BasicConstraints::new();
+        constraints.critical().ca();
+        if let Some(limit) = path_length {
+            constraints.pathlen(limit);
+        }
+        cert.append_extension(&constraints.build().unwrap())
+            .unwrap();
+        cert.append_extension(&KeyUsage::new().critical().key_cert_sign().build().unwrap())
+            .unwrap();
+        cert.sign(signer, MessageDigest::sha256()).unwrap();
+        cert.build()
+    }
     #[test]
     fn recovery_does_not_promote_a_locally_trusted_exact_leaf_to_a_ca_anchor() {
         use crate::local_trust::{LocalCertificates, LocalTrust, LocalTrustMonitor};

@@ -3,15 +3,9 @@
 mod anchors;
 mod support;
 use boring::{
-    asn1::Asn1Time,
-    bn::BigNum,
-    hash::MessageDigest,
     pkey::{PKey, Private},
     ssl::{AlpnError, SslAcceptor, SslMethod},
-    x509::{
-        X509, X509NameBuilder,
-        extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage, SubjectAlternativeName},
-    },
+    x509::X509,
 };
 use std::{
     sync::{
@@ -20,6 +14,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
+use support::local_certificates::certificate as local_certificate;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -95,47 +90,151 @@ async fn probe(
     (okay, evidence)
 }
 fn self_signed(name: &str, ca: bool, expired: bool) -> (X509, PKey<Private>) {
-    let key = support::key();
-    let mut subject = X509NameBuilder::new().unwrap();
-    subject.append_entry_by_text("CN", name).unwrap();
-    let subject = subject.build();
-    let mut cert = X509::builder().unwrap();
-    cert.set_version(2).unwrap();
-    cert.set_serial_number(&BigNum::from_u32(331).unwrap().to_asn1_integer().unwrap())
+    local_certificate(name, ca, expired, None, None, None)
+}
+
+#[tokio::test]
+async fn local_root_path_length_limits_issuer_paths() {
+    let public = ProxyCa::generate("public root", 2).unwrap();
+    for limit in [0, 1] {
+        let (cert, key) = local_certificate("limited root", true, false, None, Some(limit), None);
+        let root = ProxyCa::from_pem(
+            &cert.to_pem().unwrap(),
+            &key.private_key_to_pem_pkcs8().unwrap(),
+        )
         .unwrap();
-    cert.set_subject_name(&subject).unwrap();
-    cert.set_issuer_name(&subject).unwrap();
-    cert.set_pubkey(&key).unwrap();
-    cert.set_not_before(&Asn1Time::from_unix(1).unwrap())
+        let trust = factory(
+            &public,
+            LocalCertificates {
+                anchors: vec![cert.to_der().unwrap()],
+                ..Default::default()
+            },
+        );
+        let first = anchors::intermediate(&root);
+        let (second, key) =
+            local_certificate("second intermediate", true, false, Some(&first), None, None);
+        let second = ProxyCa::from_pem(
+            &second.to_pem().unwrap(),
+            &key.private_key_to_pem_pkcs8().unwrap(),
+        )
         .unwrap();
-    let not_after = if expired {
-        Asn1Time::from_unix(2).unwrap()
-    } else {
-        Asn1Time::days_from_now(1).unwrap()
-    };
-    cert.set_not_after(&not_after).unwrap();
-    let mut constraints = BasicConstraints::new();
-    constraints.critical();
-    if ca {
-        constraints.ca();
+        for (issuer, chain, count) in [
+            (&root, vec![], 0),
+            (&first, vec![first.certificate().clone()], 1),
+            (
+                &second,
+                vec![second.certificate().clone(), first.certificate().clone()],
+                2,
+            ),
+        ] {
+            let leaf = issuer
+                .issue(
+                    transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+                    1,
+                )
+                .unwrap();
+            let (accepted, evidence) =
+                probe(&trust, &leaf.certificate, &leaf.private_key, &chain).await;
+            assert_eq!(
+                accepted,
+                count <= limit,
+                "pathLen={limit}, intermediates={count}"
+            );
+            assert_eq!(
+                evidence.verification == Some(transmog_core::VerificationResult::Verified),
+                count <= limit
+            );
+        }
+        // A self-issued key rollover does not consume a path-length slot.
+        let (cert, key) = local_certificate("limited root", true, false, Some(&root), None, None);
+        assert!(!cert.verify(&key).unwrap());
+        let rollover = ProxyCa::from_pem(
+            &cert.to_pem().unwrap(),
+            &key.private_key_to_pem_pkcs8().unwrap(),
+        )
+        .unwrap();
+        let leaf = rollover
+            .issue(
+                transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+                1,
+            )
+            .unwrap();
+        assert!(
+            probe(&trust, &leaf.certificate, &leaf.private_key, &[cert])
+                .await
+                .0
+        );
     }
-    cert.append_extension(&constraints.build().unwrap())
+}
+
+#[tokio::test]
+async fn non_self_signed_root_ca_is_an_issuer_anchor_but_not_an_exact_leaf() {
+    let public = ProxyCa::generate("public root", 2).unwrap();
+    let unknown = ProxyCa::generate("untrusted issuer", 2).unwrap();
+    let (cert, key) = local_certificate("localhost", true, false, Some(&unknown), None, None);
+    assert!(!cert.verify(&key).unwrap());
+    let trust = factory(
+        &public,
+        LocalCertificates {
+            anchors: vec![cert.to_der().unwrap()],
+            ..Default::default()
+        },
+    );
+    assert!(!probe(&trust, &cert, &key, &[]).await.0);
+    let issuer = ProxyCa::from_pem(
+        &cert.to_pem().unwrap(),
+        &key.private_key_to_pem_pkcs8().unwrap(),
+    )
+    .unwrap();
+    let leaf = issuer
+        .issue(
+            transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+            1,
+        )
         .unwrap();
-    let mut usage = KeyUsage::new();
-    usage.digital_signature();
-    if ca {
-        usage.key_cert_sign();
+    assert!(
+        probe(&trust, &leaf.certificate, &leaf.private_key, &[])
+            .await
+            .0
+    );
+    let (cert, key) = self_signed("localhost", true, false);
+    let trust = factory(
+        &public,
+        LocalCertificates {
+            anchors: vec![cert.to_der().unwrap()],
+            ..Default::default()
+        },
+    );
+    assert!(probe(&trust, &cert, &key, &[]).await.0);
+}
+
+#[tokio::test]
+async fn exact_local_leaf_trust_compares_canonical_names_and_checks_self_signature() {
+    let public = ProxyCa::generate("public root", 2).unwrap();
+    let other = ProxyCa::generate("localhost", 2).unwrap();
+    for signer in [None, Some(&other)] {
+        let (cert, key) =
+            local_certificate("LOCALHOST", false, false, signer, None, Some("localhost"));
+        assert_ne!(
+            cert.subject_name().to_der().unwrap(),
+            cert.issuer_name().to_der().unwrap()
+        );
+        assert_eq!(
+            transmog_tls_native::certificate_is_self_signed(&cert),
+            signer.is_none()
+        );
+        assert_eq!(cert.verify(&key).unwrap(), signer.is_none());
+        for root_role in [false, true] {
+            let mut inventory = LocalCertificates::default();
+            if root_role {
+                inventory.anchors.push(cert.to_der().unwrap());
+            } else {
+                inventory.trusted_leaves.push(cert.to_der().unwrap());
+            }
+            let (accepted, _) = probe(&factory(&public, inventory), &cert, &key, &[]).await;
+            assert_eq!(accepted, signer.is_none());
+        }
     }
-    cert.append_extension(&usage.build().unwrap()).unwrap();
-    cert.append_extension(&ExtendedKeyUsage::new().server_auth().build().unwrap())
-        .unwrap();
-    let san = SubjectAlternativeName::new()
-        .dns(name)
-        .build(&cert.x509v3_context(None, None))
-        .unwrap();
-    cert.append_extension(&san).unwrap();
-    cert.sign(&key, MessageDigest::sha256()).unwrap();
-    (cert.build(), key)
 }
 
 #[tokio::test]

@@ -110,16 +110,6 @@ impl LocalTrust {
         Ok(result)
     }
 }
-fn self_signed(cert: &X509) -> bool {
-    cert.subject_name()
-        .to_der()
-        .ok()
-        .zip(cert.issuer_name().to_der().ok())
-        .is_some_and(|(subject, issuer)| subject == issuer)
-        && cert
-            .public_key()
-            .is_ok_and(|key| cert.verify(&key).unwrap_or(false))
-}
 fn build(
     metadata: &PkiMetadata,
     inventory: &Arc<LocalCertificates>,
@@ -150,7 +140,7 @@ fn build(
                 builder.add_cert(&cert)?;
                 anchors.push(cert);
             }
-        } else if self_signed(&cert) {
+        } else if transmog_tls_native::certificate_is_self_signed(&cert) {
             leaves.push(cert);
         }
     }
@@ -159,7 +149,7 @@ fn build(
             continue;
         }
         if let Ok(cert) = X509::from_der(der)
-            && self_signed(&cert)
+            && transmog_tls_native::certificate_is_self_signed(&cert)
         {
             leaves.push(cert);
         }

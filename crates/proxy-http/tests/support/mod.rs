@@ -1,5 +1,6 @@
 //! Shared local, untrusted TLS peers and observable software identities.
 #![allow(dead_code)]
+pub mod local_certificates;
 #[cfg(windows)]
 pub mod windows;
 use boring::{
