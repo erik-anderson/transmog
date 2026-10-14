@@ -52,6 +52,16 @@ dependency graph. See
 [`deny.toml`](../deny.toml) and
 [`check-crypto-graph.py`](../scripts/check-crypto-graph.py).
 
+Portable Cargo build commands also validate the actual resolved Git source,
+package versions, BoringSSL gitlink/submodule and active native features before
+compilation. `scripts/dev-env.ps1 -Check` runs the same checks for PowerShell.
+Source/header/precompiled archive overrides (`BORING_BSSL_*PATH` and
+`*_ASSUME_PATCHED`, including target and FIPS forms) are rejected both by the
+portable preflight and the native build script. FIPS, RPK, wildcard and relaxed
+verification features require a separately qualified native policy. Use the
+portable wrapper for independent embedding builds too; it checks the consumer's
+resolved graph against the embedded dependency's source receipt.
+
 ## Content, WebSockets, and file formats
 
 | Responsibility | Key dependencies | Transmog usage |

@@ -7,4 +7,7 @@ $environment = ($environmentJson -join "`n") | ConvertFrom-Json -AsHashtable
 foreach ($entry in $environment.GetEnumerator()) {
     [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, 'Process')
 }
-if ($Check) { Invoke-TransmogPython 'dev-env.py' @('--check') }
+if ($Check) {
+    Invoke-TransmogPython 'dev-env.py' @('--check')
+    Invoke-TransmogPython 'check-crypto-graph.py' @()
+}

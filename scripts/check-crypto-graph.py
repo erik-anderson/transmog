@@ -1,6 +1,9 @@
 """Check each target's production graph for one BoringSSL family."""
 import json
 from repo_tools import command, main_guard
+from tls_dependencies import reject_native_overrides, verify_stack
+from repo_tools import ROOT
+import os
 
 TARGETS = ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
 FORBIDDEN = {"openssl", "openssl-sys", "native-tls", "rustls", "rustls-webpki", "webpki"}
@@ -54,9 +57,11 @@ def check_graph(metadata, target):
 
 
 def main():
+    reject_native_overrides(os.environ)
     for target in TARGETS:
-        metadata = json.loads(command(["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", target], capture=True).stdout)
+        metadata = json.loads(command(["cargo", "metadata", "--format-version", "1", "--locked", "--all-features", "--filter-platform", target], capture=True).stdout)
         check_graph(metadata, target)
+        verify_stack(metadata, ROOT)
         print(f"{target}: one BoringSSL family; desktop updater is the only isolated HTTPS-client exception.")
 
 

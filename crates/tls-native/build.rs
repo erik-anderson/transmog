@@ -1,16 +1,44 @@
 //! Builds only the pinned PKI target against boring-sys's existing crypto ABI.
 use std::{env, fs, path::PathBuf};
+mod build_support;
 
 fn main() {
     let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let vendor = root.join("third_party/boringssl-pki");
-    let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    for (name, _) in env::vars_os() {
+        let name = name.to_string_lossy();
+        assert!(
+            !build_support::replaces_native_library(&name),
+            "Remove {name}: native TLS source/header/archive overrides are incompatible with the qualified PKI snapshot"
+        );
+    }
+    let target = env::var("TARGET").unwrap();
+    for option in ["PATH", "INCLUDE_PATH", "SOURCE_PATH", "ASSUME_PATCHED"] {
+        for prefix in ["BORING_BSSL_", "BORING_BSSL_FIPS_"] {
+            let name = format!("{prefix}{option}");
+            for key in [
+                name.clone(),
+                format!("HOST_{name}"),
+                format!("TARGET_{name}"),
+                format!("{name}_{target}"),
+                format!("{name}_{}", target.replace('-', "_")),
+            ] {
+                println!("cargo:rerun-if-env-changed={key}");
+            }
+        }
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(vendor.join("manifest.json")).unwrap()).unwrap();
+    let expected_major = manifest["boring_version"]
+        .as_str()
+        .unwrap()
+        .split('.')
+        .next()
+        .unwrap();
+    println!("cargo:rerun-if-env-changed=DEP_BORINGSSL_VERSION_MAJOR");
     assert!(
-        cargo
-            .lines()
-            .any(|line| line.starts_with("boring-sys = { git =")
-                && line.contains("rev = \"9c57211afd4e99479e4fbba73cd603128726275b\"")),
-        "Update the PKI snapshot together with boring-sys"
+        env::var("DEP_BORINGSSL_VERSION_MAJOR").as_deref() == Ok(expected_major),
+        "The resolved boring-sys major version disagrees with the PKI receipt; run the TLS dependency preflight"
     );
     println!(
         "cargo:rerun-if-changed={}",
@@ -31,8 +59,6 @@ fn main() {
         .file("native/verifier.cc");
     // Compile precisely the pinned upstream target, not arbitrary files added
     // to the vendor directory. The portable and release gates check its hashes.
-    let manifest: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(vendor.join("manifest.json")).unwrap()).unwrap();
     for source in manifest["sources"].as_array().unwrap() {
         build.file(vendor.join(source.as_str().unwrap()));
     }

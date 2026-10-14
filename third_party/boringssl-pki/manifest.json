@@ -1,6 +1,7 @@
 {
   "revision": "427ec40cc8edc545253289232e885708c409e5ea",
   "boring_revision": "9c57211afd4e99479e4fbba73cd603128726275b",
+  "boring_version": "5.2.0",
   "sources": [
     "pki/cert_error_id.cc",
     "pki/cert_error_params.cc",

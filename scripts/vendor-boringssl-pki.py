@@ -49,7 +49,7 @@ def check_snapshot(destination: Path, *, revision=None, boring_revision=None):
     return manifest
 
 
-def generate_snapshot(source: Path, destination: Path, revision: str, boring_revision: str):
+def generate_snapshot(source: Path, destination: Path, revision: str, boring_revision: str, boring_version=None):
     source = source.resolve(strict=True)
     for value in (revision, boring_revision):
         if not re.fullmatch(r"[0-9a-f]{40}", value):
@@ -98,6 +98,8 @@ def generate_snapshot(source: Path, destination: Path, revision: str, boring_rev
                         break
         manifest = {"revision": revision, "boring_revision": boring_revision,
                     "sources": sources, "files": dict(sorted(files.items()))}
+        if boring_version is not None:
+            manifest["boring_version"] = boring_version
         (staged / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
         (staged / "README.md").write_text(
             f"# BoringSSL PKI\n\nUnmodified PKI target from BoringSSL `{revision}`,\n"
@@ -129,7 +131,8 @@ def main():
     if args.check:
         manifest = check_snapshot(DEST)
     else:
-        manifest = generate_snapshot(args.source, DEST, receipt["revision"], receipt["boring_revision"])
+        dependency = cargo["workspace"]["dependencies"]["boring"]
+        manifest = generate_snapshot(args.source, DEST, receipt["revision"], receipt["boring_revision"], dependency["version"].removeprefix("="))
     print(f"Verified {len(manifest['files'])} pinned BoringSSL PKI files")
 
 
