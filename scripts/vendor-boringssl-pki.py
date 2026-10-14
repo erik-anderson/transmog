@@ -1,5 +1,6 @@
-"""Copy the PKI target and header closure from our exact boring-sys submodule.
+"""Copy/check an unmodified PKI target against the pinned boring-sys submodule.
 
+Generation uses a fresh staging directory and removes obsolete upstream files.
 No SSL or crypto implementation is built here. PKI links to boring-sys's crypto.
 """
 from __future__ import annotations
@@ -10,70 +11,126 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import tomllib
+
+from dependency_snapshots import replace_directory, snapshot_file
 
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "third_party" / "boringssl-pki"
-REVISION = "427ec40cc8edc545253289232e885708c409e5ea"
-BORING_REVISION = "9c57211afd4e99479e4fbba73cd603128726275b"
+FAMILY = ("boring", "boring-sys", "hyper-boring", "tokio-boring")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path)
-    parser.add_argument("--check", action="store_true")
-    args = parser.parse_args()
-    if args.check:
-        manifest = json.loads((DEST / "manifest.json").read_text())
-        if manifest["revision"] != REVISION or manifest["boring_revision"] != BORING_REVISION:
-            raise SystemExit("PKI manifest does not match the pinned revisions")
-        cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())
-        for name in ("boring", "boring-sys", "hyper-boring", "tokio-boring"):
-            if cargo["patch"]["crates-io"][name]["rev"] != BORING_REVISION:
-                raise SystemExit(f"PKI pin does not match {name}")
-        for name in manifest["sources"]:
-            if name not in manifest["files"] or not name.startswith("pki/") or not name.endswith(".cc"):
-                raise SystemExit(f"Unexpected PKI source: {name}")
-        for name, digest in manifest["files"].items():
-            if hashlib.sha256((DEST / name).read_bytes()).hexdigest() != digest:
-                raise SystemExit(f"PKI source hash mismatch: {name}")
-        print(f"Verified {len(manifest['files'])} pinned BoringSSL PKI files")
-        return
-    if args.source is None:
-        parser.error("--source is required when generating")
-    source = args.source.resolve()
+def check_snapshot(destination: Path, *, revision=None, boring_revision=None):
+    manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+    for key, expected in (("revision", revision), ("boring_revision", boring_revision)):
+        if not re.fullmatch(r"[0-9a-f]{40}", manifest[key]) or expected is not None and manifest[key] != expected:
+            raise ValueError(f"PKI receipt has an unexpected {key}")
+    files = manifest["files"]
+    sources = manifest["sources"]
+    if not sources or len(sources) != len(set(sources)):
+        raise ValueError("Missing or duplicate PKI sources")
+    for name in sources:
+        if name not in files or not name.startswith("pki/") or not name.endswith(".cc"):
+            raise ValueError(f"Unexpected PKI source: {name}")
+    for name, digest in files.items():
+        path = snapshot_file(destination, name)
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise ValueError(f"PKI source hash mismatch: {name}")
+    actual = set()
+    for path in destination.rglob("*"):
+        if path.is_symlink() or path.resolve() != path.absolute():
+            raise ValueError(f"Linked file in PKI snapshot: {path}")
+        if path.is_file():
+            actual.add(path.relative_to(destination).as_posix())
+    expected = set(files) | {"manifest.json", "README.md"}
+    if actual != expected:
+        raise ValueError(f"PKI snapshot file set differs: extra={sorted(actual - expected)}, missing={sorted(expected - actual)}")
+    return manifest
+
+
+def generate_snapshot(source: Path, destination: Path, revision: str, boring_revision: str):
+    source = source.resolve(strict=True)
+    for value in (revision, boring_revision):
+        if not re.fullmatch(r"[0-9a-f]{40}", value):
+            raise ValueError("Use immutable full Git revisions")
     actual = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-    if actual != REVISION:
-        raise SystemExit(f"Expected BoringSSL {REVISION}, got {actual}")
-    cmake = (source / "gen/sources.cmake").read_text()
-    block = re.search(r"set\(\s*PKI_SOURCES\s+(.*?)\n\)", cmake, re.S).group(1)
-    sources = block.split()
-    # Public crypto declarations must exactly match the linked boring-sys instance.
-    pending = [source / name for name in sources]
+    if actual != revision:
+        raise ValueError(f"Expected BoringSSL {revision}, got {actual}")
+    status = subprocess.check_output(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=all"], text=True)
+    # Cargo adds this cache marker even inside a fetched submodule. It is not
+    # source code and is never included in the snapshot.
+    if any(line != "?? .cargo-ok" for line in status.splitlines()):
+        raise ValueError("BoringSSL source checkout must be clean")
+    cmake = (source / "gen/sources.cmake").read_text(encoding="utf-8")
+    block = re.search(r"set\(\s*PKI_SOURCES\s+(.*?)\n\)", cmake, re.S)
+    if block is None:
+        raise ValueError("Upstream PKI source target is missing")
+    sources = block.group(1).split()
+    pending = [snapshot_file(source, name) for name in sources]
     pending.extend((source / "include").rglob("*.h"))
     pending.extend((source / "pki").glob("*.h"))
     pending.append(source / "LICENSE")
-    files: dict[str, str] = {}
-    while pending:
-        path = pending.pop()
-        name = path.relative_to(source).as_posix()
-        if name in files:
-            continue
-        data = path.read_bytes()
-        target = DEST / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-        files[name] = hashlib.sha256(data).hexdigest()
-        for include in re.findall(rb'^\s*#\s*include\s*[<"]([^>"]+)[>"]', data, re.M):
-            include_path = include.decode()
-            for candidate in (path.parent / include_path, source / "include" / include_path, source / include_path):
-                if candidate.is_file():
-                    pending.append(candidate.resolve())
-                    break
-    manifest = {"revision": REVISION, "boring_revision": BORING_REVISION,
-                "sources": sources, "files": dict(sorted(files.items()))}
-    (DEST / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print(f"Vendored {len(sources)} PKI sources and {len(files)} total files")
+    destination = destination.absolute()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".pki-stage-", dir=destination.parent) as temporary:
+        staged = Path(temporary)
+        files = {}
+        while pending:
+            path = pending.pop()
+            name = path.relative_to(source).as_posix()
+            snapshot_file(source, name)
+            if name in files:
+                continue
+            data = path.read_bytes()
+            target = staged / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            files[name] = hashlib.sha256(data).hexdigest()
+            for include in re.findall(rb'^\s*#\s*include\s*[<"]([^>"]+)[>"]', data, re.M):
+                include_path = include.decode()
+                for candidate in (path.parent / include_path, source / "include" / include_path, source / include_path):
+                    if candidate.is_file():
+                        candidate = candidate.resolve()
+                        if not candidate.is_relative_to(source):
+                            raise ValueError(f"Include escapes upstream source: {include_path}")
+                        pending.append(candidate)
+                        break
+        manifest = {"revision": revision, "boring_revision": boring_revision,
+                    "sources": sources, "files": dict(sorted(files.items()))}
+        (staged / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+        (staged / "README.md").write_text(
+            f"# BoringSSL PKI\n\nUnmodified PKI target from BoringSSL `{revision}`,\n"
+            f"matching cloudflare/boring `{boring_revision}`. Only PKI is\n"
+            "compiled here; SSL and crypto come from that same boring-sys instance.\n\n"
+            "Source hashes and the upstream target list are in manifest.json.\n"
+            "Verify with `python scripts/vendor-boringssl-pki.py --check`.\n"
+            "Regenerate with `--source PATH` to a clean matching checkout.\n"
+            "Update this snapshot together with the Boring crate family.\n"
+            f"Upstream: https://boringssl.googlesource.com/boringssl/+/{revision}/pki/\n\n"
+            "Preserve LICENSE and the notices in each original source header.\n",
+            encoding="utf-8", newline="\n")
+        check_snapshot(staged, revision=revision, boring_revision=boring_revision)
+        replace_directory(staged, destination)
+    return manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--source", type=Path)
+    selection.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    receipt = json.loads((DEST / "manifest.json").read_text(encoding="utf-8"))
+    cargo = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    for name in FAMILY:
+        if cargo["patch"]["crates-io"][name]["rev"] != receipt["boring_revision"]:
+            raise ValueError(f"PKI pin does not match {name}")
+    if args.check:
+        manifest = check_snapshot(DEST)
+    else:
+        manifest = generate_snapshot(args.source, DEST, receipt["revision"], receipt["boring_revision"])
+    print(f"Verified {len(manifest['files'])} pinned BoringSSL PKI files")
 
 
 if __name__ == "__main__":
