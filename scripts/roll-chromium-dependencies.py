@@ -13,13 +13,12 @@ import importlib.util
 import json
 from pathlib import Path
 import re
-import subprocess
 import sys
 import tomllib
 import urllib.request
 
 from repo_tools import ROOT, command, development_environment, main_guard
-from tls_dependencies import FAMILY, REPOSITORY, baseline, git, reject_native_overrides, verify_stack
+from tls_dependencies import FAMILY, REPOSITORY, git, reject_native_overrides, verify_stack
 
 ROOT_INPUTS = {"root_store.proto": "net/cert/root_store.proto",
                "root_store.textproto": "net/data/ssl/chrome_root_store/root_store.textproto",
@@ -96,6 +95,10 @@ def export_candidate(candidate, environment):
     # A PKI roll can introduce new headers and remove obsolete ones. An
     # unstaged diff silently omits new paths, producing an incomplete roll.
     command(["git", "add", "--all", "--", "."], cwd=candidate, env=environment)
+    # The validated PKI snapshot may contain new files matching broad ignores
+    # such as *.pem. Include the entire checked snapshot, regardless of those.
+    if (candidate / "third_party/boringssl-pki").is_dir():
+        command(["git", "add", "--all", "--force", "--", "third_party/boringssl-pki"], cwd=candidate, env=environment)
     changed = command(["git", "diff", "--cached", "--stat"], cwd=candidate, env=environment, capture=True).stdout
     patch = command(["git", "diff", "--cached", "--binary"], cwd=candidate, env=environment, capture=True).stdout
     return changed, patch

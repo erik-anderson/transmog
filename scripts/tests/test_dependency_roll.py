@@ -24,6 +24,7 @@ class RollTests(unittest.TestCase):
                 return subprocess.run(["git", "-C", str(directory), *arguments], capture_output=True, check=True)
             git(candidate, "init", "--quiet")
             git(candidate, "config", "core.autocrlf", "false")
+            (candidate / ".gitignore").write_bytes(b"*.pem\n")
             (candidate / "obsolete.h").write_bytes(b"old")
             (candidate / "roots.pb").write_bytes(b"\x00old binary\xff")
             git(candidate, "add", ".")
@@ -33,6 +34,9 @@ class RollTests(unittest.TestCase):
             (candidate / "obsolete.h").unlink()
             (candidate / "new.h").write_bytes(b"new\n")
             (candidate / "roots.pb").write_bytes(b"\x00new binary\xff")
+            pki = candidate / "third_party/boringssl-pki"
+            pki.mkdir(parents=True)
+            (pki / "new.pem").write_bytes(b"public source fixture\n")
             summary, patch_text = roll.export_candidate(candidate, None)
             self.assertIn("new.h", summary)
             self.assertIn("obsolete.h", summary)
@@ -40,7 +44,7 @@ class RollTests(unittest.TestCase):
             patch_file.write_text(patch_text, encoding="utf-8", newline="\n")
             git(applied, "apply", str(patch_file))
             self.assertFalse((applied / "obsolete.h").exists())
-            for name in ("new.h", "roots.pb"):
+            for name in ("new.h", "roots.pb", "third_party/boringssl-pki/new.pem"):
                 self.assertEqual((applied / name).read_bytes(), (candidate / name).read_bytes())
 
     def test_all_eight_family_pins_change_without_modifying_other_dependencies(self):
