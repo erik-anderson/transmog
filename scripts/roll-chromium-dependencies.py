@@ -92,6 +92,15 @@ def check(root, environment):
     return information
 
 
+def export_candidate(candidate, environment):
+    # A PKI roll can introduce new headers and remove obsolete ones. An
+    # unstaged diff silently omits new paths, producing an incomplete roll.
+    command(["git", "add", "--all", "--", "."], cwd=candidate, env=environment)
+    changed = command(["git", "diff", "--cached", "--stat"], cwd=candidate, env=environment, capture=True).stdout
+    patch = command(["git", "diff", "--cached", "--binary"], cwd=candidate, env=environment, capture=True).stdout
+    return changed, patch
+
+
 def prepare(args, environment):
     if git(ROOT, "status", "--porcelain", "--untracked-files=normal"):
         raise ValueError("Commit or stash workspace changes before preparing a dependency roll")
@@ -132,7 +141,7 @@ def prepare(args, environment):
             (data / name).write_bytes(value)
         load("generate-chromium-root-store").generate_snapshot(data, args.root_store_revision)
     after = check(candidate, environment)
-    changed = command(["git", "diff", "--stat"], cwd=candidate, env=environment, capture=True).stdout
+    changed, patch = export_candidate(candidate, environment)
     receipts = {name: json.loads((candidate / "third_party" / name / "snapshot.json").read_text(encoding="utf-8"))
                 for name in ("chromium-suffix-list", "chromium-certificate-policy", "chromium-root-store")}
     report = {"sourceCommit": git(ROOT, "rev-parse", "HEAD"), "candidate": str(candidate),
@@ -147,7 +156,7 @@ def prepare(args, environment):
                                          "TLS fingerprint, ECH/ALPS, client-auth and Docker interoperability checks"],
               "changedFiles": changed}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")
-    (output / "changes.patch").write_text(command(["git", "diff", "--binary"], cwd=candidate, env=environment, capture=True).stdout, encoding="utf-8", newline="\n")
+    (output / "changes.patch").write_text(patch, encoding="utf-8", newline="\n")
     print(f"Prepared {candidate}; review report.json and changes.patch, then qualify the candidate before applying its changes.")
 
 

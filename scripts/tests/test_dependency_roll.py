@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +15,34 @@ spec.loader.exec_module(roll)
 
 
 class RollTests(unittest.TestCase):
+    def test_exported_patch_round_trips_new_deleted_and_binary_snapshot_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            candidate, applied = root / "candidate", root / "applied"
+            candidate.mkdir()
+            def git(directory, *arguments):
+                return subprocess.run(["git", "-C", str(directory), *arguments], capture_output=True, check=True)
+            git(candidate, "init", "--quiet")
+            git(candidate, "config", "core.autocrlf", "false")
+            (candidate / "obsolete.h").write_bytes(b"old")
+            (candidate / "roots.pb").write_bytes(b"\x00old binary\xff")
+            git(candidate, "add", ".")
+            git(candidate, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "baseline")
+            git(root, "clone", "--quiet", str(candidate), str(applied))
+            git(applied, "config", "core.autocrlf", "false")
+            (candidate / "obsolete.h").unlink()
+            (candidate / "new.h").write_bytes(b"new\n")
+            (candidate / "roots.pb").write_bytes(b"\x00new binary\xff")
+            summary, patch_text = roll.export_candidate(candidate, None)
+            self.assertIn("new.h", summary)
+            self.assertIn("obsolete.h", summary)
+            patch_file = root / "changes.patch"
+            patch_file.write_text(patch_text, encoding="utf-8", newline="\n")
+            git(applied, "apply", str(patch_file))
+            self.assertFalse((applied / "obsolete.h").exists())
+            for name in ("new.h", "roots.pb"):
+                self.assertEqual((applied / name).read_bytes(), (candidate / name).read_bytes())
+
     def test_all_eight_family_pins_change_without_modifying_other_dependencies(self):
         original = (roll.ROOT / "Cargo.toml").read_text(encoding="utf-8")
         changed = roll.update_cargo(original, "5.3.0", "c" * 40)
