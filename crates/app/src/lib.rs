@@ -62,10 +62,13 @@ pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
 };
+pub use transmog_automation::HeaderRuleTest;
+
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
     AutomationStatus, ExampleResult, Experiment, ExperimentChange, ExperimentRevision,
-    ExperimentSelection, ExperimentVariant, RuleDiagnostic, RuleUsage,
+    ExperimentSelection, ExperimentVariant, HeaderRuleChange, HeaderRulePlacement,
+    HeaderRuleTestInput, RuleDiagnostic, RuleUsage,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_ranges::{BodyBytePage, BodyRangeRequest};
@@ -101,7 +104,7 @@ pub use diagnostics::{
 };
 pub use inspector::{
     AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
-    HeaderPage, HeaderSummary, HeaderView, SessionDetail,
+    HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
@@ -833,6 +836,30 @@ impl Application {
         }
         status.usage = usage.into_values().collect();
         status
+    }
+
+    /// Saves a scoped header-rule edit without changing unrelated automation or pause.
+    ///
+    /// # Errors
+    /// Rejects stale edits, invalid header operations, conflicts and persistence failures.
+    pub fn change_header_rule(
+        &self,
+        generation: u64,
+        change: HeaderRuleChange,
+    ) -> Result<AutomationStatus, AppError> {
+        self.automation.change_header_rule(generation, change)?;
+        Ok(self.automation_status())
+    }
+
+    /// Tests a single draft against supplied headers without network activity.
+    ///
+    /// # Errors
+    /// Rejects invalid rules or samples outside the finite test limits.
+    pub fn test_header_rule(
+        &self,
+        input: &HeaderRuleTestInput,
+    ) -> Result<HeaderRuleTest, AppError> {
+        automation::test_header_rule(input)
     }
 
     /// Saves or activates an experiment atomically without replacing unrelated rules.

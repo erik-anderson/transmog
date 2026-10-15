@@ -50,7 +50,8 @@ pub enum HookPhase {
 }
 
 /// Redacted structural header difference.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HeaderChanges {
     /// Header names introduced by the hook.
     pub added: Vec<String>,
@@ -68,7 +69,8 @@ impl HeaderChanges {
 }
 
 /// Redacted request-head difference.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestHeadChanges {
     /// Whether the method changed.
     pub method_changed: bool,
@@ -86,7 +88,8 @@ impl RequestHeadChanges {
 }
 
 /// Redacted response-head difference.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResponseHeadChanges {
     /// Whether the status changed.
     pub status_changed: bool,
@@ -127,6 +130,38 @@ pub struct LocalResponseSnapshot {
     pub sha256: String,
     /// Ordered content-coding tokens applied to these bytes.
     pub content_codings: Vec<String>,
+}
+
+/// Redacted head-edit evidence retained by recording and trace saving, without values.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "changes",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum HeaderEditSnapshot {
+    /// Structural changes at the request-head phase.
+    Request(RequestHeadChanges),
+    /// Structural changes at the response-head phase.
+    Response(ResponseHeadChanges),
+}
+impl HeaderEditSnapshot {
+    /// Copies only redacted head-change metadata from an actual hook action.
+    pub fn from_action(action: &HookEffectAction) -> Option<Self> {
+        match action {
+            HookEffectAction::ReplaceRequestHead(changes) => Some(Self::Request(changes.clone())),
+            HookEffectAction::ReplaceResponseHead(changes) => Some(Self::Response(changes.clone())),
+            _ => None,
+        }
+    }
+    /// Restores the observed action without interpreting current rule definitions.
+    pub fn into_action(self) -> HookEffectAction {
+        match self {
+            Self::Request(changes) => HookEffectAction::ReplaceRequestHead(changes),
+            Self::Response(changes) => HookEffectAction::ReplaceResponseHead(changes),
+        }
+    }
 }
 
 /// Traffic-affecting action attributed to one interceptor callback.

@@ -107,6 +107,15 @@ closes. Large Clear operations expire Undo and release source context too.
 
 ## Comparison snapshots
 
+Current TMCap recording and **Save trace…** preserve observed request/response
+head-edit order, captured hook identities/names and structural header-name
+changes, including no-op head replacements. Header values are excluded from
+this audit metadata; original and effective heads follow the trace's ordinary
+sensitive-header projection. **Details → Timings → Recorded header edits** reads
+that historical evidence even when no current local rule exists. Missing audit
+metadata does not establish that no hook ran. No legacy-format translation is
+performed for these records.
+
 Investigation comparisons retain exact loaded source identities, original IDs,
 selected boundaries and acquisition times. Two imports of the same file remain
 distinct loaded instances. Filenames, paths, URLs and workspace request numbers

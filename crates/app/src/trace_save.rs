@@ -520,21 +520,37 @@ fn write_session<W: Write>(
     }
     emit(CaptureRecordKind::Performance(session.performance.clone()))?;
     for effect in &session.hook_effects {
-        if let transmog_core::intercept::HookEffectAction::Respond {
-            snapshot: Some(snapshot),
-            ..
-        } = &effect.action
-        {
-            emit(CaptureRecordKind::HookEffect {
-                hook_id: effect.interceptor.id.as_str().into(),
-                hook_name: effect.interceptor.name.to_string(),
-                phase: "request-head".into(),
-                action: "respond".into(),
-                changed: effect.changed,
-                chain_position: effect.interceptor.chain_position,
-                response_snapshot: Some(snapshot.clone()),
-            })?;
+        use transmog_core::intercept::{HeaderEditSnapshot, HookEffectAction, HookPhase};
+        let header_edit = HeaderEditSnapshot::from_action(&effect.action);
+        let response_snapshot = match &effect.action {
+            HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
+            _ => None,
+        };
+        if header_edit.is_none() && response_snapshot.is_none() {
+            continue;
         }
+        let phase = match effect.phase {
+            HookPhase::RequestHead => "request-head",
+            HookPhase::ResponseHead => "response-head",
+            _ => continue,
+        };
+        let action = match effect.action {
+            HookEffectAction::ReplaceRequestHead(_) => "replace-request-head",
+            HookEffectAction::ReplaceResponseHead(_) => "replace-response-head",
+            HookEffectAction::Respond { .. } => "respond",
+            _ => continue,
+        };
+        emit(CaptureRecordKind::HookEffect {
+            hook_id: effect.interceptor.id.as_str().into(),
+            hook_name: effect.interceptor.name.to_string(),
+            phase: phase.into(),
+            action: action.into(),
+            changed: effect.changed,
+            chain_position: effect.interceptor.chain_position,
+            effect_sequence: effect.sequence,
+            header_edit,
+            response_snapshot,
+        })?;
     }
     if let Some(stream) = &session.stream {
         emit(CaptureRecordKind::StreamState(stream.clone()))?;

@@ -334,6 +334,65 @@ if their aggregate hash has not been computed, Details says **Not computed** and
 comparison reads their retained bytes to compute it. Save a TMCap trace while complete bytes
 remain available to preserve them and their selection identity.
 
+## Request and response header rules
+
+In **Automation → Header rules**, choose **New header rule**, select Request or
+Response, and use the shared method/address matcher to target the traffic.
+New rules start disabled. **Save rule** respects the Enabled choice; **Save and
+enable** explicitly applies the saved rule to new matching live requests. The
+auto-response On/Paused switch does not pause header rules. Existing exchanges
+retain their captured configuration. Header rules are standalone live automation;
+named response variants and captured-page previews currently use response assets.
+
+Operations run in their displayed order. **Set** replaces every matching field
+with one field at the first existing position (or appends when absent).
+**Append** adds a separate field at the end. **Remove** removes every matching
+field. Names match case-insensitively; untouched field order, duplicate values
+and bytes are preserved. UTF-8 text and Hex bytes allow non-ASCII field values
+without lossy conversion. Invalid names, line breaks and incomplete hex pairs
+are rejected while preserving the draft.
+
+Request-header conditions support Exists, Exact, Prefix, Suffix and byte Regex;
+response rules also support response-header conditions, status and status class.
+A predicate matches when at least one field satisfies it. Conditions use the
+effective state at that step, so an earlier rule can affect a later match.
+**Test draft** uses the production matcher and operations against explicit sample
+headers without sending traffic, executing scripts, saving or activating. It
+shows each operation's outcome and ordered before/after fields. An unmatched
+draft leaves the sample unchanged. Values can be entered as UTF-8 sample lines;
+Hex operation/predicate values preserve bytes that cannot be entered as text.
+
+Removing Content-Security-Policy, adding an Access-Control-Allow-Origin value,
+or setting Cache-Control can test a policy hypothesis. These edits alone do not
+prove browser behavior. Authored cache policy is preserved. Host, Content-Length,
+Transfer-Encoding, Content-Encoding, Connection, Proxy-Connection, Keep-Alive,
+TE, Trailer and Upgrade are managed by the proxy and cannot be header-operation
+targets; use routing, response-asset or body facilities for those tasks.
+
+| Stage | Order and interaction |
+| --- | --- |
+| Native request hooks | Earlier to later native rule position. General header operations compose. The first matching User-Agent policy claims that exchange and only replaces existing fields. A later general rule can replace its result. |
+| Script request hooks | After native request hooks, in configured script order. |
+| Local response | A matching local response stops entering later hooks. Only previously entered hooks can participate in response unwinding. |
+| Script response hooks | Before native response hooks, in reverse script registration order. |
+| Native response hooks | Earlier to later native response rule position; each rule sees the current effective response and request. |
+
+The **Execution order and conflict repair** disclosure includes native auto-responses, User-Agent
+policies and advanced rules relevant to the selected phase. Use Earlier/Later
+for neighboring header rules or save **Before other native rules** / **After
+other native rules** to resolve a shared-position conflict. Overlapping writes
+at the same position are rejected atomically. User-Agent policies keep their
+separate editor and first-match semantics. No other rule is silently rewritten.
+Refresh preserves drafts; a changed saved revision requires reopening that
+revision or copying the draft with a new identity. Remove offers Undo until
+another automation change makes that restoration stale.
+
+**Traffic → Details → Timings → Recorded header edits** lists actual observed
+head-replacement effects in exchange sequence, with captured identities, names,
+phases and changed header names. It distinguishes an observed no-op from absent
+evidence. It does not infer execution from today's rules or include values.
+Original and effective message heads remain the source for header-value evidence.
+
 ## Body and script safety
 
 Body replacements operate on the declared decoded representation. Request-body

@@ -2,6 +2,7 @@ import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkNamedVariants} from './check-named-variants.mjs';
+import {checkHeaderRules} from './check-header-rules.mjs';
 import {checkIncidents} from './check-incidents.mjs';
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
 import {checkBinaryResponse} from './check-binary-response.mjs';
@@ -79,7 +80,7 @@ await page.addInitScript((configuration) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
+    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], headerEffects:row.headerEffects??[], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const applyResponseFile=(asset,input)=>{
@@ -459,6 +460,38 @@ await page.addInitScript((configuration) => {
           return asset;
         }
         case 'validate_automation': if(state.uaRejectValidation)throw new Error('Fixture validation failed');state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
+        case 'test_header_rule': {
+          state.lastHeaderTest=structuredClone(args.input);
+          if(state.holdHeaderTest){state.holdHeaderTest=false;await new Promise(resolve=>state.finishHeaderTest=resolve);}
+          const {rule,method,url,requestHeaders,responseStatus,responseHeaders}=args.input,phase=rule.request.headers.length?'request':'response';
+          if(rule.request.headers.concat(rule.response.headers).some(op=>['host','content-length','transfer-encoding','content-encoding','connection'].includes(op.operation==='remove'?op.field.toLowerCase():new TextDecoder().decode(new Uint8Array(op.field.name)).toLowerCase())))throw new Error('Protected header: routing, framing and body coding are managed by the proxy');
+          const matched=(!rule.matcher.method||rule.matcher.method===method)&&(!rule.matcher.url||rule.matcher.url.kind!=='exact'||rule.matcher.url.value===url)&&(phase==='request'||(!rule.matcher.responseStatus||rule.matcher.responseStatus===responseStatus));
+          const before=structuredClone(phase==='request'?requestHeaders:responseHeaders);let after=structuredClone(before);const operations=[];
+          if(matched)for(const [index,op] of (phase==='request'?rule.request.headers:rule.response.headers).entries()){
+            const name=op.operation==='remove'?op.field:new TextDecoder().decode(new Uint8Array(op.field.name)),same=f=>new TextDecoder().decode(new Uint8Array(f.name)).toLowerCase()===name.toLowerCase(),previous=JSON.stringify(after);
+            if(op.operation==='append')after.push(structuredClone(op.field));else {const first=after.findIndex(same);after=after.filter(f=>!same(f));if(op.operation==='set')after.splice(first<0?after.length:first,0,structuredClone(op.field));}
+            operations.push({index:index+1,operation:op.operation[0].toUpperCase()+op.operation.slice(1),name,changed:JSON.stringify(after)!==previous});
+          }
+          return {test:{matched,normalizedUrl:url,checks:[{label:'Draft conditions',matched,detail:'Fixture sample'}],captures:[]},before,after,operations};
+        }
+        case 'change_header_rule': {
+          state.lastHeaderChange=structuredClone(args.change);
+          if(state.holdHeaderSave){state.holdHeaderSave=false;await new Promise(resolve=>state.finishHeaderSave=resolve);}
+          if(state.headerReject)throw new Error('Fixture validation failed. Previous live rules were kept.');
+          if(args.generation!==state.automation.generation)throw new Error('Automation changed. Refresh rules; the draft is preserved.');
+          const status=structuredClone(state.automation),c=args.change;
+          if(c.action==='save'){
+            const old=status.rules.find(r=>r.id===c.rule.id);
+            if((old?.revision??null)!==c.expectedRevision)throw new Error('This header rule changed while you were editing. Your draft is preserved.');
+            const saved={...structuredClone(c.rule),revision:(old?.revision??0)+1,priority:old?.priority??Math.max(-1,...status.rules.filter(r=>r.id.startsWith('header-')).map(r=>r.priority))+1};
+            if(c.placement==='before')saved.priority=Math.min(0,...status.rules.filter(r=>r.id!==saved.id).map(r=>r.priority))-1;
+            if(c.placement==='after')saved.priority=Math.max(0,...status.rules.filter(r=>r.id!==saved.id).map(r=>r.priority))+1;
+            if(old)status.rules[status.rules.indexOf(old)]=saved;else status.rules.push(saved);
+          }else if(c.action==='remove'){const old=status.rules.find(r=>r.id===c.id);if(old?.revision!==c.expectedRevision)throw new Error('This rule changed');status.rules=status.rules.filter(r=>r.id!==c.id);
+          }else if(c.action==='restore'){if(status.rules.some(r=>r.id===c.rule.id))throw new Error('Identity in use');status.rules.push({...structuredClone(c.rule),revision:c.rule.revision+1});
+          }else if(c.action==='move'){const ordered=status.rules.filter(r=>r.id.startsWith('header-')).sort((a,b)=>a.priority-b.priority),index=ordered.findIndex(r=>r.id===c.id),other=ordered[index+(c.earlier?-1:1)];if(other){[ordered[index].priority,other.priority]=[other.priority,ordered[index].priority];ordered[index].revision++;other.revision++;}}
+          status.generation++;state.automation=status;return structuredClone(status);
+        }
         case 'experiment_overlaps': return structuredClone(state.variantOverlaps??[]);
         case 'change_experiment': {
           if(state.uaRejectValidation||state.variantReject)throw new Error('Fixture validation failed; saved and live rules unchanged');
@@ -575,6 +608,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--header-rules-only')) {await checkHeaderRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Header rule authoring, raw bytes, ordered tests, activation, stale updates, Undo, evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--variants-only')) {await checkResponseExperiments(page,root);await checkNamedVariants(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Named variants, scoped activation, history, preview, pause, archive, Undo and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--file-snapshots-only')) {await checkResponseSnapshots(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response snapshot identities, changed output, incomplete retention and responsive evidence verified.\n');process.exit(0);}
   await checkResponseSnapshots(page,root);
@@ -2388,6 +2422,7 @@ try {
   await checkResponseFiles(page,root);
   await checkResponseExperiments(page,root);
   await checkNamedVariants(page,root);
+  await checkHeaderRules(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

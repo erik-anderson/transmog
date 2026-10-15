@@ -82,6 +82,7 @@ export interface SessionDetail {
   storedBodies: StoredBodyMetadata[];
   diagnostics: string[];
   hookEffects: string[];
+  headerEffects?:HeaderEffect[];
   routeSelection: string | null;
   routeAttempts: string[];
   terminal: string;
@@ -231,6 +232,11 @@ export interface WorkspacePreferences {
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
 export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
+export interface RawHeaderField {name:number[];value:number[];}
+export type HeaderOperation = {operation:'set'|'append';field:RawHeaderField}|{operation:'remove';field:string};
+export interface HeaderPredicate {name:string;condition:{kind:'exists'|'exact'|'prefix'|'suffix'|'regex';value?:number[]|string};}
+export interface HeaderRuleTest {test:MatchTestResult['test'];before:RawHeaderField[];after:RawHeaderField[];operations:Array<{index:number;operation:string;name:string;changed:boolean}>;}
+export interface HeaderEffect {sequence:number;hookId:string;name:string;phase:string;changed:boolean;headers:{added:string[];removed:string[];changed:string[]};}
 export type QueryCondition = {kind:'exact';value:string|null} | {kind:'parameters';value:Array<{name:string;value:string}>} | {kind:'ignore'};
 export type UrlCondition = {kind:'exact';value:string} | {kind:'pattern';value:{address:string;query:QueryCondition;caseSensitive:boolean}} | {kind:'regex';value:{pattern:string;scope:'url'|'path';whole:boolean;caseSensitive:boolean;query:QueryCondition|null}};
 export interface MatchExample {method:string;url:string;expected:boolean;headers?:Array<{name:string;value:string}>;}
@@ -254,20 +260,20 @@ export interface AutomationRule {
     pathPrefix: string | null;
     query: string | null;
     requestHeaders: Array<{name: string; condition: {kind: string; value?: number[] | string}}>;
-    responseHeaders: Array<unknown>;
+    responseHeaders: HeaderPredicate[];
     responseStatus: number | null;
     responseStatusClass: number | null;
   };
   request: {
     userAgent?:UserAgentOverride|null;
-    headers: unknown[];
+    headers: HeaderOperation[];
     replaceBody: number[] | null;
     discardBody: boolean;
     abortReason: string | null;
     responseAsset: string | null;
     allowNonIdempotentBodyReplacement: boolean;
   };
-  response: {headers: unknown[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
+  response: {headers: HeaderOperation[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
 }
 export interface UserAgentOverride { template:string|null; versionOverride:string|null; clientHints:Record<string,string>; stripClientHints:boolean; }
 export interface AutomationStatus {

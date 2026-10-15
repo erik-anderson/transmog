@@ -537,6 +537,23 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 }
 
 #[tauri::command]
+fn change_header_rule(
+    generation: u64,
+    change: transmog_app::HeaderRuleChange,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    state.application.change_header_rule(generation, change)
+}
+
+#[tauri::command]
+fn test_header_rule(
+    input: transmog_app::HeaderRuleTestInput,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::HeaderRuleTest, AppError> {
+    state.application.test_header_rule(&input)
+}
+
+#[tauri::command]
 fn change_experiment(
     generation: u64,
     change: transmog_app::ExperimentChange,
@@ -2132,6 +2149,8 @@ pub fn run() {
                 desktop_bootstrap,
                 record_frontend_diagnostic,
                 automation_status,
+                change_header_rule,
+                test_header_rule,
                 change_experiment,
                 experiment_overlaps,
                 remove_traffic_entries,

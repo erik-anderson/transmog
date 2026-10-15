@@ -267,6 +267,10 @@ pub enum CaptureRecordKind {
         changed: bool,
         /// Captured evaluation position, independent of subsequent rule reordering.
         chain_position: usize,
+        /// Original exchange-local hook effect sequence, preserving observed execution order.
+        effect_sequence: u64,
+        /// Observed structural head edit; header values are excluded.
+        header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
         /// Frozen local entity identity; contains no external file path.
         response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
     },
@@ -518,6 +522,8 @@ struct HookPayload {
     action: String,
     changed: bool,
     chain_position: usize,
+    effect_sequence: u64,
+    header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
     response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
 }
 
@@ -1481,6 +1487,8 @@ pub fn record_from_observer(
             action: hook_action(&effect.action).to_owned(),
             changed: effect.changed,
             chain_position: effect.interceptor.chain_position,
+            effect_sequence: effect.sequence,
+            header_edit: transmog_core::intercept::HeaderEditSnapshot::from_action(&effect.action),
             response_snapshot: match &effect.action {
                 HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
                 _ => None,
@@ -1722,6 +1730,8 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
             action,
             changed,
             chain_position,
+            effect_sequence,
+            header_edit,
             response_snapshot,
         } => (
             "hook-effect",
@@ -1732,6 +1742,8 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
                 action: action.clone(),
                 changed: *changed,
                 chain_position: *chain_position,
+                effect_sequence: *effect_sequence,
+                header_edit: header_edit.clone(),
                 response_snapshot: response_snapshot.clone(),
             })?,
         ),
@@ -1869,6 +1881,8 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
                 action: value.action,
                 changed: value.changed,
                 chain_position: value.chain_position,
+                effect_sequence: value.effect_sequence,
+                header_edit: value.header_edit,
                 response_snapshot: value.response_snapshot,
             }
         }

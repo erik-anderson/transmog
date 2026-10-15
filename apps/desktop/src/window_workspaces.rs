@@ -460,6 +460,8 @@ mod tests {
             "start_capture",
             "stop_capture",
             "activate_automation",
+            "change_header_rule",
+            "test_header_rule",
             "change_experiment",
             "experiment_overlaps",
             "enable_breakpoints",

@@ -28,8 +28,12 @@ use transmog_core::{
     },
 };
 
+mod header_rules;
 mod matching;
 mod user_agent;
+pub use header_rules::{
+    HeaderOperationResult, HeaderRulePhase, HeaderRuleTest, header_rule_phase, test_header_rule,
+};
 use matching::CompiledUrl;
 pub use matching::{
     CompiledRequestMatcher, ExampleHeader, MatchCapture, MatchCheck, MatchExample, MatchTest,
@@ -541,6 +545,12 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
             return Err(CompileError::HeaderOperationLimitExceeded(rule.id.clone()));
         }
         for operation in operations {
+            if header_rules::protected_header(operation.target().as_str()) {
+                return Err(CompileError::ProtectedHeader(
+                    rule.id.clone(),
+                    operation.target(),
+                ));
+            }
             match operation {
                 HeaderOperation::Set(field) | HeaderOperation::Append(field) => {
                     HeaderField::try_new(field.name().to_vec(), field.value().to_vec())
@@ -1063,6 +1073,11 @@ fn method_is_idempotent(method: &str) -> bool {
 /// Automation compilation failure.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CompileError {
+    /// A header operation would change transport ownership, framing or body coding.
+    #[error(
+        "rule {0} cannot edit protected header {1}; routing, framing and body coding are managed by the proxy"
+    )]
+    ProtectedHeader(String, String),
     /// One or more resource limits were zero.
     #[error("automation limits are invalid")]
     InvalidLimits,

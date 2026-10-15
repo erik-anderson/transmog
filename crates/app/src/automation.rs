@@ -19,9 +19,13 @@ use crate::{AppError, ErrorCategory};
 
 #[path = "experiments.rs"]
 mod experiments;
+#[path = "header_rules.rs"]
+mod header_rules;
 pub use experiments::{
     Experiment, ExperimentChange, ExperimentRevision, ExperimentSelection, ExperimentVariant,
 };
+pub(crate) use header_rules::test as test_header_rule;
+pub use header_rules::{HeaderRuleChange, HeaderRulePlacement, HeaderRuleTestInput};
 
 /// A network-free draft matcher evaluation.
 #[derive(Clone, Debug, Deserialize)]

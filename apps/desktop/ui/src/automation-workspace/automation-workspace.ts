@@ -5,6 +5,7 @@ import '../match-editor/match-editor.js';
 import '../user-agent-overrides/user-agent-overrides.js';
 import '../response-body-editor/response-body-editor.js';
 import '../experiment-variants/experiment-variants.js';
+import '../header-rules/header-rules.js';
 import type {ExperimentVariants} from '../experiment-variants/experiment-variants.js';
 import type {ExperimentSelection,VariantEdit} from '../models.js';
 import {responseBodyLanguage, type BodyCommit, type ResponseBodyEditor} from '../response-body-editor/response-body-editor.js';
@@ -52,6 +53,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   experimentVariants!:ExperimentVariants;
   private editingVariant:ExperimentSelection|null=null;
   onVariantStatus(event:CustomEvent<AutomationStatus>):void {this.renderAutomation(event.detail);}
+  onHeaderRulesState(event:CustomEvent<AutomationStatus>):void {this.renderAutomation(event.detail);}
   async showVariants():Promise<void> {this.automationSection='experiments';if(this.editingVariant)await this.experimentVariants.reveal(this.editingVariant);}
   async newNamedExperiment():Promise<void> {
     if(!this.selection?.reusable){this.showNotice('Select a response','Select a reusable captured response in Traffic, then choose Create experiment.',null,null);return;}
@@ -1349,7 +1351,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const matcherStateChanged=this.automationStatus!==null&&status.generation!==this.automationStatus.generation;
     this.automationStatus = status;
     if(matcherStateChanged&&!this.editorHidden)this.scheduleMatcherTest();
-    this.headerOverrideCount=status.rules.filter(rule=>rule.enabled!==false && !rule.request.responseAsset && (rule.request.userAgent || rule.request.headers.length || rule.response.headers.length)).length;
+    this.headerOverrideCount=status.rules.filter(rule=>rule.enabled!==false && rule.request.userAgent).length;
     this.$emit('automation-state-change',status);
     this.renderAutoResponseRules(status);this.renderExperimentState();
     const actions: string[] = [];

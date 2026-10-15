@@ -38,6 +38,282 @@ static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through the interoperability driver with packaged helpers"]
+#[allow(clippy::too_many_lines)] // Complete live composition and historical evidence workflow.
+async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence() {
+    use std::sync::Arc;
+    use transmog_app::{TraceImportRequest, TraceSaveOptions};
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let application = Application::new(workspace.config(&environment)).unwrap();
+    let field = |name: &str, value: &str| HeaderField::try_new(name, value).unwrap();
+    let rule = |id: &str, priority: i32, request, response| Rule {
+        id: id.into(),
+        display_name: Some(id.into()),
+        enabled: true,
+        revision: 1,
+        priority,
+        matcher: RuleMatcher {
+            path_prefix: Some("/echo/header-iteration/".into()),
+            ..RuleMatcher::default()
+        },
+        request: RequestActions {
+            headers: request,
+            ..RequestActions::default()
+        },
+        response: ResponseActions {
+            headers: response,
+            ..ResponseActions::default()
+        },
+    };
+    let request = rule(
+        "native-request",
+        0,
+        vec![HeaderOperation::Set(field("User-Agent", "native-agent"))],
+        vec![],
+    );
+    let mut response = rule(
+        "native-response",
+        1,
+        vec![],
+        vec![
+            HeaderOperation::Set(field("X-Order", "native-last")),
+            HeaderOperation::Set(field("Cache-Control", "max-age=123")),
+            HeaderOperation::Append(field("Set-Cookie", "one=1")),
+            HeaderOperation::Append(field("Set-Cookie", "two=2")),
+            HeaderOperation::Remove("Server".into()),
+        ],
+    );
+    response.matcher.response_status = Some(200);
+    response.matcher.response_headers = vec![HeaderPredicate {
+        name: "Content-Type".into(),
+        condition: HeaderCondition::Prefix(b"text/plain".to_vec()),
+    }];
+    let noop = rule(
+        "native-noop",
+        2,
+        vec![],
+        vec![HeaderOperation::Remove("X-Absent".into())],
+    );
+    let asset = application
+        .create_response_asset(AuthoredResponseAsset {
+            id: "header-local".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body: b"local bytes".to_vec(),
+            media_type: Some("text/plain".into()),
+        })
+        .unwrap();
+    let mut local = autoresponse_rule(
+        "header-local-rule",
+        "/echo/header-iteration/local",
+        &asset.asset_ref(),
+    );
+    local.priority = -100;
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            rules: vec![request, response, noop, local],
+            autoresponses_enabled: false,
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    let script = application.validate_script(ScriptDraft {
+        id: "header-script".into(), revision: 1,
+        source: r#"
+export function onRequestHead(_context: unknown, request: {headers: Array<{name:string;value:number[]}>}) {
+  const token = request.headers.find(h => h.name.toLowerCase() === "x-fresh-token");
+  const native = request.headers.find(h => h.name.toLowerCase() === "user-agent");
+  if (!token || !native || String.fromCharCode(...native.value) !== "native-agent") throw new Error("native request did not run first");
+  return {action:"headers",operations:[{operation:"set",name:"user-agent",value:String.fromCharCode(...token.value)}]};
+}
+export function onResponseHead() {
+  return {action:"headers",operations:[{operation:"set",name:"x-order",value:"script-first"}]};
+}
+"#.into(),
+        handlers: BTreeSet::from([ScriptHandler::RequestHead, ScriptHandler::ResponseHead]),
+        prefilter: ScriptPrefilter {path_prefix: Some("/echo/header-iteration/".into()), ..ScriptPrefilter::default()},
+        capabilities: ScriptCapabilities {write_headers: BTreeSet::from(["user-agent".into(), "x-order".into()]), ..ScriptCapabilities::default()},
+        limits: ScriptLimits {max_duration_ms: 1_000, ..ScriptLimits::default()}, priority: 200,
+    }).unwrap();
+    application.activate_script(&script.candidate_id).unwrap();
+    let listener = start(&application, &environment).await;
+    let recording = workspace.root.join("header-recording.tmcap");
+    application
+        .start_capture(CaptureStartRequest {
+            path: recording.clone(),
+            password: None,
+            max_file_bytes: 64 * 1024 * 1024,
+            retain_body_samples: true,
+            redact_sensitive_headers: false,
+            include_network_context: false,
+        })
+        .await
+        .unwrap();
+    let mut originals = Vec::new();
+    for token in ["fresh-first", "fresh-other"] {
+        let path = format!("echo/header-iteration/{token}");
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(&path),
+            &[&format!("X-Fresh-Token: {token}")],
+        )
+        .await;
+        assert_success(&output);
+        assert_eq!(
+            output.body,
+            format!("{token}\n").as_bytes(),
+            "header editing replaced fresh origin bytes"
+        );
+        assert_header(&output, "X-Order", "native-last");
+        assert_header(&output, "X-Seen-User-Agent", token);
+        assert_header(&output, "Cache-Control", "max-age=123");
+        assert_header(&output, "Set-Cookie", "one=1");
+        assert_header(&output, "Set-Cookie", "two=2");
+        assert!(
+            !output
+                .headers
+                .lines()
+                .any(|h| h.to_ascii_lowercase().starts_with("server:"))
+        );
+        let detail = wait_for_session(&application, &format!("/{path}"), "completed").await;
+        assert_eq!(
+            detail.header_effects.len(),
+            5,
+            "{:#?}",
+            detail.header_effects
+        );
+        assert_eq!(detail.header_effects[0].name, "native-request");
+        assert!(detail.header_effects[1].hook_id.contains("header-script"));
+        assert!(detail.header_effects[2].hook_id.contains("header-script"));
+        assert_eq!(detail.header_effects[3].name, "native-response");
+        assert_eq!(detail.header_effects[4].name, "native-noop");
+        assert!(!detail.header_effects[4].changed);
+        assert!(
+            detail
+                .header_effects
+                .windows(2)
+                .all(|p| p[0].sequence < p[1].sequence)
+        );
+        assert_eq!(
+            application
+                .inspect_body(inspection(&detail.id, "client-response"))
+                .await
+                .unwrap()
+                .display,
+            format!("{token}\n")
+        );
+        originals.push(detail);
+    }
+    let current = application.automation_status();
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            generation: current.generation,
+            rules: current.rules,
+            autoresponses_enabled: true,
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    let output = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/header-iteration/local"),
+        &[],
+    )
+    .await;
+    assert_success(&output);
+    assert_eq!(output.body, b"local bytes");
+    let local = wait_for_session(&application, "/echo/header-iteration/local", "completed").await;
+    assert!(
+        local.header_effects.is_empty(),
+        "local response entered later native/script hooks"
+    );
+    assert!(local.route_attempts.is_empty());
+    application.stop_capture().await.unwrap();
+    let saved = workspace.root.join("header-saved.tmcap");
+    application
+        .save_traffic_trace(saved.clone(), TraceSaveOptions::default())
+        .await
+        .unwrap();
+    application.shutdown().await.unwrap();
+    let restarted = Application::new(workspace.config(&environment)).unwrap();
+    assert_eq!(restarted.automation_status().rules.len(), 4);
+    restarted.shutdown().await.unwrap();
+    for path in [recording, saved] {
+        let imported_workspace = TestWorkspace::new();
+        let imported = Application::new(imported_workspace.config(&environment)).unwrap();
+        imported
+            .import_trace(
+                TraceImportRequest {
+                    path,
+                    password: None,
+                    operation_id: "header-evidence".into(),
+                    max_file_bytes: u64::MAX,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        assert!(imported.automation_status().rules.is_empty());
+        let rows = imported
+            .query_sessions(SessionQueryInput {
+                limit: Some(100),
+                ..SessionQueryInput::default()
+            })
+            .unwrap();
+        for original in &originals {
+            let row = rows
+                .sessions
+                .iter()
+                .find(|row| {
+                    original.requests[0]
+                        .target
+                        .as_ref()
+                        .unwrap()
+                        .ends_with(&row.path)
+                })
+                .unwrap();
+            let detail = imported.session_detail(&row.id).unwrap();
+            assert_eq!(detail.header_effects, original.header_effects);
+            assert_eq!(
+                imported
+                    .inspect_body(inspection(&row.id, "client-response"))
+                    .await
+                    .unwrap()
+                    .display,
+                application
+                    .inspect_body(inspection(&original.id, "client-response"))
+                    .await
+                    .unwrap()
+                    .display
+            );
+            assert!(
+                detail
+                    .responses
+                    .iter()
+                    .any(|r| r.boundary == "upstream-response")
+            );
+            assert!(
+                detail
+                    .responses
+                    .iter()
+                    .any(|r| r.boundary == "client-response")
+            );
+        }
+        imported.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through the interoperability driver with packaged helpers"]
 #[allow(clippy::too_many_lines)] // One complete scoped activation and restart workflow.
 async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     use transmog_app::{ExperimentChange, ExperimentSelection};

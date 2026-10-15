@@ -337,6 +337,8 @@ pub struct SessionDetail {
     pub diagnostics: Vec<String>,
     /// Centrally attributed hook effects.
     pub hook_effects: Vec<String>,
+    /// Observed head edits in exchange-local execution order, excluding header values.
+    pub header_effects: Vec<HeaderEffectView>,
     /// User-facing attribution when a local autoresponse won.
     pub auto_response: Option<AutoResponseMatchView>,
     /// Selected route and explanation.
@@ -373,6 +375,47 @@ pub struct AutoResponseMatchView {
     pub body_bytes: usize,
     /// Exact local entity selected before any later response processing.
     pub snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
+}
+
+/// Redacted historical header-edit attribution; current rules are never reread for this view.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderEffectView {
+    /// Original exchange-local effect sequence.
+    pub sequence: u64,
+    /// Captured registration identity, including rule/script revision when present.
+    pub hook_id: String,
+    /// Captured display name.
+    pub name: String,
+    /// Request or response head phase.
+    pub phase: &'static str,
+    /// Whether canonical state changed at this step.
+    pub changed: bool,
+    /// Header names introduced, removed or changed; values are excluded.
+    pub headers: transmog_core::intercept::HeaderChanges,
+}
+
+fn header_effects(snapshot: &SessionSnapshot) -> Vec<HeaderEffectView> {
+    snapshot
+        .hook_effects
+        .iter()
+        .filter_map(|effect| {
+            let (phase, headers) = match &effect.action {
+                HookEffectAction::ReplaceRequestHead(changes) => ("Request", &changes.headers),
+                HookEffectAction::ReplaceResponseHead(changes) => ("Response", &changes.headers),
+                _ => return None,
+            };
+            Some(HeaderEffectView {
+                sequence: effect.sequence,
+                hook_id: effect.interceptor.id.as_str().into(),
+                name: effect.interceptor.name.to_string(),
+                phase,
+                changed: effect.changed,
+                headers: headers.clone(),
+            })
+        })
+        .take(MAX_DIAGNOSTICS)
+        .collect()
 }
 
 /// Requested safe representation of retained body bytes.
@@ -628,6 +671,7 @@ pub(crate) fn detail_from_snapshot(
         stored_bodies,
         diagnostics,
         hook_effects,
+        header_effects: header_effects(snapshot),
         auto_response: auto_response_match(snapshot),
         route_selection,
         route_attempts,

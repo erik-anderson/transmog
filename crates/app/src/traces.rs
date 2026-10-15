@@ -1860,7 +1860,76 @@ fn apply_native_frame(
             changed,
             chain_position,
             response_snapshot,
+            effect_sequence,
+            header_edit,
         } => {
+            if (header_edit.is_some() || response_snapshot.is_some())
+                && (effect_sequence == 0
+                    || hook_id.len() > 512
+                    || hook_name.len() > 512
+                    || chain_position > 16_384
+                    || row.response_effects.len() >= 4_096
+                    || row
+                        .response_effects
+                        .last()
+                        .is_some_and(|previous| previous.sequence >= effect_sequence))
+            {
+                return Err(invalid(
+                    "Saved hook identity or execution sequence is invalid",
+                ));
+            }
+            if let Some(edit) = header_edit {
+                use transmog_core::intercept::{
+                    HeaderEditSnapshot, HookEffect, HookPhase, InterceptorId, InterceptorIdentity,
+                };
+                let (expected_phase, expected_action, headers) = match &edit {
+                    HeaderEditSnapshot::Request(changes) => {
+                        ("request-head", "replace-request-head", &changes.headers)
+                    }
+                    HeaderEditSnapshot::Response(changes) => {
+                        ("response-head", "replace-response-head", &changes.headers)
+                    }
+                };
+                let names = headers
+                    .added
+                    .iter()
+                    .chain(&headers.removed)
+                    .chain(&headers.changed)
+                    .collect::<Vec<_>>();
+                if phase != expected_phase
+                    || action != expected_action
+                    || response_snapshot.is_some()
+                    || names.len() > 768
+                    || names.iter().any(|name| {
+                        name.len() > 64 * 1024
+                            || transmog_core::HeaderField::try_new(name.as_bytes(), Vec::new())
+                                .is_err()
+                    })
+                {
+                    return Err(invalid("Saved header-edit evidence is invalid"));
+                }
+                *budget = budget.saturating_add(
+                    hook_id.len()
+                        + hook_name.len()
+                        + names.iter().map(|name| name.len()).sum::<usize>()
+                        + 128,
+                );
+                row.response_effects.push(HookEffect {
+                    sequence: effect_sequence,
+                    interceptor: InterceptorIdentity {
+                        id: InterceptorId::new(hook_id.clone()),
+                        name: hook_name.clone().into(),
+                        chain_position,
+                    },
+                    phase: if phase == "request-head" {
+                        HookPhase::RequestHead
+                    } else {
+                        HookPhase::ResponseHead
+                    },
+                    action: edit.into_action(),
+                    changed,
+                });
+            }
             if let Some(snapshot) = response_snapshot {
                 use transmog_core::intercept::{
                     HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
@@ -1877,13 +1946,13 @@ fn apply_native_frame(
                     || hook_id.len() > 512
                     || hook_name.len() > 512
                     || chain_position > 16_384
-                    || row.response_effects.len() >= 256
+                    || row.response_effects.len() >= 4_096
                 {
                     return Err(invalid("Saved local response snapshot metadata is invalid"));
                 }
                 *budget = budget.saturating_add(hook_id.len() + hook_name.len() + 512);
                 row.response_effects.push(HookEffect {
-                    sequence: row.response_effects.len() as u64 + 1,
+                    sequence: effect_sequence,
                     interceptor: InterceptorIdentity {
                         id: InterceptorId::new(hook_id),
                         name: hook_name.clone().into(),
