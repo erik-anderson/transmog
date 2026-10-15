@@ -17,6 +17,52 @@ and script revisions. Activation is atomic: an invalid candidate never replaces
 the last working snapshot, and an in-flight exchange keeps the immutable
 snapshot with which it started.
 
+## Choose an editing workflow
+
+| Task | Start here | Preview and activation |
+| --- | --- | --- |
+| Replace a captured response, compare alternatives or edit a local file | **Actions → Create experiment**, then the response editor and **Experiments** | Saved response assets participate in captured-page previews. Saving a named revision is passive; live activation is explicit. |
+| Change request/response headers while retaining fresh traffic | **Automation → Header rules** | Standalone live rules. Test the draft without traffic; explicitly enable it for new requests. |
+| Change a literal in each fresh origin response | **Actions → Modify current response…** or **Automation → Response edits** | Standalone live rules with bounded UTF-8 input. Test the draft, then explicitly enable it. |
+
+Header rules, fresh-response edits and scripts are not members of the named
+response-asset variants and do not execute in captured-page previews. To compare
+policy headers in a preview, edit the saved response asset's headers. Activating
+an experiment's **Baseline** removes only that experiment's live rules; unrelated
+header rules, response edits, scripts and other experiments keep their own state.
+
+### Try a captured script change
+
+1. Select a complete captured JavaScript response in Traffic and choose **Actions
+   → Create experiment**. Name the hypothesis and edit the body. The script stays
+   inert in the workbench. **Test match** checks targeting; **Compare with captured
+   source** compares the proposed response without saving or sending traffic.
+2. Choose **Save experiment**. This saves an **Edited response** revision and an
+   empty **Baseline** without changing live traffic. Failed saves preserve the
+   draft. Saving further revisions also leaves an active revision unchanged.
+3. Choose **Preview captured page…**, select a retained HTML page from the same
+   source, review the warning and explicitly allow scripts if execution is needed.
+   The page uses the saved script plus captured CSS, images and API responses.
+   Missing dependencies fail as network requests; they do not contact the origin.
+4. Inspect **Last preview diagnostics** for the exact variant, winning rule,
+   captured source and supplied-byte hash. **Compare response** compares a retained
+   supplied response; **Set response baseline** lets you compare two preview
+   observations. This evidence does not establish browser acceptance or delivery.
+5. Save the next edit, then choose **Open updated preview…**. It starts a new
+   frozen snapshot and fresh InPrivate browser session. F5 in the earlier window
+   keeps that run's saved bytes and browser state, including its cache policy.
+6. Choose **Use saved revision for live traffic** only when ready. Review any
+   overlap warnings. To remove this experiment's live edits, activate its
+   **Baseline**; **Undo activation** is available until another automation change.
+   The global auto-response pause remains independent of all these actions.
+
+For external CSS/JavaScript editing, choose **Read file on each request** instead
+of Copy. A future live request or newly opened preview acquires current file
+bytes; an existing preview and historical Traffic comparison keep their frozen
+evidence. See [file choices](#ordered-auto-responses), [snapshot
+evidence](#linked-file-snapshots-and-historical-evidence) and [preview
+isolation](captured-page-preview.md#isolation-and-implementation).
+
 ## Response experiments
 
 Select one complete captured response in the main window, then choose **Actions →
@@ -374,8 +420,9 @@ targets; use routing, response-asset or body facilities for those tasks.
 | Native request hooks | Earlier to later native rule position. General header operations compose. The first matching User-Agent policy claims that exchange and only replaces existing fields. A later general rule can replace its result. |
 | Script request hooks | After native request hooks, in configured script order. |
 | Local response | A matching local response stops entering later hooks. Only previously entered hooks can participate in response unwinding. |
-| Script response hooks | Before native response hooks, in reverse script registration order. |
-| Native response hooks | Earlier to later native response rule position; each rule sees the current effective response and request. |
+| Script response-head hooks | Before native response-head hooks, in reverse script registration order. |
+| Native response-head hooks | Earlier to later native response rule position; each rule sees the current effective response and request. |
+| Response body planning | After all response-head hooks; matching sees the final effective heads. Script body hooks run in reverse registration order, then native body rules run in saved order. Later body hooks see earlier output. Fresh-response literal edits exclude local responses. |
 
 The **Execution order and conflict repair** disclosure includes native auto-responses, User-Agent
 policies and advanced rules relevant to the selected phase. Use Earlier/Later

@@ -11,6 +11,11 @@ draft in Automation. Edit, compare and preview it before explicitly enabling liv
 use. The existing **Create auto-response** action retains its established behavior.
 See [response experiments](automation.md#response-experiments).
 
+Use [choose an editing workflow](automation.md#choose-an-editing-workflow) to
+distinguish saved response replacements from header rules and literal edits to
+fresh origin responses. Saving, previewing and live activation are separate
+actions; a captured-page preview does not run the standalone live editors.
+
 Traffic uses one continuous list and a native scrollbar spanning all matching
 entries. Only rows near the viewport are rendered, so large captures remain
 usable. Compact and ordinary rows have consistent heights. Headers and cells

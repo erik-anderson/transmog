@@ -652,14 +652,7 @@ fn canonical_url(input: &str) -> Option<String> {
     url.set_fragment(None);
     Some(url.into())
 }
-fn browser_headers(head: &ResponseHead, length: u64) -> String {
-    normalized_browser_headers(head, length, false)
-}
-pub(super) fn normalized_browser_headers(
-    head: &ResponseHead,
-    length: u64,
-    keep_cache: bool,
-) -> String {
+pub(super) fn browser_headers(head: &ResponseHead, length: u64) -> String {
     let mut out = String::new();
     for header in head.headers.iter() {
         let (Ok(name), Ok(value)) = (
@@ -682,11 +675,6 @@ pub(super) fn normalized_browser_headers(
                     | "upgrade"
                     | "content-disposition"
             )
-            || (!keep_cache
-                && matches!(
-                    name.to_ascii_lowercase().as_str(),
-                    "cache-control" | "expires" | "age"
-                ))
             || value.contains(['\r', '\n', '\0'])
         {
             continue;
@@ -698,9 +686,6 @@ pub(super) fn normalized_browser_headers(
     }
     if !matches!(head.status, 204 | 304) {
         write!(out, "Content-Length: {length}\r\n").expect("string write");
-    }
-    if !keep_cache {
-        out.push_str("Cache-Control: no-store\r\n");
     }
     out.push_str("Content-Security-Policy: worker-src 'none'; frame-src http: https: data: blob:; connect-src http: https:; form-action http: https:; object-src 'none'; base-uri http: https:; sandbox allow-scripts allow-forms allow-same-origin\r\n");
     out
@@ -1125,7 +1110,7 @@ mod tests {
                 .is_none()
         );
         assert!(scene.resource("GET", "file:///C:/private.txt").is_none());
-        assert!(!page.headers.contains("max-age"));
+        assert!(page.headers.contains("Cache-Control: max-age=3600\r\n"));
         assert!(!page.headers.contains("attachment"));
         assert!(page.headers.contains("worker-src 'none'"));
         assert!(
@@ -1146,6 +1131,45 @@ mod tests {
             canonical_url("https://EXAMPLE.invalid:443/path#anchor").unwrap(),
             "https://example.invalid/path"
         );
+    }
+
+    #[test]
+    fn browser_cache_policy_is_preserved_without_synthesizing_a_bypass() {
+        use transmog_core::{HeaderBlock, HeaderField};
+        let head = ResponseHead {
+            status: 200,
+            source_version: transmog_core::HttpLegVersion::Http1,
+            headers: HeaderBlock::from_fields(
+                [
+                    ("Cache-Control", "private, max-age=60"),
+                    ("cache-control", "must-revalidate"),
+                    ("Expires", "Thu, 15 Oct 2026 23:00:00 GMT"),
+                    ("Age", "7"),
+                    ("Content-Security-Policy", "default-src 'self'"),
+                    ("Content-Encoding", "gzip"),
+                    ("Content-Length", "123"),
+                ]
+                .into_iter()
+                .map(|(name, value)| HeaderField::try_new(name, value).unwrap())
+                .collect(),
+            ),
+        };
+        let headers = browser_headers(&head, 10);
+        assert!(headers.contains("Cache-Control: private, max-age=60\r\ncache-control: must-revalidate\r\nExpires: Thu, 15 Oct 2026 23:00:00 GMT\r\nAge: 7\r\n"));
+        assert!(headers.contains("Content-Security-Policy: default-src 'self'\r\n"));
+        assert!(headers.contains("Content-Security-Policy: worker-src 'none'"));
+        assert!(headers.contains("Content-Length: 10\r\n"));
+        assert!(!headers.contains("Content-Encoding"));
+        assert!(!headers.contains("no-store"));
+        let absent = browser_headers(
+            &ResponseHead {
+                status: 200,
+                headers: HeaderBlock::new(),
+                source_version: transmog_core::HttpLegVersion::Http1,
+            },
+            0,
+        );
+        assert!(!absent.to_ascii_lowercase().contains("cache-control"));
     }
 
     #[tokio::test]
@@ -1187,6 +1211,11 @@ mod tests {
                 .await
                 .unwrap(),
         );
+        let captured = baseline
+            .resolve("GET", &baseline.url, Some(&[]), None, true)
+            .unwrap();
+        assert!(captured.headers.contains("Cache-Control: max-age=3600\r\n"));
+        assert!(!captured.headers.contains("no-store"));
         let asset = app
             .create_response_asset(AuthoredResponseAsset {
                 id: "preview".into(),

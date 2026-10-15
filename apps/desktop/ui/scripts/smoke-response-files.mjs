@@ -7,7 +7,9 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
  const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
  const before=await invoke('automation_status'),path=join(dirname(pageSource),'editable style.css');
  const color=page=>page.evaluate("document.getElementById('captured-heading')&&getComputedStyle(document.getElementById('captured-heading')).color");
- const blue='h1 { color: rgb(0, 0, 255); }',red='h1 { color: rgb(255, 0, 0); }';
+ const css=color=>`h1 { color: ${color}; } /*`.padEnd(2046,'.')+'*/';
+ const blue=css('rgb(0, 0, 255)'),red=css('rgb(255, 0, 0)');
+ assert.equal(Buffer.byteLength(blue),2048);assert.equal(Buffer.byteLength(red),2048);
  const choose=async mode=>main.evaluate(`(async()=>{const a=${editor},info=await window.__TAURI_INTERNALS__.invoke('response_body_file_info',{path:${JSON.stringify(path)},reference:null});a.bodyFileTouched=true;a.draftDirty=true;a.setResponseFile(info);a.$flushUpdates();const select=a.autoResponseForm.elements.namedItem('bodyFileMode');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
  const save=async()=>{assert.equal(await main.evaluate(`${editor}.saveAutoResponse(new Event('submit',{cancelable:true}))`),true,'File-source rule did not save');await waitFor(()=>main.evaluate(`!${editor}.loadingSavedResponse&&!${editor}.fileChoiceBusy`),'Saved file source did not load');};
  const open=async()=>{
@@ -18,7 +20,7 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
   const target=await waitFor(async()=>(await targets()).find(row=>!prior.includes(row.id)&&row.url==='https://example.invalid/captured-page'),'File preview did not navigate');
   return {target,page:await connect(target)};
  };
- const close=async preview=>{await closeNative('Modified preview · Scripts off — Transmog');await waitFor(async()=>!(await targets()).some(row=>row.id===preview.target.id),'File preview did not close');};
+ const close=async preview=>{await closeNative('Modified preview · Scripts off — Transmog');preview.page.close();await waitFor(async()=>!(await targets()).some(row=>row.id===preview.target.id),'File preview did not close');};
  try{
   await writeFile(path,red);
   await main.evaluate(`(async()=>{const t=${traffic};await ${shell}.activateView('traffic');await t.revealSession(t.sessions.find(row=>row.path==='/page.css').id);t.beginExperimentFromSelected();})()`);
@@ -30,6 +32,7 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
   await waitFor(async()=>await color(first.page)==='rgb(255, 0, 0)','File edit changed an open frozen preview');
   const next=await open();await waitFor(async()=>await color(next.page)==='rgb(0, 0, 255)','Updated preview did not reread small linked CSS');
   await closeNative('Modified preview · Scripts off — Transmog');await closeNative('Modified preview · Scripts off — Transmog');
+  first.page.close();next.page.close();
   await waitFor(async()=>!(await targets()).some(row=>[next.target.id,first.target.id].includes(row.id)),'Linked-file previews did not close');
   await main.evaluate(`(async()=>{await ${shell}.activateView('automation');const a=${editor};a.changeResponseBodyFileMode({currentTarget:{value:'copy'}});})()`);await save();
   const assets=await invoke('response_assets'),selection=await main.evaluate(`${editor}.editingVariant`),current=(await invoke('automation_status')).experiments.find(e=>e.id===selection.experimentId).variants.find(v=>v.id===selection.variantId).revisions.find(r=>r.revision===selection.revision).rules.find(row=>row.id===ruleId);

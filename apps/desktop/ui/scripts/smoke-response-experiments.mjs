@@ -59,6 +59,7 @@ export async function smokeResponseExperiments({main,traffic,documentId,targets,
     // The already-open preview still displays its frozen selected revision.
     assert.equal(await preview.evaluate(`getComputedStyle(document.getElementById('captured-heading')).color`),'rgb(0, 0, 255)');
     await closeNative('Modified preview · Scripts off — Transmog');
+    preview.close();
     await waitFor(async()=>!(await targets()).some(row=>row.id===target.id),'Native experiment preview did not close');
     process.stdout.write('Native response experiment: captured CSS → saved variant → exact-revision preview → duplicate → scoped activation → pause → Baseline → Undo; unrelated rules, global gate and open preview preserved.\n');
   } finally {

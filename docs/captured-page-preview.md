@@ -120,6 +120,12 @@ saved revision of that same variant and freezes new bytes; an explicit revision
 selection in Experiments continues to use that exact revision. A new preview of
 an old linked-file configuration reads the current file; it does not claim to reconstruct earlier served bytes.
 
+Preview participation covers saved response assets. Standalone Header rules,
+Response edits and script modules do not execute here. Edit the selected
+response asset's headers or body to test those changes against a captured page.
+For the connected script-editing flow and live activation, see [choose an editing
+workflow](automation.md#choose-an-editing-workflow).
+
 ## Preview diagnostics
 
 **Last preview diagnostics** stays in the trusted workbench and belongs to the
@@ -165,8 +171,8 @@ Profile deletion retries in the background while WebView2 releases file locks.
 Each new baseline or updated preview has separate cache, cookies and web storage.
 F5 reloads the same frozen response snapshot within that window's existing browser
 session. Open an updated preview after saving edits to use a new snapshot and fresh
-browser state. Authored cache headers remain effective; Transmog does not rewrite
-them into a blanket cache bypass.
+browser state. Captured and authored cache headers remain effective; Transmog does
+not rewrite them into a blanket cache bypass.
 
 InPrivate is not a zero-artifact or crash-proof erasure promise. WebView2 creates a
 backing profile, and Transmog currently prepares decoded responses in temporary

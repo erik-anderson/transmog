@@ -35,7 +35,7 @@ async function connect(target){
   socket.addEventListener('message',({data})=>{const result=JSON.parse(String(data));if(result.id){const reply=pending.get(result.id);pending.delete(result.id);if(reply){clearTimeout(reply.timer);if(result.error)reply.reject(new Error(result.error.message));else reply.resolve(result.result);}}});
   const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++sequence;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(method+' timed out'));},15000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
   const evaluate=async expression=>{let result;try{result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});}catch(error){throw new Error('Native evaluation failed: '+expression.slice(0,300),{cause:error});}if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result?.value;};
-  return {call,evaluate};
+  return {call,evaluate,close:()=>socket.close()};
 }
 async function targets(){
   const ports=new Set([port]);
@@ -347,6 +347,9 @@ try{
     const enabled=await connect(enabledTarget);
     await waitFor(()=>enabled.evaluate(`globalThis.missingResult`),'Captured script did not complete its missing request');
     assert.deepEqual(await enabled.evaluate(`globalThis.missingResult`),{failed:true});
+    await waitFor(()=>enabled.evaluate('globalThis.experimentApi'),'Captured external script/API dependencies did not finish');
+    assert.equal(await enabled.evaluate('globalThis.experimentScriptValue'),'original');
+    assert.deepEqual(await enabled.evaluate('globalThis.experimentApi'),{token:'captured-token',value:42});
     await waitFor(()=>enabled.evaluate(`globalThis.variantResults`),'Captured POST variants did not finish');
     assert.deepEqual(await enabled.evaluate(`globalThis.variantResults`),[{status:200,body:'dark variant'},{status:200,body:'light variant'}]);
     const sequence=['first response','next response','next response'];
@@ -373,8 +376,10 @@ try{
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped','Preview enabled the proxy');
     if(screenshot){const image=await enabled.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-page.png'),Buffer.from(image.data,'base64'));}
     await closeNative('Baseline preview · Scripts on — Transmog');
+    enabled.close();
     await waitFor(async()=>(await targets()).filter(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)).length===1,'First native preview did not close');
     await closeNative('Baseline preview · Scripts off — Transmog');
+    disabled.close();
     await waitFor(async()=>!(await targets()).some(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)),'Closed captured previews retained browser targets');
     await smokePreviewRules({main,viewer:second,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot});
     if(profileRoot)await waitFor(async()=>{

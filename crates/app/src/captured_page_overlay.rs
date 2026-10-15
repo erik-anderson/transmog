@@ -1,5 +1,5 @@
 //! Preview-only ordered rules and owned byte snapshots. No live activation or transport.
-use crate::captured_page::{error, normalized_browser_headers};
+use crate::captured_page::{browser_headers, error};
 use crate::{
     AppError, Application, CapturedPage, CapturedPageDiagnostics, CapturedPageOptions,
     CapturedResource, PreviewRuleSnapshot,
@@ -230,7 +230,7 @@ pub(super) async fn attach(
             headers: asset.headers,
             source_version: transmog_core::HttpLegVersion::Http1,
         };
-        let headers = normalized_browser_headers(&head, bytes, true);
+        let headers = browser_headers(&head, bytes);
         rules.push(FrozenRule {
             rule,
             matcher,

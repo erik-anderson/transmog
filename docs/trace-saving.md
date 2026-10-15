@@ -153,3 +153,18 @@ A selected plan without a result does not establish completed execution; codec
 failure or interruption can prevent a report. Details and response comparison
 read retained boundaries, never today's rule. No TMCap migration or compatibility
 translation is added.
+
+## Response experiment sharing
+
+Save TMCap while complete original/effective response bodies remain retained to
+preserve the observed response bytes and historical rule, asset and operation
+evidence. A hash or saved configuration alone cannot recover an expired body.
+An imported trace shows historical attribution without enabling local automation
+or authorizing access to an author's filesystem paths.
+
+Save trace does not export the automation workspace, named variant definitions,
+script sources, external file dependencies or temporary captured-page preview
+scenes/reports. Keep reproduction steps and authored definitions separately when
+sharing an investigation today. A portable case format and binary-only rule
+management remain future work. See [response experiments](automation.md#response-experiments)
+for current authoring and activation behavior.

@@ -21,6 +21,11 @@ experiment revision does not change the explicitly activated live revision;
 activation and experiment pause are separate actions. The editor draft remains in
 the mounted workspace for the current session. See [response experiments](automation.md#response-experiments).
 
+Saving a trace preserves retained network evidence; it does not package these
+experiment definitions, script sources, linked files or temporary preview scenes.
+Copying the application state directory is not a portable investigation format.
+For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-experiment-sharing).
+
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become
 copies or fall through to the origin. Copied assets may retain their source path

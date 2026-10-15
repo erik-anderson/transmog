@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
 import {smokeResponseExperiments} from './smoke-response-experiments.mjs';
+import {smokeScriptExperiment} from './smoke-script-experiment.mjs';
 import {smokeResponseFiles} from './smoke-response-files.mjs';
 import {smokeTextEdits} from './smoke-text-edits.mjs';
 import {smokeHeaderRules} from './smoke-header-rules.mjs';
@@ -14,6 +15,7 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
   await smokeHeaderRules({main,viewer,waitFor,screenshot});
   await smokeTextEdits({main,viewer,waitFor,screenshot});
   await smokeResponseExperiments({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
+  await smokeScriptExperiment({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
   await smokeResponseFiles({main,traffic,documentId:id,pageSource,targets,connect,waitFor,closeNative,screenshot});
   const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{
     const before=(await targets()).map(row=>row.id);

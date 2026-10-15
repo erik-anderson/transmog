@@ -98,6 +98,11 @@ export async function checkResponseExperiments(page,root){
  await warning.getByRole('button',{name:'Cancel',exact:true}).click();
  await page.evaluate(async()=>{await document.querySelector('app-shell').activateView('automation');document.documentElement.style.zoom='1.5';});
  await page.emulateMedia({forcedColors:'active'});
+ for(const name of ['Preview captured page…','Use for live traffic','Save experiment']){
+  const action=editor.getByRole('button',{name,exact:true});await action.scrollIntoViewIfNeeded();await action.focus();
+  const reachability=await action.evaluate(button=>{const box=button.getBoundingClientRect(),root=button.getRootNode(),hit=root.elementFromPoint(box.x+box.width/2,box.y+box.height/2);return {visible:box.top>=0&&box.bottom<=innerHeight&&button.contains(hit),top:box.top,bottom:box.bottom,height:innerHeight,hit:hit?.tagName};});
+  assert.equal(reachability.visible,true,`${name} is unreachable at compact size and 150% zoom: ${JSON.stringify(reachability)}`);
+ }
  await editor.getByRole('button',{name:'Save experiment',exact:true}).scrollIntoViewIfNeeded();
  await page.screenshot({path:resolve(root,'../../../target/ui-check/response-experiment-zoom-forced-colors.png')});
  await page.evaluate(()=>document.documentElement.style.zoom='');await page.emulateMedia({forcedColors:'none'});

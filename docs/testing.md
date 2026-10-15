@@ -122,6 +122,30 @@ the production AppContainer/Job Object boundary. Containers use ephemeral
 loopback ports; temporary certificates and fixtures are removed in cleanup.
 It does not mutate OS trust, system proxy or durable user state.
 
+### Response editing acceptance
+
+Qualify the connected [response editing workflows](automation.md#choose-an-editing-workflow)
+across their actual boundaries:
+
+| Gate | What it establishes |
+| --- | --- |
+| UI check and full `test:workspaces` suite above | Production-template authoring, preserved drafts, failed/stale saves, ordered tests, variant activation, comparison, keyboard and wide/compact layouts under CSP/Trusted Types. |
+| `./scripts/test-windows-desktop.ps1 -ViewerChecks -CapturedPageChecks` | Real native commands and isolated previews: captured JavaScript → edit → compare → passive save → script-enabled HTML/CSS/image/API preview → supplied-response comparison → explicit activation/Baseline. Also qualifies linked-file update/frozen reload, script choice, network failures and independent browser state. |
+| `python scripts/test-response-file-modes.py` | Copy/link through the real proxy, including explicit copies above the former size cutoff, restart repair, coherent historical snapshots and zero requests to a deny origin. |
+| `python scripts/test-interop.py` | Live variant switching, header/script order, literal edits preserving fresh unrelated tokens, actual operation evidence, compressed/bounded failures, restart and native capture round trips against controlled origins. |
+
+Run scoped Rust tests and strict Clippy for the app/session/renderer/desktop and
+any changed automation, capture, runtime or core packages. File-snapshot tests
+exercise atomic replacement, in-place changes, locking, truncation and bounded
+backpressure independently of native editor tests. Browser fixtures cannot
+establish wire fidelity or WebView2 isolation. Inspect the generated populated
+screenshots; a passing check does not establish unexercised accessibility,
+localization, soak or release qualification.
+
+Current-format save/reopen tests establish persistence, not migration or backward
+compatibility. Generated logs, hashes and screenshots remain per-run evidence in
+`artifacts` and `target/ui-check`; do not turn this guide into a dated pass list.
+
 ## Post-quantum TLS
 
 The ordinary Rust gate exercises real TCP and QUIC handshakes, wire-advertised
