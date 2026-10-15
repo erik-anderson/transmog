@@ -11,9 +11,12 @@ entries. Only rows near the viewport are rendered, so large captures remain
 usable. Compact and ordinary rows have consistent heights. Headers and cells
 stay on one line and clip with ellipsis when columns are narrow; hover shows
 the complete value. Protocol includes the active WebSocket or SSE badge beside
-the HTTP version and participates in column fitting. Selection, focus and range
-anchors use stable IDs and the complete display order; leaving the rendered
-window never deselects an entry.
+the HTTP version and participates in column fitting. If upstream DNS, TCP, TLS or
+connection policy fails before an upstream HTTP protocol is observed, Protocol
+shows **Unavailable**. The inspector still preserves the recorded client-side
+HTTP version. A failed connection attempt does not hide HTTP evidence from
+another attempt. Selection, focus and range anchors use stable IDs and the
+complete display order; leaving the rendered window never deselects an entry.
 
 ## Request order
 

@@ -16,9 +16,28 @@ export async function checkTrafficFailures(page, artifacts) {
         }]},
         {...seed,id:'missing-status',status:null,terminal:'completed'},
         {...seed,id:'http-failure',status:503,terminal:'failed'},
+        {...seed,id:'dns-failure',status:null,terminal:'failed',protocol:'Unavailable',requestBytes:0,responseBytes:0,topLevelNavigation:false,storedBodies:[]},
+        {...seed,id:'http2-failure',status:null,terminal:'failed',protocol:'HTTP/2'},
       ].map(row=>({...row,url:'http://example.test/'+row.id,path:'/'+row.id}));
       await traffic.refreshSessions(undefined,true);
     });
+    const dns = page.locator('tr[data-session-id="dns-failure"]');
+    await dns.getByText('Failed',{exact:true}).waitFor({state:'visible'});
+    assert.equal((await dns.locator('td[data-column-id="protocol"]').textContent()).trim(),'Unavailable');
+    assert.equal(await dns.locator('td[data-column-id="protocol"]').getAttribute('title'),'Unavailable');
+    assert.equal((await page.locator('tr[data-session-id="http2-failure"] td[data-column-id="protocol"]').textContent()).trim(),'HTTP/2');
+    await dns.click();
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='dns-failure');
+    assert.equal(await page.locator('.selection-bar .status-badge').textContent(),'Failed');
+    await page.screenshot({path:resolve(artifacts,'dns-failure-wide.png')});
+    await page.setViewportSize({width:800,height:600});
+    await dns.focus();
+    await page.keyboard.press('Enter');
+    await dns.locator('td[data-column-id="protocol"]').scrollIntoViewIfNeeded();
+    assert.equal(await dns.locator('td[data-column-id="protocol"]').getAttribute('title'),'Unavailable');
+    assert.equal(await page.locator('.selection-bar .status-badge').textContent(),'Failed');
+    await page.screenshot({path:resolve(artifacts,'dns-failure-small.png')});
+    await page.setViewportSize(viewport);
     for (const [id, label] of [['active-post','Pending'],['failed-post','Failed'],['missing-status','Unavailable'],['http-failure','503']]) {
       const row = page.locator(`tr[data-session-id="${id}"]`);
       await row.getByText(label,{exact:true}).waitFor({state:'visible'});

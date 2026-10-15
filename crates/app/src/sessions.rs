@@ -174,7 +174,7 @@ pub struct SessionSummary {
     pub host: String,
     /// Original path and query.
     pub path: String,
-    /// Client-facing HTTP protocol.
+    /// Client-facing HTTP protocol, unavailable when upstream setup failed before HTTP.
     pub protocol: String,
     /// Observed application stream protocol, independent of the HTTP handshake.
     pub stream_protocol: Option<transmog_core::stream::StreamProtocol>,
@@ -555,11 +555,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
             || target.path.clone(),
             |query| format!("{}?{query}", target.path),
         ),
-        protocol: crate::inspector::message_protocol(
-            &snapshot.performance,
-            "client-request",
-            snapshot.metadata.ingress_version,
-        ),
+        protocol: traffic_protocol(snapshot),
         status: snapshot.response_heads.last().map(|head| head.head.status),
         duration_ms,
         request_bytes,
@@ -569,6 +565,40 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         capturing: capturing && !snapshot.imported,
         auto_response: auto_response_match(snapshot),
     }
+}
+
+fn traffic_protocol(snapshot: &SessionSnapshot) -> String {
+    use transmog_core::performance::TransportOutcome;
+
+    let upstream_http_observed = snapshot.performance.protocols.iter().any(|item| {
+        matches!(
+            item.boundary.as_str(),
+            "upstream-request" | "upstream-response"
+        )
+    }) || snapshot
+        .response_heads
+        .iter()
+        .any(|head| head.boundary == transmog_core::observe::ExchangeBoundary::UpstreamResponse);
+    let setup_failed = snapshot.performance.transports.iter().any(|transport| {
+        transport.leg == "upstream"
+            && matches!(
+                transport.outcome,
+                TransportOutcome::DnsFailed
+                    | TransportOutcome::TcpFailed
+                    | TransportOutcome::TlsFailed
+                    | TransportOutcome::PolicyRejected
+            )
+    });
+    // A client's HTTP version does not establish an upstream HTTP exchange.
+    // Retain actual HTTP evidence if another connection attempt succeeded.
+    if setup_failed && !upstream_http_observed {
+        return "Unavailable".into();
+    }
+    crate::inspector::message_protocol(
+        &snapshot.performance,
+        "client-request",
+        snapshot.metadata.ingress_version,
+    )
 }
 
 fn response_content_type(snapshot: &SessionSnapshot) -> Option<String> {
@@ -1213,6 +1243,102 @@ mod tests {
                 .unwrap()
                 .as_millis(),
             0
+        );
+    }
+
+    #[test]
+    fn traffic_protocol_does_not_label_setup_failures_with_the_client_version() {
+        use transmog_core::{
+            HeaderBlock, RequestHead,
+            intercept::{ExchangeFailure, ExchangeFailureKind, ExchangeStage},
+            performance::{ProtocolObservation, TransportObservation, TransportOutcome},
+        };
+        use transmog_session::{ObservedRequestHead, ObservedResponseHead, SessionTerminal};
+
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        service.catalog().apply(started(1));
+        let mut snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        Arc::make_mut(&mut snapshot.metadata).ingress_version = HttpLegVersion::Http2;
+        snapshot.performance.protocols.push(ProtocolObservation {
+            boundary: "client-request".into(),
+            version: "HTTP/2".into(),
+            reason: None,
+        });
+        // A finalized upstream head is intent, before the transport connects.
+        for boundary in [
+            transmog_core::observe::ExchangeBoundary::ClientRequest,
+            transmog_core::observe::ExchangeBoundary::UpstreamRequest,
+        ] {
+            snapshot.request_heads.push(ObservedRequestHead {
+                boundary,
+                head: RequestHead {
+                    method: "GET".into(),
+                    target: snapshot.metadata.original_target.as_target().clone(),
+                    headers: HeaderBlock::default(),
+                    source_version: HttpLegVersion::Http2,
+                },
+            });
+        }
+        snapshot.terminal = Some(SessionTerminal::Failed(ExchangeFailure {
+            metadata: snapshot.metadata.clone(),
+            stage: ExchangeStage::Upstream,
+            kind: ExchangeFailureKind::Upstream,
+            request_committed: false,
+            response_committed: false,
+            message: "Connection setup failed".into(),
+        }));
+        for outcome in [
+            TransportOutcome::DnsFailed,
+            TransportOutcome::TcpFailed,
+            TransportOutcome::TlsFailed,
+            TransportOutcome::PolicyRejected,
+        ] {
+            snapshot.performance.transports = vec![TransportObservation {
+                leg: "upstream".into(),
+                outcome,
+                ..Default::default()
+            }];
+            let row = summarize(&snapshot, SystemTime::now(), false);
+            assert_eq!(row.terminal, "failed");
+            assert_eq!(text_value(&row, TrafficColumn::Protocol), "Unavailable");
+            assert_eq!(
+                crate::inspector::detail_from_snapshot(&snapshot, None)
+                    .unwrap()
+                    .requests[0]
+                    .protocol,
+                "HTTP/2"
+            );
+        }
+        // A failed alternative must not hide HTTP evidence from another attempt,
+        // including older captures which only retained the upstream response.
+        snapshot.response_heads.push(ObservedResponseHead {
+            boundary: transmog_core::observe::ExchangeBoundary::UpstreamResponse,
+            head: transmog_core::ResponseHead {
+                status: 200,
+                headers: HeaderBlock::default(),
+                source_version: HttpLegVersion::Http2,
+            },
+        });
+        assert_eq!(
+            summarize(&snapshot, SystemTime::now(), false).protocol,
+            "HTTP/2"
+        );
+        snapshot.response_heads.clear();
+        snapshot.performance.protocols.push(ProtocolObservation {
+            boundary: "upstream-request".into(),
+            version: "HTTP/2".into(),
+            reason: None,
+        });
+        assert_eq!(
+            summarize(&snapshot, SystemTime::now(), false).protocol,
+            "HTTP/2"
+        );
+        snapshot.performance.transports.clear();
+        snapshot.performance.protocols.pop();
+        assert_eq!(
+            summarize(&snapshot, SystemTime::now(), false).protocol,
+            "HTTP/2"
         );
     }
 
