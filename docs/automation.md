@@ -32,7 +32,7 @@ stale-update detection, and audit evidence.
 
 ## User-Agent and client hints
 
-Header overrides contains an ordered list of User-Agent rules. The first enabled
+UA header overrides contains an ordered list of User-Agent rules. The first enabled
 matching rule wins, even if the request has no headers to replace. Host filters
 are exact and case-insensitive; path prefixes are case-sensitive. Drag the
 handle or use Move up and Move down to change precedence. Saving filters already
@@ -53,7 +53,7 @@ preserving duplicate fields and never adding missing headers. Client hints can
 be preserved, overridden from preset metadata or custom values, or stripped.
 Preserve is the default when no hint overrides are authored. The Automation
 navigation count includes enabled non-auto-response rules and active script
-modules; Header overrides shows its enabled header-rule count.
+modules; UA header overrides shows its enabled header-rule count.
 
 ## Ordered auto-responses
 
@@ -93,7 +93,13 @@ Captured sources require a complete retained client response. Disabled,
 truncated, evicted, missing, or lossy bodies cannot be represented as faithful
 sources. Text can be edited in decoded form and re-encoded with its original
 gzip, Brotli, deflate, or zstd stack, or the user can deliberately choose
-identity output. Binary and oversized sources retain exact replay behavior.
+identity output. Complete non-Unicode bodies open in Hex mode. Text and Hex view
+changes retain the same bytes; invalid text conversions are rejected without
+changing the draft. Unsupported text encodings remain editable in Hex without
+silently changing the declared charset.
+Unchanged bodies retain their exact encoded replay bytes. Oversized sources retain
+exact replay behavior and offer bounded inspection or file replacement without
+treating a preview as the full editable body.
 
 Matching uses the original client request, before request mutations. Method and
 case-sensitive exact URL are the default conditions. Captured response headers,
@@ -103,9 +109,14 @@ condition explicitly when a rule should target only one client. Methods include 
 custom tokens. Request-header conditions are available for every method;
 request bodies are not inspected. Exact URLs, address patterns and bounded
 regular expressions use the same backend matcher in live requests and in the
-network-free editor tester. Saved expected match/nonmatch examples retain their
-own method and explicit headers. Generalizing a selected path segment and
-editing a placeholder show the same syntax inline.
+network-free editor tester. Saved test cases retain their own method, URL,
+explicit headers and expected result. The tester separates the request, observed
+result and saved cases.
+Each case shows Expected, Actual and Test (Passed or Failed); a passed negative
+case means the request correctly did not match. Adding an expectation never
+changes matching. Cases become durable with Save rule, and distinct header
+variants remain separate. A rule can retain up to 32 cases. Generalizing a
+selected path segment and editing a placeholder show the same syntax inline.
 
 Address patterns keep the scheme and host literal. In the path, `{id}` or `{}`
 matches one nonempty segment; `{id:digits}` or `{:digits}` matches decimal
@@ -129,11 +140,11 @@ first-match order, ignoring annotations and regression examples. They identify
 the earlier enabled rule; arbitrary regular-expression equivalence is not
 inferred from sample URLs.
 
-Saved response status, content type, ordered headers and text remain editable
+Saved response status, content type, ordered headers and body bytes remain editable
 after the original Traffic entry disappears. Body replacement from a file also
 supports binary responses. Serve response body from file copies files up to
 25 MB on save; larger files retain their absolute path and read current bytes for
-each request. File mode disables text editing and offers Clear file choice.
+each request. File mode disables inline body editing and offers Clear file choice.
 Clearing a pending file choice preserves the text draft. Compression controls
 use canonical names (`x-gzip` maps to `gzip`); captured headers and source context
 retain the original coding token.
@@ -148,9 +159,13 @@ unknown encoded length, without reusing a stale Content-Length. Pasted framing a
 fields cannot override these choices in the editor. Response edits create an
 immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor
-starts at twelve lines. Edit in dialog opens a syntax editor for HTML, CSS,
-JavaScript, JSON or plain text, with an undoable Format action and manual language
-choice. Apply updates the draft; Cancel retains its previous body. An existing
+starts at twelve lines and automatically selects Text or Hex for complete editable
+bodies. Edit in dialog supports both representations and syntax editing for SVG,
+HTML, CSS, JavaScript, JSON or plain text. SVG uses HTML language services while
+retaining its content type; SVG formatting is disabled to preserve XML semantics.
+Formatting for supported languages is explicit and undoable. Monaco popups remain
+inside the modal dialog and can extend beyond the editor. Apply to draft updates
+the draft; Cancel retains its previous body. An existing
 rule with only body changes also offers Save rule. Failed saves keep the dialog
 and edits available, and closing restores focus and releases the editor model. The open Response section groups status, content type,
 ten-line editable headers and neutral original-response context; rule usage is
@@ -176,12 +191,29 @@ size. The traffic row is marked `AUTO`, and the response inspector links to the
 matching rule. That immutable evidence remains meaningful after a rule is
 renamed, reordered, disabled, or deleted.
 
-Scripts have their own Automation tab. Validation and sandbox testing describe
-only the current source and capability settings; editing either invalidates the
-candidate until checked again. Saving a draft does not enable it. Active revision
-status remains visible while a newer draft is edited, and comparison or pausing
-is available in More. Sandbox input can be authored or copied from a selected
-Traffic request with sensitive headers omitted.
+Scripts have their own Automation tab. **Save & enable** validates, saves and
+activates a new or paused script in one action. **Save & apply** does the same for
+edits to an active script. Validation is authoritative in the backend; activation
+starts the sandbox and persists the exact source and settings before atomically
+replacing the running revision for newly admitted requests. Failure preserves the
+previous active version and the current edits. In-flight requests retain their
+original snapshot. Concurrent changes invalidate stale candidates.
+
+**Save draft** (Ctrl+S) remains available without enabling the script, including
+unfinished source. **Validate only** is available in More. **Test in sandbox**
+automatically validates when needed and evaluates the authored sample without
+sending a request or changing traffic. Testing is optional. Its result identifies
+the handler and returned action; it describes that input only. Editing source,
+capabilities or test input marks earlier test results outdated.
+
+Live state and draft state are separate. An active script can have unapplied
+changes, and a paused script can have a saved draft. Successful activation makes
+that exact source and settings the saved editing baseline. Reopening recovers the
+active version when it is newer than the saved draft, while retaining newer saved
+work. Late asynchronous results cannot mark newer edits saved or enabled. Pause
+is directly available while running; More offers comparison of both source and
+settings. Sandbox input can be authored or copied from a selected Traffic request
+with sensitive headers omitted.
 
 ## Body and script safety
 

@@ -376,6 +376,8 @@ pub enum BodyRepresentation {
     Auto,
     /// Preserve decoded Unicode text without reformatting.
     OriginalText,
+    /// Preserve editable text or fall back to bytes, retaining exact decoded bytes.
+    Editable,
     /// Apply a reviewed structured formatter, currently JSON only.
     Formatted,
     /// Render offset, hexadecimal, and ASCII columns.
@@ -424,7 +426,7 @@ pub struct BodyInspection {
     /// `textContent`, never HTML.
     pub display: String,
     /// Exact displayed bytes for byte-aware selection and lossless copying.
-    /// Present only for the `bytes` representation, including automatic fallback.
+    /// Present for byte views and editable views, including editable text.
     pub bytes_base64: Option<String>,
     /// Offset of the first displayed byte in the inspected representation.
     pub byte_offset: u64,
@@ -805,7 +807,9 @@ pub(crate) async fn inspect_body(
         decoded,
         text_encoding,
         display,
-        bytes_base64: (representation == "bytes").then(|| STANDARD.encode(&bytes)),
+        bytes_base64: (representation == "bytes"
+            || request.representation == BodyRepresentation::Editable)
+            .then(|| STANDARD.encode(&bytes)),
         byte_offset: request.offset,
         display_bytes: consumed,
         truncated: next_offset.is_some() || decoded_truncated,
@@ -1074,6 +1078,10 @@ pub(crate) fn render_body(
         .and_then(|_| detect_unicode_encoding(bytes, charset));
     match requested {
         BodyRepresentation::Bytes => ("bytes", hex_dump(bytes, offset), None, None),
+        BodyRepresentation::Editable => text.map_or_else(
+            || ("bytes", hex_dump(bytes, offset), None, None),
+            |text| ("original-text", text, None, text_encoding),
+        ),
         BodyRepresentation::OriginalText => text.map_or_else(
             || {
                 (

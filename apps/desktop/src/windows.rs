@@ -676,17 +676,23 @@ fn script_declarations(state: State<'_, DesktopState>) -> String {
 #[tauri::command]
 fn save_script(
     draft: ScriptDraft,
+    expected_generation: Option<u64>,
     state: State<'_, DesktopState>,
 ) -> Result<ScriptStatus, AppError> {
-    state.application.save_script(draft)
+    state
+        .application
+        .save_script_checked(draft, expected_generation)
 }
 
 #[tauri::command]
 fn validate_script(
     draft: ScriptDraft,
+    expected_generation: Option<u64>,
     state: State<'_, DesktopState>,
 ) -> Result<ScriptCandidate, AppError> {
-    state.application.validate_script(draft)
+    state
+        .application
+        .validate_script_checked(draft, expected_generation)
 }
 
 #[tauri::command]

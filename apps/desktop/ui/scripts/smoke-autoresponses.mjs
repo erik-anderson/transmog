@@ -56,7 +56,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
     await evaluate(`(async()=>{
       const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');w.bodyEditor.commit(false);
       await new Promise(resolve=>setTimeout(resolve,50));if(!w.autoResponseBody.value.includes('\\n')||w.bodyEditor.model)throw new Error('Native dialog Apply did not restore and release the draft');
-      const applied=w.autoResponseBody.value;w.openBodyDialog();const deadline=Date.now()+15000;
+      const applied=w.autoResponseBody.value,appliedBytes=w.currentBodyBytes();w.openBodyDialog();const deadline=Date.now()+15000;
       while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       w.bodyEditor.editor.setValue('cancelled');w.bodyEditor.cancel();await new Promise(resolve=>setTimeout(resolve,50));
       if(w.autoResponseBody.value!==applied)throw new Error('Native Cancel changed the draft');
@@ -65,7 +65,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       while((w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)&&Date.now()<savedDeadline)await new Promise(resolve=>setTimeout(resolve,25));
       if(w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)throw new Error('Native dialog Save rule failed: '+JSON.stringify({open:w.bodyEditor.surface.open,dirty:w.draftDirty,hasModel:Boolean(w.bodyEditor.model),canSave:w.bodyEditor.bodyCanSave,busy:w.bodyEditor.bodyBusy,error:w.bodyEditor.bodyError,ruleError:w.autoResponseError}));
       const saved=await window.__TAURI_INTERNALS__.invoke('inspect_response_asset',{reference:w.rules.find(rule=>rule.id==='native-linked-rule').request.responseAsset});
-      if(saved.display!==applied||saved.textEncoding!=='utf-16le'||saved.asset.mediaType!==${JSON.stringify(mediaType)})throw new Error('Native clear-file text body disagrees with its declared charset');
+      if(JSON.stringify(Array.from(atob(saved.bytesBase64),c=>c.charCodeAt(0)))!==JSON.stringify(appliedBytes)||saved.textEncoding!=='utf-16le'||saved.asset.mediaType!==${JSON.stringify(mediaType)})throw new Error('Native clear-file text body disagrees with its original bytes or declared charset');
     })()`);
     return {linkedPath:true,disabledEditor:true,compressionChoice:true,gzipAlias:true,rawHeaderOrder:true,linkedFileCharset:true,missingFile:true,recovery:true,clearFile:true,syntaxEditor:true,formatUndo:true,applyCancel:true,dialogSave:true};
   } finally {

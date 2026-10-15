@@ -6,6 +6,8 @@ import { smokeAbout } from './smoke-about.mjs';
 import { smokeLoopback } from './smoke-loopback.mjs';
 import { smokeUserAgent } from './smoke-user-agent.mjs';
 import { smokeStreams } from './smoke-streams.mjs';
+import { smokeBodyEditor } from './smoke-body-editor.mjs';
+import { smokeAutomationEditing } from './smoke-automation-editing.mjs';
 import { smokeAutoResponseFiles,smokeAutoResponseDragging } from './smoke-autoresponses.mjs';
 
 const portArgument = process.argv.findIndex((value) => value === '--port');
@@ -688,6 +690,8 @@ try {
   result.loopback=await smokeLoopback(call,evaluate,screenshotPath);
   result.userAgent=await smokeUserAgent(call,evaluate,screenshotPath);
   result.streams=await smokeStreams(call,evaluate,screenshotPath);
+  result.automationEditing=await smokeAutomationEditing(call,evaluate,screenshotPath,waitForEvent);
+  result.bodyEditor=await smokeBodyEditor(call,evaluate,screenshotPath);
   const metrics = await call('Performance.getMetrics');
   const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
   assert(heap < 64 * 1024 * 1024, `bounded status soak exceeded 64 MiB JS heap: ${heap}`);

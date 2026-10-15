@@ -14,8 +14,10 @@ when changing the experience.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.
-- Separate selection, editing, saving and activation. Explain what changes and
-  when it takes effect; saved, enabled, active and paused are different states.
+- Keep selection, editing, saving and activation understandable. A combined
+  save-and-activate action is appropriate when its label explains the effect and
+  validation and persistence succeed before activation. Keep saving a draft
+  available separately; saved, enabled, active and paused are different states.
 - Show recovery and risk acknowledgements when relevant. Name counts for what
   they count, with human-readable units and outcomes. Keep opaque identifiers
   available as technical detail.

@@ -42,10 +42,16 @@ pub struct AutoResponseTestInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExampleResult {
+    /// Position in the saved examples, including distinct header variants.
+    pub index: usize,
     /// HTTP method of this saved test request.
     pub method: String,
     /// URL being checked.
     pub url: String,
+    /// Authored expectation, independent of the actual matcher outcome.
+    pub expected: bool,
+    /// Actual outcome from the production matcher.
+    pub matched: bool,
     /// Whether the actual outcome agrees with its expectation.
     pub passed: bool,
 }
@@ -236,7 +242,7 @@ impl AutomationRegistry {
             "This rule would serve the saved response.".to_owned()
         };
         let mut examples = Vec::new();
-        for example in &input.matcher.examples {
+        for (index, example) in input.matcher.examples.iter().enumerate() {
             let example_headers = example
                 .headers
                 .iter()
@@ -251,8 +257,11 @@ impl AutomationRegistry {
             let actual = transmog_automation::test_matcher(&input.matcher, &request)
                 .map_err(|message| AppError::new(ErrorCategory::InvalidInput, message, false))?;
             examples.push(ExampleResult {
+                index,
                 method: example.method.clone(),
                 url: example.url.clone(),
+                expected: example.expected,
+                matched: actual.matched,
                 passed: actual.matched == example.expected,
             });
         }
@@ -830,6 +839,61 @@ mod tests {
         assert!(!result.test.matched);
         assert!(result.examples.iter().all(|example| example.passed));
         assert_eq!(result.examples[1].method, "GET");
+        assert_eq!(result.examples[1].index, 1);
+        assert!(!result.examples[1].expected);
+        assert!(!result.examples[1].matched);
+    }
+
+    #[test]
+    fn saved_test_expectations_never_override_actual_matching() {
+        use transmog_automation::MatchExample;
+        let registry = AutomationRegistry::load(
+            None,
+            Arc::new(crate::response_assets::ResponseAssetStore::load(None).unwrap()),
+        )
+        .unwrap();
+        let mut examples = Vec::new();
+        for method in ["GET", "POST"] {
+            for expected in [true, false] {
+                examples.push(MatchExample {
+                    method: method.into(),
+                    url: "https://example.test/".into(),
+                    expected,
+                    headers: vec![],
+                });
+            }
+        }
+        let result = registry
+            .test_match(&AutoResponseTestInput {
+                matcher: RuleMatcher {
+                    method: Some("GET".into()),
+                    examples,
+                    ..RuleMatcher::default()
+                },
+                method: "POST".into(),
+                url: "https://example.test/".into(),
+                headers: vec![],
+                rule_id: None,
+                enabled: true,
+            })
+            .unwrap();
+        assert!(!result.test.matched);
+        assert!(!result.would_serve);
+        assert_eq!(
+            result
+                .examples
+                .iter()
+                .map(|item| (item.index, item.expected, item.matched, item.passed))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, true, true, true),
+                (1, false, true, false),
+                (2, true, false, false),
+                (3, false, false, true)
+            ]
+        );
+        assert_eq!(registry.status().generation, 0);
+        assert!(registry.status().rules.is_empty());
     }
 
     #[test]

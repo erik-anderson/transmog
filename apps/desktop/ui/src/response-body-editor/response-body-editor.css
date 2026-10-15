@@ -1,12 +1,18 @@
 response-body-editor { display:contents; }
-.response-body-dialog { box-sizing:border-box; width:min(76rem,calc(100vw - 2rem)); height:min(52rem,calc(100dvh - 2rem)); max-width:none; max-height:none; padding:1rem; border:1px solid var(--line); border-radius:.45rem; background:var(--panel); color:var(--text); }
+.response-body-dialog { box-sizing:border-box; width:min(76rem,calc(100vw - 2rem)); height:min(52rem,calc(100dvh - 2rem)); max-width:none; max-height:none; padding:1rem; border:1px solid var(--line); border-radius:.45rem; background:var(--panel); color:var(--text); overflow:visible; }
 .response-body-dialog[open] { display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; gap:.6rem; }
 .response-body-dialog::backdrop { background:rgb(0 0 0 / .4); }
 .response-body-dialog header { display:flex; align-items:baseline; flex-wrap:wrap; gap:.6rem; }
 .response-body-dialog h2 { margin:0; font-size:1rem; flex:1 1 10rem; }
 .response-body-dialog header label { display:flex; align-items:baseline; gap:.4rem; }
 .body-editor-status { margin:0; color:var(--muted); font-size:.8rem; }
+.body-editor-information { display:flex; gap:.5rem 1rem; justify-content:space-between; align-items:baseline; flex-wrap:wrap; }
+.body-byte-status { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .body-dialog-content,.body-code-host { min-width:0; min-height:0; height:100%; }
+.body-dialog-content { overflow:hidden; }
+/* Monaco positions floating widgets in viewport coordinates. Keep their host in
+   the dialog's top layer, outside its clipped editor viewport. */
+.body-editor-overflow { position:fixed; inset:0; width:0; height:0; overflow:visible; z-index:2; }
 .body-dialog-content > label { display:flex; flex-direction:column; height:100%; gap:.3rem; font-size:.8rem; }
 .body-dialog-content textarea { flex:1; min-height:0; resize:none; font:.85rem/1.5 "Cascadia Mono",Consolas,monospace; }
 .response-body-dialog footer { min-width:0; }
@@ -16,3 +22,11 @@ response-body-editor { display:contents; }
 
 .body-apply[data-secondary] { background:var(--panel); color:var(--text); border-color:var(--line-strong); }
 .response-body-dialog footer > small { display:block; color:var(--muted); margin-bottom:.4rem; }
+@media (max-height:420px) {
+  .response-body-dialog { padding:.5rem; }
+  .response-body-dialog[open] { gap:.25rem; }
+  .response-body-dialog header { gap:.25rem; }
+  .response-body-dialog h2 { flex-basis:100%; }
+  .body-editor-information { flex-wrap:nowrap; gap:.25rem; }
+  .response-body-dialog footer > small { margin-bottom:.25rem; }
+}

@@ -1,4 +1,7 @@
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
+import {checkBinaryResponse} from './check-binary-response.mjs';
+import {checkMatchingTests,checkMatchingSelectionRace} from './check-matching-tests.mjs';
+import {checkScripts} from './check-scripts.mjs';
 import {checkAutoResponseDragging} from './check-autoresponse-dragging.mjs';
 import { checkStreams } from './check-streams.mjs';
 import assert from 'node:assert/strict';
@@ -27,6 +30,7 @@ const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.j
 const root = fileURLToPath(new URL('../', import.meta.url));
 await checkUserAgentPresets(root);
 const initial = JSON.parse(await readFile(resolve(root, 'src/initial-state.json'), 'utf8'));
+const scriptDeclarations = await readFile(resolve(root,'../../../crates/proxy-script/generated/transmog-script.d.ts'),'utf8');
 const metadata = JSON.parse(await readFile(resolve(root, 'dist/client-metafile.json'), 'utf8'));
 const assets = JSON.parse(await readFile(resolve(root, 'dist/client-assets.json'), 'utf8'));
 const built = build({ appDir: resolve(root, 'src'), plugin: 'webui', css: 'link', cssPublicBase: '/', cssFileNameTemplate: '[name]-[hash].[ext]', projectionManifests: [resolve(root, 'dist/webui-projection.json')] });
@@ -58,7 +62,7 @@ await page.route('https://workspace.test/**', async (route) => {
   }
 });
 await page.addInitScript((configuration) => {
-  const {workspace,networkProfiles}=configuration;
+  const {workspace,networkProfiles,scriptDeclarations}=configuration;
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
   const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
@@ -294,12 +298,17 @@ await page.addInitScript((configuration) => {
         }
         case 'inspect_body': {
           const composer=state.composerResponseDetail?.id===args.request.sessionId;
-          if (state.deferBody===args.request.sessionId && args.request.representation==='original-text') { state.bodyPending=true; await new Promise(resolve=>state.releaseBody=resolve); }
+          if (state.deferBody===args.request.sessionId && ['original-text','editable'].includes(args.request.representation)) { state.bodyPending=true; await new Promise(resolve=>state.releaseBody=resolve); }
           if (state.slowBody && args.request.sessionId==='first') await new Promise(resolve => setTimeout(resolve,100));
           const metadata=detail(args.request.sessionId).storedBodies[0];
           if (state.bodyOverride&&!composer) Object.assign(metadata,state.bodyOverride);
           state.lastBodyRequest=structuredClone(args.request);
           if (metadata.contentCodings.length && metadata.availability!=='complete' && args.request.decodeContent) throw new Error('Content decoding needs a complete body');
+          if(args.request.representation==='editable') {
+            const bytes=state.editableBodyBytes??Array.from(new TextEncoder().encode('body for '+args.request.sessionId));
+            let display='',textEncoding=null;try{display=new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(bytes));if(!/[\u0000-\u0008\u000b\u000e-\u001f\u007f-\u009f]/u.test(display))textEncoding='utf-8';}catch{}
+            return {metadata,representation:textEncoding?'original-text':'bytes',decoded:args.request.decodeContent&&metadata.contentCodings.length>0,textEncoding,display,displayBytes:bytes.length,bytesBase64:btoa(String.fromCharCode(...bytes)),byteOffset:0,truncated:state.editableBodyTruncated??false,nextOffset:null,warning:null,previewHandle:null,previewMimeType:null};
+          }
           const representation=args.request.representation==='auto'?(metadata.mediaType==='application/json'?'formatted-json':metadata.mediaType.startsWith('image/')?'image':metadata.mediaType==='application/octet-stream'?'bytes':'original-text'):args.request.representation;
           const bytes=composer?state.composerBytes:state.hexBytes??[0,0x41,0xff,0x20];
           const chunks=[];
@@ -314,7 +323,8 @@ await page.addInitScript((configuration) => {
         }
         case 'test_autoresponse_match': {
           state.lastMatcherTest=structuredClone(args.input);
-          const {matcher,url}=args.input;const request=new URL(url);const condition=matcher.url;
+          const evaluate=input=>{
+          const {matcher,url}=input;const request=new URL(url);const condition=matcher.url;
           let matched=true;const checks=[];const captures=[];
           if(condition?.kind==='exact')matched=new URL(condition.value).href===request.href;
           else if(condition?.kind==='pattern') {
@@ -335,8 +345,13 @@ await page.addInitScript((configuration) => {
             matched=new RegExp(whole?'^(?:'+pattern+')$':pattern,caseSensitive?'':'i').test(scope==='path'?request.pathname:request.href);
           }
           checks.push({label:'Address',matched,detail:'Fixture runtime condition'});
-          if(matcher.method){const method=matcher.method===args.input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
-          return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && args.input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(args.input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:matcher.examples?.map(item=>({method:item.method,url:item.url,passed:true}))??[]};
+          if(matcher.method){const method=matcher.method===input.method;checks.push({label:'Method',matched:method,detail:matcher.method});matched&&=method;}
+          for(const header of matcher.requestHeaders??[]){const value=input.headers?.find(item=>item.name.toLowerCase()===header.name.toLowerCase())?.value;const expected=header.condition.kind==='exact'?new TextDecoder().decode(new Uint8Array(header.condition.value)):null;if(expected!==null)matched&&=value===expected;}
+          return {test:{matched,normalizedUrl:request.href,checks,captures},wouldServe:matched && input.enabled && state.automation?.autoresponsesEnabled!==false,explanation:matched?(input.enabled?'This rule would serve the saved response.':'The request matches, but this rule is disabled.'):'This request does not match the draft rule.',winningRule:null,examples:[]};
+          };
+          const result=evaluate(args.input);result.examples=(args.input.matcher.examples??[]).map((item,index)=>{const actual=evaluate({...args.input,...item}).test.matched;return {index,method:item.method,url:item.url,expected:item.expected,matched:actual,passed:actual===item.expected};});
+          if(state.deferNextMatcher&&args.input.url!=='https://example.test/'){state.deferNextMatcher=false;state.matcherPending=true;await new Promise(resolve=>state.releaseMatcher=resolve);}
+          return result;
         }
         case 'autoresponse_source_headers': return structuredClone(state.rawResponseHeaders??detail(args.id).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})));
         case 'response_assets': return structuredClone(state.assets??[]);
@@ -344,7 +359,9 @@ await page.addInitScript((configuration) => {
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
           if(!asset)throw new Error('Saved response missing');
           const charset=asset.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
-          return {asset:structuredClone(asset),display:asset.linkedBody?'':asset.display??'saved body',textEncoding:asset.linkedBody?null:state.assetTextEncoding===null?null:charset,contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
+          const display=asset.display??'saved body',bytes=asset.rawBody??(charset==='utf-16le'?Array.from(display).flatMap(char=>[char.charCodeAt(0)&255,char.charCodeAt(0)>>8]):Array.from(new TextEncoder().encode(display)));
+          const unavailable=asset.linkedBody||state.assetBodyUnavailable;
+          return {asset:structuredClone(asset),display:unavailable?'':display,textEncoding:unavailable?null:state.assetTextEncoding===null?null:charset,bytesBase64:unavailable?null:btoa(String.fromCharCode(...bytes)),contentCodings:state.assetCodings??asset.linkedBody?.originalContentCodings??[],explanation:'Edits create a new saved response revision.'};
         }
         case 'edit_response_asset': {
           if(state.deferAssetEdit){state.assetEditPending=true;await new Promise(resolve=>state.finishAssetEdit=resolve);}
@@ -353,8 +370,8 @@ await page.addInitScript((configuration) => {
           const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
           const charset=args.input.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
           const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder(charset).decode(new Uint8Array(args.input.decodedBody)):source.display};
-          if(args.input.bodyPath){asset.linkedBody=(state.bodyFileBytes??100)>25000000?{path:args.input.bodyPath,originalContentCodings:[]}:null;asset.display=asset.linkedBody?'':'file body';asset.bodyBytes=state.bodyFileBytes??100;}
-          else if(args.input.decodedBody!==null){asset.linkedBody=null;}
+          if(args.input.bodyPath){asset.linkedBody=(state.bodyFileBytes??100)>25000000?{path:args.input.bodyPath,originalContentCodings:[]}:null;asset.display=asset.linkedBody?'':'file body';asset.rawBody=Array.from(new TextEncoder().encode(asset.display));asset.bodyBytes=state.bodyFileBytes??100;}
+          else if(args.input.decodedBody!==null){asset.linkedBody=null;asset.rawBody=structuredClone(args.input.decodedBody);asset.bodyBytes=asset.rawBody.length;}
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
@@ -387,6 +404,7 @@ await page.addInitScript((configuration) => {
           const input=args.input;
           const sourceHeaders=command==='create_response_asset_from_session'?state.rawResponseHeaders??detail(input.exchangeId).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})):[];
           const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??sourceHeaders,display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
+          asset.rawBody=structuredClone(input.body??input.decodedBody??state.editableBodyBytes??Array.from(new TextEncoder().encode(asset.display)));
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
@@ -433,13 +451,39 @@ await page.addInitScript((configuration) => {
           state.composerResponseDetail=response;
           return {detail:structuredClone(response),id:1,status:201,headers:response.responses[0].headers,body,bodyIsHex:false,truncated:false,attribution:'composer',source:state.composerResultSource??null};
         }
-        case 'script_declarations': return '';
-        case 'script_status': return {generation:0,active:state.activeScripts??[],saved:state.savedScripts??(state.savedScript?[state.savedScript]:[]),candidateCount:0,historyCount:0};
-        case 'save_script': state.savedScript=structuredClone(args.draft);return {generation:1,active:state.activeScripts??[],saved:[state.savedScript],candidateCount:0,historyCount:0};
-        case 'validate_script': state.scriptCandidate=structuredClone(args.draft);if(state.deferScriptValidation){state.scriptValidationPending=true;await new Promise(resolve=>state.finishScriptValidation=resolve);}return {candidateId:'fixture-script',scriptId:args.draft.id,revision:args.draft.revision,sourceHash:'0'.repeat(64)};
-        case 'test_script': state.scriptTestInput=structuredClone(args.invocation);return {action:'continue'};
-        case 'activate_script': if(state.activeScripts?.some(item=>item.manifest.id===state.scriptCandidate.id&&item.manifest.revision>=state.scriptCandidate.revision))throw new Error('script revision must increase before activation');state.activeScripts=[{manifest:{id:state.scriptCandidate.id,revision:state.scriptCandidate.revision,sourceHash:'0'.repeat(64)},source:state.scriptCandidate.source}];return {generation:1,active:state.activeScripts,saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
-        case 'disable_script': state.activeScripts=[];return {generation:2,active:[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
+        case 'script_declarations': return scriptDeclarations;
+        case 'script_status': return {generation:state.scriptGeneration??0,active:state.activeScripts??[],saved:state.savedScripts??(state.savedScript?[state.savedScript]:[]),candidateCount:0,historyCount:0};
+        case 'save_script': {
+          if(args.expectedGeneration!==(state.scriptGeneration??0))throw new Error('script workspace changed');
+          if(state.deferScriptSave){state.scriptSavePending=true;await new Promise(resolve=>state.finishScriptSave=resolve);}
+          state.savedScript=structuredClone(args.draft);state.scriptGeneration=(state.scriptGeneration??0)+1;
+          return {generation:state.scriptGeneration,active:state.activeScripts??[],saved:[state.savedScript],candidateCount:0,historyCount:0};
+        }
+        case 'validate_script': {
+          if(state.changeScriptBeforeValidation){state.changeScriptBeforeValidation=false;state.savedScript={...structuredClone(args.draft),source:args.draft.source+'\n// saved concurrently in another window'};state.scriptGeneration=(state.scriptGeneration??0)+1;}
+          if(args.expectedGeneration!==undefined&&args.expectedGeneration!==(state.scriptGeneration??0))throw new Error('script workspace changed');
+          state.scriptCandidate=structuredClone(args.draft);state.scriptCandidateGeneration=state.scriptGeneration??0;
+          state.scriptCandidate.capabilities.writeHeaders=[...new Set(state.scriptCandidate.capabilities.writeHeaders)].sort();
+          if(state.deferScriptValidation){state.scriptValidationPending=true;await new Promise(resolve=>state.finishScriptValidation=resolve);}
+          if(state.scriptValidationError)throw new Error('Fixture TypeScript validation failed');
+          return {candidateId:'fixture-script',scriptId:args.draft.id,revision:args.draft.revision,sourceHash:'0'.repeat(64)};
+        }
+        case 'test_script': {
+          state.scriptTestInput=structuredClone(args.invocation);
+          if(state.deferScriptTest){state.scriptTestPending=true;await new Promise(resolve=>state.finishScriptTest=resolve);}
+          return {action:'headers',operations:[{operation:'set',name:'User-Agent',value:'Fixture/1.0'}]};
+        }
+        case 'activate_script': {
+          const draft=structuredClone(state.scriptCandidate);
+          if(state.deferScriptActivation){state.scriptActivationPending=true;await new Promise(resolve=>state.finishScriptActivation=resolve);}
+          if(state.scriptActivationError)throw new Error('Fixture sandbox startup failed');
+          if(state.scriptCandidateGeneration!==(state.scriptGeneration??0))throw new Error('script workspace changed');
+          if(state.activeScripts?.some(item=>item.manifest.id===draft.id&&item.manifest.revision>=draft.revision))throw new Error('script revision must increase before activation');
+          const {source,...manifest}=draft;state.activeScripts=[{manifest:{...manifest,apiRevision:1,sourceHash:'0'.repeat(64)},source}];
+          state.savedScript=draft;delete state.savedScripts;state.scriptGeneration=(state.scriptGeneration??0)+1;
+          return {generation:state.scriptGeneration,active:state.activeScripts,saved:[draft],candidateCount:0,historyCount:0};
+        }
+        case 'disable_script': state.activeScripts=[];state.scriptGeneration=(state.scriptGeneration??0)+1;return {generation:state.scriptGeneration,active:[],saved:state.savedScript?[state.savedScript]:[],candidateCount:0,historyCount:0};
         case 'breakpoint_status': return { enabled: true, paused: structuredClone(state.paused) };
         case 'decide_breakpoint': state.paused = state.paused.filter((item) => item.decisionId !== args.decision.decisionId); return { enabled: true, paused: structuredClone(state.paused) };
         default: throw new Error('Unexpected fixture command: ' + command);
@@ -448,7 +492,7 @@ await page.addInitScript((configuration) => {
   };
   globalThis.__cspViolations = [];
   addEventListener('securitypolicyviolation', (event) => globalThis.__cspViolations.push(event.effectiveDirective));
-}, {workspace:initial.workspace,networkProfiles:initial.networkProfiles});
+}, {workspace:initial.workspace,networkProfiles:initial.networkProfiles,scriptDeclarations});
 
 const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
@@ -1003,7 +1047,7 @@ try {
   await page.getByRole('button', { name: 'Create auto-response', exact: true }).click();
   await page.locator('#automation').waitFor({ state: 'visible' });
   await page.locator('.auto-response-editor').waitFor({ state: 'visible' });
-  await page.locator('#auto-response-body-help').getByText(/text uses utf-8/).waitFor({state:'visible'});
+  await page.locator('#auto-response-body-help').getByText('Complete body preview. Enable editing or open the dialog to replace it.',{exact:true}).waitFor({state:'visible'});
   const autoEditor=page.locator('.auto-response-editor');
   const sourceLink=page.locator('.auto-response-source a');
   const autoField=name=>autoEditor.locator('[name="'+name+'"]');
@@ -1022,7 +1066,7 @@ try {
   await autoField('status').fill('201');
   const capturedPreview=await autoField('body').inputValue();
   await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
-  await page.locator('#auto-response-body-help').getByText(/text uses utf-8/).waitFor();
+  await page.locator('#auto-response-body-help').getByText('Complete body preview. Enable editing or open the dialog to replace it.',{exact:true}).waitFor();
   assert.equal(await autoField('status').inputValue(),'200');
   assert.equal(await autoField('body').inputValue(),capturedPreview);
   assert.equal(await autoEditor.locator('h3').textContent(),'New rule from captured response');
@@ -1205,9 +1249,10 @@ try {
 
 
   await checkResponseBodyEditor(page,root);
+  await checkBinaryResponse(page,root);
   await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.assetCodings=['X-GZIP','BR'];s.assetTextEncoding=null;const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.editAutoResponse(w.rules.find(rule=>rule.id===w.editingAutoResponseId),true);});
   await autoEditor.getByText('Apply original compression type (gzip, Brotli)',{exact:false}).waitFor();
-  assert.equal(await autoField('preserveEncoding').isDisabled(),true);
+  assert.equal(await autoField('preserveEncoding').isEnabled(),true,'Complete binary bodies can apply original compression');
   await page.evaluate(()=>globalThis.__workspaceFixture.bodyFile='C:/fixtures/binary.bin');
   await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
   assert.equal(await autoField('preserveEncoding').isEnabled(),true,'Binary file replacement cannot apply original compression');
@@ -1252,7 +1297,7 @@ try {
   await autoField('mediaType').fill('text/plain; charset=windows-1252');
   await page.locator('#auto-response-body-help').getByText(/set a supported charset/).waitFor();
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await autoEditor.getByText(/Content type has an unsupported charset/).waitFor();
+  await autoEditor.getByText(/This body has an unsupported text encoding/).waitFor();
   assert.equal(await autoField('body').inputValue(),'Hi','Unsupported text encoding discarded the draft');
   await autoField('mediaType').fill('text/plain; charset=utf-16le');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
@@ -1292,7 +1337,8 @@ try {
   await autoEditor.getByLabel('Optional annotation',{exact:true}).fill('account');
   await autoEditor.getByRole('button',{name:'Apply placeholder',exact:true}).click();
   assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
-  await autoEditor.getByRole('button',{name:'Remember as a match',exact:true}).click();
+  await autoEditor.getByRole('button',{name:'Add test case',exact:true}).click();
+  await checkMatchingTests(page,root);
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
   const patternRuleId=await page.locator('.auto-response-rule').first().getAttribute('data-rule-id');
@@ -1300,6 +1346,7 @@ try {
   assert.equal(await autoEditor.getByLabel('URL matching',{exact:true}).inputValue(),'pattern');
   assert.equal(await autoField('url').inputValue(),'https://api.example.test/users/{account:digits}');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Numeric account pattern').matcher.examples.length),1);
+  await checkMatchingSelectionRace(page,await capturedRule.getAttribute('data-rule-id'));
   await page.evaluate(id=>{const state=globalThis.__workspaceFixture;state.automation.usage=[{ruleId:id,matches:2,lastMatchedAt:1000}];document.querySelector('app-shell').onTrafficRefreshed();},patternRuleId);
   await autoEditor.getByText(/2 retained matches/).waitFor({state:'visible'});
   await page.evaluate(()=>{globalThis.__workspaceFixture.automation.usage=[];document.querySelector('app-shell').onTrafficRefreshed();});
@@ -1441,60 +1488,7 @@ try {
   await view('automation');
   assert.equal(await page.locator('.auto-response-editor input[name="name"]').inputValue(), 'Preserved draft');
   await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').sourceEditor !== null);
-  await page.waitForFunction(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.tokenize('const placeholder: string = "value";', 'typescript')[0].some(token=>token.type.startsWith('keyword')));
-  const sourceSurface=page.locator('script-editor editor-surface').first();
-  assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=320,'Source editor is too short');
-  await sourceSurface.getByRole('button',{name:'Expand editor',exact:true}).click();
-  assert.equal(await sourceSurface.locator('dialog').evaluate(dialog=>dialog.matches(':modal')),true);
-  assert.ok((await page.locator('script-editor .monaco-editor-host').first().boundingBox()).height>=580,'Expanded source editor is too short');
-  assert.equal(await sourceSurface.getByRole('button',{name:'Save draft',exact:true}).isVisible(),true);
-  await page.keyboard.press('Escape');
-  assert.equal(await sourceSurface.locator('dialog').evaluate(dialog=>dialog.matches(':modal')),false);
-  const scripts=page.locator('script-editor');
-  await scripts.getByRole('button',{name:'Validate',exact:true}).click();
-  await scripts.locator('.script-state').getByText('Validated · Unsaved',{exact:true}).waitFor({state:'visible'});
-  await scripts.locator('.script-test summary').click();
-  await scripts.getByLabel('Test URL',{exact:true}).fill('https://sandbox.example.test:8443/users/42?ready=yes');
-  await scripts.getByLabel('Method',{exact:true}).fill('PATCH');
-  await scripts.getByLabel('Headers',{exact:true}).fill('X-Test: yes');
-  await scripts.getByRole('button',{name:'Test in sandbox',exact:true}).click();
-  await scripts.locator('.script-state').getByText('Tested · Unsaved',{exact:true}).waitFor({state:'visible'});
-  assert.deepEqual(await page.evaluate(()=>{const input=globalThis.__workspaceFixture.scriptTestInput.request;return {method:input.method,host:input.host,port:input.port,path:input.path,query:input.query};}),{method:'PATCH',host:'sandbox.example.test',port:8443,path:'/users/42',query:'ready=yes'});
-  await scripts.getByRole('button',{name:'Enable',exact:true}).click();
-  await scripts.locator('.script-state').getByText('Active · Unsaved',{exact:true}).waitFor({state:'visible'});
-  await sourceSurface.getByRole('button',{name:'Expand editor',exact:true}).click();
-  await scripts.getByRole('button',{name:'More',exact:true}).click();
-  const scriptButton=await scripts.getByRole('button',{name:'More',exact:true}).boundingBox();
-  const scriptMenu=await scripts.locator('#script-actions-menu').boundingBox();
-  assert.ok(scriptMenu.x<scriptButton.x+scriptButton.width&&scriptMenu.x+scriptMenu.width>scriptButton.x&&Math.abs(scriptMenu.y-scriptButton.y-scriptButton.height)<12,'Script menu is detached from More');
-  await scripts.getByRole('button',{name:'Pause script',exact:true}).click();
-  assert.equal(await scripts.evaluate(editor=>editor.sourceEditor.hasTextFocus()),true);
-  await sourceSurface.getByRole('button',{name:'Return to panel',exact:true}).click();
-  await page.keyboard.press('Escape');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferScriptValidation=true;globalThis.__scriptValidation=document.querySelector('app-shell').shadowRoot.querySelector('script-editor').validateScript();});
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.scriptValidationPending);
-  await page.evaluate(()=>{const scripts=document.querySelector('app-shell').shadowRoot.querySelector('script-editor');scripts.sourceEditor.setValue(scripts.sourceEditor.getValue()+'\n// changed while validating');globalThis.__workspaceFixture.finishScriptValidation();globalThis.__workspaceFixture.deferScriptValidation=false;});
-  await page.evaluate(()=>globalThis.__scriptValidation);
-  assert.equal(await scripts.getByRole('button',{name:'Enable',exact:true}).isDisabled(),true,'An older validation enabled changed source');
-  await scripts.getByRole('button',{name:'Save draft',exact:true}).click();
-  await scripts.locator('.script-state').getByText('Saved',{exact:true}).waitFor({state:'visible'});
-  await page.evaluate(async()=>{
-    const editor=document.querySelector('app-shell').shadowRoot.querySelector('script-editor');
-    const draft=globalThis.__workspaceFixture.savedScript;
-    globalThis.__workspaceFixture.savedScripts=[{...draft,revision:10,source:draft.source+'\n// older'}, {...draft,revision:20,source:draft.source+'\n// newest'}];
-    globalThis.__workspaceFixture.activeScripts=[{manifest:{id:draft.id,revision:20},source:draft.source}];
-    editor.hasLoadedDraft=false;await editor.refreshScripts();
-  });
-  assert.match(await scripts.evaluate(editor=>editor.sourceEditor.getValue()),/newest/,'Reload selected an older saved draft');
-  await scripts.getByRole('button',{name:'Validate',exact:true}).click();
-  await scripts.getByRole('button',{name:'Enable',exact:true}).click();
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.activeScripts[0].manifest.revision>20);
-  await page.evaluate(()=>delete globalThis.__workspaceFixture.savedScripts);
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/scripts-wide.png')});
-  await page.setViewportSize({width:760,height:520});
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/scripts-small.png')});
-  await page.setViewportSize({width:1280,height:800});
+  await checkScripts(page, root);
   const editorsBefore = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);
   await page.evaluate(() => {
     globalThis.__workspaceFixture.paused = Array.from({ length: 20 }, (_, index) => ({ decisionId: index + 1, exchangeId: 'paused-' + index, phase: index%2?'response-head':'request-head', requestHead: { method: 'GET',target:'https://example.test/paused/'+index }, responseHead: index%2?{status:200,headers:[]}:null, bodyHex: null, hookId: 'fixture', expiresAtUnixMs:Date.now()+60000 }));
@@ -1520,7 +1514,7 @@ try {
   await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').editor.setValue('{\"method\":\"PATCH\"}'));
   await page.locator('tr[data-decision-id="2"]').click();
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').draftText.includes('status'));
-  assert.equal(await page.locator('.nav-count').textContent(),'20');
+  assert.equal(await page.locator('a[data-view="breakpoints"] .nav-count').textContent(),'20');
   await page.locator('tr[data-decision-id="1"]').click();
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('paused-exchange').editor.getValue()),/PATCH/,'Queue navigation lost a replacement draft');
   const editorsVisible = await page.evaluate(() => document.querySelector('app-shell').shadowRoot.querySelector('script-editor').monaco.editor.getModels().length);

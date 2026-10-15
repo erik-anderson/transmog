@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -178,6 +179,8 @@ pub struct ResponseAssetInspection {
     pub display: String,
     /// Character encoding used when saving text edits.
     pub text_encoding: Option<&'static str>,
+    /// Complete decoded bytes for lossless Text/Hex editing, absent when unavailable.
+    pub bytes_base64: Option<String>,
     /// Original compression stack.
     pub content_codings: Vec<String>,
     /// Why a preview is read-only or unavailable.
@@ -289,7 +292,7 @@ impl ResponseAssetStore {
     ) -> Result<ResponseAssetInspection, AppError> {
         let asset = self.get(reference)?;
         let content_codings = asset_codings(&asset.headers);
-        let mut result=ResponseAssetInspection {asset:asset.clone(),display:String::new(),text_encoding:None,content_codings:content_codings.clone(),explanation:"Binary or unsupported text. Headers and status remain editable; replace the body from a file if needed.".into()};
+        let mut result=ResponseAssetInspection {asset:asset.clone(),display:String::new(),text_encoding:None,bytes_base64:None,content_codings:content_codings.clone(),explanation:"Body unavailable. Headers and status remain editable; replace the body from a file if needed.".into()};
         if let Some(linked) = &asset.linked_body {
             result
                 .content_codings
@@ -298,9 +301,24 @@ impl ResponseAssetStore {
             return Ok(result);
         }
         if asset.body_bytes > MAX_AUTHORED_BYTES as u64 {
-            result.explanation =
-                "Body exceeds the 16 MiB text editor limit. Status and headers remain editable."
-                    .into();
+            let mut preview = Vec::new();
+            self.open_body(&asset)?
+                .take(4096)
+                .read_to_end(&mut preview)
+                .map_err(|_| unavailable("Saved response body is unreadable."))?;
+            result.display = crate::inspector::render_body(
+                crate::BodyRepresentation::Bytes,
+                &preview,
+                None,
+                None,
+                0,
+            )
+            .1;
+            result.explanation = format!(
+                "Read-only original-byte preview: first {} of {} bytes (before decoding compression). Body exceeds the 16 MiB editor limit. Serve the complete body from a file to replace it.",
+                preview.len(),
+                asset.body_bytes
+            );
             return Ok(result);
         }
         let mut bytes = Vec::new();
@@ -311,11 +329,22 @@ impl ResponseAssetStore {
         if bytes.len() as u64 != asset.body_bytes {
             return Err(unavailable("Saved response body changed."));
         }
+        let preview = bytes[..bytes.len().min(4096)].to_vec();
         let bytes = match crate::inspector::decode_content(&content_codings, bytes).await {
             Ok(bytes) => bytes,
             Err(error) => {
+                result.display = crate::inspector::render_body(
+                    crate::BodyRepresentation::Bytes,
+                    &preview,
+                    None,
+                    None,
+                    0,
+                )
+                .1;
                 result.explanation = format!(
-                    "Text preview unavailable: {}. Status, headers and file replacement remain available.",
+                    "Read-only original-byte preview: first {} of {} bytes (before decoding compression). Decoded body unavailable: {}. Serve the complete body from a file to replace it.",
+                    preview.len(),
+                    asset.body_bytes,
                     error.message
                 );
                 return Ok(result);
@@ -338,7 +367,13 @@ impl ResponseAssetStore {
         );
         result.display = display;
         result.text_encoding = encoding;
-        result.explanation=warning.unwrap_or_else(||"Edits create a new saved response revision. Historical traffic retains its original response.".into());
+        result.bytes_base64 = Some(STANDARD.encode(&bytes));
+        result.explanation = if warning.is_some() {
+            "Binary body · Hex. Edit hexadecimal byte pairs, or replace the body from a file."
+                .into()
+        } else {
+            "Edits create a new saved response revision. Historical traffic retains its original response.".into()
+        };
         Ok(result)
     }
 
@@ -1811,6 +1846,109 @@ mod tests {
 
     fn root() -> PathBuf {
         std::env::temp_dir().join(format!("transmog-assets-{}", random_hex().unwrap()))
+    }
+
+    #[tokio::test]
+    async fn binary_inspection_and_edits_preserve_complete_decoded_and_encoded_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
+        let binary = (0..=u8::MAX).collect::<Vec<_>>();
+        for (index, codings) in [
+            vec![],
+            vec!["gzip".into()],
+            vec!["gzip".into(), "br".into()],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut headers = HeaderBlock::new();
+            set_content_encoding(&mut headers, &codings).unwrap();
+            let encoded = crate::inspector::encode_content(&codings, binary.clone())
+                .await
+                .unwrap();
+            let original = store
+                .create_authored(AuthoredResponseAsset {
+                    id: format!("binary-{index}"),
+                    revision: 1,
+                    status: 200,
+                    headers,
+                    body: encoded.clone(),
+                    media_type: Some("application/octet-stream".into()),
+                })
+                .unwrap();
+            let inspection = store.inspect(&original.asset_ref()).await.unwrap();
+            assert_eq!(inspection.text_encoding, None);
+            assert_eq!(
+                STANDARD.decode(inspection.bytes_base64.unwrap()).unwrap(),
+                binary
+            );
+            assert!(inspection.explanation.contains("Hex"));
+            let retained = store
+                .edit(ResponseAssetEdit {
+                    asset_reference: original.asset_ref(),
+                    status: 201,
+                    headers: original.headers.clone(),
+                    media_type: original.media_type.clone(),
+                    decoded_body: None,
+                    body_path: None,
+                    preserve_content_encoding: true,
+                })
+                .await
+                .unwrap();
+            assert_eq!(returned_body(&store, &retained).await.1, encoded);
+            let mut changed = binary.clone();
+            changed[128] = 255;
+            for preserve in [true, false] {
+                let edited = store
+                    .edit(ResponseAssetEdit {
+                        asset_reference: retained.asset_ref(),
+                        status: 200,
+                        headers: retained.headers.clone(),
+                        media_type: retained.media_type.clone(),
+                        decoded_body: Some(changed.clone()),
+                        body_path: None,
+                        preserve_content_encoding: preserve,
+                    })
+                    .await
+                    .unwrap();
+                let (headers, body) = returned_body(&store, &edited).await;
+                let applied = asset_codings(&headers);
+                assert_eq!(applied, if preserve { codings.clone() } else { vec![] });
+                assert_eq!(
+                    crate::inspector::decode_content(&applied, body)
+                        .await
+                        .unwrap(),
+                    changed
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_inspection_never_exposes_a_partial_editable_body() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+        let path = root.path().join("large-body");
+        File::create(&path)
+            .unwrap()
+            .set_len(MAX_AUTHORED_BYTES as u64 + 1)
+            .unwrap();
+        let asset = store
+            .import_file(ImportResponseAsset {
+                id: "large".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body_path: path,
+                media_type: None,
+            })
+            .unwrap();
+        let inspection = store.inspect(&asset.asset_ref()).await.unwrap();
+        assert!(inspection.bytes_base64.is_none());
+        assert!(inspection.text_encoding.is_none());
+        assert!(inspection.display.starts_with("00000000"));
+        assert!(inspection.explanation.contains("first 4096 of"));
+        assert!(inspection.explanation.contains("16 MiB"));
     }
 
     #[test]

@@ -3,7 +3,7 @@ import {resolve} from 'node:path';
 
 export async function checkUserAgentOverrides(page,root) {
   await page.evaluate(()=>{const shell=document.querySelector('app-shell');globalThis.__uaOriginal={state:structuredClone(globalThis.__workspaceFixture.automation??{generation:0,rules:[],autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount:0,historyCount:0}),scriptGeneration:shell.scriptGeneration,scriptCount:shell.enabledScriptCount};});
-  await page.locator('automation-workspace .workspace-tabs').getByRole('button',{name:/^Header overrides/}).click();
+  await page.locator('automation-workspace .workspace-tabs').getByRole('button',{name:/^UA header overrides/}).click();
   const editor=page.locator('user-agent-overrides'),field=name=>editor.locator('[name="'+name+'"]');
   const rows=()=>editor.locator('.ua-list-row');
   const settled=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').userAgentOverrides.uaBusy);

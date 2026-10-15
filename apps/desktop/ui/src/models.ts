@@ -232,7 +232,7 @@ export type UrlCondition = {kind:'exact';value:string} | {kind:'pattern';value:{
 export interface MatchExample {method:string;url:string;expected:boolean;headers?:Array<{name:string;value:string}>;}
 export interface MatchTestResult {
   test:{matched:boolean;normalizedUrl:string;checks:Array<{label:string;matched:boolean;detail:string}>;captures:Array<{label:string;value:string}>};
-  wouldServe:boolean;explanation:string;winningRule:string|null;examples:Array<{method:string;url:string;passed:boolean}>;
+  wouldServe:boolean;explanation:string;winningRule:string|null;examples:Array<{index:number;method:string;url:string;expected:boolean;matched:boolean;passed:boolean}>;
 }
 export interface AutomationRule {
   id: string;
@@ -284,7 +284,7 @@ export interface ResponseAsset {
   linkedBody?:{path:string;originalContentCodings:string[];applyOriginalCompression?:boolean}|null;
 }
 export interface ResponseBodyFileInfo {path:string;bytes:number;linked:boolean;error:string|null;}
-export interface ResponseAssetInspection {asset:ResponseAsset;display:string;textEncoding:string|null;contentCodings:string[];explanation:string;}
+export interface ResponseAssetInspection {asset:ResponseAsset;display:string;textEncoding:string|null;bytesBase64:string|null;contentCodings:string[];explanation:string;}
 export interface CapturedAutoResponseSource {
   kind: 'captured';
   sessionId: string;
@@ -320,7 +320,7 @@ export interface ScriptDraft {
   };
   priority: number;
 }
-export interface ScriptRevision { manifest: { id: string; revision: number; sourceHash: string }; source: string; }
+export interface ScriptRevision { manifest: Omit<ScriptDraft, 'source'> & { sourceHash: string; apiRevision: number }; source: string; }
 export interface ScriptStatus {
   generation: number;
   active: ScriptRevision[];

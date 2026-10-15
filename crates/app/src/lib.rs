@@ -880,12 +880,36 @@ impl Application {
         self.scripts.validate(draft)
     }
 
+    /// Compiles only if the script workspace still matches the editor's snapshot.
+    ///
+    /// # Errors
+    /// Returns stale workspace, manifest, TypeScript, capability, or resource errors.
+    pub fn validate_script_checked(
+        &self,
+        draft: ScriptDraft,
+        expected_generation: Option<u64>,
+    ) -> Result<ScriptCandidate, AppError> {
+        self.scripts.validate_checked(draft, expected_generation)
+    }
+
     /// Saves a bounded script draft without compiling or activating it.
     ///
     /// # Errors
     /// Returns a shape, resource, or crash-safe persistence error.
     pub fn save_script(&self, draft: ScriptDraft) -> Result<ScriptStatus, AppError> {
         self.scripts.save(draft)
+    }
+
+    /// Saves a draft only if no other script workspace change has intervened.
+    ///
+    /// # Errors
+    /// Returns a stale workspace, shape, resource, or persistence error.
+    pub fn save_script_checked(
+        &self,
+        draft: ScriptDraft,
+        expected_generation: Option<u64>,
+    ) -> Result<ScriptStatus, AppError> {
+        self.scripts.save_checked(draft, expected_generation)
     }
 
     /// Executes one synthetic invocation in a fresh production sandbox.
