@@ -57,6 +57,13 @@ unchanged. Review round 1 corrected regression-test assumptions and CID
 identity coverage; round 2 found no further significant issues. The complete
 H3 suite, TLS PQC/wire suite and strict Clippy passed.
 
+Signature distinction: the pinned Chromium QUIC configuration does not add
+ML-DSA to BoringSSL's default handshake verification preferences; TCP explicitly
+does. Installing a root does not change that ClientHello list. Certificate path
+verification separately supports ML-DSA issuer signatures, including an
+RSA/ECDSA leaf issued by a locally trusted ML-DSA CA. Do not describe the QUIC
+offer restriction as disabling all ML-DSA certificate chains.
+
 Keep the common certificate verifier and trust inputs. Introduce a
 transport-specific offer policy at the shared TLS-context boundary, so QUIC
 does not inherit TCP-only GREASE, signature preferences and OCSP/SCT requests.

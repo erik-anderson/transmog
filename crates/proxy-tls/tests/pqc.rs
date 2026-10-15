@@ -340,6 +340,41 @@ fn custom_profile_controls_actual_tcp_offers_and_capture_provenance() {
 }
 
 #[test]
+fn quic_accepts_an_ecdsa_leaf_issued_by_a_locally_trusted_ml_dsa_root() {
+    let root = X509::from_pem(include_bytes!("fixtures/ml-dsa-issuer/root.pem")).unwrap();
+    let leaf = X509::from_pem(include_bytes!("fixtures/ml-dsa-issuer/leaf.pem")).unwrap();
+    let key =
+        PKey::private_key_from_pem(include_bytes!("fixtures/ml-dsa-issuer/leaf-key.pem")).unwrap();
+    assert_eq!(
+        MlDsaVariant::for_key(&root.public_key().unwrap()),
+        Some(MlDsaVariant::MlDsa44)
+    );
+    assert!(leaf.verify(&root.public_key().unwrap()).unwrap());
+    let source =
+        PemTrustSource::from_pem(&root.to_pem().unwrap(), "Local ML-DSA fixture root").unwrap();
+    let factory = UpstreamTlsContextFactory::new(
+        Arc::new(TrustSnapshot::load(&source, 1).unwrap()),
+        UpstreamTlsPolicy::default(),
+    );
+    let mut server = SslContext::builder(SslMethod::tls()).unwrap();
+    server.set_certificate(&leaf).unwrap();
+    server.set_private_key(&key).unwrap();
+    let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+    let mut context = factory.quiche_context_builder().unwrap();
+    capture.attach_context(&mut context).unwrap();
+    let (mut client, _) = quic_handshake(quic_config(context), quic_config(server));
+    assert_eq!(
+        client.as_mut().peer_signature_algorithm(),
+        Some(SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256)
+    );
+    assert!(capture.snapshot().valid());
+    assert_eq!(
+        capture.snapshot().details["Certificate Transparency"],
+        "Not required for private trust"
+    );
+}
+
+#[test]
 fn custom_profile_controls_quic_context_before_capture_callback_reinstallation() {
     use transmog_core::network_profile::{NetworkProfileSnapshot, TlsGrease};
     let ca = ProxyCa::generate("Custom profile QUIC root", 2).unwrap();
