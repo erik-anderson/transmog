@@ -421,6 +421,7 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         state.preferences.network_profiles.migrate_http3_alps()?;
         state.schema_version = CURRENT_SCHEMA;
     }
+    state.workspace.migrate_columns();
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -1313,14 +1314,42 @@ mod tests {
         for column in &mut invisible.columns {
             column.visible = false;
         }
+        let mut legacy_invisible = invisible.clone();
+        legacy_invisible.columns.remove(0);
         let mut narrow = original.clone();
         narrow.columns[0].width = 1;
         let mut extreme_split = original.clone();
         extreme_split.list_split = 100;
-        for invalid in [duplicate, invisible, narrow, extreme_split] {
+        for invalid in [
+            duplicate,
+            invisible,
+            legacy_invisible,
+            narrow,
+            extreme_split,
+        ] {
             assert!(store.save_workspace(invalid).is_err());
             assert_eq!(store.snapshot().workspace, original);
         }
+    }
+
+    #[test]
+    fn legacy_column_upgrade_preserves_custom_layout_and_hidden_number_survives() {
+        let mut state = ProductState::default();
+        state.workspace.columns.remove(0);
+        state.workspace.columns.swap(0, 5);
+        state.workspace.columns[0].width = 311;
+        state.workspace.columns[1].visible = false;
+        state.workspace.columns[3].pinned = true;
+        state.workspace.list_split = 67;
+        let legacy = state.workspace.clone();
+        let upgraded = validate(state).unwrap();
+        assert_eq!(upgraded.workspace.columns[1..], legacy.columns);
+        assert_eq!(upgraded.workspace.list_split, 67);
+        let mut hidden = upgraded;
+        hidden.workspace.columns[0].visible = false;
+        let serialized = serde_json::to_string(&hidden).unwrap();
+        let restored = validate(serde_json::from_str(&serialized).unwrap()).unwrap();
+        assert_eq!(restored.workspace, hidden.workspace);
     }
 }
 #[test]

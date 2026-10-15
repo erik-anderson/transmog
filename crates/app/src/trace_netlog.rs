@@ -150,11 +150,14 @@ pub(super) fn import(
         .as_array()
         .ok_or_else(|| invalid("NetLog events must be an array"))?;
     let mut sources: BTreeMap<u64, Vec<&Value>> = BTreeMap::new();
+    let mut source_appearance = HashMap::new();
     for event in events {
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
         if let Some(id) = event["source"]["id"].as_u64() {
+            let next = source_appearance.len();
+            source_appearance.entry(id).or_insert(next);
             sources.entry(id).or_default().push(event);
         }
     }
@@ -173,6 +176,7 @@ pub(super) fn import(
     let mut position = 0;
     let mut spool = BodySpool::new()?;
     let mut certificates = HashMap::new();
+    let mut request_order = HashMap::new();
     for (source_id, group) in &sources {
         if !group.iter().any(|e| {
             matches!(
@@ -225,6 +229,14 @@ pub(super) fn import(
             };
             position += 1;
             let id = ExchangeId(u128::from(prefix) << 64 | position as u128);
+            request_order.insert(
+                id,
+                (
+                    number(&group[*begin]["time"]),
+                    source_appearance[source_id],
+                    hop,
+                ),
+            );
             let start_ticks = number(&group[*begin]["time"]).unwrap_or(0.0);
             let last_ticks = slice
                 .last()
@@ -579,12 +591,21 @@ pub(super) fn import(
                 &mut result,
                 &serde_json::json!({"request":request.headers,"response":response.as_ref().map(|r| &r.headers),"timings":timings}),
             )?;
-            result.entries.insert(format!("{:032x}", id.0), TraceEntry { trace_id: trace_id.into(), original_id: format!("{source_id}:{}", hop + 1), raw_headers: None, timings, protocol_known: !request_protocol.is_empty(), target_known: true, diagnostics: vec![if complete { "Response body recovered from Chromium's complete filtered-byte events. Request body bytes are unavailable." } else { "Complete HTTP body bytes are unavailable; socket bytes are not reconstructed as HTTP bodies." }.into()] });
+            result.entries.insert(format!("{:032x}", id.0), TraceEntry { trace_id: trace_id.into(), original_id: format!("{source_id}:{}", hop + 1), original_number: None, raw_headers: None, timings, protocol_known: !request_protocol.is_empty(), target_known: true, diagnostics: vec![if complete { "Response body recovered from Chromium's complete filtered-byte events. Request body bytes are unavailable." } else { "Complete HTTP body bytes are unavailable; socket bytes are not reconstructed as HTTP bodies." }.into()] });
             result.sessions.push(snapshot);
             progress(position as u64, sources.len() as u64);
         }
     }
     spool.finish(&mut result);
+    result.sessions.sort_by(|left, right| {
+        let (a, source_a, hop_a) = request_order[&left.exchange_id];
+        let (b, source_b, hop_b) = request_order[&right.exchange_id];
+        a.unwrap_or(f64::INFINITY)
+            .total_cmp(&b.unwrap_or(f64::INFINITY))
+            .then_with(|| source_a.cmp(&source_b))
+            .then_with(|| hop_a.cmp(&hop_b))
+    });
+    result.notes.push("Request order is inferred from surviving request-start monotonic times; missing times follow timed requests, with ties ordered by first source appearance and redirect hop. It is not an original request number.".into());
     result.notes.push("Chromium request heads, redirect hops, errors, connection context and original NetLog timings are mapped to Traffic. NetLog clocks remain labeled as imported evidence; missing bodies and measurements are not invented.".into());
     Ok(result)
 }

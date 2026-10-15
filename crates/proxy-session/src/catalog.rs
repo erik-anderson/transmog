@@ -105,6 +105,8 @@ pub enum SessionTerminal {
 /// Immutable point-in-time representation of one exchange.
 #[derive(Clone, Debug)]
 pub struct SessionSnapshot {
+    /// Immutable workspace admission number, assigned on catalog publication.
+    pub request_number: u64,
     /// Measured local timing and physical connection observations.
     pub performance: transmog_core::performance::PerformanceEvidence,
     /// Whether this is immutable saved evidence, independent of live retention.
@@ -146,7 +148,7 @@ pub struct SessionSnapshot {
 /// Monotonic catalog loss and pressure counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CatalogCounters {
-    /// New exchanges rejected because every retained session was active.
+    /// New exchanges rejected by admission policy, including exhausted numbering.
     pub admission_rejected: u64,
     /// Old terminal exchanges evicted to admit newer exchanges.
     pub evicted: u64,
@@ -242,6 +244,9 @@ pub struct CatalogPage {
 /// Failure to create or consume a bounded subscription.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum CatalogError {
+    /// No further unique request numbers are available in this workspace.
+    #[error("workspace request number exhausted")]
+    RequestNumberExhausted,
     /// Saved evidence reached its independent finite entry bound or collided.
     #[error("imported session limit or identifier collision")]
     ImportLimit,
@@ -267,6 +272,7 @@ struct MutableBody {
 
 #[derive(Debug)]
 struct MutableSession {
+    request_number: u64,
     performance: transmog_core::performance::PerformanceEvidence,
     imported: bool,
     metadata: Arc<ExchangeMetadata>,
@@ -326,6 +332,7 @@ impl MutableSession {
     }
     fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
+            request_number: self.request_number,
             performance: self.performance.clone(),
             imported: self.imported,
             exchange_id: self.metadata.exchange_id,
@@ -436,6 +443,11 @@ impl SessionCatalog {
                     state.counters.unknown_exchange_events.saturating_add(1);
                 return CatalogApply::UnknownExchange;
             }
+            let Some(admission) = state.next_admission.checked_add(1) else {
+                state.counters.admission_rejected =
+                    state.counters.admission_rejected.saturating_add(1);
+                return CatalogApply::AdmissionRejected;
+            };
             while state.max_live_entries.is_some_and(|maximum| {
                 state.by_id.len().saturating_sub(state.imported_count) >= maximum.get()
             }) {
@@ -446,12 +458,12 @@ impl SessionCatalog {
             let ObserverEventKind::ExchangeStarted { metadata } = &event.kind else {
                 unreachable!();
             };
-            state.next_admission = state.next_admission.saturating_add(1);
-            let admission = state.next_admission;
+            state.next_admission = admission;
             state.order.insert(admission, exchange_id);
             state.by_id.insert(
                 exchange_id,
                 MutableSession {
+                    request_number: admission,
                     performance: transmog_core::performance::PerformanceEvidence::default(),
                     imported: false,
                     metadata: Arc::clone(metadata),
@@ -570,9 +582,15 @@ impl SessionCatalog {
         {
             return Err(CatalogError::ImportLimit);
         }
+        let count =
+            u64::try_from(sessions.len()).map_err(|_| CatalogError::RequestNumberExhausted)?;
+        state
+            .next_admission
+            .checked_add(count)
+            .ok_or(CatalogError::RequestNumberExhausted)?;
         prepare()?;
         for snapshot in sessions {
-            state.next_admission = state.next_admission.saturating_add(1);
+            state.next_admission += 1;
             let admission = state.next_admission;
             let id = snapshot.exchange_id;
             state.order.insert(admission, id);
@@ -591,6 +609,7 @@ impl SessionCatalog {
             state.by_id.insert(
                 id,
                 MutableSession {
+                    request_number: admission,
                     imported: true,
                     performance: snapshot.performance,
                     metadata: snapshot.metadata,
@@ -1249,6 +1268,95 @@ fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<Exchang
 #[cfg(test)]
 mod tests {
     #[test]
+    fn request_numbers_survive_completion_undo_and_clear_without_reuse() {
+        let catalog = SessionCatalog::new(limits(2));
+        start(&catalog, 90, "one.test");
+        start(&catalog, 2, "two.test");
+        fail(&catalog, 2, 2);
+        fail(&catalog, 90, 2);
+        assert_eq!(catalog.get(ExchangeId(90)).unwrap().request_number, 1);
+        assert_eq!(catalog.get(ExchangeId(2)).unwrap().request_number, 2);
+        catalog.dismiss_all();
+        catalog.restore_dismissed(&[ExchangeId(90)]);
+        assert_eq!(catalog.get(ExchangeId(90)).unwrap().request_number, 1);
+        catalog.dismiss_all();
+        catalog.forget_dismissed(&[ExchangeId(90), ExchangeId(2)]);
+        assert_eq!(
+            catalog.apply(event(
+                90,
+                3,
+                ObserverEventKind::StreamState(transmog_core::stream::StreamState::now(
+                    transmog_core::stream::StreamProtocol::Sse,
+                    transmog_core::stream::StreamStatus::Closed,
+                    None
+                ))
+            )),
+            CatalogApply::UnknownExchange
+        );
+        assert!(catalog.get(ExchangeId(90)).is_none());
+        start(&catalog, 3, "three.test");
+        assert_eq!(catalog.get(ExchangeId(3)).unwrap().request_number, 3);
+    }
+
+    #[test]
+    fn request_number_exhaustion_and_canceled_import_are_atomic() {
+        let source = SessionCatalog::new(limits(3));
+        start(&source, 20, "one.test");
+        start(&source, 10, "two.test");
+        let batch = source.project_retained(Clone::clone);
+        let catalog = SessionCatalog::new(limits(3));
+        catalog.lock_state().next_admission = u64::MAX - 1;
+        assert_eq!(
+            catalog.import_sessions(batch.clone()),
+            Err(CatalogError::RequestNumberExhausted)
+        );
+        assert_eq!(catalog.lock_state().next_admission, u64::MAX - 1);
+        assert!(catalog.project_retained(|row| row.exchange_id).is_empty());
+        assert_eq!(
+            catalog.try_import_sessions_with(vec![batch[0].clone()], || Err(
+                CatalogError::ImportCanceled
+            )),
+            Err(CatalogError::ImportCanceled)
+        );
+        assert_eq!(catalog.lock_state().next_admission, u64::MAX - 1);
+        catalog.import_sessions(vec![batch[0].clone()]).unwrap();
+        assert_eq!(
+            catalog.get(ExchangeId(20)).unwrap().request_number,
+            u64::MAX
+        );
+        assert_eq!(
+            catalog.apply(event(
+                99,
+                1,
+                ObserverEventKind::ExchangeStarted {
+                    metadata: metadata(99, "rejected.test")
+                }
+            )),
+            CatalogApply::AdmissionRejected
+        );
+        assert!(catalog.get(ExchangeId(99)).is_none());
+        assert_eq!(catalog.counters().admission_rejected, 1);
+    }
+
+    #[test]
+    fn live_and_imported_requests_share_one_numbering_namespace() {
+        let source = SessionCatalog::new(limits(3));
+        start(&source, 20, "one.test");
+        start(&source, 10, "two.test");
+        let catalog = SessionCatalog::new(limits(3));
+        start(&catalog, 90, "live.test");
+        catalog
+            .import_sessions(source.project_retained(Clone::clone))
+            .unwrap();
+        fail(&catalog, 90, 2);
+        start(&catalog, 99, "later.test");
+        assert_eq!(
+            catalog.project_retained(|row| (row.exchange_id.0, row.request_number)),
+            [(90, 1), (20, 2), (10, 3), (99, 4)]
+        );
+    }
+
+    #[test]
     fn clear_includes_previous_removals_and_stale_expiry_cannot_release_new_undo() {
         let catalog = SessionCatalog::new(limits(3));
         start(&catalog, 1, "placeholder.invalid");
@@ -1335,6 +1443,7 @@ mod tests {
         assert!(catalog.get(ExchangeId(1)).unwrap().terminal.is_some());
         catalog.dismiss(&[ExchangeId(1)]);
         start(&catalog, 3, "three.test");
+        assert_eq!(catalog.get(ExchangeId(3)).unwrap().request_number, 3);
         assert!(catalog.restore_dismissed(&[ExchangeId(1)]).is_empty());
         assert!(catalog.lock_state().dismissed.is_empty());
     }

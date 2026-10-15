@@ -63,6 +63,15 @@ Changing the maximum applies immediately. Per-entry samples and details, query
 pages and subscription queues retain their separate bounds. See
 [the catalog model](../crates/proxy-session/src/catalog.rs) for configuration.
 
+`SessionSnapshot.request_number` exposes the immutable positive admission number.
+It is independent of exchange IDs, timestamps and observer-event sequences. The
+catalog owns the counter across proxy restarts and Clear; dismissed or evicted
+numbers are never reused. Imports receive fresh numbers in their publication
+order under the catalog lock, after validation and cancellation checks. Counter
+exhaustion rejects a new live admission (with `admission_rejected`) or the entire
+import (`RequestNumberExhausted`) before publication. The application transports
+numbers as decimal strings and sorts/filters exact `u64` values before windowing.
+
 Each snapshot may contain:
 
 - immutable original metadata and boundary heads under the selected privacy policy;

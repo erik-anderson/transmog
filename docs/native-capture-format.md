@@ -3,6 +3,16 @@
 For byte layouts, cryptographic derivation, record and index schemas, and reader
 invariants, see the [TMCap format specification](tmcap-format.md).
 
+Application saves may include an exchange-scoped `request-order` extension with
+`{"version":1,"ordinal":"42"}`. The positive decimal `u64` ordinal describes
+relative workspace admission order at save time, independently of observer-event
+sequence and exchange identity. Import uses a complete, unique set of ordinals;
+otherwise it labels its first-surviving-appearance fallback. It always assigns
+fresh workspace numbers. Entry provenance may separately retain an
+`originalNumber` object (`version`, exact decimal `value`, and `provenance`) for
+an explicit source request number, such as a SAZ session number. These optional
+extensions do not change the container schema or interpret opaque IDs as numbers.
+
 TMCap is an indexed, block-based capture container. `TMCAP001\0`, header version
 `1`, and record schema revision `1` identify the current format. Stream lifecycle
 and WebSocket/SSE content are independently indexed. Persistent SSE IDs are

@@ -15,6 +15,47 @@ the HTTP version and participates in column fitting. Selection, focus and range
 anchors use stable IDs and the complete display order; leaving the rendered
 window never deselects an entry.
 
+## Request order
+
+The leading pinned **#** column is **Request order**: a positive, workspace-local
+number assigned once when a request is admitted. Use it to refer to a request or
+restore admission order through **Lowest first** / **Highest first** in its header
+menu. Equals, At least and At most accept exact positive decimal integers, including
+values larger than JavaScript's safe integer range. Filtering and sorting happen
+across all retained matches before the visible rows are selected.
+
+Numbers survive response completion, filtering, scrolling, dismissal and Undo.
+Clear, eviction, and stopping/restarting the proxy do not reuse numbers in the same
+workspace. Gaps are normal and do not establish capture loss or causal order.
+Independent workspaces assign their own numbers. **Start time** remains a separate
+column, the default newest-first sort, and the sort used by **Follow latest**.
+
+| Source | Admission order within an import |
+| --- | --- |
+| Native TMCap | Valid saved request-order metadata, otherwise first surviving exchange appearance in the stream. Opaque IDs and wall-clock times do not determine this fallback. |
+| HAR | Entry-array order, including entries without timestamps. |
+| SAZ | Conventional numeric session order; extended Transmog archives prefer complete, unique saved request-order metadata. |
+| Chromium NetLog | Inferred surviving request-start monotonic time; missing times follow timed requests. Ties use first source appearance, then redirect hop. |
+
+Each import publishes one atomic batch after existing admissions. Reimporting a
+file, combining files with overlapping source IDs, and mixing files with live
+traffic allocate new workspace numbers without renumbering existing requests.
+Partial or circular captures retain only surviving evidence; inferred order does
+not claim that missing initial requests or records were captured.
+
+**Details → Capture source** shows the original capture, original request ID, and
+an explicit source request number with its provenance when available (for example,
+a conventional SAZ session number). An opaque ID, HAR array position, or observer
+event sequence is not presented as an original measured request number.
+**Copy request reference** in Actions or the row context menu includes the exact
+workspace number, its scope, and available source path, original ID and URL.
+Workspace numbers and runtime import namespaces alone are not portable case IDs.
+
+**View → Columns** calls the column **Request order (#)**. It supports the existing
+hide, pin, resize, fit and move actions. Upgrading an old layout inserts the pinned
+column while preserving existing widths, order, visibility, pinning and splits.
+Hiding it persists, and Reset columns restores the new default.
+
 ## Headers and sizes
 
 Header views preserve ordering and duplicate fields. Value and field byte sizes,

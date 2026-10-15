@@ -20,6 +20,187 @@ fn record(kind: CaptureRecordKind) -> CaptureRecord {
 }
 
 #[test]
+fn native_request_order_uses_saved_ordinals_or_surviving_appearance() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("order.tmcap");
+    let heads = [90, 2, 44].map(|id| {
+        let mut record = head(format!("https://example.invalid/{id}"));
+        record.exchange_id = id;
+        record
+    });
+    write_records(&path, heads.to_vec());
+    let imported = read(&path).unwrap();
+    assert_eq!(
+        imported
+            .sessions
+            .iter()
+            .map(|session| session.request_heads[0].head.target.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/90", "/2", "/44"]
+    );
+    let (_, trace, _) =
+        TraceRegistry::read(&request(&path), &AtomicBool::new(false), &|_| {}).unwrap();
+    assert!(trace.notes.iter().any(|note| note.contains("surviving")));
+    let records = heads
+        .into_iter()
+        .zip([10, 100, 2])
+        .flat_map(|(head, order)| {
+            let order = CaptureRecord {
+                exchange_id: head.exchange_id,
+                sequence: 2,
+                kind: CaptureRecordKind::Unknown {
+                    kind: "request-order".into(),
+                    payload: serde_json::json!({"version":1,"ordinal":order.to_string()}),
+                },
+            };
+            [head, order]
+        })
+        .collect();
+    write_records(&path, records);
+    let imported = read(&path).unwrap();
+    assert_eq!(
+        imported
+            .sessions
+            .iter()
+            .map(|session| session.request_heads[0].head.target.path.as_str())
+            .collect::<Vec<_>>(),
+        ["/44", "/90", "/2"]
+    );
+}
+
+fn numbered_saz(path: &Path, sessions: &[(u64, u8)]) {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
+    for &(id, second) in sessions {
+        for (side, text) in [
+            (
+                "c.txt",
+                format!("GET https://example.invalid/source/{id} HTTP/1.1\r\n\r\n"),
+            ),
+            (
+                "s.txt",
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".into(),
+            ),
+            (
+                "m.xml",
+                format!(
+                    "<Session><SessionTimers ClientBeginRequest='2026-10-14T00:00:{second:02}Z'/></Session>"
+                ),
+            ),
+        ] {
+            zip.start_file(
+                format!("raw/{id}_{side}"),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+    }
+    zip.finish().unwrap();
+}
+
+#[test]
+fn zero_source_number_is_preserved_independently_of_positive_workspace_order() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("zero.saz");
+    numbered_saz(&path, &[(0, 0)]);
+    let data = read(&path).unwrap();
+    let source = data.entries.into_values().next().unwrap();
+    assert_eq!(source.original_number.as_ref().unwrap().value, "0");
+    assert!(
+        SavedEntry {
+            source,
+            terminal_unix_millis: None
+        }
+        .valid()
+    );
+}
+
+#[tokio::test]
+async fn merged_sources_and_saved_subsets_keep_source_numbers_and_relative_order() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("numbered.saz");
+    numbered_saz(&path, &[(90, 0), (2, 20), (10, 10)]);
+    let workspace = app(root.path());
+    for operation in ["first", "second"] {
+        let mut input = request(&path);
+        input.operation_id = operation.into();
+        workspace
+            .import_trace(input, Arc::new(|_| {}))
+            .await
+            .unwrap();
+    }
+    let rows = workspace
+        .query_sessions(crate::SessionQueryInput::default())
+        .unwrap()
+        .sessions;
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.request_number.as_str())
+            .collect::<Vec<_>>(),
+        ["1", "2", "3", "4", "5", "6"]
+    );
+    assert_eq!(
+        rows.iter().map(|row| row.path.as_str()).collect::<Vec<_>>(),
+        [
+            "/source/2",
+            "/source/10",
+            "/source/90",
+            "/source/2",
+            "/source/10",
+            "/source/90"
+        ]
+    );
+    assert_ne!(rows[0].trace_id, rows[3].trace_id);
+    workspace
+        .session_service()
+        .catalog()
+        .dismiss(&[ExchangeId(u128::from_str_radix(&rows[0].id, 16).unwrap())]);
+    for (format, extension) in [
+        (crate::TraceSaveFormat::Native, "tmcap"),
+        (crate::TraceSaveFormat::SazExtended, "saz"),
+    ] {
+        let saved = root.path().join(format!("subset.{extension}"));
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    format,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let reopened = app(root.path());
+        reopened
+            .import_trace(request(&path), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let mut input = request(&saved);
+        input.operation_id = "subset".into();
+        reopened
+            .import_trace(input, Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let entries = reopened
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        assert_eq!(entries[3].request_number, "4");
+        assert_eq!(entries[3].path, "/source/10");
+        assert_eq!(entries[4].path, "/source/90");
+        assert_eq!(entries[5].path, "/source/2");
+        let detail = reopened.session_detail(&entries[3].id).unwrap();
+        assert_eq!(detail.original_id.as_deref(), Some("10"));
+        assert_eq!(detail.original_request_number.as_deref(), Some("10"));
+        assert_eq!(
+            detail.original_request_number_provenance.as_deref(),
+            Some("SAZ session number")
+        );
+    }
+}
+
+#[test]
 fn native_rejects_invalid_stream_tags_and_counts_stream_reason_storage() {
     use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
     let root = tempfile::tempdir().unwrap();

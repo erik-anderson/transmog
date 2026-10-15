@@ -162,6 +162,8 @@ pub struct SessionQueryInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
+    /// Exact workspace admission number, transported as decimal text.
+    pub request_number: String,
     /// Opaque display identifier for subsequent detail queries.
     pub id: String,
     /// Best-effort caller identity captured when the connection opened.
@@ -520,6 +522,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
             );
     let terminal = snapshot.state();
     SessionSummary {
+        request_number: snapshot.request_number.to_string(),
         top_level_navigation,
         fetch_destination,
         trace_id: None,
@@ -628,6 +631,7 @@ fn validate_fetch_destinations(values: &[String]) -> Result<(), AppError> {
 
 fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
     match column {
+        TrafficColumn::RequestNumber => row.request_number.parse().ok(),
         TrafficColumn::Status => row.status.map(u64::from),
         TrafficColumn::Pid => row.caller.process_id.map(u64::from),
         TrafficColumn::Duration => row.duration_ms,
@@ -641,7 +645,8 @@ fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
 fn numeric_column(column: TrafficColumn) -> bool {
     matches!(
         column,
-        TrafficColumn::Status
+        TrafficColumn::RequestNumber
+            | TrafficColumn::Status
             | TrafficColumn::Pid
             | TrafficColumn::Duration
             | TrafficColumn::ResponseBytes
@@ -899,6 +904,18 @@ impl PreparedFilter {
     fn new(filter: &SessionColumnFilter) -> Result<Self, AppError> {
         validate_filter(Some(&filter.value))?;
         let numeric = filter.value.parse::<u64>().ok();
+        if filter.column == TrafficColumn::RequestNumber
+            && (filter.operator == FilterOperator::Contains
+                || filter.value.is_empty()
+                || !filter.value.bytes().all(|byte| byte.is_ascii_digit())
+                || numeric.is_none_or(|value| value == 0))
+        {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "Request order requires a positive decimal integer from 1 to 18446744073709551615 and Equals, At least, or At most.",
+                false,
+            ));
+        }
         if matches!(
             filter.operator,
             FilterOperator::Minimum | FilterOperator::Maximum
@@ -1579,6 +1596,76 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(invalid.category, ErrorCategory::InvalidInput);
+    }
+
+    #[test]
+    fn request_order_sorts_and_filters_before_windowing_and_transports_exactly() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=100 {
+            service.catalog().apply(started(id));
+        }
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let query = SessionQueryInput {
+            limit: Some(2),
+            sort: Some(SessionSort {
+                column: TrafficColumn::RequestNumber,
+                direction: SortDirection::Ascending,
+            }),
+            filters: vec![SessionColumnFilter {
+                column: TrafficColumn::RequestNumber,
+                operator: FilterOperator::Minimum,
+                value: "9".into(),
+            }],
+            ..Default::default()
+        };
+        let page = query_sessions(&service, &registry, query.clone()).unwrap();
+        assert_eq!(page.total_matched, 92);
+        assert_eq!(
+            page.sessions
+                .iter()
+                .map(|row| row.request_number.as_str())
+                .collect::<Vec<_>>(),
+            ["9", "10"]
+        );
+        let descending = query_sessions(
+            &service,
+            &registry,
+            SessionQueryInput {
+                sort: Some(SessionSort {
+                    column: TrafficColumn::RequestNumber,
+                    direction: SortDirection::Descending,
+                }),
+                ..query
+            },
+        )
+        .unwrap();
+        assert_eq!(descending.sessions[0].request_number, "100");
+        let mut snapshot = service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(1))
+            .unwrap();
+        snapshot.request_number = u64::MAX;
+        let row = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!(
+            serde_json::to_value(&row).unwrap()["requestNumber"],
+            "18446744073709551615"
+        );
+        let exact = SessionColumnFilter {
+            column: TrafficColumn::RequestNumber,
+            operator: FilterOperator::Equals,
+            value: u64::MAX.to_string(),
+        };
+        assert!(PreparedFilter::new(&exact).unwrap().matches(&row));
+        for value in ["0", "-1", "1.5", "+1", "18446744073709551616", "abc"] {
+            assert!(
+                PreparedFilter::new(&SessionColumnFilter {
+                    value: value.into(),
+                    ..exact.clone()
+                })
+                .is_err()
+            );
+        }
     }
 
     #[test]

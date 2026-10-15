@@ -297,6 +297,12 @@
     "compactRows": true,
     "columns": [
       {
+        "id": "request-number",
+        "width": 72,
+        "visible": true,
+        "pinned": true
+      },
+      {
         "id": "method",
         "width": 76,
         "visible": true,
@@ -392,6 +398,12 @@
     "wrapCells": false,
     "compactRows": true,
     "columns": [
+      {
+        "id": "request-number",
+        "width": 72,
+        "visible": true,
+        "pinned": true
+      },
       {
         "id": "method",
         "width": 76,
@@ -562,6 +574,20 @@
   "headerShare": "35%",
   "columns": [
     {
+      "id": "request-number",
+      "width": 72,
+      "visible": true,
+      "pinned": true,
+      "label": "Request order",
+      "headerLabel": "#",
+      "numeric": true,
+      "placeholder": "Positive request number",
+      "widthCss": "72px",
+      "offsetCss": "0px",
+      "sortDirection": "none",
+      "sortArrow": ""
+    },
+    {
       "id": "method",
       "width": 76,
       "visible": true,
@@ -570,9 +596,10 @@
       "numeric": false,
       "placeholder": "GET, POST…",
       "widthCss": "76px",
-      "offsetCss": "0px",
+      "offsetCss": "72px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Method"
     },
     {
       "id": "status",
@@ -583,9 +610,10 @@
       "numeric": true,
       "placeholder": "HTTP status, e.g. 304",
       "widthCss": "84px",
-      "offsetCss": "76px",
+      "offsetCss": "148px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Status"
     },
     {
       "id": "process",
@@ -596,9 +624,10 @@
       "numeric": false,
       "placeholder": "Process name",
       "widthCss": "180px",
-      "offsetCss": "160px",
+      "offsetCss": "232px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Process / PID"
     },
     {
       "id": "host",
@@ -609,9 +638,10 @@
       "numeric": false,
       "placeholder": "example.com",
       "widthCss": "180px",
-      "offsetCss": "160px",
+      "offsetCss": "232px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Host"
     },
     {
       "id": "path",
@@ -622,9 +652,10 @@
       "numeric": false,
       "placeholder": "/api/",
       "widthCss": "260px",
-      "offsetCss": "160px",
+      "offsetCss": "232px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Path and query"
     },
     {
       "id": "duration",
@@ -635,9 +666,10 @@
       "numeric": true,
       "placeholder": "Milliseconds",
       "widthCss": "94px",
-      "offsetCss": "160px",
+      "offsetCss": "232px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Duration"
     },
     {
       "id": "response-bytes",
@@ -648,12 +680,20 @@
       "numeric": true,
       "placeholder": "Bytes",
       "widthCss": "112px",
-      "offsetCss": "160px",
+      "offsetCss": "232px",
       "sortDirection": "none",
-      "sortArrow": ""
+      "sortArrow": "",
+      "headerLabel": "Response size"
     }
   ],
   "settingsColumns": [
+    {
+      "id": "request-number",
+      "width": 72,
+      "visible": true,
+      "pinned": true,
+      "label": "Request order (#)"
+    },
     {
       "id": "method",
       "width": 76,
@@ -865,6 +905,7 @@
   "metadataTraceId": "",
   "metadataTraceName": "",
   "metadataSummary": "",
+  "sourceRequestIdentity": "",
   "metadataContext": "",
   "metadataNotes": [],
   "metadataError": "",

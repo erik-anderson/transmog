@@ -118,6 +118,7 @@ impl ComposerResponse {
             started_at,
         });
         let snapshot = SessionSnapshot {
+            request_number: 0,
             performance: {
                 performance
                     .protocols

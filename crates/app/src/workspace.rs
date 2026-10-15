@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TrafficColumn {
+    /// Immutable workspace admission number.
+    RequestNumber,
     /// Request verb.
     Method,
     /// HTTP response status.
@@ -91,7 +93,7 @@ impl Default for WorkspacePreferences {
     fn default() -> Self {
         use TrafficColumn::{
             ContentType, Duration, Host, Method, Path, Pid, Process, Protocol, RequestBytes,
-            ResponseBytes, StartedAt, State, Status, Url,
+            RequestNumber, ResponseBytes, StartedAt, State, Status, Url,
         };
         Self {
             sidebar_collapsed: false,
@@ -104,6 +106,7 @@ impl Default for WorkspacePreferences {
             wrap_cells: false,
             compact_rows: true,
             columns: [
+                (RequestNumber, 72),
                 (Method, 76),
                 (Status, 84),
                 (Process, 180),
@@ -124,8 +127,8 @@ impl Default for WorkspacePreferences {
             .map(|(index, (id, width))| ColumnPreference {
                 id,
                 width,
-                visible: index < 8,
-                pinned: index < 2,
+                visible: index < 9,
+                pinned: index < 3,
             })
             .collect(),
         }
@@ -133,11 +136,23 @@ impl Default for WorkspacePreferences {
 }
 
 impl WorkspacePreferences {
+    /// Supported upgrade from the complete fourteen-column layout.
+    pub(crate) fn migrate_columns(&mut self) {
+        let ids: std::collections::BTreeSet<_> =
+            self.columns.iter().map(|column| column.id).collect();
+        if self.columns.len() == 14
+            && ids.len() == 14
+            && !ids.contains(&TrafficColumn::RequestNumber)
+            && self.columns.iter().any(|column| column.visible)
+        {
+            self.columns.insert(0, Self::default().columns.remove(0));
+        }
+    }
     pub(crate) fn is_valid(&self) -> bool {
         let ids: std::collections::BTreeSet<_> =
             self.columns.iter().map(|column| column.id).collect();
-        self.columns.len() == 14
-            && ids.len() == 14
+        self.columns.len() == 15
+            && ids.len() == 15
             && self.columns.iter().any(|column| column.visible)
             && self
                 .columns

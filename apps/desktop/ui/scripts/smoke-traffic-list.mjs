@@ -24,6 +24,35 @@ export async function smokeTrafficList(client,screenshot) {
     assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native header activation selected traffic');
     await key('Escape','Escape',27);await wait(`!${t}.columnMenu.matches(':popover-open')`);
   }
+  // Request order uses real backend sorting and keeps its exact source association.
+  await client.evaluate(`${t}.getRootNode().getElementById('header-request-number').querySelector('button').focus()`);
+  await key('Enter','Enter',13);await wait(`${t}.columnMenu.matches(':popover-open')`);
+  await key('Enter','Enter',13);
+  await wait(`${t}.sort.column==='request-number' && !${t}.queryPending && ${t}.sessions[0]?.requestNumber==='1'`);
+  assert.equal(await client.evaluate(`${t}.getRootNode().getElementById('header-request-number').getAttribute('aria-sort')`),'ascending');
+  assert.deepEqual(await client.evaluate(`${t}.sessions.slice(0,3).map(row=>row.requestNumber)`),['1','2','3']);
+  await client.evaluate(`${t}.applySort('descending','request-number')`);
+  await wait(`!${t}.queryPending && ${t}.sort.direction==='descending'`);
+  // Explicit sorting preserves the viewport's request anchor; inspect the full
+  // ordering before deliberately revealing its leading entry for screenshots.
+  const numberedId=await client.evaluate(`${t}.virtualList.ids[0]`);
+  await client.evaluate(`${t}.revealCurrent(${JSON.stringify(numberedId)})`);
+  await wait(`!${t}.queryPending && ${t}.sessions[0]?.requestNumber==='20000'`);
+  const numberedDetail=await client.evaluate(`window.__TAURI_INTERNALS__.invoke('session_detail',{id:${JSON.stringify(numberedId)}})`);
+  assert.equal(numberedDetail.requestNumber,'20000');assert.equal(numberedDetail.originalRequestNumber,'20000');
+  if(screenshot)for(const [width,height] of [[1440,900],[960,720],[800,600]]){
+    await client.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    const image=await client.call('Page.captureScreenshot',{format:'png'});
+    await writeFile(screenshot.replace('.png','-request-order-'+width+'.png'),Buffer.from(image.data,'base64'));
+  }
+  // A 640x480 CSS viewport at 125% device scale occupies an 800x600 surface.
+  await client.call('Emulation.setDeviceMetricsOverride',{width:640,height:480,deviceScaleFactor:1.25,mobile:false});
+  assert.equal(await client.evaluate(`(()=>{const h=${t}.getRootNode().getElementById('header-request-number'),r=h.getBoundingClientRect();return h.querySelector('button').getAttribute('aria-label')==='Request order' && r.left>=0 && r.right<=innerWidth;})()`),true);
+  if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-request-order-scaled.png'),Buffer.from(image.data,'base64'));}
+  await client.call('Emulation.clearDeviceMetricsOverride');
+  await client.evaluate(`${t}.applySort('descending','started-at')`);
+  await client.evaluate(`${t}.revealCurrent(${JSON.stringify(ids[0])})`);
+  await wait(`!${t}.queryPending && ${t}.sessions.every(row=>!row.loading)`);
   // Drag the actual native scrollbar thumb into the middle of the full capture.
   const scrollbar=await client.evaluate(`(()=>{const s=${t}.sessionScroller,r=s.getBoundingClientRect();return {x:r.right-(s.offsetWidth-s.clientWidth)/2,start:r.top+(s.offsetWidth-s.clientWidth)*1.5,end:r.top+r.height/2};})()`);
   await client.call('Input.dispatchMouseEvent',{type:'mousePressed',x:scrollbar.x,y:scrollbar.start,button:'left',clickCount:1});
@@ -38,6 +67,7 @@ export async function smokeTrafficList(client,screenshot) {
   await click(ids[1],8);await wait(`${t}.selectedTrafficCount===5001`);
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===14999 && !${t}.removingTraffic`);
   await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`);
+  assert.equal(await client.evaluate(`window.__TAURI_INTERNALS__.invoke('session_detail',{id:${JSON.stringify(numberedId)}}).then(detail=>detail.requestNumber)`),'20000');
   await client.evaluate(`${t}.trafficTable.focus()`);await key('a','KeyA',65,2);await wait(`${t}.selectedTrafficCount===20000`);
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
   await client.evaluate(`${t}.trafficTable.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===20000 && !${t}.removingTraffic`);

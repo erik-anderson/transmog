@@ -123,6 +123,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable metadataTraceId='';
   @observable metadataTraceName='';
   @observable metadataSummary='';
+  @observable sourceRequestIdentity='';
   @observable metadataContext='';
   @observable metadataNetworkTitle='';
   @observable metadataNetworkSummary='';
@@ -381,7 +382,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async refreshTimings():Promise<void> {
     const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
-    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;const source=detail.traceId??'';this.detailsUrl=detail.requests[0]?.target??this.detailsUrl;if(source!==this.detailsSourceId){this.detailsSourceId=source;this.detailsHasSource=!!source;if(source)void this.loadDetailsSource(source);}const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;this.sourceRequestIdentity='Workspace request '+detail.requestNumber+(detail.originalId?' · Original request ID: '+detail.originalId:'')+(detail.originalRequestNumber?' · Original number: '+detail.originalRequestNumber+' ('+detail.originalRequestNumberProvenance+')':'');const source=detail.traceId??'';this.detailsUrl=detail.requests[0]?.target??this.detailsUrl;if(source!==this.detailsSourceId){this.detailsSourceId=source;this.detailsHasSource=!!source;if(source)void this.loadDetailsSource(source);}const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
     catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
     finally {if(generation===this.timingGeneration)this.timingBusy=false;}
   }
@@ -394,6 +395,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch(error:unknown){if(generation===this.metadataGeneration)this.metadataError='Capture source unavailable: '+describeError(error);}
   }
   async showTraceMetadata(id?:string):Promise<void> {
+    this.sourceRequestIdentity='';
     const active=(this.getRootNode() as ShadowRoot).activeElement;
     this.metadataReturnFocus=active instanceof HTMLElement?(this.filesMenu.contains(active)?this.filesMenuButton:active):null;
     this.closePopover(this.filesMenu,this.filesMenuButton);
@@ -436,9 +438,10 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.scheduleViewport();
   }
   selectedSessionIdChanged():void { this.rebuildRows(this.sessions); }
+  private requestNumberDigits=1;
   private rebuildColumns():void {
-    this.columns = displayColumns(this.preferences.columns).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
-    this.settingsColumns = this.preferences.columns.map((column) => ({...column,label:columnDefinitions.find((definition) => definition.id === column.id)!.label}));
+    this.columns = displayColumns(this.preferences.columns.map(column=>column.id==='request-number'&&column.width===72?{...column,width:Math.max(column.width,this.requestNumberDigits*8+24)}:column)).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
+    this.settingsColumns = this.preferences.columns.map((column) => ({...column,label:column.id==='request-number'?'Request order (#)':columnDefinitions.find((definition) => definition.id === column.id)!.label}));
     this.tableWidth = this.columns.reduce((sum,column) => sum+column.width,0)+'px';
     this.rebuildRows(this.sessions);
   }
@@ -457,6 +460,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private releaseView(view:TrafficView|null):void {if(view)void invoke('release_traffic_view',{viewId:view.id}).catch(()=>{});}
   private cacheRows(rows:SessionSummary[]):void {
+    const digits=Math.max(this.requestNumberDigits,...rows.map(row=>row.requestNumber?.length??1));
+    if(digits>this.requestNumberDigits){this.requestNumberDigits=digits;this.rebuildColumns();}
     for(const row of rows){this.rowCache.delete(row.id);this.rowCache.set(row.id,row);}
     // Only metadata near the viewport is retained by the renderer. Selection keeps IDs.
     while(this.rowCache.size>1024){const first=this.rowCache.keys().next().value;if(first===undefined)break;this.rowCache.delete(first);}
@@ -584,6 +589,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.ascendingLabel = id === 'started-at' ? 'Oldest first' : id === 'duration' ? 'Shortest first' : id.includes('bytes') ? 'Smallest first' : this.menuColumn.numeric ? 'Lowest first' : 'Sort A–Z';
     this.descendingLabel = id === 'started-at' ? 'Newest first' : id === 'duration' ? 'Longest first' : id.includes('bytes') ? 'Largest first' : this.menuColumn.numeric ? 'Highest first' : 'Sort Z–A';
     this.pinLabel = this.preferences.columns.find((column) => column.id === id)!.pinned ? 'Unpin column' : 'Pin column';
+    this.filterInput.setCustomValidity('');
     this.filterDraft = this.filters.find((filter) => filter.column === id)?.value ?? '';
     this.$flushUpdates();
     this.filterInput.value = this.filterDraft;
@@ -610,9 +616,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (moved) columns.splice(to,0,{...moved,pinned});
     this.patchPreferences({columns});
   }
+  clearFilterValidity():void {this.filterInput.setCustomValidity('');}
   async applyFilter(event:Event):Promise<void> {
     event.preventDefault(); const value = this.filterInput.value.trim(); if (!value) return;
     const operator = this.filterOperator.value as TrafficFilter['operator'];
+    if(this.menuColumn.id==='request-number' && (!/^[0-9]+$/.test(value) || BigInt(value)<1n || BigInt(value)>18446744073709551615n)){this.filterInput.setCustomValidity('Enter a positive decimal request number from 1 to 18446744073709551615.');this.filterInput.reportValidity();return;}
+    this.filterInput.setCustomValidity('');
     const others = this.filters.filter((filter) => filter.column !== this.menuColumn.id || filter.operator !== operator);
     if (others.length >= 14) { this.diagnostic = 'Remove a filter before adding another (maximum 14).'; return; }
     this.clearTrafficSelection();
@@ -805,12 +814,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   cancelColumnResize(event:PointerEvent):void { if (this.resize?.pointer !== event.pointerId) return; const {id,previous} = this.resize; this.resize = null; this.setColumnWidth(id,previous,true); }
   resizeColumnWithKeyboard(id:ColumnId,event:KeyboardEvent):void {
     if (event.key === 'Home') { event.preventDefault(); this.fitColumn(id); }
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); this.setColumnWidth(id,this.preferences.columns.find((column) => column.id === id)!.width+(event.key === 'ArrowRight' ? 1 : -1)*(event.shiftKey ? 40 : 10),true); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); this.setColumnWidth(id,this.columns.find((column) => column.id === id)!.width+(event.key === 'ArrowRight' ? 1 : -1)*(event.shiftKey ? 40 : 10),true); }
   }
   fitColumn(id:ColumnId):void {
     const context = new OffscreenCanvas(1,1).getContext('2d');
     if (!context) return; context.font = getComputedStyle(this.trafficTable).font || '13px Segoe UI';
-    const width = Math.max(context.measureText(columnDefinitions.find((column) => column.id === id)!.label).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)+(id==='protocol'&&row.activeStreamLabel?context.measureText(row.activeStreamLabel).width+18:0)))+38;
+    const width = Math.max(context.measureText((id==='request-number'?'#':columnDefinitions.find((column) => column.id === id)!.label)).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)+(id==='protocol'&&row.activeStreamLabel?context.measureText(row.activeStreamLabel).width+18:0)))+38;
     this.setColumnWidth(id,width,true);
   }
   private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(32,Math.min(1200,width)))} : column)},committed); }
@@ -1082,6 +1091,16 @@ export class TrafficWorkspace extends WorkspaceElement {
     finally{this.commandBusy=false;}
   }
   closeCommand():void {this.commandDialog.close();}
+  async copyRequestReference():Promise<void> {
+    this.trafficMenu.hidePopover();
+    const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;if(!id)return;
+    try{const detail=await invoke<SessionDetail>('session_detail',{id});
+      const traces=detail.traceId?await invoke<TraceMetadata[]>('trace_metadata_list'):[];
+      const trace=traces.find(trace=>trace.id===detail.traceId);
+      const text='Workspace request '+detail.requestNumber+' (workspace-local)\n'+(trace?'Capture: '+trace.name+'\nPath: '+trace.path+'\n':'Live traffic\n')+'Request ID: '+(detail.originalId??detail.id)+(detail.originalRequestNumber?'\nOriginal number: '+detail.originalRequestNumber+' ('+detail.originalRequestNumberProvenance+')':'')+'\n'+(detail.requests[0]?.target??'');
+      await navigator.clipboard.writeText(text);this.diagnostic='Request reference copied.';
+    }catch(error:unknown){this.diagnostic='Request reference could not be copied: '+describeError(error);}
+  }
   async copyAllHeaders():Promise<void> {
     if(!this.selectedSessionId||this.commandBusy)return;this.trafficMenu.hidePopover();this.commandBusy=true;
     try {const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;const text=await invoke<string>('copy_all_headers',{id});await navigator.clipboard.writeText(text);this.diagnostic='Request and response headers copied.';}

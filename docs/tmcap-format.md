@@ -210,6 +210,21 @@ duplicates. See `StoredRecord`, the payload types, `store`, and `load` in
 Unknown kind strings and their JSON payloads are preserved; unsupported record
 revisions are rejected.
 
+Application saves may emit the exchange-scoped `request-order` extension:
+`{"version":1,"ordinal":"42"}`. `ordinal` is a decimal string representing a
+positive `u64` workspace admission number at save time. It is independent of the
+record's event sequence, exchange ID and wall clock. Application import validates
+the version, integer range, scope and single occurrence per exchange. Complete,
+unique ordinals determine the surviving relative order; otherwise import labels
+its first-surviving-appearance fallback. Import assigns fresh workspace numbers
+and does not restore the old workspace's numbering namespace.
+
+The application `entry-provenance.source` object may additionally carry
+`originalNumber` with `version: 1`, a decimal unsigned `u64` string `value`, and a
+bounded `provenance` description. This is an explicit source number (including zero
+when recorded by that source), separate from request order. Missing fields retain
+legacy behavior; an opaque original ID is never converted into this number.
+
 The `public-certificate` extension has `{ "sha256": lowercase_hex, "der": [...] }`,
 uses exchange ID zero, and precedes references in TLS performance evidence. Its
 digest must match, and DER must parse and reencode as exactly one X.509

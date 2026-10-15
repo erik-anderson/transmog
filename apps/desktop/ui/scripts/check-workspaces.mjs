@@ -13,6 +13,7 @@ import { build, Protocol } from '@microsoft/webui';
 import { checkHexViewer } from './check-hex-viewer.mjs';
 import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
+import {checkRequestOrder,checkRequestOrderModel} from './check-request-order.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTraceSave } from './check-trace-save.mjs';
@@ -29,6 +30,7 @@ import { checkLoopback } from './check-loopback.mjs';
 const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.json', import.meta.url))('playwright');
 const root = fileURLToPath(new URL('../', import.meta.url));
 await checkUserAgentPresets(root);
+await checkRequestOrderModel(root);
 const initial = JSON.parse(await readFile(resolve(root, 'src/initial-state.json'), 'utf8'));
 const scriptDeclarations = await readFile(resolve(root,'../../../crates/proxy-script/generated/transmog-script.d.ts'),'utf8');
 const metadata = JSON.parse(await readFile(resolve(root, 'dist/client-metafile.json'), 'utf8'));
@@ -64,13 +66,13 @@ await page.route('https://workspace.test/**', async (route) => {
 await page.addInitScript((configuration) => {
   const {workspace,networkProfiles,scriptDeclarations}=configuration;
   const caller = { kind: 'local-process', processName: 'Fixture', processId: 42 };
-  const summary = (id, index = 0) => ({ id, caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
+  const summary = (id, index = 0) => ({ id, requestNumber:String(index+1), caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     if(state.composerResponseDetail?.id===id)return structuredClone(state.composerResponseDetail);
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
+    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   if(new URL(location.href).searchParams.has('empty')){state.emptyExample=state.sessions[0];state.sessions=[];}
@@ -222,14 +224,14 @@ await page.addInitScript((configuration) => {
           if (state.deferFocus && args.query.focusId) { state.deferFocus=false; state.focusPending=true; await new Promise(resolve=>state.releaseFocus=resolve); }
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
-          const key = (row, column) => ({method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
+          const key = (row, column) => ({'request-number':BigInt(row.requestNumber??'0'),method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
           const dismissedQuery=new Set(state.dismissedIds??[]),matchingQuery=args.query.searchResultId?new Set(state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids??[]):null;
           let rows = structuredClone(state.sessions).filter(row => (!matchingQuery||matchingQuery.has(row.id)) && !dismissedQuery.has(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
           if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
-          for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=Number(filter.value):filter.operator==='maximum'?key(row,filter.column)<=Number(filter.value):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
+          for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='maximum'?key(row,filter.column)<=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
           let offset=args.query.offset??0;
-          if (sort) rows.sort((a,b) => {const left=key(a,sort.column),right=key(b,sort.column);const result=typeof left==='number'?left-right:String(left).localeCompare(String(right));return (sort.direction==='descending'?-result:result)||a.id.localeCompare(b.id);});
+          if (sort) rows.sort((a,b) => {const left=key(a,sort.column),right=key(b,sort.column);const result=typeof left==='bigint'?(left<right?-1:left>right?1:0):typeof left==='number'?left-right:String(left).localeCompare(String(right));return (sort.direction==='descending'?-result:result)||a.id.localeCompare(b.id);});
           if (args.query.focusId) {
             const index=rows.findIndex(row=>row.id===args.query.focusId);
             if (index<0) throw new Error('Source no longer in Traffic.');
@@ -554,7 +556,7 @@ try {
   await view('traffic');
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.sessions=state.reviewOriginalRows;delete state.reviewOriginalRows;const traffic=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');traffic.clearTrafficSelection();await traffic.refreshSessions(undefined,true);});
   assert.equal(await page.evaluate(() => CSS.supports('width','attr(data-width type(<length>))')), true, 'Typed CSS attributes required by resizable panels are unavailable');
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['method','status','process','host','path','duration','response-bytes','protocol']);
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers => headers.map(header=>header.dataset.columnId)), ['request-number','method','status','process','host','path','duration','response-bytes','protocol']);
   assert.match(await page.locator('tr[data-session-id="first"] td[data-column-id="process"]').textContent(), /Fixture \(42\)/);
   assert.equal(await page.locator('tr[data-session-id="cached"]').getAttribute('data-tone'),'not-modified');
   assert.equal(await page.locator('tr[data-session-id="first"] .navigation-badge').textContent(),'Page');
@@ -613,19 +615,19 @@ try {
   await page.mouse.move(pathHeader.x+pathHeader.width/2,pathHeader.y+12,{steps:8});
   assert.equal(await page.locator('#header-path').getAttribute('data-drop-target'),'','Column drop target is not visible');
   await page.mouse.up();
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes','protocol']);
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['request-number','method','status','host','path','process','duration','response-bytes','protocol']);
   await page.waitForTimeout(300); // Let the accidental post-drag click guard expire.
   const dragCancelBounds=await page.locator('#header-process .column-trigger').boundingBox();
   await page.mouse.move(dragCancelBounds.x+15,dragCancelBounds.y+12); await page.mouse.down();
   await page.mouse.move(dragCancelBounds.x-50,dragCancelBounds.y+12,{steps:5}); await page.keyboard.press('Escape'); await page.mouse.up();
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['method','status','host','path','process','duration','response-bytes','protocol'],'Cancelling a column drag changed the layout');
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.map(header=>header.dataset.columnId)),['request-number','method','status','host','path','process','duration','response-bytes','protocol'],'Cancelling a column drag changed the layout');
   await page.waitForTimeout(300);
   await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').setColumnWidth('method',32,true));
   assert.ok(Math.abs(await page.locator('#header-method').evaluate(header=>header.getBoundingClientRect().width)-32)<1,'Minimum column width is stretched by table or header content');
   await methodEdge.press('Home');
   const openColumn = async id => { await page.locator('#header-'+id+' .column-trigger').click(); await page.locator('#column-actions').waitFor({state:'visible'}); };
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move left',exact:true}).click();
-  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.slice(0,3).map(header=>header.dataset.columnId)),['method','host','status'],'Moving across pinned columns did not change visible order');
+  assert.deepEqual(await page.locator('.traffic-table th').evaluateAll(headers=>headers.slice(0,4).map(header=>header.dataset.columnId)),['request-number','method','host','status'],'Moving across pinned columns did not change visible order');
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Move right',exact:true}).click();
   await openColumn('host'); await page.locator('#column-actions').getByRole('button',{name:'Unpin column',exact:true}).click();
   await openColumn('status'); await page.locator('#column-actions').getByRole('button',{name:'Highest first',exact:false}).click();
@@ -2277,6 +2279,7 @@ try {
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   await checkStreams(page,root);
   await checkTrafficPresentation(page,root);
+  await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);
   await page.goto('https://workspace.test/?empty');
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);

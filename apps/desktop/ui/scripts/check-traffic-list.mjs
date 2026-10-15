@@ -7,7 +7,7 @@ export async function checkTrafficList(page,outputDirectory) {
   for(const count of [10_000,50_000,100_000]){
     await page.evaluate(async count=>{
       const state=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=state.sessions[0];
-      state.sessions=Array.from({length:count},(_,index)=>({...seed,id:'virtual-'+index,startedAt:index,path:'/virtual/'+index,url:'http://example.test/virtual/'+index,searchBody:index%5000===0?'VirtualNeedle':'other',topLevelNavigation:false}));
+      state.sessions=Array.from({length:count},(_,index)=>({...seed,id:'virtual-'+index,requestNumber:String(index+1),startedAt:index,path:'/virtual/'+index,url:'http://example.test/virtual/'+index,searchBody:index%5000===0?'VirtualNeedle':'other',topLevelNavigation:false}));
       state.dismissedIds=[];t.sort={column:'started-at',direction:'ascending'};t.sortLabel='Oldest first';t.followLatest=true;t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);
     },count);
     await settle();
@@ -19,6 +19,7 @@ export async function checkTrafficList(page,outputDirectory) {
       await page.evaluate(fraction=>{const t=document.querySelector('app-shell').traffic;t.sessionScroller.scrollTop=fraction*(t.sessionScroller.scrollHeight-t.sessionScroller.clientHeight);t.sessionScrolled();},fraction);
       await page.waitForFunction(fraction=>{const t=document.querySelector('app-shell').traffic;return fraction===0?t.sessions[0]?.id==='virtual-0':fraction===1?t.sessions.at(-1)?.id==='virtual-'+(t.totalMatched-1):t.sessions.some(row=>row.index>t.totalMatched*.49&&row.index<t.totalMatched*.51);},fraction);
       await settle();
+      assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.sessions.every(row=>row.requestNumber===String(row.index+1))),true,'Virtual rows changed request numbers');
     }
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.query_traffic_view),before,'Scrolling rebuilt the query projection');
     stats.push(measured);

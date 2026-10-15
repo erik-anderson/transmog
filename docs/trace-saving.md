@@ -1,5 +1,16 @@
 # Saving and inspecting traces
 
+Request order (**#**) is local to the workspace; see
+[Request order](traffic-inspection.md#request-order) for numbering and import
+fallbacks. Saving a subset preserves source associations and explicit source
+numbers, while reopening assigns fresh workspace numbers. Native saves carry
+versioned request-order ordinals so a saved investigation retains deterministic
+relative order even with equal or backward timestamps. Extended SAZ carries the
+same ordering and original numeric provenance in its Transmog evidence. Older
+native and extended-SAZ files remain readable without these optional fields.
+HAR and conventional third-party SAZ consumers may discard these extensions;
+workspace numbers alone are never portable source references.
+
 Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. It saves
 all retained entries across the list and search results; removed entries are excluded.
 Undo a removal before saving if those entries should be included. The file dialog

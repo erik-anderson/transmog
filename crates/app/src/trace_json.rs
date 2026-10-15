@@ -563,6 +563,7 @@ fn har(
             TraceEntry {
                 trace_id: trace_id.into(),
                 original_id: (position + 1).to_string(),
+                original_number: None,
                 raw_headers: None,
                 timings,
                 protocol_known: !string(req, "httpVersion").is_empty(),
@@ -877,6 +878,30 @@ mod tests {
         assert!(detail.performance.points.is_empty());
         assert_eq!(detail.saved_evidence["NetLog elapsed (ms)"], "4");
         assert_eq!(detail.bodies[1].observed_bytes, 4);
+    }
+
+    #[test]
+    fn netlog_request_order_uses_request_evidence_instead_of_source_ids() {
+        let document = json!({"constants":{},"events":[
+            {"source":{"id":2,"type":"URL_REQUEST"},"type":"URL_REQUEST_START_JOB","phase":"PHASE_BEGIN","time":"20","params":{"url":"https://example.invalid/later"}},
+            {"source":{"id":90,"type":"URL_REQUEST"},"type":"URL_REQUEST_START_JOB","phase":"PHASE_BEGIN","time":"10","params":{"url":"https://example.invalid/earlier"}},
+            {"source":{"id":1,"type":"URL_REQUEST"},"type":"URL_REQUEST_START_JOB","phase":"PHASE_BEGIN","params":{"url":"https://example.invalid/unknown"}}
+        ]});
+        let data =
+            netlog::import(&document, 1, "source", &AtomicBool::new(false), &|_, _| {}).unwrap();
+        assert_eq!(
+            data.sessions
+                .iter()
+                .map(|row| row.metadata.original_target.as_target().path.as_str())
+                .collect::<Vec<_>>(),
+            ["/earlier", "/later", "/unknown"]
+        );
+        assert!(data.notes.iter().any(|note| note.contains("inferred")));
+        assert!(
+            data.entries
+                .values()
+                .all(|entry| entry.original_number.is_none())
+        );
     }
     #[tokio::test]
     async fn har_security_summaries_are_visible_without_inventing_certificate_bytes() {

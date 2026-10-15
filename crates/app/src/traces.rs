@@ -156,11 +156,22 @@ pub(crate) async fn inspect(request: crate::ImportRequest) -> Result<TraceInspec
 pub(crate) struct TraceEntry {
     pub trace_id: String,
     pub original_id: String,
+    /// Explicit source number, never inferred from an opaque exchange ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_number: Option<SourceRequestNumber>,
     pub raw_headers: Option<String>,
     pub timings: BTreeMap<String, String>,
     pub protocol_known: bool,
     pub target_known: bool,
     pub diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct SourceRequestNumber {
+    pub version: u8,
+    pub value: String,
+    pub provenance: String,
 }
 
 #[derive(Default)]
@@ -486,6 +497,9 @@ impl TraceRegistry {
                 transmog_session::CatalogError::ImportCanceled => {
                     unavailable("Trace import canceled")
                 }
+                transmog_session::CatalogError::RequestNumberExhausted => {
+                    invalid("This workspace has no request numbers left. Open the capture in a new workspace.")
+                }
                 _ => invalid("The viewer's imported-entry limit was reached"),
             })?;
         Ok(TraceImportResult {
@@ -576,6 +590,7 @@ fn import_saz(
     }
     let mut head_bytes = 0_usize;
     let mut omitted_body_issues = 0_usize;
+    let mut request_order = HashMap::new();
     for source in index.trace_sources {
         head_bytes += serde_json::to_vec(&source)
             .map_err(|_| invalid("Invalid SAZ source"))?
@@ -596,6 +611,17 @@ fn import_saz(
             continue;
         }
         let evidence = session.evidence.take();
+        if let Some(order) = evidence
+            .as_ref()
+            .and_then(|evidence| evidence.request_order.as_ref())
+        {
+            request_order.insert(
+                position,
+                order
+                    .parse::<u64>()
+                    .map_err(|_| invalid("Invalid saved request order"))?,
+            );
+        }
         if let Some(evidence) = &evidence {
             head_bytes += serde_json::to_vec(evidence)
                 .map_err(|_| invalid("Invalid SAZ evidence"))?
@@ -1157,6 +1183,19 @@ fn import_saz(
         } else {
             TraceEntry {
                 trace_id: trace_id.into(),
+                original_number: if evidence.is_none() {
+                    session
+                        .source_id
+                        .parse::<u64>()
+                        .ok()
+                        .map(|value| SourceRequestNumber {
+                            version: 1,
+                            value: value.to_string(),
+                            provenance: "SAZ session number".into(),
+                        })
+                } else {
+                    None
+                },
                 original_id: evidence
                     .as_ref()
                     .and_then(|evidence| evidence.native_exchange_id.clone())
@@ -1180,6 +1219,7 @@ fn import_saz(
             }
         };
         result.entries.insert(format!("{:032x}", id.0), entry);
+        snapshot.request_number = request_order.get(&position).copied().unwrap_or_default();
         result.sessions.push(snapshot);
     }
     if omitted_body_issues > 0 {
@@ -1188,6 +1228,16 @@ fn import_saz(
         ));
     }
     result.index_bytes = head_bytes;
+    let orders = result
+        .sessions
+        .iter()
+        .map(|session| session.request_number)
+        .collect::<HashSet<_>>();
+    if !orders.contains(&0) && orders.len() == result.sessions.len() {
+        result
+            .sessions
+            .sort_by_key(|session| session.request_number);
+    }
     Ok(result)
 }
 
@@ -1251,6 +1301,7 @@ fn generated_connection_outcomes(
 
 #[derive(Default)]
 struct NativeSession {
+    source_order: Option<u64>,
     stream: Option<transmog_core::stream::StreamState>,
     stream_history: transmog_core::stream::StreamHistory,
     provenance: Option<SavedEntry>,
@@ -1302,6 +1353,7 @@ fn import_native(
     )
     .map_err(AppError::from)?;
     let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
+    let mut appearance = Vec::new();
     let mut context = Value::Null;
     let mut sources = BTreeMap::new();
     let mut budget = 0_usize;
@@ -1354,6 +1406,7 @@ fn import_native(
         let row = match rows.entry(frame.record.exchange_id) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
+                appearance.push(*entry.key());
                 // Even an empty exchange retains a row, snapshot and provenance.
                 charge_native_index(
                     &mut budget,
@@ -1401,7 +1454,17 @@ fn import_native(
             .notes
             .push("The source did not have a complete, consistent seal.".into());
     }
-    for (position, (original, row)) in rows.into_iter().enumerate() {
+    let explicit_order = rows
+        .values()
+        .filter_map(|row| row.source_order)
+        .collect::<HashSet<_>>();
+    if explicit_order.len() == rows.len() && rows.values().all(|row| row.source_order.is_some()) {
+        appearance.sort_by_key(|id| rows[id].source_order);
+    } else {
+        result.notes.push("Request order follows first surviving exchange appearance in this file; it does not establish complete original sequencing.".into());
+    }
+    for (position, original) in appearance.into_iter().enumerate() {
+        let row = rows.remove(&original).expect("indexed exchange");
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
@@ -1417,7 +1480,9 @@ fn validate_native_scope(record: &transmog_capture::CaptureRecord) -> Result<(),
         CaptureRecordKind::Unknown { kind, .. } => match kind.as_str() {
             "trace-metadata" | "trace-source" | "circular-retention" | "public-certificate"
             | "connection-context" => Some(true),
-            "body-representation" | "body-completed" | "entry-provenance" => Some(false),
+            "body-representation" | "body-completed" | "entry-provenance" | "request-order" => {
+                Some(false)
+            }
             _ => None, // Future extensions can belong to either scope.
         },
         _ => Some(false),
@@ -1561,6 +1626,21 @@ fn apply_native_frame(
             }
             *budget = budget.saturating_add(bytes);
             row.provenance = Some(provenance);
+        }
+        CaptureRecordKind::Unknown { kind, payload } if kind == "request-order" => {
+            let order = payload["ordinal"]
+                .as_str()
+                .filter(|value| {
+                    value.len() <= 20 && value.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .and_then(|value| value.parse::<u64>().ok());
+            if payload["version"].as_u64() != Some(1)
+                || order.is_none_or(|value| value == 0)
+                || row.source_order.is_some()
+            {
+                return Err(invalid("Invalid or repeated saved request order"));
+            }
+            row.source_order = order;
         }
         CaptureRecordKind::Performance(evidence) => {
             if !evidence.valid() {
@@ -2046,6 +2126,7 @@ fn append_native(
         TraceEntry {
             trace_id: trace_id.into(),
             original_id: format!("{original:032x}"),
+            original_number: None,
             raw_headers: None,
             timings: BTreeMap::new(),
             protocol_known,
@@ -2208,6 +2289,7 @@ fn empty_snapshot(
         import_failure(metadata.clone())
     };
     SessionSnapshot {
+        request_number: 0,
         imported: true,
         performance: transmog_core::performance::PerformanceEvidence::default(),
         exchange_id: metadata.exchange_id,
@@ -2361,6 +2443,14 @@ impl SavedEntry {
     fn valid(&self) -> bool {
         let source = &self.source;
         source.trace_id.len() <= 256
+            && source.original_number.as_ref().is_none_or(|number| {
+                number.version == 1
+                    && number.value.len() <= 20
+                    && number.value.bytes().all(|byte| byte.is_ascii_digit())
+                    && number.value.parse::<u64>().is_ok()
+                    && !number.provenance.is_empty()
+                    && number.provenance.len() <= 256
+            })
             && source.original_id.len() <= 128
             && source
                 .raw_headers

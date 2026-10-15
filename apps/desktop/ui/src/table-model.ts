@@ -2,6 +2,7 @@ import type { ColumnId, ColumnPreference, SessionSummary, WorkspacePreferences }
 import initialState from './initial-state.json';
 
 export const columnDefinitions: ReadonlyArray<{id: ColumnId; label: string; numeric: boolean; placeholder: string}> = [
+  {id:'request-number', label:'Request order', numeric:true, placeholder:'Positive request number'},
   {id:'method', label:'Method', numeric:false, placeholder:'GET, POST…'},
   {id:'status', label:'Status', numeric:true, placeholder:'HTTP status, e.g. 304'},
   {id:'process', label:'Process / PID', numeric:false, placeholder:'Process name'},
@@ -24,17 +25,21 @@ export function defaultWorkspace(): WorkspacePreferences {
 
 export function normalizeWorkspace(value: WorkspacePreferences | undefined): WorkspacePreferences {
   const fallback = defaultWorkspace();
-  if (!value || value.columns?.length !== columnDefinitions.length) return fallback;
+  if (!value || !Array.isArray(value.columns)) return fallback;
+  if ([value.listSplit,value.requestSplit,value.requestBodySplit,value.responseBodySplit,value.autoresponseSplit].some(split=>split!==undefined&&(!Number.isInteger(split)||split<15||split>85))) return fallback;
   const known = new Set(columnDefinitions.map((column) => column.id));
-  if (new Set(value.columns.map((column) => column.id)).size !== known.size || value.columns.some((column) => !known.has(column.id))) return fallback;
-  return { ...fallback, ...value, wrapCells:false, columns:value.columns.map((column) => ({...column,width:Math.max(32,Math.min(1200,column.width))})) };
+  const ids = new Set(value.columns.map((column) => column.id));
+  if (ids.size !== value.columns.length || value.columns.some((column) => !known.has(column.id) || Object.keys(column).some(key=>!['id','width','visible','pinned'].includes(key)) || !Number.isInteger(column.width) || column.width<32 || column.width>1200 || typeof column.visible!=='boolean' || typeof column.pinned!=='boolean') || !value.columns.some(column=>column.visible)) return fallback;
+  const legacy = value.columns.length === known.size-1 && !ids.has('request-number');
+  if (!legacy && ids.size !== known.size) return fallback;
+  return { ...fallback, ...value, wrapCells:false, columns:legacy ? [fallback.columns[0]!,...value.columns] : value.columns.map(column=>({...column})) };
 }
 
 export function displayColumns(columns: ColumnPreference[]) {
   let offset = 0;
   return [...columns.filter((column) => column.visible && column.pinned), ...columns.filter((column) => column.visible && !column.pinned)].map((column) => {
     const definition = columnDefinitions.find((definition) => definition.id === column.id)!;
-    const result = {...column,...definition,widthCss:column.width+'px',offsetCss:offset+'px'};
+    const result = {...column,...definition,headerLabel:column.id==='request-number'?'#':definition.label,widthCss:column.width+'px',offsetCss:offset+'px'};
     if (column.pinned) offset += column.width;
     return result;
   });
@@ -65,6 +70,7 @@ export function statusTone(row: ResponseStatus): string {
 
 export function cellText(row: SessionSummary, column: ColumnId): string {
   switch (column) {
+    case 'request-number': return row.requestNumber ?? '—';
     case 'method': return row.method;
     case 'status': return statusText(row);
     case 'process': return row.caller.kind === 'remote' ? 'Remote' : (row.caller.processName ?? 'Unknown process') + (row.caller.processId === null ? '' : ' ('+row.caller.processId+')');

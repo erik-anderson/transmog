@@ -27,6 +27,7 @@ export interface ClientIdentity {
 }
 
 export interface SessionSummary {
+  requestNumber: string;
   id: string;
   caller: ClientIdentity;
   method: string;
@@ -69,6 +70,7 @@ export interface SessionDetail {
   composerOrigin?:ComposerOrigin|null;
   performance?: { work?:Array<{kind:string;label:string;beganOffsetMicros:number;endedOffsetMicros:number;busyNanos:number;calls:number}>; points:Array<{milestone:string;unixMillis:number;offsetMicros:number}>; protocols:Array<{boundary:string;version:string;reason:string|null}>; transports:Array<{leg:string;connectionId:string;shared:boolean;setupTimings?:Array<{phase:string;beganOffsetMicros:number;endedOffsetMicros:number;requestWaitMicros:number}>;outcome:string;tunnelDestination?:string|null;sampledOffsetMicros:number;peer:string|null;local:string|null;dnsMicros:number|null;tcpMicros:number|null;tlsMicros:number|null;tlsVersion:string|null;tls?:unknown;tlsResumed:boolean|null;cipher:string|null;alpn:string|null;bytesRead:number|null;bytesWritten:number|null;tcp?:{rttMicros:number|null;minRttMicros:number|null;congestionWindow:number|null;sendWindow:number|null;receiveWindow:number|null;unacknowledgedBytes:number|null;retransmittedBytes:number|null;retransmittedSegments:number|null;fastRetransmissions:number|null;duplicateAcks:number|null;timeoutEpisodes:number|null;mss:number|null;connectionAgeMillis:number|null}|null;tcpSampledOffsetMicros?:number|null;socketIo?:{writeWaitMicros:number;writeWaits:number;lastWriteOffsetMicros:number|null;lastFlushOffsetMicros:number|null}|null;quic?:{rttMicros:number|null;congestionWindow:number|null;packetsSent:number;packetsReceived:number;packetsLost:number;retransmittedBytes:number}|null}> };
   traceId?:string|null; originalId?:string|null;
+  requestNumber:string; originalRequestNumber?:string|null; originalRequestNumberProvenance?:string|null;
   savedEvidence?: Record<string, string>;
   sourceIp?: string;
   id: string;
@@ -210,7 +212,7 @@ export interface ClientCertificatePending {id:string;host:string;port:number;cal
 export interface ClientCertificateStatus {supported:boolean;pending:ClientCertificatePending[]}
 export interface ClientCertificateRequestDetail {pending:ClientCertificatePending;choices:ClientCertificateIdentity[];tlsVersion:string;acceptedIssuers:number;signatureAlgorithms:string[]}
 
-export type ColumnId = 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
+export type ColumnId = 'request-number' | 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
 export interface ColumnPreference { id: ColumnId; width: number; visible: boolean; pinned: boolean; }
 export interface WorkspacePreferences {
   sidebarCollapsed: boolean;

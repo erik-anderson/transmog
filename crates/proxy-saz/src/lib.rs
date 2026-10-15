@@ -439,6 +439,11 @@ fn collect_sessions(
             CaptureRecordKind::Unknown { kind, payload } if kind == "entry-provenance" => {
                 session.evidence.provenance = Some(payload.clone());
             }
+            CaptureRecordKind::Unknown { kind, payload } if kind == "request-order" => {
+                if payload["version"].as_u64() == Some(1) {
+                    session.evidence.request_order = payload["ordinal"].as_str().map(str::to_owned);
+                }
+            }
             CaptureRecordKind::Unknown { kind, payload } if kind == "body-representation" => {
                 match payload["boundary"].as_str() {
                     Some("client-request") => {

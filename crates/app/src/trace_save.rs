@@ -395,6 +395,7 @@ fn write_session<W: Write>(
         .unwrap_or_else(|| TraceEntry {
             trace_id: "live".into(),
             original_id: format!("{id:032x}"),
+            original_number: None,
             raw_headers: None,
             timings: std::collections::BTreeMap::default(),
             protocol_known: !session.performance.protocols.is_empty(),
@@ -404,6 +405,10 @@ fn write_session<W: Write>(
     emit(CaptureRecordKind::Unknown {
         kind: "entry-provenance".into(),
         payload: serde_json::json!({"source":entry,"terminalUnixMillis":session.terminal_at.map(millis)}),
+    })?;
+    emit(CaptureRecordKind::Unknown {
+        kind: "request-order".into(),
+        payload: serde_json::json!({"version":1,"ordinal":session.request_number.to_string()}),
     })?;
     for head in &session.request_heads {
         let target = &head.head.target;

@@ -297,6 +297,12 @@ pub(crate) fn copy_message_headers_from_snapshot(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Exact workspace admission number.
+    pub request_number: String,
+    /// Explicit original source number and its format provenance, when recorded.
+    pub original_request_number: Option<String>,
+    /// Meaning of the original number, independent of workspace order.
+    pub original_request_number_provenance: Option<String>,
     /// Live or recorded WebSocket/SSE lifetime and counters.
     pub stream: Option<crate::StreamSummary>,
     /// Original captured request that supplied a manually sent Composer draft.
@@ -588,6 +594,9 @@ pub(crate) fn detail_from_snapshot(
         composer_origin: None,
         performance: snapshot.performance.clone(),
         trace_id: None,
+        request_number: snapshot.request_number.to_string(),
+        original_request_number: None,
+        original_request_number_provenance: None,
         original_id: None,
         saved_evidence: std::collections::BTreeMap::new(),
         source_ip: {

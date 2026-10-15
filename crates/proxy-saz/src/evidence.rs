@@ -16,6 +16,9 @@ pub struct SessionEvidence {
     pub performance: PerformanceEvidence,
     /// Original entry/source association, retained as bounded untrusted data.
     pub provenance: Option<serde_json::Value>,
+    /// Exact saved workspace order, independent of conventional SAZ renumbering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_order: Option<String>,
     /// Original source endpoint, including its port when known.
     pub client_addr: Option<String>,
     /// Recorded caller identity, independent of the computer opening the archive.
@@ -48,6 +51,11 @@ pub struct FailureEvidence {
 impl SessionEvidence {
     pub(crate) fn valid(&self) -> bool {
         self.schema == 1
+            && self.request_order.as_ref().is_none_or(|value| {
+                value.len() <= 20
+                    && value.bytes().all(|byte| byte.is_ascii_digit())
+                    && value.parse::<u64>().is_ok_and(|value| value > 0)
+            })
             && self.performance.valid()
             && self
                 .native_exchange_id

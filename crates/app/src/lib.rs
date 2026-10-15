@@ -1487,6 +1487,10 @@ impl Application {
             let native = entry.raw_headers.is_none();
             detail.trace_id = Some(entry.trace_id);
             detail.original_id = Some(entry.original_id);
+            if let Some(number) = entry.original_number {
+                detail.original_request_number = Some(number.value);
+                detail.original_request_number_provenance = Some(number.provenance);
+            }
             detail.saved_evidence = entry.timings;
             detail.diagnostics.extend(entry.diagnostics);
             if !entry.protocol_known || native {
