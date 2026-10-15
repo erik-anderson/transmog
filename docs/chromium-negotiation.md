@@ -63,9 +63,13 @@ either under **More handshake options**. Old captures missing the real-ECH field
 retain false. TLS 1.2-only profiles do not attempt ECH.
 
 The pinned Hickory resolver reads the configured system DNS servers. HTTPS records
-are bounded by a three-second discovery deadline, eight aliases, 64 service records
+are bounded by a three-second discovery deadline, 64 service records
 and native configuration size limits. Service priority, ALPN, no-default-ALPN,
 mandatory keys, target name and port select compatible endpoints in priority order.
+Matching the pinned Chromium resolver, AliasMode disables service metadata;
+targets must match the original hostname or canonical record owner, and at least
+one eligible service must allow default ALPN. That service need not offer ECH or
+one of the caller's enabled protocols.
 For a `.` target,
 discovery uses the actual HTTPS record owner, including after CNAME
 resolution and for port-prefixed owners. The original origin remains the

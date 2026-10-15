@@ -101,46 +101,58 @@ impl EchConfigSource for SystemEchSource {
     }
 }
 async fn lookup(resolver: &TokioResolver, host: &str, port: u16, alpn: &[String]) -> Vec<EchOffer> {
-    let mut owner = if port == 443 {
+    let owner = if port == 443 {
         format!("{}.", host.trim_end_matches('.'))
     } else {
         format!("_{port}._https.{}.", host.trim_end_matches('.'))
     };
-    for _ in 0..8 {
-        let Ok(records) = resolver.lookup(owner.clone(), RecordType::HTTPS).await else {
-            return Vec::new();
-        };
-        let services = records
-            .answers()
+    let Ok(records) = resolver.lookup(owner, RecordType::HTTPS).await else {
+        return Vec::new();
+    };
+    let services = records
+        .answers()
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::HTTPS(service) => Some((&record.name, &service.0)),
+            _ => None,
+        })
+        .take(65)
+        .collect::<Vec<_>>();
+    if services.len() > 64
+        || services
             .iter()
-            .filter_map(|record| match &record.data {
-                RData::HTTPS(service) => Some((&record.name, &service.0)),
-                _ => None,
-            })
-            .take(64)
-            .collect::<Vec<_>>();
-        if let Some((_, alias)) = services
-            .iter()
-            .find(|(_, service)| service.svc_priority == 0)
-        {
-            if alias.target_name.is_root() {
-                return Vec::new();
-            }
-            owner = alias.target_name.to_utf8();
-            continue;
-        }
-        let mut services = services;
-        services.sort_by_key(|(_, service)| service.svc_priority);
-        return services
-            .into_iter()
-            .filter_map(|(record_owner, service)| {
-                select(service, &record_owner.to_utf8(), port, alpn)
-            })
-            .collect();
+            .any(|(_, service)| service.svc_priority == 0)
+    {
+        // AliasMode takes precedence, but the pinned Chromium resolver does
+        // not support following it. CNAME resolution is independent.
+        return Vec::new();
     }
-    Vec::new()
+    let mut services = services
+        .into_iter()
+        .filter_map(|(owner, service)| {
+            eligible_endpoint(service, &owner.to_utf8(), host, port)
+                .map(|endpoint| (service, endpoint))
+        })
+        .collect::<Vec<_>>();
+    if !services
+        .iter()
+        .any(|(service, _)| allows_default_alpn(service))
+    {
+        return Vec::new();
+    }
+    services.sort_by_key(|(service, _)| service.svc_priority);
+    services
+        .into_iter()
+        .filter_map(|(service, endpoint)| select_offer(service, endpoint, port, alpn))
+        .collect()
 }
-fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<EchOffer> {
+fn allows_default_alpn(service: &SVCB) -> bool {
+    !service
+        .svc_params
+        .iter()
+        .any(|(key, _)| *key == SvcParamKey::NoDefaultAlpn)
+}
+fn eligible_endpoint(service: &SVCB, owner: &str, host: &str, port: u16) -> Option<String> {
     let params = &service.svc_params;
     if let Some((_, SvcParamValue::Mandatory(keys))) = params
         .iter()
@@ -166,26 +178,7 @@ fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<
             None
         }
     });
-    let no_default = params
-        .iter()
-        .any(|(key, _)| *key == SvcParamKey::NoDefaultAlpn);
-    let compatible = alpn
-        .is_some_and(|protocols| protocols.iter().any(|protocol| offered.contains(protocol)))
-        || (!no_default && offered.iter().any(|protocol| protocol == "http/1.1"));
-    if !compatible || (no_default && alpn.is_none()) {
-        return None;
-    }
-    let config = params.iter().find_map(|(_, value)| {
-        if let SvcParamValue::EchConfigList(config) = value {
-            Some(&config.0)
-        } else {
-            None
-        }
-    })?;
-    if config.len() < 2
-        || config.len() > 65535
-        || usize::from(u16::from_be_bytes([config[0], config[1]])) != config.len() - 2
-    {
+    if !allows_default_alpn(service) && alpn.is_none_or(Vec::is_empty) {
         return None;
     }
     let service_port = params
@@ -212,6 +205,38 @@ fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<
             .trim_end_matches('.')
             .to_owned()
     };
+    if !endpoint.eq_ignore_ascii_case(host.trim_end_matches('.'))
+        && !endpoint.eq_ignore_ascii_case(owner.trim_end_matches('.'))
+    {
+        return None;
+    }
+    Some(endpoint)
+}
+fn select_offer(
+    service: &SVCB,
+    endpoint: String,
+    port: u16,
+    offered: &[String],
+) -> Option<EchOffer> {
+    let compatible = service.svc_params.iter().any(|(_, value)| {
+        matches!(value, SvcParamValue::Alpn(alpn) if alpn.0.iter().any(|protocol| offered.contains(protocol)))
+    }) || (allows_default_alpn(service) && offered.iter().any(|p| p == "http/1.1"));
+    if !compatible {
+        return None;
+    }
+    let config = service.svc_params.iter().find_map(|(_, value)| {
+        if let SvcParamValue::EchConfigList(config) = value {
+            Some(&config.0)
+        } else {
+            None
+        }
+    })?;
+    if config.len() < 2
+        || config.len() > 65535
+        || usize::from(u16::from_be_bytes([config[0], config[1]])) != config.len() - 2
+    {
+        return None;
+    }
     Some(EchOffer {
         config: config.as_slice().into(),
         endpoint,
@@ -295,6 +320,15 @@ mod tests {
         rdata::svcb::{Alpn, EchConfigList, Mandatory},
     };
 
+    fn select(service: &SVCB, owner: &str, port: u16, offered: &[String]) -> Option<EchOffer> {
+        select_offer(
+            service,
+            eligible_endpoint(service, owner, owner, port)?,
+            port,
+            offered,
+        )
+    }
+
     struct DnsFixture {
         resolver: TokioResolver,
         task: tokio::task::JoinHandle<()>,
@@ -328,7 +362,6 @@ mod tests {
                         SvcParamKey::Alpn,
                         SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
                     ),
-                    (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
                     (
                         SvcParamKey::EchConfigList,
                         SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
@@ -381,10 +414,10 @@ mod tests {
         use hickory_resolver::proto::rr::rdata::HTTPS;
         let dns = dns_answers(|query| {
             [
-                (3, "third.example.test.", 443),
-                (1, "first.example.test.", 443),
-                (2, "redirect.example.test.", 8443),
-                (2, "second.example.test.", 443),
+                (3, ".", 443),
+                (1, "ORIGIN.example.test.", 443),
+                (2, ".", 8443),
+                (2, "origin.example.test.", 443),
             ]
             .into_iter()
             .map(|(priority, endpoint, port)| {
@@ -396,7 +429,6 @@ mod tests {
                             SvcParamKey::Alpn,
                             SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
                         ),
-                        (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
                         (SvcParamKey::Port, SvcParamValue::Port(port)),
                         (
                             SvcParamKey::EchConfigList,
@@ -421,9 +453,9 @@ mod tests {
                 .map(|o| o.endpoint.as_str())
                 .collect::<Vec<_>>(),
             [
-                "first.example.test",
-                "second.example.test",
-                "third.example.test"
+                "ORIGIN.example.test",
+                "origin.example.test",
+                "origin.example.test"
             ]
         );
         assert_eq!(
@@ -431,6 +463,121 @@ mod tests {
             [1, 2, 3]
         );
         assert!(offers.iter().all(|o| o.port == 443));
+    }
+    #[tokio::test]
+    async fn chromium_eligibility_precedes_ech_and_caller_alpn_filtering() {
+        use hickory_resolver::proto::rr::rdata::HTTPS;
+        for (alias, default_target, default_port, mandatory, expected) in [
+            (false, "origin.example.test.", 443, false, true),
+            (true, "origin.example.test.", 443, false, false),
+            (false, "unrelated.example.test.", 443, false, false),
+            (false, "origin.example.test.", 8443, false, false),
+            (false, "origin.example.test.", 443, true, false),
+        ] {
+            let dns = dns_answers(move |query| {
+                let mut defaults = vec![(
+                    SvcParamKey::Alpn,
+                    SvcParamValue::Alpn(Alpn(vec!["h3".into()])),
+                )];
+                if mandatory {
+                    defaults.insert(
+                        0,
+                        (
+                            SvcParamKey::Mandatory,
+                            SvcParamValue::Mandatory(Mandatory(vec![SvcParamKey::Unknown(42)])),
+                        ),
+                    );
+                }
+                defaults.push((SvcParamKey::Port, SvcParamValue::Port(default_port)));
+                let mut records = vec![
+                    SVCB::new(
+                        1,
+                        Name::root(),
+                        vec![
+                            (
+                                SvcParamKey::Alpn,
+                                SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
+                            ),
+                            (SvcParamKey::NoDefaultAlpn, SvcParamValue::NoDefaultAlpn),
+                            (
+                                SvcParamKey::EchConfigList,
+                                SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
+                            ),
+                        ],
+                    ),
+                    // Default ALPN on an eligible non-ECH, non-H2 service counts.
+                    SVCB::new(2, Name::from_ascii(default_target).unwrap(), defaults),
+                ];
+                if alias {
+                    records.push(SVCB::new(
+                        0,
+                        Name::from_ascii("alias.example.test.").unwrap(),
+                        vec![],
+                    ));
+                }
+                records
+                    .into_iter()
+                    .map(|service| {
+                        Record::from_rdata(query.name().clone(), 60, RData::HTTPS(HTTPS(service)))
+                    })
+                    .collect()
+            })
+            .await;
+            assert_eq!(
+                lookup(&dns.resolver, "origin.example.test", 443, &["h2".into()])
+                    .await
+                    .len(),
+                usize::from(expected)
+            );
+        }
+    }
+    #[tokio::test]
+    async fn no_default_alpn_and_unrelated_targets_disable_discovery() {
+        use hickory_resolver::proto::rr::rdata::HTTPS;
+        for (target, no_default) in [
+            ("origin.example.test.", true),
+            ("unrelated.example.test.", true),
+            ("unrelated.example.test.", false),
+        ] {
+            let dns = dns_answers(move |query| {
+                vec![Record::from_rdata(
+                    query.name().clone(),
+                    60,
+                    RData::HTTPS(HTTPS(SVCB::new(
+                        1,
+                        Name::from_ascii(target).unwrap(),
+                        vec![
+                            (
+                                SvcParamKey::Alpn,
+                                SvcParamValue::Alpn(Alpn(vec!["h2".into()])),
+                            ),
+                            (
+                                if no_default {
+                                    SvcParamKey::NoDefaultAlpn
+                                } else {
+                                    SvcParamKey::Port
+                                },
+                                if no_default {
+                                    SvcParamValue::NoDefaultAlpn
+                                } else {
+                                    SvcParamValue::Port(443)
+                                },
+                            ),
+                            (
+                                SvcParamKey::EchConfigList,
+                                SvcParamValue::EchConfigList(EchConfigList(vec![0, 2, 0, 1])),
+                            ),
+                        ],
+                    ))),
+                )]
+            })
+            .await;
+            assert!(
+                lookup(&dns.resolver, "origin.example.test", 443, &["h2".into()])
+                    .await
+                    .is_empty()
+            );
+        }
     }
     #[tokio::test]
     async fn dot_targets_use_the_resolved_record_owner_after_cname() {
