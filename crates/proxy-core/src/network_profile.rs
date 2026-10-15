@@ -2,6 +2,9 @@
 use crate::connection_policy::AllowedHttpProtocols;
 use serde::{Deserialize, Serialize};
 
+/// HTTP transport limits from the pinned Chromium recipe, shared across adapters.
+pub mod chromium_http;
+
 /// Initial qualified Chromium recipe identifier.
 pub const CHROMIUM_154: &str = "chromium-154";
 /// Chromium transport recipe with installed `WebView2` PKI discovery.

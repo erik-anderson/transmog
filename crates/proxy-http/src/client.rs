@@ -17,6 +17,7 @@ use hyper_util::{
 };
 use thiserror::Error;
 use tokio::time::timeout;
+use transmog_core::network_profile::chromium_http;
 use transmog_core::{
     BodyFrame, BodyStream, BodyStreamError, CanonicalRequest, CanonicalResponse, HeaderBlock,
     HeaderField, HttpLegVersion, MessageKind, RequestHead, ResponseHead, StreamingRequest,
@@ -366,6 +367,14 @@ impl HyperOriginClient {
         let epoch = factory.client_certificate_generation();
         let admitted = factory.clone().for_client_certificate_epoch(epoch);
         let mut builder = Client::builder(TokioExecutor::new());
+        builder
+            .http2_initial_connection_window_size(chromium_http::CONNECTION_RECEIVE_WINDOW)
+            .http2_initial_stream_window_size(chromium_http::STREAM_RECEIVE_WINDOW)
+            .http2_header_table_size(chromium_http::HTTP2_HEADER_TABLE_SIZE)
+            .http2_max_header_list_size(chromium_http::HEADER_LIST_SIZE)
+            // Keep the protocol's default frame size without advertising an
+            // extra SETTINGS entry that Chromium omits.
+            .http2_max_frame_size(None);
         if factory
             .network_profile()
             .is_none_or(|profile| profile.settings.http2_alps)

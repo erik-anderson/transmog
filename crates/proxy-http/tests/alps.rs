@@ -131,6 +131,48 @@ async fn execute(
 }
 
 #[tokio::test]
+async fn chromium_settings_and_receive_credit_are_sent_in_auto_and_forced_h2() {
+    for mode in [HyperEgressMode::Auto, HyperEgressMode::Http2Only] {
+        let (client, listener, acceptor, _) = fixture(true).await;
+        let port = listener.local_addr().unwrap().port();
+        let origin = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut io = tokio_boring::accept(&acceptor, tcp).await.unwrap();
+            let mut preface = [0; 24];
+            io.read_exact(&mut preface).await.unwrap();
+            assert_eq!(preface, PREFACE);
+            // Independent wire expectation from Chromium 154, including order
+            // and omission of a redundant SETTINGS_MAX_FRAME_SIZE.
+            let (kind, flags, stream, payload) = read_frame(&mut io).await;
+            assert_eq!((kind, flags, stream), (4, 0, 0));
+            assert_eq!(
+                payload,
+                settings(&[(1, 65_536), (2, 0), (4, 6_291_456), (6, 262_144)])[9..]
+            );
+            io.write_all(&settings(&[])).await.unwrap();
+            io.flush().await.unwrap();
+            let mut window_updates = Vec::new();
+            let stream = loop {
+                let (kind, _, stream, payload) = read_frame(&mut io).await;
+                if kind == 8 && stream == 0 {
+                    window_updates.push(u32::from_be_bytes(payload.try_into().unwrap()));
+                }
+                if kind == 1 {
+                    break stream;
+                }
+            };
+            assert_eq!(window_updates, [15_663_105]);
+            respond(&mut io, stream).await;
+        });
+        client
+            .execute(support::request(port), mode, 1024, Duration::from_secs(3))
+            .await
+            .unwrap();
+        origin.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn alps_applies_hpack_and_concurrency_before_requests_without_a_wire_settings_frame() {
     let (client, listener, acceptor, offer) = fixture(true).await;
     let recorder = transmog_core::performance::PerformanceRecorder::new(

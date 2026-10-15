@@ -18,6 +18,7 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tower_service::Service;
+use transmog_core::network_profile::chromium_http;
 
 type Lease = Arc<tokio::sync::Mutex<Option<Peer>>>;
 type Peers = HashMap<
@@ -319,6 +320,11 @@ async fn connect(
     connected.get_extras(&mut extras);
     let observation = extras.get::<ConnectionObservation>().cloned();
     let (sender, mut connection) = h2::client::Builder::new()
+        .initial_window_size(chromium_http::STREAM_RECEIVE_WINDOW)
+        .initial_connection_window_size(chromium_http::CONNECTION_RECEIVE_WINDOW)
+        .header_table_size(chromium_http::HTTP2_HEADER_TABLE_SIZE)
+        .max_header_list_size(chromium_http::HEADER_LIST_SIZE)
+        .enable_push(false)
         .initial_max_send_streams(0)
         .handshake(TokioIo::new(io))
         .await?;

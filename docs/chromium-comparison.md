@@ -117,3 +117,19 @@ Parser regression checks run without Docker:
 ```powershell
 python -m unittest discover -s scripts/tests -p test_browser_fingerprint.py -v
 ```
+
+## Qualified transport defaults
+
+HTTP/2 uses Chromium 154's 64 KiB HPACK table, 6 MiB stream receive window,
+15 MiB connection receive window and 256 KiB header-list limit. Both the normal
+origin client (Auto and forced H2) and the extended-CONNECT WebSocket client
+apply that policy. The default 16 KiB frame size is implicit, matching Chrome's
+omission of `SETTINGS_MAX_FRAME_SIZE`.
+
+The shared constants live in `network_profile::chromium_http`. The pinned
+sources are Chromium 154.0.8037.99's
+[`http_network_session.cc`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/http/http_network_session.cc),
+[`http_network_session.h`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/http/http_network_session.h)
+and [`quic_context.cc`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/quic/quic_context.cc).
+These receive credits are finite protocol limits, independent of application
+body limits and bounded request queues.
