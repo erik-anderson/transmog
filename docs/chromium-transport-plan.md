@@ -1,0 +1,114 @@
+# Remaining Chromium transport alignment
+
+## Verified starting point
+
+The local harness compared transport commit `ac9d6ea` with Chrome
+155.0.8059.79 using three fresh direct/proxied pairs for each of H1.1, H2 and H3.
+All 18 navigations proved their browser and origin protocols and proxy routing.
+The production recipe remains Chromium 154.0.8037.99; the implemented numeric
+defaults were separately checked against that release's source and pinned
+Google QUICHE revision.
+
+Completed corrections:
+
+- H2 SETTINGS match: HPACK table 64 KiB, push disabled, stream receive credit
+  6 MiB, header-list limit 256 KiB, with the default frame size implicit.
+  Initial connection credit is 15 MiB, yielding WINDOW_UPDATE `15663105`.
+  Auto, forced H2 and the separate WebSocket extended-CONNECT client share the
+  policy. Wire fixtures cover Auto/forced H2; runtime WebSocket tests pass.
+- H3 field-section limit is 256 KiB. Its 15 MiB connection credit, three 6 MiB
+  stream credits, and peer stream counts 100/103 match the browser capture.
+- All normalized H3 HTTP request fields match, including pseudo-header and
+  regular-header order. H1/H2 JA4 hashes still match; H3 JA4 still differs.
+
+The full core, HTTP and H3 suites, ALPS tests, seven runtime H2 WebSocket tests,
+formatting and strict Clippy passed. Per-change reviews and a final combined
+review completed; the final review found no additional actionable issues.
+
+See [the comparison guide](chromium-comparison.md) for the repeatable command,
+normalization, artifacts and limitations. The report counts differing fields,
+not independent bugs: one header-order change affects several reported fields.
+
+## 1. Qualify the remaining wire targets
+
+Add an explicitly versioned browser image/input to the local harness and record
+its binary digest. Qualify Chromium 154 against the existing recipe, with newer
+browser versions reported as separate comparisons. Keep this recipe's named
+target fixed rather than silently rolling it to the latest installed Chrome.
+
+Expand the local cases beyond a fresh GET: repeated requests and connection
+reuse, HEAD/POST, duplicate headers and cookies, edits/reroutes, ALPS accepted
+and declined, and resumption. Normalize reserved QUIC version codes inside the
+version-information parameter while retaining their presence and order.
+Keep ECH GREASE padding lengths as sampled observations; a single different
+random padding length does not establish a compatibility gap.
+
+Acceptance: each remaining difference has a pinned source or repeatable wire
+expectation, with protocol fallback and missing evidence remaining hard errors.
+
+## 2. Align QUIC's TLS offer and packet policy
+
+Keep the common certificate verifier and trust inputs. Introduce a
+transport-specific offer policy at the shared TLS-context boundary, so QUIC
+does not inherit TCP-only GREASE, signature preferences and OCSP/SCT requests.
+Preserve custom-profile override meanings and report the effective offers.
+
+Handle H3 ALPS as a real integration: negotiate its correct application label,
+apply the server's HTTP/3 settings before dependent requests, and capture the
+raw/decoded contents. Extending the existing H2-only ALPS offer just to change
+the JA4 hash would leave settings semantics unqualified. Determine the required
+quiche settings-injection API before advertising it.
+
+Then align initial datagram size, client/server connection-ID lengths, advertised
+UDP receive size, ACK parameters, QUIC reserved transport parameters and version
+information. Prefer existing quiche APIs. Where a value is fixed internally,
+propose a small upstream API and use the existing pinned-dependency/patch
+workflow only for the necessary change. Preserve working Retry, version
+negotiation, IPv4/IPv6 racing, ECH retry, resumption and connection isolation.
+
+Acceptance: QUIC ClientHello inputs/JA4 and stable transport parameters match the
+pinned browser; authenticated retry and certificate rejection tests still pass.
+
+## 3. Align HTTP serialization
+
+For H2, add focused encoder controls for Chromium's pseudo-header order and the
+HEADERS priority fields. Investigate startup-frame ordering alongside the ALPS
+bootstrap: the current SETTINGS ACK precedes some initial frames. Preserve
+correct peer settings, flow control and concurrency before sending requests.
+Prefer upstreamable controls over rewriting encoded HPACK bytes in an I/O shim.
+The numeric SETTINGS list itself is already aligned.
+
+For H1, carry original header name/order metadata through the canonical request
+and serializers, including user edits and protocol translation. Preserve Chrome's
+mixed casing rather than applying blanket title casing. Generate Host and the
+outgoing connection-management headers from the authorized destination and our
+actual upstream reuse policy. Retain hop-by-hop filtering, framing repair and
+protection against conflicting lengths; never forward a caller's Connection
+header as a shortcut.
+
+Acceptance: fresh/reused H1 and H2 request ordering and casing match across the
+expanded cases, without breaking uploads, trailers, WebSockets or interception.
+
+## 4. Implement missing H3 capabilities before advertising them
+
+The pinned quiche 0.30 decoder still has unimplemented QPACK dynamic-table
+paths. Its configuration setters can advertise nonzero capacities even though
+those paths are incomplete. Keep capacity and blocked-stream promises at zero
+until bounded table updates, inserts/evictions, blocked streams,
+acknowledgements/cancellation and malformed-input handling are implemented and
+tested against an independent peer. Prefer upstream support; assess a maintained
+implementation or an adapter migration behind the existing interface if needed.
+
+QUIC datagrams require an application consumer, routing/ownership rules, capture
+semantics and bounded queues. Review that product scope before implementing or
+advertising H3_DATAGRAM. Extended CONNECT/WebTransport promises likewise need
+working end-to-end behavior. These are substantive capabilities, not fingerprint
+switches.
+
+Acceptance: interoperable QPACK compression and any approved datagram feature
+work correctly under load and cancellation before their Chrome-like SETTINGS
+are enabled. Unsupported capabilities remain absent from offers.
+
+For each implementation stage, run a review/fix cycle of at most three rounds,
+stopping early when no issues remain; commit the completed stage and rerun the
+local comparison plus the affected interoperability tests.

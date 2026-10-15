@@ -147,3 +147,7 @@ QUICHE commit `80bf9559d3a4c08dde4b85abc46d190a88ffef64`, pinned by Chromium
 `quic_session.cc` and `http/quic_spdy_session.cc`.
 These receive credits are finite protocol limits, independent of application
 body limits and bounded request queues.
+
+The [remaining transport plan](chromium-transport-plan.md) tracks QUIC's TLS and
+packet policy, H1/H2 serialization, and the H3 capabilities that must be
+implemented before their SETTINGS can safely match Chromium.
