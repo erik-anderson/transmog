@@ -153,6 +153,12 @@ impl<'a> Iterator for UnknownTransportParameterIterator<'a> {
 /// QUIC Transport Parameters
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransportParams {
+    /// RFC 9368 chosen version followed by available versions.
+    pub version_information: Option<(u32, Vec<u32>)>,
+    /// Locally configured extension parameters, never inferred from peer input.
+    pub additional_parameters: Vec<UnknownTransportParameter<Vec<u8>>>,
+    /// Local encoding preference; effective ACK defaults are unchanged.
+    pub omit_default_ack_parameters: bool,
     /// Value of Destination CID field from first Initial packet sent by client
     pub original_destination_connection_id: Option<ConnectionId<'static>>,
     /// The maximum idle timeout.
@@ -194,9 +200,45 @@ pub struct TransportParams {
     // pub preferred_address: ...,
 }
 
+#[cfg(test)]
+mod transmog_tests {
+    use super::*;
+
+    #[test]
+    fn transmog_ack_defaults_are_omitted_without_changing_zero_values() {
+        for (exponent, delay) in [(3, 25), (0, 0), (10, 100)] {
+            let parameters = TransportParams { omit_default_ack_parameters: true, ack_delay_exponent: exponent, max_ack_delay: delay, ..Default::default() };
+            let mut storage = [0; 128];
+            let encoded = TransportParams::encode(&parameters, false, &mut storage).unwrap();
+            if exponent == 3 {
+                let mut wire = octets::Octets::with_slice(encoded);
+                while wire.cap() > 0 {
+                    let id = wire.get_varint().unwrap();
+                    assert!(!matches!(id, 10 | 11));
+                    wire.get_bytes_with_varint_length().unwrap();
+                }
+            }
+            let decoded = TransportParams::decode(encoded, true, None).unwrap();
+            assert_eq!((decoded.ack_delay_exponent, decoded.max_ack_delay), (exponent, delay));
+        }
+    }
+
+    #[test]
+    fn transmog_malformed_version_information_is_rejected() {
+        for payload in [vec![], vec![1], vec![0; 4], vec![0, 0, 0, 1, 0], vec![0, 0, 0, 1, 0, 0, 0, 0]] {
+            let mut encoded = vec![0x11, payload.len() as u8];
+            encoded.extend(payload);
+            assert_eq!(TransportParams::decode(&encoded, false, None), Err(Error::InvalidTransportParam));
+        }
+    }
+}
+
 impl Default for TransportParams {
     fn default() -> TransportParams {
         TransportParams {
+            version_information: None,
+            additional_parameters: Vec::new(),
+            omit_default_ack_parameters: false,
             original_destination_connection_id: None,
             max_idle_timeout: 0,
             stateless_reset_token: None,
@@ -370,6 +412,21 @@ impl TransportParams {
                     tp.retry_source_connection_id = Some(val.to_vec().into());
                 },
 
+                0x0011 => {
+                    if val.cap() < 4 || val.cap() % 4 != 0 || val.cap() > 1024 {
+                        return Err(Error::InvalidTransportParam);
+                    }
+                    let chosen = val.get_u32()?;
+                    let mut available = Vec::new();
+                    if chosen == 0 { return Err(Error::InvalidTransportParam); }
+                    while val.cap() > 0 {
+                        let version = val.get_u32()?;
+                        if version == 0 { return Err(Error::InvalidTransportParam); }
+                        available.push(version);
+                    }
+                    tp.version_information = Some((chosen, available));
+                },
+
                 0x0020 => {
                     tp.max_datagram_frame_size = Some(val.get_varint()?);
                 },
@@ -500,7 +557,7 @@ impl TransportParams {
             b.put_varint(tp.initial_max_streams_uni)?;
         }
 
-        if tp.ack_delay_exponent != 0 {
+        if if tp.omit_default_ack_parameters { tp.ack_delay_exponent != 3 } else { tp.ack_delay_exponent != 0 } {
             assert!(tp.ack_delay_exponent <= MAX_ACK_DELAY_EXPONENT);
             TransportParams::encode_param(
                 &mut b,
@@ -510,7 +567,7 @@ impl TransportParams {
             b.put_varint(tp.ack_delay_exponent)?;
         }
 
-        if tp.max_ack_delay != 0 {
+        if if tp.omit_default_ack_parameters { tp.max_ack_delay != 25 } else { tp.max_ack_delay != 0 } {
             assert!(tp.max_ack_delay <= octets::MAX_VAR_INT);
             TransportParams::encode_param(
                 &mut b,
@@ -558,6 +615,15 @@ impl TransportParams {
             b.put_varint(max_datagram_frame_size)?;
         }
 
+        if let Some((chosen, available)) = &tp.version_information {
+            TransportParams::encode_param(&mut b, 0x11, 4 + available.len() * 4)?;
+            b.put_u32(*chosen)?;
+            for version in available { b.put_u32(*version)?; }
+        }
+        for parameter in &tp.additional_parameters {
+            TransportParams::encode_param(&mut b, parameter.id, parameter.value.len())?;
+            b.put_bytes(&parameter.value)?;
+        }
         let out_len = b.off();
 
         Ok(&mut out[..out_len])

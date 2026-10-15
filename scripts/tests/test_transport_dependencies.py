@@ -33,6 +33,9 @@ class TransportSnapshots(unittest.TestCase):
                 transport.regenerate(sources, root)
             self.assertEqual((root / "vendor/h2/file").read_bytes(), b"y\n")
             transport.check(sources)
+            stamp = (root / "vendor/h2/file").stat().st_mtime_ns
+            transport.regenerate(sources, root)
+            self.assertEqual((root / "vendor/h2/file").stat().st_mtime_ns, stamp)
 
     def archive(self, name, *, kind=tarfile.REGTYPE):
         output = io.BytesIO()

@@ -64,6 +64,19 @@ verification separately supports ML-DSA issuer signatures, including an
 RSA/ECDSA leaf issued by a locally trusted ML-DSA CA. Do not describe the QUIC
 offer restriction as disabling all ML-DSA certificate chains.
 
+The packet increment adds bounded quiche APIs for 1250-byte Initial datagrams,
+omitting effective ACK defaults, extension transport parameters and RFC 9368
+version information. Chosen-version mismatches fail with VERSION_NEGOTIATION_ERROR;
+malformed encodings, duplicate/standard extension IDs and oversized values are
+rejected. The reserved version's value and insertion position are randomized,
+and the harness retains its position while normalizing only the reserved code.
+The zero-CID production driver omits disable_active_migration; its connected
+UDP socket remains pinned. ORIG permits ignored ORIGIN hints without granting
+additional routing or connection-reuse authority. Datagram support is absent.
+Three review rounds corrected test assumptions, version GREASE placement, FFI
+coverage and snapshot publication under transient Windows directory locks.
+H3 tests, isolated quiche regressions, strict Clippy and local comparison pass.
+
 Keep the common certificate verifier and trust inputs. Introduce a
 transport-specific offer policy at the shared TLS-context boundary, so QUIC
 does not inherit TCP-only GREASE, signature preferences and OCSP/SCT requests.
@@ -114,8 +127,8 @@ Transport registry archives are checksum-pinned and preserved with their
 licenses under `third_party/rust-transport`. The complete patches and file
 receipts are reproducible with `scripts/vendor-transport.py`; portable build
 preflight checks both bytes and the resolved Cargo sources. Regeneration forces
-LF independently of Git's user settings. Quiche is the unmodified starting
-snapshot for the following increments.
+LF independently of Git's user settings. Quiche's patch additionally exposes
+the bounded packet and transport-parameter APIs described above.
 
 For H2, add focused encoder controls for Chromium's pseudo-header order and the
 HEADERS priority fields. Investigate startup-frame ordering alongside the ALPS

@@ -35,6 +35,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A QUIC error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// Authenticated RFC 9368 version information conflicts with this connection.
+    VersionNegotiation,
     /// There is no more work to do.
     Done,
 
@@ -185,6 +187,7 @@ impl Error {
     pub(crate) fn to_wire(self) -> u64 {
         match self {
             Error::Done => WireErrorCode::NoError as u64,
+            Error::VersionNegotiation => 0x11,
             Error::InvalidFrame => WireErrorCode::FrameEncodingError as u64,
             Error::InvalidStreamState(..) =>
                 WireErrorCode::StreamStateError as u64,
@@ -205,6 +208,7 @@ impl Error {
     pub(crate) fn to_c(self) -> libc::ssize_t {
         match self {
             Error::Done => -1,
+            Error::VersionNegotiation => -24,
             Error::BufferTooShort => -2,
             Error::UnknownVersion => -3,
             Error::InvalidFrame => -4,

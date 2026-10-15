@@ -3,7 +3,7 @@
     "version": "0.30.0",
     "archiveSha256": "52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a"
   },
-  "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "patchSha256": "b77d62606ad2501cee008a2d22971d7e90ea334912de29d95f30329538a9b46a",
   "files": {
     ".cargo_vcs_info.json": "2444909773167947d6188f976aa577eec591b791a212630469345c6568d53184",
     "AGENTS.md": "3570f11efb1e9f771ada8b4881d2aaa79836fc70bc2d92beed44b8729a3187b6",
@@ -29,7 +29,7 @@
     "examples/rootca.crt": "31e0ca6e04dec70c30fabc2701587cbff0a8be01786d27426bcc4d4909eff50d",
     "examples/server.c": "e3a0baf889a976ba3d443b442eb3a71ca1e0a0adf1730a23fe4fdf6c4d63625b",
     "examples/server.rs": "a4e473e661909a7384f6964744e50c6143dd960960e6d873b174c97f27ed1ec6",
-    "include/quiche.h": "7ea33344e053a9f17cfe738b59680465bc6b8e35e82b381d348a53eb16ae23b8",
+    "include/quiche.h": "10cce7cb6c3e03c7ea57164454809059d91cf035f18db3926ff611600c97ddcf",
     "quiche.svg": "f6db38887c22f1c6ea36f53dd6b47c2d0e6d1bbe5909e0fc82d338b5ad5b488f",
     "src/buffers.rs": "e6caed60410e2344883b4cae420bd1cc56a32ff5bcba2177cdeb0a54c4457b9b",
     "src/build.rs": "e41aac77f4cf5918ff2f572e28a9f3bf28c4350a15dc5a65d62992fe51b8af46",
@@ -37,7 +37,7 @@
     "src/crypto/boringssl.rs": "3703d56be13c000aea2479c12be3987851496dfd3ac705dc2df1c96e10bca1bb",
     "src/crypto/mod.rs": "27c370aaff560ffb6941d708ef4dea614c2b20aca1d7a8eaa6670bce6c43bedf",
     "src/dgram.rs": "b2b3f5378a6231ad6f92d87ba5ff2da2d36da36c60d77c3a44ea3a10be567ab6",
-    "src/error.rs": "414812b6415d2fe06b90c2193c52807f8e2858d69acb3761dfc021ac8795bff2",
+    "src/error.rs": "e3d06e2e0629d3901207388ed2781ea57933b4a2b1cc26386b8a1503097397af",
     "src/ffi.rs": "bcd1fb6632361a50fcf19bd3ee63d719810993dc56f21f555f591de6b199f0cf",
     "src/flowcontrol.rs": "ec1f8d02cbef312d8e6e70e300e49dfb2a07b9e14daa3932a525857c024a2dcd",
     "src/frame.rs": "32a51c9dc01c7d6887488a147c761a7101bd60e8290526ca278d7f84c37c3273",
@@ -50,7 +50,7 @@
     "src/h3/qpack/mod.rs": "b2037b5485b510d6d1954e41b9ae9312ddae47120f4582b4e9630350bf9ff3a3",
     "src/h3/qpack/static_table.rs": "c907b067cb1b41f68c5f15f777afcf2149ffa0a00b869a5eeabb5baf4c64e9ce",
     "src/h3/stream.rs": "ec992ebe411261b2eb51717fc8e0a92bee928328ff830b5d7be40b86faa9b19e",
-    "src/lib.rs": "ba74f8c2e8e134312c30e55e76c57cf13e030872a6531512a108069540ff2fb2",
+    "src/lib.rs": "269267cf4c705b5784e5064c9c81c26dbc4563e4e18bd115ccad461b5f363612",
     "src/minmax.rs": "dfe3ca5a9499cba2cca49ff253ac92abebd27e828c7502d7213472a0fcb9ff70",
     "src/packet.rs": "f1a3272710f294a730dd090c943a199fab48db0d65ef906abbea2479009e6eec",
     "src/path.rs": "d0f9d6c5b62b1b922de6b46cc6c1aa36f10834d3d75a2094073b47f462700704",
@@ -93,9 +93,9 @@
     "src/stream/recv_buf.rs": "a57d8ebb4d0012e307ed1758d896d28d847b036acb2e424654df2e03f20681e3",
     "src/stream/send_buf.rs": "3c4f33953da2d651dad58731f804d6e0e25398506965733713ef42fbf0cb6cc4",
     "src/test_utils.rs": "125ee3042d07a4d4999752f71f9cdd66422e80421551a1768e29c69fe5c51dd3",
-    "src/tests.rs": "e10c78d1feaf63b768a24bd5f8fdce64c954d3d68fc76ac225ab1b107eab3d88",
+    "src/tests.rs": "7cca8b5ccd84c6c91a7a2894878adb892342efaa105988207196d8e70221165c",
     "src/tls/boringssl.rs": "4338604280a51aad9318dc2b642bc78d194cc968407020e7e19e3a2e3278167b",
-    "src/tls/mod.rs": "134466c3af44732cd8a8794f885bb6db61701884fb57a775041c6534f185e505",
-    "src/transport_params.rs": "ccba665c9e668227d7cc09860a02aad98205b11b2a9f987a1893c040214468a0"
+    "src/tls/mod.rs": "650ef0a2876bed307849b29662063667c58cfec7452a8ba5c5be2130ac5feed1",
+    "src/transport_params.rs": "c04962e1a5391595b3e3e01682a434f7db6582ac81cd0463d699ba6c9b6a6d79"
   }
 }

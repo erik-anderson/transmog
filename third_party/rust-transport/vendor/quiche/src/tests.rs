@@ -32,6 +32,38 @@ use crate::Header;
 
 use rstest::rstest;
 
+#[test]
+fn transmog_initial_size_and_authenticated_version_information() {
+    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+    config.set_application_protos(&[b"h3"]).unwrap();
+    config.set_max_send_udp_payload_size(1350);
+    assert_eq!(config.set_initial_packet_size(1199), Err(Error::InvalidState));
+    assert_eq!(config.set_initial_packet_size(1351), Err(Error::InvalidState));
+    config.set_initial_packet_size(1250).unwrap();
+    config.enable_version_information();
+    let mut conn = connect(None, &ConnectionId::from_ref(&[]), "127.0.0.1:1234".parse().unwrap(), "127.0.0.1:443".parse().unwrap(), &mut config).unwrap();
+    let mut output = [0; 1350];
+    assert_eq!(conn.send(&mut output).unwrap().0, 1250);
+    let mut peer = TransportParams::default();
+    peer.version_information = Some((2, vec![1, 2]));
+    assert_eq!(conn.parse_peer_transport_params(peer.clone()), Err(Error::VersionNegotiation));
+    peer.version_information = Some((1, vec![])); // Server's list may be empty.
+    peer.initial_source_connection_id = Some(conn.destination_id().to_vec().into());
+    peer.original_destination_connection_id = conn.odcid.clone();
+    conn.parse_peer_transport_params(peer).unwrap();
+}
+
+#[test]
+fn transmog_extension_parameters_are_bounded_and_cannot_override_standard_ids() {
+    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+    for parameters in [
+        vec![UnknownTransportParameter { id: 17, value: vec![] }],
+        vec![UnknownTransportParameter { id: 100, value: vec![0; 513] }],
+        vec![UnknownTransportParameter { id: 100, value: vec![] }; 2],
+        vec![UnknownTransportParameter { id: 1 << 62, value: vec![] }],
+    ] { assert_eq!(config.set_additional_transport_parameters(parameters), Err(Error::InvalidTransportParam)); }
+}
+
 /// Pick a numeric expectation based on the active `boring` major version.
 ///
 /// `boring` 5.x ships BoringSSL with post-quantum (X25519MLKEM768) key
@@ -59,6 +91,9 @@ macro_rules! by_boring {
 fn transport_params() {
     // Server encodes, client decodes.
     let tp = TransportParams {
+        version_information: None,
+        additional_parameters: Vec::new(),
+        omit_default_ack_parameters: false,
         original_destination_connection_id: None,
         max_idle_timeout: 30,
         stateless_reset_token: Some(u128::from_be_bytes([0xba; 16])),
@@ -89,6 +124,9 @@ fn transport_params() {
 
     // Client encodes, server decodes.
     let tp = TransportParams {
+        version_information: None,
+        additional_parameters: Vec::new(),
+        omit_default_ack_parameters: false,
         original_destination_connection_id: None,
         max_idle_timeout: 30,
         stateless_reset_token: None,

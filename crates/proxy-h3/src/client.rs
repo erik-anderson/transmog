@@ -850,6 +850,27 @@ impl H3ConnectionDriver {
         )?;
         config.set_max_recv_udp_payload_size(MAX_RECEIVE_UDP_PAYLOAD);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
+        config.set_initial_packet_size(1_250)?;
+        config.omit_default_ack_parameters(true);
+        config.enable_version_information();
+        // Zero-length local CIDs already prohibit peer migration. The UDP
+        // socket remains pinned, without adding Chrome's omitted migration TP.
+        config.set_disable_active_migration(false);
+        let mut random = [0_u8; 8];
+        rand_bytes(&mut random)?;
+        let reserved = 31 * (u64::from_le_bytes(random) % ((1_u64 << 62) / 31 - 1)) + 27;
+        config.set_additional_transport_parameters(vec![
+            quiche::UnknownTransportParameter {
+                id: reserved,
+                value: Vec::new(),
+            },
+            // Requests the optional ORIGIN frame experiment. Unknown H3 frames
+            // are safely consumed; advertised origins do not authorize reuse.
+            quiche::UnknownTransportParameter {
+                id: 0x3128,
+                value: b"ORIG".to_vec(),
+            },
+        ])?;
         // Chromium requests zero-length server-to-client CIDs. The connected
         // UDP socket demultiplexes this connection; observation identity must
         // remain independent of a wire CID that is deliberately empty.
@@ -2326,6 +2347,15 @@ mod tests {
                 assert_eq!(params.initial_max_streams_bidi, 100);
                 assert_eq!(params.initial_max_streams_uni, 103);
                 assert_eq!(params.max_udp_payload_size, 1_472);
+                assert!(!params.disable_active_migration);
+                assert_eq!(params.ack_delay_exponent, 3);
+                assert_eq!(params.max_ack_delay, 25);
+                let (chosen, available) = params.version_information.as_ref().unwrap();
+                assert_eq!(*chosen, 1);
+                assert!(available.contains(&1));
+                assert_eq!(available.len(), 2);
+                let reserved = available.iter().find(|&&version| version != 1).unwrap();
+                assert_eq!(reserved & 0x0f0f_0f0f, 0x0a0a_0a0a);
                 assert_eq!(connection.destination_id().len(), 0);
                 let names = headers
                     .iter()
@@ -3795,6 +3825,7 @@ mod tests {
                         .unwrap();
                 assert_eq!(header.ty, quiche::Type::Initial);
                 if probe.is_some() {
+                    assert_eq!(read, 1_250);
                     assert_eq!(header.dcid.len(), 8);
                     assert_eq!(header.scid.len(), 0);
                 }

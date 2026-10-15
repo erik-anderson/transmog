@@ -96,6 +96,14 @@ def quic_parameters(data):
             continue
         if key in (0, 2, 15, 16):
             normalized[str(key)] = {"length": len(value)}  # random CIDs/reset token
+        elif key == 17:
+            if len(value) < 4 or len(value) % 4:
+                raise ValueError("Malformed QUIC version information")
+            versions = codes(value, 4)
+            normalized[str(key)] = {
+                "chosen": f"{versions[0]:08x}",
+                "available": ["GREASE" if v & 0x0f0f0f0f == 0x0a0a0a0a else f"{v:08x}" for v in versions[1:]],
+            }
         elif key in (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 0x20):
             v = Reader(value)
             normalized[str(key)] = varint(v)

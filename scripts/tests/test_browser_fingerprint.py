@@ -78,6 +78,17 @@ class TlsTests(unittest.TestCase):
             with self.assertRaises(ValueError): fp.quic_parameters(invalid)
 
 
+    def test_version_information_normalizes_reserved_values_without_hiding_order(self):
+        def parameter(versions):
+            data = b"".join(v.to_bytes(4, "big") for v in versions)
+            return fp.quic_parameters(bytes([17, len(data)]) + data)
+        first = parameter([1, 1, 0x1a2a3a4a])
+        second = parameter([1, 1, 0xfafafafa])
+        self.assertEqual(first["parameters"], second["parameters"])
+        self.assertNotEqual(first["wire_order"], second["wire_order"])
+        self.assertNotEqual(first["parameters"], parameter([1, 0x1a2a3a4a, 1])["parameters"])
+
+
 class HttpTests(unittest.TestCase):
     def test_h2_continuation_padding_priority_and_window(self):
         wire = (fp.PREFACE + frame(4, 0, 0, b"\x00\x01\0\x01\0\0") + frame(8, 0, 0, b"\0\0\x10\0")

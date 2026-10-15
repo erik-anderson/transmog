@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import tarfile
 import tempfile
+import time
 import urllib.request
 
 from dependency_snapshots import replace_directory, snapshot_file
@@ -87,7 +88,20 @@ def regenerate(sources, archive_dir):
                 shutil.rmtree(staged / ".git")
             receipt = {"source": source, "patchSha256": digest(patch_data), "files": inventory(staged)}
             (staged / "transmog-snapshot.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8", newline="\n")
-            replace_directory(staged, vendor / name)
+            destination = vendor / name
+            if destination.is_dir() and inventory(destination) == inventory(staged):
+                continue
+            # Windows indexers briefly open crate directories without delete
+            # sharing. Retry only while the staged tree is still unpublished;
+            # replace_directory restores the previous snapshot on failure.
+            for attempt in range(10):
+                try:
+                    replace_directory(staged, destination)
+                    break
+                except PermissionError:
+                    if not staged.is_dir() or attempt == 9:
+                        raise
+                    time.sleep(0.2)
 
 
 def record_patches(sources, archive_dir):

@@ -560,6 +560,7 @@ pub enum QlogLevel {
 
 /// Stores configuration shared between multiple connections.
 pub struct Config {
+    initial_packet_size: usize,
     local_transport_params: TransportParams,
 
     version: u32,
@@ -646,6 +647,7 @@ impl Config {
         }
 
         Ok(Config {
+            initial_packet_size: MIN_CLIENT_INITIAL_LEN,
             local_transport_params: TransportParams::default(),
             version,
             tls_ctx,
@@ -935,6 +937,60 @@ impl Config {
     /// The default and minimum value is `1200`.
     pub fn set_max_send_udp_payload_size(&mut self, v: usize) {
         self.max_send_udp_payload_size = cmp::max(v, MAX_SEND_UDP_PAYLOAD_SIZE);
+    }
+
+    /// Sets the target Initial datagram size within the configured send limit.
+    pub fn set_initial_packet_size(&mut self, size: usize) -> Result<()> {
+        if !(MIN_CLIENT_INITIAL_LEN..=16383).contains(&size) || size > self.max_send_udp_payload_size {
+            return Err(Error::InvalidState);
+        }
+        self.initial_packet_size = size;
+        Ok(())
+    }
+
+    /// Omits ACK transport parameters only when they equal protocol defaults.
+    pub fn omit_default_ack_parameters(&mut self, enabled: bool) {
+        self.local_transport_params.omit_default_ack_parameters = enabled;
+    }
+
+    /// Offers RFC 9368 version information for the configured version and a
+    /// reserved version. Switching to another real version is not advertised.
+    pub fn enable_version_information(&mut self) {
+        let reserved = (rand::rand_u64() as u32 & 0xf0f0_f0f0) | 0x0a0a_0a0a;
+        let mut available = vec![self.version, reserved];
+        if rand::rand_u8() & 1 != 0 {
+            available.reverse();
+        }
+        self.local_transport_params.version_information = Some((self.version, available));
+    }
+
+    /// Adds bounded extension transport parameters. Standard parameters must
+    /// use dedicated setters. Duplicate identifiers are rejected.
+    pub fn set_additional_transport_parameters(
+        &mut self,
+        parameters: Vec<UnknownTransportParameter<Vec<u8>>>,
+    ) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        let mut bytes = 0usize;
+        if parameters.len() > 16 {
+            return Err(Error::InvalidTransportParam);
+        }
+        for parameter in &parameters {
+            if parameter.id > octets::MAX_VAR_INT
+                || matches!(parameter.id, 0..=0x11 | 0x20)
+                || !seen.insert(parameter.id)
+            {
+                return Err(Error::InvalidTransportParam);
+            }
+            bytes = bytes
+                .saturating_add(parameter.value.len())
+                .saturating_add(16);
+            if bytes > 512 {
+                return Err(Error::InvalidTransportParam);
+            }
+        }
+        self.local_transport_params.additional_parameters = parameters;
+        Ok(())
     }
 
     /// Sets the `initial_max_data` transport parameter.
@@ -1356,6 +1412,7 @@ where
 
     /// Local transport parameters.
     local_transport_params: TransportParams,
+    initial_packet_size: usize,
 
     /// TLS handshake state.
     handshake: tls::Handshake,
@@ -2085,6 +2142,7 @@ impl<F: BufFactory> Connection<F> {
                 .track_unknown_transport_params,
 
             local_transport_params: config.local_transport_params.clone(),
+            initial_packet_size: config.initial_packet_size,
 
             handshake: tls,
 
@@ -4098,8 +4156,8 @@ impl<F: BufFactory> Connection<F> {
             return Err(Error::Done);
         }
 
-        if has_initial && left > 0 && done < MIN_CLIENT_INITIAL_LEN {
-            let pad_len = cmp::min(left, MIN_CLIENT_INITIAL_LEN - done);
+        if has_initial && left > 0 && done < self.initial_packet_size {
+            let pad_len = cmp::min(left, self.initial_packet_size - done);
 
             // Fill padding area with null bytes, to avoid leaking information
             // in case the application reuses the packet buffer.
@@ -6757,7 +6815,7 @@ impl<F: BufFactory> Connection<F> {
 
         // Allow for 1200 bytes (minimum QUIC packet size) during the
         // handshake.
-        MIN_CLIENT_INITIAL_LEN
+        self.initial_packet_size.min(self.recovery_config.max_send_udp_payload_size)
     }
 
     /// Schedule an ack-eliciting packet on the active path.
@@ -7975,6 +8033,13 @@ impl<F: BufFactory> Connection<F> {
     fn parse_peer_transport_params(
         &mut self, peer_params: TransportParams,
     ) -> Result<()> {
+        // Only one real version is offered, so compatible switching cannot
+        // occur. Authenticate the chosen version before applying peer policy.
+        if let Some((chosen, available)) = &peer_params.version_information {
+            if *chosen != self.version || (self.is_server && !available.contains(chosen)) {
+                return Err(Error::VersionNegotiation);
+            }
+        }
         // Validate initial_source_connection_id.
         match &peer_params.initial_source_connection_id {
             Some(v) if v != &self.destination_id() =>

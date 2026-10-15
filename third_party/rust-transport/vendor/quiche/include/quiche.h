@@ -137,6 +137,8 @@ enum quiche_error {
 
     /// An invalid DCID was used when connecting to a remote peer.
     QUICHE_ERR_INVALID_DCID_INITIALIZATION = -23,
+    // Authenticated version information conflicts with the connection.
+    QUICHE_ERR_VERSION_NEGOTIATION = -24,
 };
 
 // Returns a human readable string with the quiche version number.

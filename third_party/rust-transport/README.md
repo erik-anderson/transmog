@@ -22,3 +22,10 @@ independently verified registry archive checksum in `sources.json`, adjust the
 workspace version and patch, regenerate, update Cargo.lock, and run the affected
 wire/interoperability tests and local Chromium comparison. Remove each local
 patch as soon as an upstream release exposes the required capability.
+
+Run `python scripts/test-transport-patches.py` for focused quiche regressions in
+an isolated source copy. It verifies the shared TLS pins and uses a separate
+test-only lockfile (including upstream development dependencies). Use
+`--update-lock` after a roll and review that lockfile separately; it never
+changes production Cargo.lock. `--package` and `--filter` select other upstream
+unit checks.

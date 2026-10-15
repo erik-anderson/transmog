@@ -1,0 +1,356 @@
+--- a/include/quiche.h
++++ b/include/quiche.h
+@@ -137,6 +137,8 @@
+ 
+     /// An invalid DCID was used when connecting to a remote peer.
+     QUICHE_ERR_INVALID_DCID_INITIALIZATION = -23,
++    // Authenticated version information conflicts with the connection.
++    QUICHE_ERR_VERSION_NEGOTIATION = -24,
+ };
+ 
+ // Returns a human readable string with the quiche version number.
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -35,6 +35,8 @@
+ /// A QUIC error.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Error {
++    /// Authenticated RFC 9368 version information conflicts with this connection.
++    VersionNegotiation,
+     /// There is no more work to do.
+     Done,
+ 
+@@ -185,6 +187,7 @@
+     pub(crate) fn to_wire(self) -> u64 {
+         match self {
+             Error::Done => WireErrorCode::NoError as u64,
++            Error::VersionNegotiation => 0x11,
+             Error::InvalidFrame => WireErrorCode::FrameEncodingError as u64,
+             Error::InvalidStreamState(..) =>
+                 WireErrorCode::StreamStateError as u64,
+@@ -205,6 +208,7 @@
+     pub(crate) fn to_c(self) -> libc::ssize_t {
+         match self {
+             Error::Done => -1,
++            Error::VersionNegotiation => -24,
+             Error::BufferTooShort => -2,
+             Error::UnknownVersion => -3,
+             Error::InvalidFrame => -4,
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -560,6 +560,7 @@
+ 
+ /// Stores configuration shared between multiple connections.
+ pub struct Config {
++    initial_packet_size: usize,
+     local_transport_params: TransportParams,
+ 
+     version: u32,
+@@ -646,6 +647,7 @@
+         }
+ 
+         Ok(Config {
++            initial_packet_size: MIN_CLIENT_INITIAL_LEN,
+             local_transport_params: TransportParams::default(),
+             version,
+             tls_ctx,
+@@ -937,6 +939,60 @@
+         self.max_send_udp_payload_size = cmp::max(v, MAX_SEND_UDP_PAYLOAD_SIZE);
+     }
+ 
++    /// Sets the target Initial datagram size within the configured send limit.
++    pub fn set_initial_packet_size(&mut self, size: usize) -> Result<()> {
++        if !(MIN_CLIENT_INITIAL_LEN..=16383).contains(&size) || size > self.max_send_udp_payload_size {
++            return Err(Error::InvalidState);
++        }
++        self.initial_packet_size = size;
++        Ok(())
++    }
++
++    /// Omits ACK transport parameters only when they equal protocol defaults.
++    pub fn omit_default_ack_parameters(&mut self, enabled: bool) {
++        self.local_transport_params.omit_default_ack_parameters = enabled;
++    }
++
++    /// Offers RFC 9368 version information for the configured version and a
++    /// reserved version. Switching to another real version is not advertised.
++    pub fn enable_version_information(&mut self) {
++        let reserved = (rand::rand_u64() as u32 & 0xf0f0_f0f0) | 0x0a0a_0a0a;
++        let mut available = vec![self.version, reserved];
++        if rand::rand_u8() & 1 != 0 {
++            available.reverse();
++        }
++        self.local_transport_params.version_information = Some((self.version, available));
++    }
++
++    /// Adds bounded extension transport parameters. Standard parameters must
++    /// use dedicated setters. Duplicate identifiers are rejected.
++    pub fn set_additional_transport_parameters(
++        &mut self,
++        parameters: Vec<UnknownTransportParameter<Vec<u8>>>,
++    ) -> Result<()> {
++        let mut seen = std::collections::HashSet::new();
++        let mut bytes = 0usize;
++        if parameters.len() > 16 {
++            return Err(Error::InvalidTransportParam);
++        }
++        for parameter in &parameters {
++            if parameter.id > octets::MAX_VAR_INT
++                || matches!(parameter.id, 0..=0x11 | 0x20)
++                || !seen.insert(parameter.id)
++            {
++                return Err(Error::InvalidTransportParam);
++            }
++            bytes = bytes
++                .saturating_add(parameter.value.len())
++                .saturating_add(16);
++            if bytes > 512 {
++                return Err(Error::InvalidTransportParam);
++            }
++        }
++        self.local_transport_params.additional_parameters = parameters;
++        Ok(())
++    }
++
+     /// Sets the `initial_max_data` transport parameter.
+     ///
+     /// When set to a non-zero value quiche will only allow at most `v` bytes of
+@@ -1356,6 +1412,7 @@
+ 
+     /// Local transport parameters.
+     local_transport_params: TransportParams,
++    initial_packet_size: usize,
+ 
+     /// TLS handshake state.
+     handshake: tls::Handshake,
+@@ -2085,6 +2142,7 @@
+                 .track_unknown_transport_params,
+ 
+             local_transport_params: config.local_transport_params.clone(),
++            initial_packet_size: config.initial_packet_size,
+ 
+             handshake: tls,
+ 
+@@ -4098,8 +4156,8 @@
+             return Err(Error::Done);
+         }
+ 
+-        if has_initial && left > 0 && done < MIN_CLIENT_INITIAL_LEN {
+-            let pad_len = cmp::min(left, MIN_CLIENT_INITIAL_LEN - done);
++        if has_initial && left > 0 && done < self.initial_packet_size {
++            let pad_len = cmp::min(left, self.initial_packet_size - done);
+ 
+             // Fill padding area with null bytes, to avoid leaking information
+             // in case the application reuses the packet buffer.
+@@ -6757,7 +6815,7 @@
+ 
+         // Allow for 1200 bytes (minimum QUIC packet size) during the
+         // handshake.
+-        MIN_CLIENT_INITIAL_LEN
++        self.initial_packet_size.min(self.recovery_config.max_send_udp_payload_size)
+     }
+ 
+     /// Schedule an ack-eliciting packet on the active path.
+@@ -7975,6 +8033,13 @@
+     fn parse_peer_transport_params(
+         &mut self, peer_params: TransportParams,
+     ) -> Result<()> {
++        // Only one real version is offered, so compatible switching cannot
++        // occur. Authenticate the chosen version before applying peer policy.
++        if let Some((chosen, available)) = &peer_params.version_information {
++            if *chosen != self.version || (self.is_server && !available.contains(chosen)) {
++                return Err(Error::VersionNegotiation);
++            }
++        }
+         // Validate initial_source_connection_id.
+         match &peer_params.initial_source_connection_id {
+             Some(v) if v != &self.destination_id() =>
+--- a/src/tests.rs
++++ b/src/tests.rs
+@@ -32,6 +32,38 @@
+ 
+ use rstest::rstest;
+ 
++#[test]
++fn transmog_initial_size_and_authenticated_version_information() {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    config.set_application_protos(&[b"h3"]).unwrap();
++    config.set_max_send_udp_payload_size(1350);
++    assert_eq!(config.set_initial_packet_size(1199), Err(Error::InvalidState));
++    assert_eq!(config.set_initial_packet_size(1351), Err(Error::InvalidState));
++    config.set_initial_packet_size(1250).unwrap();
++    config.enable_version_information();
++    let mut conn = connect(None, &ConnectionId::from_ref(&[]), "127.0.0.1:1234".parse().unwrap(), "127.0.0.1:443".parse().unwrap(), &mut config).unwrap();
++    let mut output = [0; 1350];
++    assert_eq!(conn.send(&mut output).unwrap().0, 1250);
++    let mut peer = TransportParams::default();
++    peer.version_information = Some((2, vec![1, 2]));
++    assert_eq!(conn.parse_peer_transport_params(peer.clone()), Err(Error::VersionNegotiation));
++    peer.version_information = Some((1, vec![])); // Server's list may be empty.
++    peer.initial_source_connection_id = Some(conn.destination_id().to_vec().into());
++    peer.original_destination_connection_id = conn.odcid.clone();
++    conn.parse_peer_transport_params(peer).unwrap();
++}
++
++#[test]
++fn transmog_extension_parameters_are_bounded_and_cannot_override_standard_ids() {
++    let mut config = Config::new(PROTOCOL_VERSION).unwrap();
++    for parameters in [
++        vec![UnknownTransportParameter { id: 17, value: vec![] }],
++        vec![UnknownTransportParameter { id: 100, value: vec![0; 513] }],
++        vec![UnknownTransportParameter { id: 100, value: vec![] }; 2],
++        vec![UnknownTransportParameter { id: 1 << 62, value: vec![] }],
++    ] { assert_eq!(config.set_additional_transport_parameters(parameters), Err(Error::InvalidTransportParam)); }
++}
++
+ /// Pick a numeric expectation based on the active `boring` major version.
+ ///
+ /// `boring` 5.x ships BoringSSL with post-quantum (X25519MLKEM768) key
+@@ -59,6 +91,9 @@
+ fn transport_params() {
+     // Server encodes, client decodes.
+     let tp = TransportParams {
++        version_information: None,
++        additional_parameters: Vec::new(),
++        omit_default_ack_parameters: false,
+         original_destination_connection_id: None,
+         max_idle_timeout: 30,
+         stateless_reset_token: Some(u128::from_be_bytes([0xba; 16])),
+@@ -89,6 +124,9 @@
+ 
+     // Client encodes, server decodes.
+     let tp = TransportParams {
++        version_information: None,
++        additional_parameters: Vec::new(),
++        omit_default_ack_parameters: false,
+         original_destination_connection_id: None,
+         max_idle_timeout: 30,
+         stateless_reset_token: None,
+--- a/src/tls/mod.rs
++++ b/src/tls/mod.rs
+@@ -474,7 +474,7 @@
+     pub fn set_quic_transport_params(
+         &mut self, params: &crate::TransportParams, is_server: bool,
+     ) -> Result<()> {
+-        let mut raw_params = [0; 128];
++        let mut raw_params = [0; 2048];
+ 
+         let raw_params =
+             crate::TransportParams::encode(params, is_server, &mut raw_params)?;
+--- a/src/transport_params.rs
++++ b/src/transport_params.rs
+@@ -153,6 +153,12 @@
+ /// QUIC Transport Parameters
+ #[derive(Clone, Debug, PartialEq)]
+ pub struct TransportParams {
++    /// RFC 9368 chosen version followed by available versions.
++    pub version_information: Option<(u32, Vec<u32>)>,
++    /// Locally configured extension parameters, never inferred from peer input.
++    pub additional_parameters: Vec<UnknownTransportParameter<Vec<u8>>>,
++    /// Local encoding preference; effective ACK defaults are unchanged.
++    pub omit_default_ack_parameters: bool,
+     /// Value of Destination CID field from first Initial packet sent by client
+     pub original_destination_connection_id: Option<ConnectionId<'static>>,
+     /// The maximum idle timeout.
+@@ -194,9 +200,45 @@
+     // pub preferred_address: ...,
+ }
+ 
++#[cfg(test)]
++mod transmog_tests {
++    use super::*;
++
++    #[test]
++    fn transmog_ack_defaults_are_omitted_without_changing_zero_values() {
++        for (exponent, delay) in [(3, 25), (0, 0), (10, 100)] {
++            let parameters = TransportParams { omit_default_ack_parameters: true, ack_delay_exponent: exponent, max_ack_delay: delay, ..Default::default() };
++            let mut storage = [0; 128];
++            let encoded = TransportParams::encode(&parameters, false, &mut storage).unwrap();
++            if exponent == 3 {
++                let mut wire = octets::Octets::with_slice(encoded);
++                while wire.cap() > 0 {
++                    let id = wire.get_varint().unwrap();
++                    assert!(!matches!(id, 10 | 11));
++                    wire.get_bytes_with_varint_length().unwrap();
++                }
++            }
++            let decoded = TransportParams::decode(encoded, true, None).unwrap();
++            assert_eq!((decoded.ack_delay_exponent, decoded.max_ack_delay), (exponent, delay));
++        }
++    }
++
++    #[test]
++    fn transmog_malformed_version_information_is_rejected() {
++        for payload in [vec![], vec![1], vec![0; 4], vec![0, 0, 0, 1, 0], vec![0, 0, 0, 1, 0, 0, 0, 0]] {
++            let mut encoded = vec![0x11, payload.len() as u8];
++            encoded.extend(payload);
++            assert_eq!(TransportParams::decode(&encoded, false, None), Err(Error::InvalidTransportParam));
++        }
++    }
++}
++
+ impl Default for TransportParams {
+     fn default() -> TransportParams {
+         TransportParams {
++            version_information: None,
++            additional_parameters: Vec::new(),
++            omit_default_ack_parameters: false,
+             original_destination_connection_id: None,
+             max_idle_timeout: 0,
+             stateless_reset_token: None,
+@@ -370,6 +412,21 @@
+                     tp.retry_source_connection_id = Some(val.to_vec().into());
+                 },
+ 
++                0x0011 => {
++                    if val.cap() < 4 || val.cap() % 4 != 0 || val.cap() > 1024 {
++                        return Err(Error::InvalidTransportParam);
++                    }
++                    let chosen = val.get_u32()?;
++                    let mut available = Vec::new();
++                    if chosen == 0 { return Err(Error::InvalidTransportParam); }
++                    while val.cap() > 0 {
++                        let version = val.get_u32()?;
++                        if version == 0 { return Err(Error::InvalidTransportParam); }
++                        available.push(version);
++                    }
++                    tp.version_information = Some((chosen, available));
++                },
++
+                 0x0020 => {
+                     tp.max_datagram_frame_size = Some(val.get_varint()?);
+                 },
+@@ -500,7 +557,7 @@
+             b.put_varint(tp.initial_max_streams_uni)?;
+         }
+ 
+-        if tp.ack_delay_exponent != 0 {
++        if if tp.omit_default_ack_parameters { tp.ack_delay_exponent != 3 } else { tp.ack_delay_exponent != 0 } {
+             assert!(tp.ack_delay_exponent <= MAX_ACK_DELAY_EXPONENT);
+             TransportParams::encode_param(
+                 &mut b,
+@@ -510,7 +567,7 @@
+             b.put_varint(tp.ack_delay_exponent)?;
+         }
+ 
+-        if tp.max_ack_delay != 0 {
++        if if tp.omit_default_ack_parameters { tp.max_ack_delay != 25 } else { tp.max_ack_delay != 0 } {
+             assert!(tp.max_ack_delay <= octets::MAX_VAR_INT);
+             TransportParams::encode_param(
+                 &mut b,
+@@ -558,6 +615,15 @@
+             b.put_varint(max_datagram_frame_size)?;
+         }
+ 
++        if let Some((chosen, available)) = &tp.version_information {
++            TransportParams::encode_param(&mut b, 0x11, 4 + available.len() * 4)?;
++            b.put_u32(*chosen)?;
++            for version in available { b.put_u32(*version)?; }
++        }
++        for parameter in &tp.additional_parameters {
++            TransportParams::encode_param(&mut b, parameter.id, parameter.value.len())?;
++            b.put_bytes(&parameter.value)?;
++        }
+         let out_len = b.off();
+ 
+         Ok(&mut out[..out_len])
