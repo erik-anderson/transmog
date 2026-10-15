@@ -902,7 +902,7 @@ impl H3ConnectionDriver {
                 local_addr,
                 peer_addr,
                 connection,
-                h3_config: quiche::h3::Config::new()?,
+                h3_config: crate::config::http3_config()?,
                 transport: TransportObservation {
                     leg: "upstream".into(),
                     connection_id: format!("quic-{}", hex_lower(source_connection_id.as_ref())),
@@ -1631,8 +1631,8 @@ fn prepare_request_headers(
     }
     let mut h3_headers = vec![
         quiche::h3::Header::new(b":method", head.method.as_bytes()),
-        quiche::h3::Header::new(b":scheme", head.target.scheme.as_bytes()),
         quiche::h3::Header::new(b":authority", head.target.authority.as_bytes()),
+        quiche::h3::Header::new(b":scheme", head.target.scheme.as_bytes()),
         quiche::h3::Header::new(b":path", path.as_bytes()),
     ];
     h3_headers.extend(h3_regular_headers(&headers));
@@ -2295,6 +2295,49 @@ mod tests {
                 diagnostics: Vec::new(),
             })
         }
+    }
+
+    #[tokio::test]
+    async fn chromium_h3_headers_and_transport_credit_reach_the_origin() {
+        let ca = ProxyCa::generate("Chromium H3 wire policy", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) = spawn_origin_probed(
+            leaf,
+            "127.0.0.1".parse().unwrap(),
+            1,
+            Some(|connection, headers| {
+                let params = connection.peer_transport_params().unwrap();
+                assert_eq!(params.initial_max_data, 15_728_640);
+                assert_eq!(params.initial_max_stream_data_bidi_local, 6_291_456);
+                assert_eq!(params.initial_max_stream_data_bidi_remote, 6_291_456);
+                assert_eq!(params.initial_max_stream_data_uni, 6_291_456);
+                assert_eq!(params.initial_max_streams_bidi, 100);
+                assert_eq!(params.initial_max_streams_uni, 103);
+                let names = headers
+                    .iter()
+                    .take(4)
+                    .map(quiche::h3::NameValue::name)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    names,
+                    [b":method".as_slice(), b":authority", b":scheme", b":path"]
+                );
+            }),
+        )
+        .await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 1).unwrap(),
+        );
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default());
+        let client = H3OriginClient::new(tls, H3TransportLimits::default());
+        let response = client
+            .execute(h3_request(origin, "/proof"), origin.port(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(response.response.head.status, 200);
+        server.finish().await;
     }
 
     #[test]
@@ -3231,6 +3274,16 @@ mod tests {
         bind_ip: std::net::IpAddr,
         requests: usize,
     ) -> (SocketAddr, TestOrigin) {
+        spawn_origin_probed(leaf, bind_ip, requests, None).await
+    }
+
+    type RequestProbe = fn(&quiche::Connection, &[quiche::h3::Header]);
+    async fn spawn_origin_probed(
+        leaf: transmog_tls::IssuedLeaf,
+        bind_ip: std::net::IpAddr,
+        requests: usize,
+        probe: Option<RequestProbe>,
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -3255,7 +3308,7 @@ mod tests {
         let local = socket.local_addr().unwrap();
         let task_socket = Arc::clone(&socket);
         let task = tokio::spawn(async move {
-            run_origin(task_socket, local, config, requests).await;
+            run_origin(task_socket, local, config, requests, probe).await;
         });
         (local, TestOrigin { socket, task })
     }
@@ -3708,6 +3761,7 @@ mod tests {
         local: SocketAddr,
         mut config: quiche::Config,
         requests: usize,
+        probe: Option<RequestProbe>,
     ) {
         let mut peers = HashMap::new();
         let h3_config = quiche::h3::Config::new().unwrap();
@@ -3749,6 +3803,9 @@ mod tests {
                 loop {
                     match http3.poll(connection) {
                         Ok((stream_id, quiche::h3::Event::Headers { list, .. })) => {
+                            if let Some(probe) = probe {
+                                probe(connection, &list);
+                            }
                             assert!(list.iter().any(|header| {
                                 header.name() == b"x-h3-proof" && header.value() == b"yes"
                             }));

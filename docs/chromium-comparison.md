@@ -126,10 +126,24 @@ origin client (Auto and forced H2) and the extended-CONNECT WebSocket client
 apply that policy. The default 16 KiB frame size is implicit, matching Chrome's
 omission of `SETTINGS_MAX_FRAME_SIZE`.
 
+HTTP/3 uses the same 6/15 MiB stream/connection receive credits, a 256 KiB
+field-section limit, and initial peer stream credits of 100 bidirectional and
+103 unidirectional streams. The latter includes three H3 control streams in
+addition to Chromium's 100 application streams. Explicit embedding overrides
+in `H3TransportLimits` retain their supplied values. Request pseudo-headers use
+`:method`, `:authority`, `:scheme`, `:path`, followed by regular headers. QPACK
+dynamic-table and datagram capabilities remain unadvertised until implemented.
+
 The shared constants live in `network_profile::chromium_http`. The pinned
 sources are Chromium 154.0.8037.99's
 [`http_network_session.cc`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/http/http_network_session.cc),
 [`http_network_session.h`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/http/http_network_session.h)
 and [`quic_context.cc`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/quic/quic_context.cc).
+The H3 header limit is also set in
+[`quic_chromium_client_session.h`](https://github.com/chromium/chromium/blob/154.0.8037.99/net/quic/quic_chromium_client_session.h).
+The stream-count defaults and control-stream allowance come from Google's
+QUICHE commit `80bf9559d3a4c08dde4b85abc46d190a88ffef64`, pinned by Chromium
+154's DEPS: `quiche/quic/core/quic_constants.h`, `quic_config.cc`,
+`quic_session.cc` and `http/quic_spdy_session.cc`.
 These receive credits are finite protocol limits, independent of application
 body limits and bounded request queues.

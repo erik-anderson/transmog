@@ -13,3 +13,7 @@ pub const CONNECTION_RECEIVE_WINDOW: u32 = 15 * 1024 * 1024;
 pub const HTTP2_HEADER_TABLE_SIZE: u32 = 64 * 1024;
 /// Maximum uncompressed HTTP field section size (256 KiB).
 pub const HEADER_LIST_SIZE: u32 = 256 * 1024;
+/// Initial peer bidirectional stream credit from Chromium's pinned QUICHE.
+pub const HTTP3_BIDIRECTIONAL_STREAMS: u64 = 100;
+/// Initial peer unidirectional stream credit: 100 application plus 3 H3 controls.
+pub const HTTP3_UNIDIRECTIONAL_STREAMS: u64 = 103;

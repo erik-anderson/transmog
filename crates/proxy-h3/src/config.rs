@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use thiserror::Error;
+use transmog_core::network_profile::chromium_http;
 use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 
 /// Bounded transport settings for an HTTP/3 client connection.
@@ -26,14 +27,22 @@ impl Default for H3TransportLimits {
     fn default() -> Self {
         Self {
             idle_timeout: Duration::from_secs(30),
-            connection_window: 4 * 1024 * 1024,
-            stream_window: 1024 * 1024,
-            peer_bidirectional_streams: 16,
-            peer_unidirectional_streams: 16,
+            connection_window: u64::from(chromium_http::CONNECTION_RECEIVE_WINDOW),
+            stream_window: u64::from(chromium_http::STREAM_RECEIVE_WINDOW),
+            peer_bidirectional_streams: chromium_http::HTTP3_BIDIRECTIONAL_STREAMS,
+            peer_unidirectional_streams: chromium_http::HTTP3_UNIDIRECTIONAL_STREAMS,
             pending_requests_per_connection: 256,
             max_pool_entries: 128,
         }
     }
+}
+
+pub(crate) fn http3_config() -> Result<quiche::h3::Config, quiche::h3::Error> {
+    let mut config = quiche::h3::Config::new()?;
+    config.set_max_field_section_size(u64::from(chromium_http::HEADER_LIST_SIZE));
+    // Do not advertise QPACK dynamic tables or datagrams until the adapter can
+    // process the capabilities that would be enabled by those SETTINGS.
+    Ok(config)
 }
 
 impl H3TransportLimits {
