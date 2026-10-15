@@ -54,7 +54,9 @@ does not impose a second parse requirement on unused entries.
 Credentials and requested CA names use buffer APIs. QUIC connections are created
 without quiche's legacy hostname setter; SNI and expected identity are installed
 separately before the first packet. The older `hyper_connector*` embedding helpers
-retain their legacy return types; the production adapter uses `tcp_context_builder`.
+retain their legacy return types and use worker verification with async TLS
+drivers; blocking callers use `synchronous_connector*`. The production adapter
+uses `tcp_context_builder`.
 
 ## Encrypted Client Hello
 
@@ -122,8 +124,10 @@ limits. Cancellation stops outstanding fetches.
 Production TCP and QUIC verification runs on bounded workers. Only owned DER,
 expected identity, SCT/OCSP evidence and frozen trust inputs cross threads; the
 TLS object and capture publication stay on their owning thread. Low-level
-synchronous embedding contexts retain synchronous verification; async adapters
-install the worker callback and must supply a TLS task waker.
+synchronous embedding contexts retain synchronous verification; `hyper_connector*`
+and async adapters install the worker callback and require a TLS task waker.
+Use `synchronous_connector*` for a blocking legacy TLS stream. Verification rules
+are identical; only execution differs.
 
 Only intermediates from fully accepted paths enter the bounded cache: up to 256
 certificates and 4 MiB, with seven days of inactivity expiry. Leaf certificates

@@ -75,7 +75,10 @@ fn false_start_requires_tls12_aead_and_alpn_and_capture_waits_for_finished() {
                 cipher_list: cipher.into(),
             },
         );
-        let context = factory.hyper_connector_builder(b"\x02h2").unwrap().build();
+        let context = factory
+            .synchronous_connector_builder(b"\x02h2")
+            .unwrap()
+            .build();
         let mut ssl = context.configure().unwrap().into_ssl("localhost").unwrap();
         let capture = factory.capture(Some("localhost".into()), vec!["h2".into()]);
         capture.attach_ssl(&mut ssl).unwrap();

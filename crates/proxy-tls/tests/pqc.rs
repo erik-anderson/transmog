@@ -298,7 +298,7 @@ fn custom_profile_controls_actual_tcp_offers_and_capture_provenance() {
         server.set_private_key(&leaf.private_key).unwrap();
         let (tls, group) = handshake_captured(
             server.build(),
-            &factory.hyper_connector().unwrap(),
+            &factory.synchronous_connector().unwrap(),
             Some(&capture),
         );
         assert_eq!(group, Some(29));
@@ -401,7 +401,7 @@ fn production_tcp_general_grease_preserves_real_preferences() {
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
     let mut baseline = factory(&ca)
-        .hyper_connector_builder(b"\x02h2\x08http/1.1")
+        .synchronous_connector_builder(b"\x02h2\x08http/1.1")
         .unwrap();
     baseline.set_grease_enabled(false);
     baseline.set_permute_extensions(false);
@@ -423,7 +423,7 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             let capture = factory(&ca).capture(Some("localhost".into()), vec![]);
             let (tls, _) = handshake_captured(
                 server,
-                &factory(&ca).hyper_connector().unwrap(),
+                &factory(&ca).synchronous_connector().unwrap(),
                 Some(&capture),
             );
             assert_eq!(tls.ssl().version2(), Some(version));
@@ -503,7 +503,7 @@ fn production_tcp_signature_grease_preserves_real_algorithms_and_handshakes() {
         .unwrap();
     for version in [SslVersion::TLS1_2, SslVersion::TLS1_3] {
         let mut baseline = factory(&ca)
-            .hyper_connector_builder(b"\x02h2\x08http/1.1")
+            .synchronous_connector_builder(b"\x02h2\x08http/1.1")
             .unwrap();
         transmog_tls_native::set_signature_algorithm_grease(&mut baseline, false);
         let acceptor = || {
@@ -518,7 +518,7 @@ fn production_tcp_signature_grease_preserves_real_algorithms_and_handshakes() {
         let expected = signature_algorithms(&hello_extensions(&tls.get_ref().written)[&13]);
         assert_eq!(expected, CHROMIUM_SIGNATURE_ALGORITHMS);
         assert!(expected.iter().all(|&value| !is_grease(value)));
-        let connector = factory(&ca).hyper_connector().unwrap();
+        let connector = factory(&ca).synchronous_connector().unwrap();
         for _ in 0..3 {
             let (tls, _) = handshake(acceptor(), &connector);
             assert_eq!(tls.ssl().version2(), Some(version));
@@ -617,7 +617,7 @@ fn chromium_trust_anchor_ids_match_actual_tcp_and_quic_client_hellos() {
         let factory = factory(&ca).with_network_profile(profile).unwrap();
         let (tcp, _) = handshake(
             acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
-            &factory.hyper_connector().unwrap(),
+            &factory.synchronous_connector().unwrap(),
         );
         let extensions = recorded_hello(&tcp.get_ref().written)
             .extensions
@@ -685,7 +685,7 @@ fn webview2_catalog_without_ids_omits_the_extension_over_tcp_and_quic() {
         .unwrap();
     let (tcp, _) = handshake(
         acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
-        &factory.hyper_connector().unwrap(),
+        &factory.synchronous_connector().unwrap(),
     );
     let extensions = recorded_hello(&tcp.get_ref().written).extensions;
     assert!(!extensions.iter().any(|(kind, _)| *kind == 0xca34));
@@ -746,7 +746,10 @@ fn production_clients_verify_brotli_compressed_certificates_over_tcp_and_quic() 
     server
         .add_certificate_compression_algorithm(CertificateEncoder(compressed.clone()))
         .unwrap();
-    let (tls, _) = handshake(server.build(), &factory(&ca).hyper_connector().unwrap());
+    let (tls, _) = handshake(
+        server.build(),
+        &factory(&ca).synchronous_connector().unwrap(),
+    );
     assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_3));
     assert!(tls.ssl().verify_result().is_ok());
     assert_eq!(compressed.load(Ordering::SeqCst), 1);
@@ -829,7 +832,7 @@ fn compressed_certificate_errors_and_untrusted_chains_fail_the_handshake() {
         let tcp = TcpStream::connect(address).unwrap();
         socket(&tcp);
         let connector = factory(if kind == 3 { &unrelated } else { &ca })
-            .hyper_connector()
+            .synchronous_connector()
             .unwrap();
         assert!(
             connector.connect("localhost", tcp).is_err(),
@@ -845,7 +848,7 @@ fn production_upstream_prefers_hybrid_and_negotiates_classical_peers() {
     let leaf = ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
-    let connector = factory(&ca).hyper_connector().unwrap();
+    let connector = factory(&ca).synchronous_connector().unwrap();
     for (groups, expected) in [
         (GROUPS, HYBRID_GROUP),
         ("X25519:P-256:P-384", 29),
@@ -941,7 +944,7 @@ fn production_tls12_offers_chromium_order_and_negotiates_each_suite() {
                 transmog_core::network_profile::NetworkProfileSnapshot::legacy_chromium(3),
             )
             .unwrap();
-        let (tls, _) = handshake(server.build(), &preset.hyper_connector().unwrap());
+        let (tls, _) = handshake(server.build(), &preset.synchronous_connector().unwrap());
         assert_eq!(tls.ssl().version2(), Some(SslVersion::TLS1_2));
         assert!(tls.ssl().verify_result().is_ok());
         assert_eq!(tls.ssl().current_cipher().unwrap().name(), cipher);
@@ -1369,7 +1372,7 @@ fn production_upstream_verifies_all_ml_dsa_variants_over_tcp_and_quic() {
         let capture = factory.capture(Some("localhost".into()), vec![]);
         let (tls, _) = handshake_captured(
             acceptor(&leaf.certificate, &leaf.private_key, GROUPS),
-            &factory.hyper_connector().unwrap(),
+            &factory.synchronous_connector().unwrap(),
             Some(&capture),
         );
         assert_eq!(

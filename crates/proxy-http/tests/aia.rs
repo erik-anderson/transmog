@@ -8,6 +8,104 @@ use std::{collections::HashMap, sync::Arc};
 use transmog_tls::issuer_source::{HttpIssuerSource, IssuerSource};
 
 #[tokio::test]
+async fn legacy_embedding_helpers_fetch_aia_without_blocking_the_reactor() {
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    for helper in ["connector", "builder", "pool"] {
+        for valid_name in [true, false] {
+            let root = aia::root("Embedding AIA root");
+            let issuer = anchors::intermediate(&root);
+            let origin = aia::issuer(&issuer.certificate().to_der().unwrap()).await;
+            let (leaf, key) = aia::leaf(
+                &issuer,
+                &[format!("http://127.0.0.1:{}/issuer", origin.port)],
+                if valid_name {
+                    "localhost"
+                } else {
+                    "wrong.example.test"
+                },
+            );
+            let cache = Arc::new(HttpIssuerSource::default());
+            let factory = aia::factory(&root).with_issuer_source(cache.clone());
+            let (port, server) = aia::tls_origin(&leaf, &key).await;
+            let success = if helper == "connector" {
+                let connector = factory.hyper_connector().unwrap();
+                let mut ssl = connector
+                    .configure()
+                    .unwrap()
+                    .into_ssl("localhost")
+                    .unwrap();
+                factory
+                    .configure_ssl_metadata_for_peer(&mut ssl, "localhost")
+                    .unwrap();
+                let socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .unwrap();
+                let connected = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    tokio_boring::SslStreamBuilder::new(ssl, socket).connect(),
+                )
+                .await
+                .unwrap();
+                if let Ok(mut tls) = connected {
+                    tls.write_all(
+                        b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                    let mut response = Vec::new();
+                    tls.read_to_end(&mut response).await.unwrap();
+                    assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                let builder = if helper == "pool" {
+                    factory.hyper_pool_connector_builder(b"\x08http/1.1")
+                } else {
+                    factory.hyper_connector_builder(b"\x08http/1.1")
+                }
+                .unwrap();
+                let mut tcp = hyper_util::client::legacy::connect::HttpConnector::new();
+                tcp.enforce_http(false);
+                let mut connector =
+                    hyper_boring::HttpsConnector::with_connector(tcp, builder).unwrap();
+                let policy = factory.clone();
+                connector.set_ssl_callback(move |ssl, uri| {
+                    policy
+                        .configure_ssl_metadata_for_peer(ssl, uri.host().unwrap())
+                        .map_err(|_| boring::error::ErrorStack::get())
+                });
+                let client = hyper_util::client::legacy::Client::builder(
+                    hyper_util::rt::TokioExecutor::new(),
+                )
+                .build::<_, http_body_util::Empty<bytes::Bytes>>(connector);
+                tokio::time::timeout(
+                    Duration::from_secs(3),
+                    client.get(format!("https://localhost:{port}/").parse().unwrap()),
+                )
+                .await
+                .unwrap()
+                .is_ok()
+            };
+            assert_eq!(success, valid_name, "{helper}");
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(3), server)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                valid_name
+            );
+            assert_eq!(cache.cached_issuers().len(), usize::from(valid_name));
+            if valid_name {
+                assert_eq!(origin.requests.lock().unwrap().len(), 1);
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn missing_issuer_fetches_der_and_caches_only_verified_intermediate() {
     let root = aia::root("AIA root");
     let issuer = anchors::intermediate(&root);

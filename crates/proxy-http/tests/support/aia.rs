@@ -122,26 +122,7 @@ pub async fn probe(
     key: &PKey<Private>,
     expected: bool,
 ) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let mut tls =
-        boring::ssl::SslAcceptor::mozilla_intermediate_v5(boring::ssl::SslMethod::tls()).unwrap();
-    tls.set_certificate(leaf).unwrap();
-    tls.set_private_key(key).unwrap();
-    let tls = tls.build();
-    let server = tokio::spawn(async move {
-        let (tcp, _) = listener.accept().await.unwrap();
-        if let Ok(mut tls) = tokio_boring::accept(&tls, tcp).await {
-            let mut request = [0; 4096];
-            assert!(tls.read(&mut request).await.unwrap() > 0);
-            tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await
-                .unwrap();
-            true
-        } else {
-            false
-        }
-    });
+    let (port, server) = tls_origin(leaf, key).await;
     let result = transmog_http::HyperOriginClient::new(factory)
         .unwrap()
         .execute(
@@ -168,4 +149,27 @@ pub async fn probe(
             .unwrap(),
         expected
     );
+}
+pub async fn tls_origin(leaf: &X509, key: &PKey<Private>) -> (u16, JoinHandle<bool>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut tls =
+        boring::ssl::SslAcceptor::mozilla_intermediate_v5(boring::ssl::SslMethod::tls()).unwrap();
+    tls.set_certificate(leaf).unwrap();
+    tls.set_private_key(key).unwrap();
+    let tls = tls.build();
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        if let Ok(mut tls) = tokio_boring::accept(&tls, tcp).await {
+            let mut request = [0; 4096];
+            assert!(tls.read(&mut request).await.unwrap() > 0);
+            tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            true
+        } else {
+            false
+        }
+    });
+    (port, server)
 }

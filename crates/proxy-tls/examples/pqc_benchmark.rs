@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(TrustSnapshot::load(&trust, 1)?),
         UpstreamTlsPolicy::default(),
     );
-    let mut context = factory.hyper_connector_builder(b"\x08http/1.1")?;
+    let mut context = factory.synchronous_connector_builder(b"\x08http/1.1")?;
     if !hybrid {
         context.set_curves_list("X25519:P-256:P-384")?;
     }

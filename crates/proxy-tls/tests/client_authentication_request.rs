@@ -2232,7 +2232,10 @@ async fn check_queued_eligibility(
         },
         transmog_tls::TlsCapture::new(transmog_core::TlsEvidence::default()),
     );
-    let connector = factory(&ca).hyper_connector().unwrap();
+    // This fixture saturates the blocking pool specifically for eligibility.
+    // Verify the supplied server chain synchronously so the earlier certificate
+    // worker does not consume the intentionally blocked stage instead.
+    let connector = factory(&ca).synchronous_connector().unwrap();
     let mut config = connector.configure().unwrap();
     config.set_min_proto_version(Some(version)).unwrap();
     config.set_max_proto_version(Some(version)).unwrap();

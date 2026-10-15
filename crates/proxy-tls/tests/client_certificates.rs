@@ -165,7 +165,7 @@ fn mutual_tls_retains_full_client_path_on_both_connection_legs() {
             capture.completed(stream.ssl(), true);
             capture.snapshot().client_chain
         });
-        let connector = upstream.hyper_connector().unwrap();
+        let connector = upstream.synchronous_connector().unwrap();
         let mut ssl = connector
             .configure()
             .unwrap()
@@ -215,7 +215,7 @@ fn mutual_tls_retains_full_client_path_on_both_connection_legs() {
 fn empty_and_leaf_only_client_paths_are_safe_and_invalid_keys_are_rejected() {
     let ca = ProxyCa::generate("Leaf-only regression root", 2).unwrap();
     let factory = factory(&ca);
-    let context = factory.hyper_connector().unwrap();
+    let context = factory.synchronous_connector().unwrap();
     let capture = factory.capture(None, vec![]);
     capture.completed(&Ssl::new(context.context()).unwrap(), false);
     assert!(capture.snapshot().client_chain.is_empty());
@@ -226,10 +226,10 @@ fn empty_and_leaf_only_client_paths_are_safe_and_invalid_keys_are_rejected() {
         factory
             .clone()
             .with_client_authentication(leaf.certificate.clone(), key(), vec![]);
-    assert!(wrong_key.hyper_connector().is_err());
+    assert!(wrong_key.synchronous_connector().is_err());
     let factory =
         factory.with_client_authentication(leaf.certificate.clone(), leaf.private_key, vec![]);
-    let context = factory.hyper_connector().unwrap();
+    let context = factory.synchronous_connector().unwrap();
     let capture = factory.capture(None, vec![]);
     capture.completed(&Ssl::new(context.context()).unwrap(), false);
     assert_eq!(capture.snapshot().client_chain.len(), 1);
@@ -247,7 +247,7 @@ fn low_level_client_issuers_preserve_leaf_order_and_deduplicate_on_completion() 
         .unwrap();
     let factory =
         factory(&ca).with_client_authentication(leaf.certificate.clone(), leaf.private_key, vec![]);
-    let context = factory.hyper_connector().unwrap();
+    let context = factory.synchronous_connector().unwrap();
     let ssl = Ssl::new(context.context()).unwrap();
     for before in [true, false] {
         let capture = TlsCapture::new(TlsEvidence::default());

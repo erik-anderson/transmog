@@ -995,6 +995,9 @@ impl UpstreamTlsContextFactory {
     }
 
     /// Creates the connector used by Hyper's HTTP/1.1 and HTTP/2 adapter.
+    /// Verification runs on bounded workers; the async TLS driver must supply
+    /// a task waker, as `tokio-boring` does. Blocking callers must instead use
+    /// [`Self::synchronous_connector`].
     ///
     /// # Errors
     ///
@@ -1008,6 +1011,8 @@ impl UpstreamTlsContextFactory {
     /// `alpn_wire_format` is the TLS length-prefixed protocol list. Supplying
     /// it here keeps protocol selection and certificate policy on the same
     /// context before the adapter takes ownership of the builder.
+    /// The async TLS driver must supply a task waker. For blocking TLS use
+    /// [`Self::synchronous_connector_builder`].
     ///
     /// # Errors
     ///
@@ -1017,12 +1022,15 @@ impl UpstreamTlsContextFactory {
         &self,
         alpn_wire_format: &[u8],
     ) -> Result<SslConnectorBuilder, TrustError> {
-        self.build_hyper_connector(alpn_wire_format, true)
+        let mut builder = self.build_hyper_connector(alpn_wire_format, true)?;
+        crate::issuer_source::enable_async_certificate_verification(&mut builder)?;
+        Ok(builder)
     }
 
     /// Creates a pooled TCP context without a frozen Trust Anchor ID offer.
     /// The adapter must call [`Self::configure_ssl_metadata_for_peer`] on each
     /// fresh physical connection, including when the selected catalog is empty.
+    /// Verification requires an async TLS driver with a task waker.
     ///
     /// # Errors
     /// Returns [`TrustError`] when TLS policy or ALPN cannot be applied.
@@ -1030,7 +1038,30 @@ impl UpstreamTlsContextFactory {
         &self,
         alpn_wire_format: &[u8],
     ) -> Result<SslConnectorBuilder, TrustError> {
-        self.build_hyper_connector(alpn_wire_format, false)
+        let mut builder = self.build_hyper_connector(alpn_wire_format, false)?;
+        crate::issuer_source::enable_async_certificate_verification(&mut builder)?;
+        Ok(builder)
+    }
+
+    /// Creates a legacy connector for blocking TLS callers, using the same
+    /// certificate verifier synchronously. Do not drive it on a Tokio reactor.
+    /// # Errors
+    /// Returns errors applying the configured TLS policy.
+    pub fn synchronous_connector(&self) -> Result<SslConnector, TrustError> {
+        Ok(self
+            .synchronous_connector_builder(b"\x02h2\x08http/1.1")?
+            .build())
+    }
+
+    /// Creates a blocking connector builder with explicit length-prefixed ALPN.
+    /// Use [`Self::hyper_connector_builder`] with async TLS drivers.
+    /// # Errors
+    /// Returns errors applying the configured TLS policy or ALPN.
+    pub fn synchronous_connector_builder(
+        &self,
+        alpn: &[u8],
+    ) -> Result<SslConnectorBuilder, TrustError> {
+        self.build_hyper_connector(alpn, true)
     }
 
     fn build_hyper_connector(
