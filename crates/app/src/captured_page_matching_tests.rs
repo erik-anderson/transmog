@@ -314,6 +314,7 @@ async fn preference_scene(root: &std::path::Path) -> CapturedPage {
         id,
         CapturedPageOptions {
             scope: CapturedPageScope::AllLoaded,
+            ..Default::default()
         },
         Arc::new(AtomicBool::new(false)),
     )

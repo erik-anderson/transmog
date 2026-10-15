@@ -604,70 +604,107 @@ pub fn test_matcher(matcher: &RuleMatcher, request: &RequestHead) -> Result<Matc
         AutomationLimits::default(),
     )
     .map_err(|e| e.to_string())?;
-    let mut checks = url
-        .as_ref()
-        .map_or_else(Vec::new, |url| url_checks(url, &request.target));
-    let mut add = |label: &str, matched: bool, detail: String| {
-        checks.push(MatchCheck {
-            label: label.to_owned(),
-            matched,
-            detail,
-        });
-    };
-    if let Some(method) = &matcher.method {
-        add(
-            "Method",
-            request.method.eq_ignore_ascii_case(method),
-            format!("Expected {method}"),
-        );
+    Ok(CompiledRequestMatcher {
+        matcher: matcher.clone(),
+        url,
+        regexes: compile_predicates(&matcher.request_headers),
     }
-    if let Some(host) = &matcher.host {
-        add(
-            "Host",
-            request.target.host.eq_ignore_ascii_case(host),
-            host.clone(),
-        );
+    .evaluate(request))
+}
+
+/// Validated request matcher shared by preview and network-free editor tests.
+#[derive(Clone, Debug)]
+pub struct CompiledRequestMatcher {
+    matcher: RuleMatcher,
+    url: Option<CompiledUrl>,
+    regexes: std::sync::Arc<[Option<crate::Regex>]>,
+}
+impl CompiledRequestMatcher {
+    /// Validates and compiles the same conditions used by live automation.
+    ///
+    /// # Errors
+    /// Returns the editor's matcher validation errors.
+    pub fn new(matcher: &RuleMatcher) -> Result<Self, String> {
+        let request = request_for_test("GET", "https://preview.invalid/", &[])?;
+        test_matcher(matcher, &request)?;
+        Ok(Self {
+            matcher: matcher.clone(),
+            url: matcher
+                .url
+                .as_ref()
+                .map(UrlCondition::compile)
+                .transpose()?,
+            regexes: compile_predicates(&matcher.request_headers),
+        })
     }
-    if let Some(scheme) = &matcher.scheme {
-        add(
-            "Scheme",
-            request.target.scheme.eq_ignore_ascii_case(scheme),
-            scheme.clone(),
-        );
-    }
-    if let Some(port) = matcher.port {
-        add("Port", request.target.port == port, port.to_string());
-    }
-    if let Some(path) = &matcher.path_prefix {
-        add(
-            "Path prefix",
-            request.target.path.starts_with(path),
-            path.clone(),
-        );
-    }
-    if let Some(query) = &matcher.query {
-        add(
-            "Query",
-            request.target.query.as_deref() == Some(query),
-            query.clone(),
-        );
-    }
-    let regexes = compile_predicates(&matcher.request_headers);
-    for (predicate, regex) in matcher.request_headers.iter().zip(regexes.iter()) {
-        add(
-            "Request header",
-            predicate.matches(&request.headers, regex.as_ref()),
-            predicate.name.clone(),
-        );
-    }
-    Ok(MatchTest {
-        matched: checks.iter().all(|check| check.matched),
-        normalized_url: absolute_url(&request.target),
-        checks,
-        captures: url
+    /// Evaluates conditions without recompiling or sending traffic.
+    pub fn evaluate(&self, request: &RequestHead) -> MatchTest {
+        let matcher = &self.matcher;
+        let url = &self.url;
+        let mut checks = url
             .as_ref()
-            .map_or_else(Vec::new, |url| url.captures(&request.target)),
-    })
+            .map_or_else(Vec::new, |url| url_checks(url, &request.target));
+        let mut add = |label: &str, matched: bool, detail: String| {
+            checks.push(MatchCheck {
+                label: label.to_owned(),
+                matched,
+                detail,
+            });
+        };
+        if let Some(method) = &matcher.method {
+            add(
+                "Method",
+                request.method.eq_ignore_ascii_case(method),
+                format!("Expected {method}"),
+            );
+        }
+        if let Some(host) = &matcher.host {
+            add(
+                "Host",
+                request.target.host.eq_ignore_ascii_case(host),
+                host.clone(),
+            );
+        }
+        if let Some(scheme) = &matcher.scheme {
+            add(
+                "Scheme",
+                request.target.scheme.eq_ignore_ascii_case(scheme),
+                scheme.clone(),
+            );
+        }
+        if let Some(port) = matcher.port {
+            add("Port", request.target.port == port, port.to_string());
+        }
+        if let Some(path) = &matcher.path_prefix {
+            add(
+                "Path prefix",
+                request.target.path.starts_with(path),
+                path.clone(),
+            );
+        }
+        if let Some(query) = &matcher.query {
+            add(
+                "Query",
+                request.target.query.as_deref() == Some(query),
+                query.clone(),
+            );
+        }
+        for (predicate, regex) in matcher.request_headers.iter().zip(self.regexes.iter()) {
+            add(
+                "Request header",
+                predicate.matches(&request.headers, regex.as_ref()),
+                predicate.name.clone(),
+            );
+        }
+        MatchTest {
+            matched: checks.iter().all(|check| check.matched),
+            normalized_url: absolute_url(&request.target),
+            checks,
+            captures: url
+                .as_ref()
+                .map_or_else(Vec::new, |url| url.captures(&request.target)),
+        }
+    }
 }
 
 fn url_checks(url: &CompiledUrl, target: &Target) -> Vec<MatchCheck> {
@@ -878,6 +915,57 @@ mod tests {
                     .find(|check| check.label == "Required parameter")
                     .unwrap()
                     .matched,
+                expected
+            );
+        }
+    }
+    #[test]
+    fn preview_editor_and_live_matchers_agree_on_actual_method_url_and_headers() {
+        let matcher = RuleMatcher {
+            method: Some("GET".into()),
+            url: Some(UrlCondition::Exact("https://example.test/items?q=1".into())),
+            request_headers: vec![crate::HeaderPredicate {
+                name: "X-Preview".into(),
+                condition: crate::HeaderCondition::Exact(b"dark".to_vec()),
+            }],
+            ..Default::default()
+        };
+        let compiled = CompiledRequestMatcher::new(&matcher).unwrap();
+        for (method, url, headers, expected) in [
+            (
+                "GET",
+                "https://EXAMPLE.test:443/items?q=1",
+                vec![("x-preview".into(), "dark".into())],
+                true,
+            ),
+            (
+                "POST",
+                "https://example.test/items?q=1",
+                vec![("x-preview".into(), "dark".into())],
+                false,
+            ),
+            (
+                "GET",
+                "https://example.test/items?q=2",
+                vec![("x-preview".into(), "dark".into())],
+                false,
+            ),
+            ("GET", "https://example.test/items?q=1", vec![], false),
+            (
+                "GET",
+                "https://example.test/items?q=1",
+                vec![
+                    ("x-preview".into(), "light".into()),
+                    ("X-Preview".into(), "dark".into()),
+                ],
+                true,
+            ),
+        ] {
+            let request = request_for_test(method, url, &headers).unwrap();
+            assert_eq!(compiled.evaluate(&request).matched, expected);
+            assert_eq!(test_matcher(&matcher, &request).unwrap().matched, expected);
+            assert_eq!(
+                matcher.matches_request(&request, &compiled.regexes, compiled.url.as_ref()),
                 expected
             );
         }

@@ -88,18 +88,13 @@ impl SceneBuilder {
             return Err(error("Captured page preview canceled"));
         }
         let primary = candidate.id == self.numeric;
-        let row = CapturedResourceDecision {
-            entry_id: format!("{:032x}", candidate.id.0),
-            source: candidate.source.clone(),
-            source_available: true,
-            method: candidate.method.clone(),
-            url: candidate.url.chars().take(2048).collect(),
-            unix_millis: (candidate.time > 0).then_some(candidate.time),
-            bytes: None,
-            decision: String::new(),
-        };
+        let row = decision(&candidate);
         if self.resources >= MAX_RESOURCES || self.bytes >= MAX_SCENE_BYTES {
-            self.record(row, "Preview resource/byte budget reached", None);
+            self.record(
+                row,
+                "Preview limit reached (2,048 variants / 256 MiB decoded total)",
+                None,
+            );
             return Ok(());
         }
         if !(200..=599).contains(&candidate.head.status) {
@@ -136,13 +131,21 @@ impl SceneBuilder {
             &candidate,
             &path,
             MAX_RESOURCE_BYTES.min(MAX_SCENE_BYTES - self.bytes),
+            canceled,
         )
         .await;
         let (resource, size) = match result {
             Ok(value) => value,
             Err(failure) if primary => return Err(failure),
-            Err(_) => {
-                self.record(row, "Complete bounded response bytes unavailable", None);
+            Err(failure) => {
+                self.record(
+                    row,
+                    &format!(
+                        "{}; preview limit 32 MiB per resource / 256 MiB total",
+                        failure.message
+                    ),
+                    None,
+                );
                 return Ok(());
             }
         };
@@ -152,7 +155,7 @@ impl SceneBuilder {
             self.add_primary(&candidate, resource.clone(), body_sha256.clone());
         }
         self.record(
-            row,
+            CapturedResourceDecision {sha256: Some(resource.sha256.clone()), ..row},
             if primary {
                 "Selected HTML document; GET navigation uses these exact response bytes"
             } else {
@@ -224,6 +227,7 @@ impl SceneBuilder {
         self,
         scope: CapturedPageScope,
         source: String,
+        source_trace_id: Option<String>,
     ) -> Result<CapturedPage, AppError> {
         let url = self
             .primary_url
@@ -232,12 +236,18 @@ impl SceneBuilder {
             url: url.clone(),
             scope,
             source,
+            source_trace_id,
             scripts_enabled: None,
+            selected_entry_id: format!("{:032x}", self.numeric.0),
+            runtime: "WebView2 (version unavailable)".into(),
+            bytes_available: true,
+            rules: Vec::new(),
             available: self.resources,
             skipped: self.skipped,
             bytes: self.bytes,
             hits: 0,
             misses: 0,
+            failures: 0,
             resources: self.decisions,
             requests: Vec::new(),
         });
@@ -249,9 +259,23 @@ impl SceneBuilder {
             diagnostics,
             navigation_time: self.navigation_time,
             positions: std::sync::Mutex::new(HashMap::new()),
-            files: self.files,
-            _root: self.root,
+            files: std::sync::Arc::new(self.files),
+            overlay: crate::captured_page_overlay::Overlay::default(),
+            root: std::sync::Arc::new(self.root),
         })
+    }
+}
+fn decision(candidate: &Candidate) -> CapturedResourceDecision {
+    CapturedResourceDecision {
+        entry_id: format!("{:032x}", candidate.id.0),
+        source: candidate.source.clone(),
+        source_available: true,
+        method: candidate.method.clone(),
+        url: candidate.url.chars().take(2048).collect(),
+        unix_millis: (candidate.time > 0).then_some(candidate.time),
+        bytes: None,
+        sha256: None,
+        decision: String::new(),
     }
 }
 async fn materialize(
@@ -260,6 +284,7 @@ async fn materialize(
     candidate: &Candidate,
     path: &Path,
     limit: u64,
+    canceled: &AtomicBool,
 ) -> Result<(CapturedResource, u64), AppError> {
     let body = crate::response_file::prepare(
         &application.service,
@@ -267,7 +292,7 @@ async fn materialize(
         &format!("{:032x}", candidate.id.0),
         "client-response",
     )?;
-    let result = Box::pin(body.write_to(path, limit)).await?;
+    let result = Box::pin(body.write_to_cancellable(path, limit, canceled)).await?;
     let reason = candidate.reason.clone().unwrap_or_else(|| {
         http::StatusCode::from_u16(candidate.head.status)
             .ok()
@@ -277,6 +302,16 @@ async fn materialize(
     });
     Ok((
         CapturedResource {
+            sha256: {
+                use sha2::{Digest, Sha256};
+                format!(
+                    "{:x}",
+                    Sha256::digest(
+                        std::fs::read(path)
+                            .map_err(|_| error("Frozen response could not be hashed"))?
+                    )
+                )
+            },
             status: candidate.head.status,
             reason,
             headers: browser_headers(&candidate.head, result.bytes),

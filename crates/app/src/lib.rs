@@ -13,6 +13,7 @@ mod body_ranges;
 mod body_store;
 mod breakpoints;
 mod captured_page;
+mod captured_page_overlay;
 mod captured_page_report;
 mod certificates;
 mod client_certificates;
@@ -72,6 +73,7 @@ pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
 };
 pub use captured_page::{CapturedPage, CapturedResource};
+pub use captured_page_report::PreviewRuleSnapshot;
 pub use captured_page_report::{
     CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport, CapturedPageScope,
     CapturedPreviewRequest, CapturedResourceDecision,

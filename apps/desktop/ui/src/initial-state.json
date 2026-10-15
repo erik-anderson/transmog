@@ -1070,5 +1070,15 @@
   "loopbackCountText": "",
   "loopbackSort": "displayName",
   "loopbackDirection": "ascending",
-  "loopbackSortStates": {"displayName":"ascending","description":"none","package":"none","name":"none","sid":"none","users":"none","exempt":"none"}
+  "loopbackSortStates": {"displayName":"ascending","description":"none","package":"none","name":"none","sid":"none","users":"none","exempt":"none"},
+  "previewRuleRows": [],
+  "previewSceneAvailable": false,
+  "previewPageMode": "captured",
+  "previewRulesBusy": false,
+  "previewRulesError": "",
+  "previewRuleSummary": "",
+  "previewRules": [],
+  "previewDraftDirty": false,
+  "previewReusesScene": false,
+  "previewDraftExcluded": false
 }

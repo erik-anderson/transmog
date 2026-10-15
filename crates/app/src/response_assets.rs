@@ -1019,6 +1019,100 @@ impl ResponseAssetResolver for ResponseAssetStore {
 }
 
 impl ResponseAssetStore {
+    /// Materializes bounded, stable bytes without exposing an external path to a browser.
+    pub(crate) async fn freeze_preview(
+        &self,
+        reference: &str,
+        destination: &Path,
+        limit: u64,
+        canceled: &std::sync::atomic::AtomicBool,
+    ) -> Result<(ResponseAsset, u64, String), AppError> {
+        let asset = self
+            .assets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| unavailable("Saved response revision is unavailable"))?;
+        let path = match &asset.linked_body {
+            Some(link) => link.path.clone(),
+            None => body_path(
+                self.root
+                    .as_deref()
+                    .ok_or_else(|| unavailable("Response storage is unavailable"))?,
+                &asset.sha256,
+            ),
+        };
+        let mut file = File::open(path).map_err(|_| {
+            unavailable(
+                "Response file is unavailable; select a readable file and save the rule again",
+            )
+        })?;
+        let before = file
+            .metadata()
+            .map_err(|_| unavailable("Response file metadata is unavailable"))?;
+        if !before.is_file() || before.len() > limit || limit == 0 {
+            return Err(unavailable(
+                "Response exceeds the preview limit (32 MiB per resource, 256 MiB total)",
+            ));
+        }
+        let read = |file: &mut File| -> Result<Vec<u8>, AppError> {
+            let mut bytes = Vec::new();
+            let mut buffer = vec![0; 16 * 1024];
+            loop {
+                if canceled.load(std::sync::atomic::Ordering::Acquire) {
+                    return Err(unavailable("Captured page preview canceled"));
+                }
+                let count = file
+                    .read(&mut buffer)
+                    .map_err(|_| unavailable("Response file could not be read"))?;
+                if count == 0 {
+                    break;
+                }
+                if bytes.len() as u64 + count as u64 > limit {
+                    return Err(unavailable("Response grew beyond the preview byte limit"));
+                }
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            Ok(bytes)
+        };
+        let bytes = read(&mut file)?;
+        file.rewind()
+            .map_err(|_| unavailable("Response file could not be verified"))?;
+        let verified = read(&mut file)?;
+        let after = file
+            .metadata()
+            .map_err(|_| unavailable("Response file metadata is unavailable"))?;
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        if bytes != verified
+            || before.len() != after.len()
+            || bytes.len() as u64 != before.len()
+            || before.modified().ok() != after.modified().ok()
+            || (asset.linked_body.is_none()
+                && (digest != asset.sha256 || bytes.len() as u64 != asset.body_bytes))
+        {
+            return Err(unavailable(
+                "Response file changed during preparation; retry after saving the file",
+            ));
+        }
+        let codings = if asset.linked_body.is_some() {
+            Vec::new()
+        } else {
+            asset_codings(&asset.headers)
+        };
+        let result = crate::response_file::ResponseFile::preview(bytes, codings)
+            .write_to_cancellable(destination, limit, canceled)
+            .await?;
+        let sha256 = format!(
+            "{:x}",
+            Sha256::digest(
+                std::fs::read(destination)
+                    .map_err(|_| unavailable("Frozen response is unavailable"))?
+            )
+        );
+        Ok((asset, result.bytes, sha256))
+    }
+
     fn resolve_linked(
         &self,
         asset: &ResponseAsset,
@@ -1594,6 +1688,87 @@ fn invalid(message: &'static str) -> AppError {
 
 fn unavailable(message: &'static str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, true)
+}
+
+#[cfg(test)]
+mod preview_snapshot_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[tokio::test]
+    async fn linked_preview_copies_bytes_and_reports_missing_changed_limits_and_cancellation() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+        let file = root.path().join("linked.css");
+        let payload = vec![b'a'; 25_000_001];
+        std::fs::write(&file, &payload).unwrap();
+        let asset = store
+            .import_file(ImportResponseAsset {
+                id: "linked".into(),
+                revision: 1,
+                body_path: file.clone(),
+                status: 200,
+                headers: HeaderBlock::new(),
+                media_type: Some("text/css".into()),
+            })
+            .unwrap();
+        assert!(asset.linked_body.is_some());
+        let output = root.path().join("frozen");
+        let (_, bytes, hash) = store
+            .freeze_preview(
+                &asset.asset_ref(),
+                &output,
+                32 * 1024 * 1024,
+                &AtomicBool::new(false),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, payload.len() as u64);
+        assert_eq!(hash, format!("{:x}", Sha256::digest(&payload)));
+        std::fs::write(&file, b"edited").unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), payload);
+        assert!(
+            store
+                .freeze_preview(
+                    &asset.asset_ref(),
+                    &root.path().join("limited"),
+                    2,
+                    &AtomicBool::new(false)
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .freeze_preview(
+                    &asset.asset_ref(),
+                    &root.path().join("canceled"),
+                    32 * 1024 * 1024,
+                    &AtomicBool::new(true)
+                )
+                .await
+                .err()
+                .unwrap()
+                .message
+                .contains("canceled")
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert!(
+            store
+                .freeze_preview(
+                    &asset.asset_ref(),
+                    &root.path().join("missing"),
+                    32 * 1024 * 1024,
+                    &AtomicBool::new(false)
+                )
+                .await
+                .err()
+                .unwrap()
+                .message
+                .contains("unavailable")
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), payload);
+    }
 }
 
 #[cfg(test)]

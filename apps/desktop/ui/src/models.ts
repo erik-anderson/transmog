@@ -174,7 +174,8 @@ export interface TraceImportResult {trace:TraceMetadata;issues:string[];}
 export interface TraceImportIntent {paths:string[];}
 export interface TraceInspection {path:string;format:string;sessions:number;bytes:number;context:unknown;sources:TraceMetadata[];notes:string[];}
 export interface TraceImportProgress {operationId:string;completed:number;total:number;}
-export interface CapturedPageReport {url:string;scope:string;source:string;scriptsEnabled?:boolean|null;available:number;skipped:number;bytes:number;hits:number;misses:number;resources:Array<{entryId:string;source:string;sourceAvailable?:boolean;method:string;url:string;unixMillis:number|null;bytes:number|null;decision:string}>;requests:Array<{id:number;method:string;url:string;outcome:string;entryId:string|null;reason:string}>;}
+export interface PreviewRuleSnapshot {id:string;name:string;revision:number;asset:string;sha256:string;bytes:number;shadowedBy:string|null;}
+export interface CapturedPageReport {url:string;scope:string;source:string;selectedEntryId:string;runtime:string;bytesAvailable:boolean;rules:PreviewRuleSnapshot[];scriptsEnabled?:boolean|null;available:number;skipped:number;bytes:number;hits:number;misses:number;failures:number;resources:Array<{entryId:string;source:string;sourceAvailable?:boolean;method:string;url:string;unixMillis:number|null;bytes:number|null;sha256:string|null;decision:string}>;requests:Array<{id:number;method:string;url:string;outcome:string;entryId:string|null;ruleId:string|null;sha256:string|null;reason:string}>;}
 export interface TrafficSearchMatch {boundary:string;field:string;startUtf16:number;endUtf16:number;before:string;matched:string;after:string;shortened:boolean;}
 export interface TrafficSearchEntry {entryId:string;matches:TrafficSearchMatch[];moreMatches:boolean;}
 export interface TrafficSearchResult {id:string;operationId:string;ids:string[];examined:number;binaryBodies:number;unavailableBodies:number;}

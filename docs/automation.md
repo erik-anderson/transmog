@@ -229,3 +229,20 @@ the same validated action vocabulary but run in the separately sandboxed script
 host described by [ADR 0008](adr/0008-traffic-workspace-and-script-isolation.md).
 Script errors abort the affected exchange and produce bounded remediation
 diagnostics.
+
+## Captured-page experiments
+
+The main window's [captured-page preview](captured-page-preview.md) can snapshot
+selected saved auto-responses, including disabled rules. Preview participation is
+independent of live enabled states and the On/Paused gate. Preview never changes
+those states. The same request matcher evaluates actual browser method, normalized
+URL and explicit header conditions before captured fallback; the first
+participating match wins. Browser headers may differ from captured headers and
+captured Vary is not an authored rule condition.
+
+Save editor changes or explicitly exclude unsaved changes before opening a modified
+preview. **Preview captured page…** in a saved rule's editor opens the last retained
+scene or selected complete HTML response. Existing previews and F5 retain their
+original rules and linked-file bytes; **Open updated preview…** freezes the new saved
+versions. Diagnostics retain historical rule/asset revisions and byte hashes even
+when the current saved rule changes or is deleted.

@@ -8,6 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$ViewerChecks,
+    [switch]$CapturedPageChecks,
     [switch]$TraceSaveChecks,
     [switch]$KeyRecoveryChecks,
     [string]$NativeTracePath,
@@ -25,6 +26,7 @@ if ($ExecutablePath) {
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($CapturedPageChecks -and -not $ViewerChecks) { throw 'CapturedPageChecks requires ViewerChecks.' }
 if ($TraceSaveChecks -and (-not $ViewerChecks -or $NativeTracePath)) { throw 'TraceSaveChecks requires ViewerChecks and uses its isolated SAZ fixture.' }
 if ($KeyRecoveryChecks -and ($StartupOnly -or $ViewerChecks)) { throw 'KeyRecoveryChecks requires the main-window smoke checks.' }
 if ($NativeTracePath -and -not $ViewerChecks) { throw 'NativeTracePath requires ViewerChecks.' }
@@ -156,10 +158,11 @@ try {
             }
         } finally { $zip.Dispose() }
         $pageSource = Join-Path $probeRoot 'captured-page-fixture.saz'
-        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;Promise.all([fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"beta"}).then(async r=>({status:r.status,body:await r.text()})),fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"alpha"}).then(async r=>({status:r.status,body:await r.text()}))]).then(rows=>globalThis.variantResults=rows);(async()=>{const rows=[];for(let i=0;i<3;i++){rows.push(await (await fetch("/sequence")).text());}globalThis.sequenceResults=rows;})();fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};});</script></body></html>'
+        $pageHtml = '<!doctype html><html><head><meta charset="utf-8"><title>Captured fixture</title><link rel="stylesheet" href="/page.css"></head><body><h1 id="captured-heading">Captured page fixture</h1><img id="captured-image" src="/pixel.svg"><script>globalThis.capturedScriptRan=true;Promise.all([fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"beta"}).then(async r=>({status:r.status,body:await r.text()})),fetch("/variant",{method:"POST",headers:{"X-Preview":"dark"},body:"alpha"}).then(async r=>({status:r.status,body:await r.text()}))]).then(rows=>globalThis.variantResults=rows);(async()=>{const rows=[];for(let i=0;i<3;i++){rows.push(await (await fetch("/sequence")).text());}globalThis.sequenceResults=rows;})();fetch("/missing").then(async r=>{globalThis.missingResult={status:r.status,body:await r.text()};},()=>{globalThis.missingResult={failed:true};});</script></body></html>'
         $pageMembers = [ordered]@{}
         $pageResources = @(
             @{ Id=1; Url='https://example.invalid/captured-page'; Type='text/html'; RequestHeaders="Sec-Fetch-Dest: document`r`nSec-Fetch-Mode: navigate`r`n"; Body=$pageHtml },
+            @{ Id=9; Url='https://example.invalid/captured-post'; Method='POST'; RequestBody='form'; Type='text/html'; Body='<h1 id="post-heading">Captured POST fallback</h1>' },
             @{ Id=8; Url='https://example.invalid/captured-frame'; Type='text/html'; RequestHeaders="Sec-Fetch-Dest: iframe`r`nSec-Fetch-Mode: navigate`r`n"; Body='<h1>Captured frame fixture</h1>' },
             @{ Id=2; Url='https://example.invalid/page.css'; Type='text/css'; RequestHeaders="Sec-Fetch-Dest: style`r`n"; ResponseHeaders="Vary: User-Agent`r`n"; Body='h1 { color: rgb(0, 128, 0); }' },
             @{ Id=4; Url='https://example.invalid/variant'; Method='POST'; RequestBody='alpha'; RequestHeaders="X-Preview: light`r`n"; ResponseHeaders="Vary: X-Preview`r`n"; Type='text/plain'; Body='light variant' },
@@ -235,7 +238,7 @@ try {
         if ($ViewerChecks) {
             $viewerArguments = @('scripts/smoke-viewers.mjs', '--port', "$DevToolsPort", '--source', $viewerSource, '--executable', $executable)
             $viewerArguments += @('--page-source', $pageSource)
-            $viewerArguments += @('--traffic-source', $trafficSource)
+            if (-not $CapturedPageChecks) { $viewerArguments += @('--traffic-source', $trafficSource) }
             $viewerArguments += @('--profile-root', $probeRoot)
             $viewerArguments += @('--process-id', "$($process.Id)", '--close-helper', (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1'))
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }

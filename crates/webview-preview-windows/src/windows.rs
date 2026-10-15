@@ -60,6 +60,8 @@ const MAX_REQUEST_BYTES: usize = 32 * 1024 * 1024;
 /// Installs fail-closed resource interception before navigating from about:blank.
 ///
 /// Call from Tauri's `with_webview` UI-thread callback for a fresh isolated profile.
+/// The host must configure its private deny-only proxy, with no bypasses, before
+/// creating this webview. Missing resources use that endpoint for network failure.
 /// All event handlers live with the COM webview. Unsupported interception fails
 /// before navigation; the host must destroy the hidden window on any error.
 ///
@@ -128,6 +130,7 @@ pub fn attach(
             })),
             &raw mut token,
         )?;
+        let request_failed = navigation_failed.clone();
         core.add_NavigationCompleted(
             &NavigationCompletedEventHandler::create(Box::new(move |_, args| {
                 if let Some(args) = args {
@@ -196,17 +199,24 @@ pub fn attach(
                 }
                 return Ok(());
             };
-            let response = resource_response(&response_environment, &args, &lookup)
-                .or_else(|_| empty_response(&response_environment));
-            match response {
-                Ok(response) => {
+            match resource_response(&response_environment, &args, &lookup) {
+                Ok(Some(response)) => {
                     if args.SetResponse(&response).is_err()
                         && let Some(sender) = sender
                     {
                         sender.Stop()?;
                     }
                 }
+                Ok(None) => {
+                    // Leave the response unset: the mandatory private deny proxy closes
+                    // the transport without an HTTP response. It never contacts origins.
+                }
                 Err(_) => {
+                    let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
+                    args.ResourceContext(&raw mut context)?;
+                    if context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT {
+                        request_failed();
+                    }
                     if let Some(sender) = sender {
                         sender.Stop()?;
                     }
@@ -223,7 +233,7 @@ fn resource_response(
     environment: &ICoreWebView2Environment,
     args: &ICoreWebView2WebResourceRequestedEventArgs,
     lookup: &Lookup,
-) -> Result<ICoreWebView2WebResourceResponse> {
+) -> Result<Option<ICoreWebView2WebResourceResponse>> {
     // SAFETY: Called only by WebView2 on the owning UI thread. Request getters
     // allocate CoTaskMem strings into initialized slots; take_pwstr copies and
     // frees each allocation once. Stream creation opens a trusted owned path in
@@ -246,14 +256,17 @@ fn resource_response(
             document: context == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         };
         let Some(resource) = lookup(&facts) else {
-            return empty_response(environment);
+            return Ok(None);
         };
+        if facts.document && matches!(resource.status, 204 | 205 | 304) {
+            return Err(windows::core::Error::from_hresult(E_POINTER));
+        }
         if !(200..=599).contains(&resource.status)
             || resource.reason.contains(['\r', '\n', '\0'])
             || resource.headers.contains('\0')
             || !resource.body_path.is_absolute()
         {
-            return empty_response(environment);
+            return Ok(None);
         }
         let path = HSTRING::from(resource.body_path.to_string_lossy().as_ref());
         let body = SHCreateStreamOnFileEx(
@@ -263,29 +276,16 @@ fn resource_response(
             false,
             None::<&IStream>,
         )?;
-        environment.CreateWebResourceResponse(
-            &body,
-            i32::from(resource.status),
-            &HSTRING::from(resource.reason),
-            &HSTRING::from(resource.headers),
-        )
+        environment
+            .CreateWebResourceResponse(
+                &body,
+                i32::from(resource.status),
+                &HSTRING::from(resource.reason),
+                &HSTRING::from(resource.headers),
+            )
+            .map(Some)
     }
 }
-fn empty_response(
-    environment: &ICoreWebView2Environment,
-) -> Result<ICoreWebView2WebResourceResponse> {
-    // SAFETY: The owned environment is used on its UI thread. None supplies a
-    // null optional stream; static owned HSTRING buffers live through the call.
-    unsafe {
-        environment.CreateWebResourceResponse(
-            None::<&IStream>,
-            404,
-            &HSTRING::from("Not Found"),
-            &HSTRING::from("Content-Length: 0\r\nCache-Control: no-store\r\n"),
-        )
-    }
-}
-
 fn request_headers(request: &ICoreWebView2WebResourceRequest) -> Result<Vec<(String, String)>> {
     // SAFETY: Request and iterator belong to this UI-thread callback. Output
     // slots are initialized; each CoTaskMem string is copied/freed once, even
@@ -324,7 +324,7 @@ fn request_body_hash(
     // the body is never forwarded to a network endpoint.
     // Read receives initialized, correctly sized writable storage and a live
     // byte-count slot. The returned count is checked before slicing. Inspection
-    // is bounded, and failures produce no signature (therefore an empty 404).
+    // is bounded; failures leave the body preference unavailable.
     unsafe {
         let content = match request.Content() {
             Ok(content) => content,

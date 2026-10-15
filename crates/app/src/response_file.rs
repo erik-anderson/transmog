@@ -60,9 +60,44 @@ impl ResponseFile {
     }
 
     pub(crate) async fn write_to(
+        self,
+        destination: &Path,
+        limit: u64,
+    ) -> Result<ResponseFileResult, AppError> {
+        self.write_to_cancellable(
+            destination,
+            limit,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .await
+    }
+
+    pub(crate) fn preview(bytes: Vec<u8>, content_codings: Vec<String>) -> Self {
+        Self {
+            name: String::new(),
+            metadata: StoredBodyMetadata {
+                exchange_id: String::new(),
+                boundary: "client-response",
+                length_known: true,
+                observed_bytes: bytes.len() as u64,
+                retained_bytes: bytes.len() as u64,
+                wire_body_bytes: Some(bytes.len() as u64),
+                availability: BodyAvailability::Complete,
+                media_type: None,
+                charset: None,
+                content_codings,
+                sha256: None,
+                reason: None,
+            },
+            reader: Box::new(std::io::Cursor::new(bytes)),
+        }
+    }
+
+    pub(crate) async fn write_to_cancellable(
         mut self,
         destination: &Path,
         limit: u64,
+        canceled: &std::sync::atomic::AtomicBool,
     ) -> Result<ResponseFileResult, AppError> {
         if !destination.is_absolute() || destination.file_name().is_none() {
             return Err(AppError::new(
@@ -78,8 +113,11 @@ impl ResponseFile {
             .map_err(|_| unavailable("Response file could not be created"))?;
         let mut decoders = response_decoders(&self.metadata, limit)?;
         let (mut encoded_bytes, mut decoded_bytes) = (0_u64, 0_u64);
-        let mut buffer = [0_u8; 16 * 1024];
+        let mut buffer = vec![0_u8; 16 * 1024];
         loop {
+            if canceled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(unavailable("Captured page preview canceled"));
+            }
             let count = self
                 .reader
                 .read(&mut buffer)

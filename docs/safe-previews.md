@@ -8,7 +8,18 @@ origin. Raster images also cross a process sandbox before reaching that origin.
 The explicit [captured-page preview](captured-page-preview.md) is a separate
 Windows browser window with its own profile, native resource interception and
 warning/script-choice flow. It does not render captured HTML in the workbench
-or grant access to application commands.
+or grant access to application commands. Optional main-window auto-responses
+cross the same interception boundary: rule configuration and linked-file bytes are
+frozen into preview-owned storage before navigation. Asset paths never become
+browser response sources. Invalid selected assets fail preparation. Authored CSP,
+CORS and cache headers remain effective alongside mandatory isolation; they cannot
+remove the deny-only proxy, all-source interception, transport API restrictions,
+worker/download/permission restrictions or host-command denial. A rule can answer
+an uncaptured URL locally, but cannot open an origin connection. Requests without
+frozen bytes reach only the private deny endpoint, which closes without sending an
+HTTP response. Missing data therefore causes a browser network failure, including
+rejected fetch promises, rather than a fabricated server 404. The native probe
+qualifies WebView2 only, not another browser engine.
 
 ## Allowed image path
 

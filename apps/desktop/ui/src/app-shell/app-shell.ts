@@ -287,6 +287,8 @@ export class AppShell extends WebUIElement {
   onTrafficRefreshed(): void {
     if (this.activeView === 'automation') {void this.automation.refreshSourceAvailability();this.automation.refreshUsageSoon();}
   }
+  onPreviewOptions():void {this.traffic.previewDraftDirty=Boolean(this.automation?.draftDirty);}
+  async onPagePreview(event:CustomEvent<string>):Promise<void> {if(await this.activateView('traffic'))this.traffic.showRulePreview(event.detail);}
   async onMatchedRule(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
   }

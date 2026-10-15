@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {smokePreviewRules} from './smoke-preview-rules.mjs';
 import {writeFile, readFile, glob} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -278,7 +279,7 @@ try{
       await waitFor(()=>preview.evaluate("document.readyState==='complete' && document.body?.innerText.length>0"),'Saved HTML reload did not render');
       for(const sheet of sheets.filter(row=>row.loaded))assert.ok(await preview.evaluate(`Array.from(document.querySelectorAll('link[rel=stylesheet]')).some(link=>link.href===${JSON.stringify(sheet.url)}&&!!link.sheet)`),'Saved stylesheet did not survive reload');
       if(screenshot){const image=await preview.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-external-page.png'),Buffer.from(image.data,'base64'));}
-      await closeNative('Captured page preview — Transmog');
+      await closeNative('Baseline preview · Scripts off — Transmog');
       process.stdout.write('Saved HTML preview, captured stylesheets and reload verified.\n');
     }
   }
@@ -318,7 +319,7 @@ try{
     const enabledTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>!oldEnabled.includes(target.id)&&target.url.includes('/captured-page'));},'Script-enabled preview did not navigate');
     const enabled=await connect(enabledTarget);
     await waitFor(()=>enabled.evaluate(`globalThis.missingResult`),'Captured script did not complete its missing request');
-    assert.deepEqual(await enabled.evaluate(`globalThis.missingResult`),{status:404,body:''});
+    assert.deepEqual(await enabled.evaluate(`globalThis.missingResult`),{failed:true});
     await waitFor(()=>enabled.evaluate(`globalThis.variantResults`),'Captured POST variants did not finish');
     assert.deepEqual(await enabled.evaluate(`globalThis.variantResults`),[{status:200,body:'dark variant'},{status:200,body:'light variant'}]);
     const sequence=['first response','next response','next response'];
@@ -328,7 +329,7 @@ try{
     await enabled.call('Page.reload',{ignoreCache:true});
     await waitFor(()=>enabled.evaluate(`!globalThis.beforeSequenceReload && globalThis.sequenceResults`),'Captured sequence did not restart on reload');
     assert.deepEqual(await enabled.evaluate(`globalThis.sequenceResults`),sequence);
-    const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=5&&report.misses>=1);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='served'));
+    const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=5&&report.misses>=1);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='captured'));
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}}).then(()=>false,()=>true)`),true,'Another window read a preview report');
     await second.evaluate(`(async()=>{const workspace=${traffic};workspace.previewReportLabel=${JSON.stringify(enabledLabel)};await workspace.showPreviewReport();})()`);
     if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-preview-report.png'),Buffer.from(image.data,'base64'));}
@@ -343,15 +344,16 @@ try{
     try{const url='http://127.0.0.1:'+sink.address().port+'/uncaptured';await enabled.evaluate(`fetch(${JSON.stringify(url)},{mode:'no-cors'}).then(()=>true,()=>false)`);await new Promise(resolve=>setTimeout(resolve,100));assert.equal(contacted,0,'Preview contacted an uncaptured endpoint');}finally{await new Promise(resolve=>sink.close(resolve));}
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped','Preview enabled the proxy');
     if(screenshot){const image=await enabled.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-page.png'),Buffer.from(image.data,'base64'));}
-    await closeNative('Captured page preview — Transmog');
+    await closeNative('Baseline preview · Scripts on — Transmog');
     await waitFor(async()=>(await targets()).filter(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)).length===1,'First native preview did not close');
-    await closeNative('Captured page preview — Transmog');
+    await closeNative('Baseline preview · Scripts off — Transmog');
     await waitFor(async()=>!(await targets()).some(target=>[disabledTarget.id,enabledTarget.id].includes(target.id)),'Closed captured previews retained browser targets');
+    await smokePreviewRules({main,viewer:second,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot});
     if(profileRoot)await waitFor(async()=>{
       for await(const _ of glob('temp/transmog-captured-webview-*',{cwd:profileRoot}))return false;
       return true;
     },'Closed captured preview profiles were not cleaned up');
-    process.stdout.write('Captured HTML, CSS across UAs, image, script choice, response sequence/reset, empty misses, IPC and uncaptured egress verified.\n');
+    process.stdout.write('Captured HTML, CSS across UAs, image, script choice, response sequence/reset, network failures, IPC and uncaptured egress verified.\n');
   }
   const beforeReopen=(await targets()).map(target=>target.id);
   await closeNative('Transmog');

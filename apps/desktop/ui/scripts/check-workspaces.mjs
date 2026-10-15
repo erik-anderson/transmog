@@ -17,6 +17,7 @@ import {checkRequestOrder,checkRequestOrderModel} from './check-request-order.mj
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTraceSave } from './check-trace-save.mjs';
+import {checkPagePreviewRules} from './check-page-preview-rules.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
@@ -142,8 +143,8 @@ await page.addInitScript((configuration) => {
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
         case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
-        case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled)throw new Error('Captured page preview canceled');return 'captured-fixture';
-        case 'cancel_captured_page': state.pagePreviewCanceled=true;state.releasePagePreview?.();return;
+        case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return 'captured-fixture';
+        case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
         case 'save_traffic_trace': {
           state.savedTraceArgs=structuredClone({options:args.options});state.saveTraceChannel=args.onProgress;
           if(state.deferTraceSave){state.traceSavePending=true;await new Promise(resolve=>state.releaseTraceSave=resolve);state.traceSavePending=false;}
@@ -1131,6 +1132,14 @@ try {
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
+  const previewSourceBefore=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,detail=structuredClone(t.selectedDetail),html=structuredClone(detail);html.storedBodies[0].mediaType='text/html';t.applyDetail(html);return detail;});
+  await autoEditor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
+  await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.previewPageDialog.open&&!t.previewRulesBusy;});
+  assert.equal(await page.locator('.captured-page-warning[open]').getByLabel('Responses',{exact:true}).inputValue(),'modified');
+  assert.equal(await page.evaluate(()=>{const shell=document.querySelector('app-shell');return shell.traffic.previewRules.find(row=>row.id===shell.automation.editingAutoResponseId)?.included;}),true,'Saved disabled rule was not selected by editor preview');
+  await page.keyboard.press('Escape');
+  await page.evaluate(detail=>document.querySelector('app-shell').traffic.applyDetail(detail),previewSourceBefore);
+  await view('automation');
   // Both views share one gate, preserving each rule's own enabled state.
   await page.locator('#automation autoresponse-switch button').click();
   await page.waitForFunction(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled===false);
@@ -2258,11 +2267,12 @@ try {
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options),{scope:'all-loaded'});
   assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
   await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).click();const previewReport=page.locator('.captured-preview-report[open]');
-  await previewReport.getByText(/3 frozen variants.*1 skipped.*4 served.*2 empty 404s.*Scripts enabled/).waitFor();
+  await previewReport.getByText(/3 frozen variants.*1 skipped.*4 served.*2 network failures.*Scripts enabled/).waitFor();
   await previewReport.getByText('Captured resource versions',{exact:true}).click();await previewReport.getByText('POST · fixture.saz',{exact:true}).waitFor();
   await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-compact.png')});
   assert.ok((await previewReport.boundingBox()).height<=520);await previewReport.getByRole('button',{name:'Close',exact:true}).click();
   assert.equal(await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
+  await checkPagePreviewRules(page,root);
   await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.metadataContext='Placeholder metadata';workspace.metadataNetworkContext='Placeholder network context';});
   await page.evaluate(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').metadataContext),'');

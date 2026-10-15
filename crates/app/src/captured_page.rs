@@ -19,7 +19,9 @@ const MAX_SCENE_BYTES: u64 = 256 * 1024 * 1024;
 /// A captured resource already decoded and materialized outside the UI thread.
 #[derive(Clone, Debug)]
 pub struct CapturedResource {
-    /// Actual captured final status, when browser-compatible.
+    /// Exact decoded response byte identity.
+    pub sha256: String,
+    /// Frozen final HTTP status, when browser-compatible.
     pub status: u16,
     /// Original or canonical HTTP reason phrase.
     pub reason: String,
@@ -36,13 +38,14 @@ pub struct CapturedPage {
     pub user_agent: Option<String>,
     /// Number of response variants available in this scene.
     pub resources: usize,
-    /// Unavailable or bounded-out variants; misses still return empty 404s.
+    /// Unavailable or bounded-out variants; misses still return network failures.
     pub skipped: usize,
-    files: HashMap<(String, String), Vec<ResourceVariant>>,
-    diagnostics: CapturedPageDiagnostics,
+    files: std::sync::Arc<HashMap<(String, String), Vec<ResourceVariant>>>,
+    pub(super) overlay: crate::captured_page_overlay::Overlay,
+    pub(super) diagnostics: CapturedPageDiagnostics,
     navigation_time: u64,
     positions: Mutex<HashMap<(String, String), (u64, u128)>>,
-    _root: tempfile::TempDir,
+    root: std::sync::Arc<tempfile::TempDir>,
 }
 struct ResourceVariant {
     resource: CapturedResource,
@@ -59,6 +62,42 @@ struct ResourceVariant {
     order: u128,
 }
 impl ResourceVariant {
+    fn relaxed_reason(
+        &self,
+        headers: Option<&[(String, String)]>,
+        body_sha256: Option<&str>,
+        fallback_ua: Option<String>,
+        navigation_time: u64,
+    ) -> String {
+        let mut reason = String::new();
+        let preferences =
+            RequestPreferences::new(headers, body_sha256, fallback_ua, navigation_time, None);
+        let mut relaxed = Vec::new();
+        if body_sha256 != self.body_sha256.as_deref() {
+            relaxed.push("body");
+        }
+        if preferences.user_agent != self.user_agent {
+            relaxed.push("User-Agent");
+        }
+        if preferences.origin != self.origin {
+            relaxed.push("Origin");
+        }
+        if preferences.referer != self.referer {
+            relaxed.push("Referer");
+        }
+        if !self.varies_with(headers) {
+            relaxed.push("Vary");
+        }
+        if self.sec_headers.iter().any(|(name, value)| {
+            headers.and_then(|h| header_value(h, name)).as_ref() != Some(value)
+        }) {
+            relaxed.push("Sec- headers");
+        }
+        if !relaxed.is_empty() {
+            write!(reason, "; relaxed {}", relaxed.join(", ")).expect("string write");
+        }
+        reason
+    }
     fn position(&self) -> (u64, u128) {
         (self.time, self.order)
     }
@@ -214,12 +253,30 @@ impl CapturedPage {
             );
             return None;
         }
+        // Reload resets captured sequence even when an overlay supplies the document.
+        if document && method == "GET" && canonical_url(url).as_deref() == Some(&self.url) {
+            self.positions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
+        }
+        let overlay_reason =
+            match self
+                .overlay
+                .resolve(method, url, headers, document, &self.diagnostics)
+            {
+                crate::captured_page_overlay::Resolution::Served(resource) => {
+                    return Some(resource);
+                }
+                crate::captured_page_overlay::Resolution::Fallback(reason) => reason,
+            };
         let key = canonical_url(url).map(|url| (method.to_owned(), url));
         let variants = key.as_ref().and_then(|key| self.files.get(key));
         let mut positions = self
             .positions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous_position = key.as_ref().and_then(|key| positions.get(key)).copied();
         let selection_reason = "Captured response selected by sequence, body, client, Origin/Referer, Sec- headers and time preferences";
         let selected = variants.and_then(|variants| {
             if document
@@ -259,11 +316,26 @@ impl CapturedPage {
             },
             |(_, reason)| reason,
         );
-        self.diagnostics.request(
+        let mut reason = reason.to_owned();
+        if let Some((variant, _)) = selected {
+            reason.push_str(&variant.relaxed_reason(
+                headers,
+                body_sha256,
+                self.user_agent.clone(),
+                self.navigation_time,
+            ));
+            if previous_position == Some(variant.position()) && !variant.primary {
+                reason.push_str("; reused last captured variant");
+            }
+        }
+        reason.push_str(&overlay_reason);
+        self.diagnostics.outcome(
             method,
             url,
             selected.map(|(variant, _)| variant.entry_id.clone()),
-            reason,
+            None,
+            selected.map(|(variant, _)| variant.resource.sha256.clone()),
+            &reason,
         );
         selected.map(|(variant, _)| variant.resource.clone())
     }
@@ -409,10 +481,35 @@ async fn build(
         .as_deref()
         .and_then(|id| application.traces.metadata(id))
         .map_or_else(|| "Live traffic".into(), |metadata| metadata.name);
-    scene.finish(options.scope, source_name)
+    let page = scene.finish(options.scope, source_name, source)?;
+    crate::captured_page_overlay::attach(application, page, options, canceled).await
 }
 #[path = "captured_page_build.rs"]
 mod preparation;
+
+/// Opens a new run from retained immutable capture bytes with independently frozen rules.
+pub(crate) fn fork(page: &CapturedPage) -> CapturedPage {
+    let mut report = page.diagnostics.snapshot();
+    report.bytes -= report.rules.iter().map(|r| r.bytes).sum::<u64>();
+    report.rules.clear();
+    report.hits = 0;
+    report.misses = 0;
+    report.failures = 0;
+    report.requests.clear();
+    report.scripts_enabled = None;
+    CapturedPage {
+        url: page.url.clone(),
+        user_agent: page.user_agent.clone(),
+        resources: page.resources,
+        skipped: page.skipped,
+        files: page.files.clone(),
+        overlay: crate::captured_page_overlay::Overlay::default(),
+        diagnostics: CapturedPageDiagnostics::new(report),
+        navigation_time: page.navigation_time,
+        positions: Mutex::new(HashMap::new()),
+        root: page.root.clone(),
+    }
+}
 
 fn require_html(store: &crate::BodyStore, numeric: ExchangeId) -> Result<(), AppError> {
     let metadata = store
@@ -551,6 +648,13 @@ fn canonical_url(input: &str) -> Option<String> {
     Some(url.into())
 }
 fn browser_headers(head: &ResponseHead, length: u64) -> String {
+    normalized_browser_headers(head, length, false)
+}
+pub(super) fn normalized_browser_headers(
+    head: &ResponseHead,
+    length: u64,
+    keep_cache: bool,
+) -> String {
     let mut out = String::new();
     for header in head.headers.iter() {
         let (Ok(name), Ok(value)) = (
@@ -571,11 +675,13 @@ fn browser_headers(head: &ResponseHead, length: u64) -> String {
                     | "proxy-authenticate"
                     | "proxy-authorization"
                     | "upgrade"
-                    | "cache-control"
-                    | "expires"
-                    | "age"
                     | "content-disposition"
             )
+            || (!keep_cache
+                && matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "cache-control" | "expires" | "age"
+                ))
             || value.contains(['\r', '\n', '\0'])
         {
             continue;
@@ -585,7 +691,13 @@ fn browser_headers(head: &ResponseHead, length: u64) -> String {
         out.push_str(value);
         out.push_str("\r\n");
     }
-    write!(out, "Content-Length: {length}\r\nCache-Control: no-store\r\nContent-Security-Policy: worker-src 'none'; frame-src http: https: data: blob:; connect-src http: https:; form-action http: https:; object-src 'none'; base-uri http: https:; sandbox allow-scripts allow-forms allow-same-origin\r\n" ).expect("string write");
+    if !matches!(head.status, 204 | 304) {
+        write!(out, "Content-Length: {length}\r\n").expect("string write");
+    }
+    if !keep_cache {
+        out.push_str("Cache-Control: no-store\r\n");
+    }
+    out.push_str("Content-Security-Policy: worker-src 'none'; frame-src http: https: data: blob:; connect-src http: https:; form-action http: https:; object-src 'none'; base-uri http: https:; sandbox allow-scripts allow-forms allow-same-origin\r\n");
     out
 }
 fn millis(time: SystemTime) -> u64 {
@@ -596,7 +708,7 @@ fn millis(time: SystemTime) -> u64 {
     )
     .unwrap_or(u64::MAX)
 }
-fn error(message: &str) -> AppError {
+pub(super) fn error(message: &str) -> AppError {
     AppError::new(ErrorCategory::Unavailable, message, false)
 }
 
@@ -858,6 +970,7 @@ mod tests {
                 id,
                 CapturedPageOptions {
                     scope: CapturedPageScope::AllLoaded,
+                    ..Default::default()
                 },
                 Arc::new(AtomicBool::new(false)),
             )
@@ -978,6 +1091,298 @@ mod tests {
         assert_eq!(
             canonical_url("https://EXAMPLE.invalid:443/path#anchor").unwrap(),
             "https://example.invalid/path"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Complete baseline/modified/updated user flow.
+    async fn overlay_freezes_disabled_rules_assets_order_and_related_scenes() {
+        use crate::{AuthoredResponseAsset, AutomationRuleSet};
+        use transmog_automation::{RequestActions, Rule, RuleMatcher, UrlCondition};
+        use transmog_core::{HeaderBlock, HeaderField};
+        let root = tempfile::tempdir().unwrap();
+        let app = Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(root.path().join("bodies"))),
+            response_asset_root: Some(root.path().join("assets")),
+            ..Default::default()
+        })
+        .unwrap();
+        let path = root.path().join("page.saz");
+        fixture(&path, "Baseline");
+        app.import_trace(
+            TraceImportRequest {
+                path,
+                password: None,
+                operation_id: "overlay".into(),
+                max_file_bytes: 1024 * 1024,
+            },
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+        let id = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|r| r.path == "/page")
+            .unwrap()
+            .id;
+        let baseline = Arc::new(
+            app.prepare_captured_page(id, Arc::new(AtomicBool::new(false)))
+                .await
+                .unwrap(),
+        );
+        let asset = app
+            .create_response_asset(AuthoredResponseAsset {
+                id: "preview".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("cache-control", "max-age=99").unwrap(),
+                    HeaderField::try_new("content-security-policy", "default-src 'none'").unwrap(),
+                    HeaderField::try_new("x-duplicate", "one").unwrap(),
+                    HeaderField::try_new("x-duplicate", "two").unwrap(),
+                ]),
+                body: b"Modified".to_vec(),
+                media_type: Some("text/html".into()),
+            })
+            .unwrap();
+        let rule = Rule {
+            id: "first".into(),
+            display_name: Some("Disabled experiment".into()),
+            enabled: false,
+            revision: 1,
+            priority: 0,
+            matcher: RuleMatcher {
+                method: Some("GET".into()),
+                url: Some(UrlCondition::Exact(baseline.url.clone())),
+                ..Default::default()
+            },
+            request: RequestActions {
+                response_asset: Some(asset.asset_ref()),
+                ..Default::default()
+            },
+            response: transmog_automation::ResponseActions::default(),
+        };
+        let mut second = rule.clone();
+        second.id = "second".into();
+        second.priority = 1;
+        let candidate = app
+            .validate_automation(AutomationRuleSet {
+                rules: vec![second, rule.clone()],
+                autoresponses_enabled: false,
+                ..Default::default()
+            })
+            .unwrap();
+        let status = app.activate_automation(&candidate.candidate_id).unwrap();
+        let options = CapturedPageOptions {
+            rule_ids: Some(vec!["second".into(), "first".into()]),
+            generation: Some(status.generation),
+            ..Default::default()
+        };
+        let modified = app
+            .prepare_related_captured_page(
+                baseline.clone(),
+                options.clone(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        for _ in 0..2 {
+            let r = modified
+                .resolve("GET", &baseline.url, Some(&[]), None, true)
+                .unwrap();
+            assert_eq!(std::fs::read_to_string(r.body_path).unwrap(), "Modified");
+            assert!(r.headers.contains("max-age=99"));
+            assert!(r.headers.contains("default-src 'none'"));
+            assert!(r.headers.contains("worker-src 'none'"));
+            assert!(r.headers.contains("x-duplicate: one\r\nx-duplicate: two"));
+        }
+        let report = modified.diagnostics().snapshot();
+        assert_eq!((report.hits, report.misses), (2, 0));
+        assert_eq!(report.requests[0].outcome, "auto-response");
+        assert_eq!(report.requests[0].rule_id.as_deref(), Some("first"));
+        assert_eq!(report.rules[1].shadowed_by.as_deref(), Some("first"));
+        assert!(!app.automation_status().autoresponses_enabled);
+        assert!(app.automation_status().rules.iter().all(|r| !r.enabled));
+        let again = app
+            .prepare_related_captured_page(
+                Arc::new(modified),
+                CapturedPageOptions::default(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(
+                again
+                    .resolve("GET", &baseline.url, None, None, true)
+                    .unwrap()
+                    .body_path
+            )
+            .unwrap()
+            .contains("Baseline")
+        );
+        let mut missing = rule.clone();
+        missing.id = "missing".into();
+        missing.matcher.method = None;
+        missing.matcher.url = Some(UrlCondition::Exact("https://absent.invalid/".into()));
+        let candidate = app
+            .validate_automation(AutomationRuleSet {
+                generation: status.generation,
+                rules: vec![missing],
+                ..Default::default()
+            })
+            .unwrap();
+        app.activate_automation(&candidate.candidate_id).unwrap();
+        assert!(
+            app.prepare_related_captured_page(
+                baseline.clone(),
+                options,
+                Arc::new(AtomicBool::new(false))
+            )
+            .await
+            .err()
+            .unwrap()
+            .message
+            .contains("changed")
+        );
+        let missing = app
+            .prepare_related_captured_page(
+                baseline.clone(),
+                CapturedPageOptions {
+                    rule_ids: Some(vec!["missing".into()]),
+                    ..Default::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            missing
+                .resolve("GET", "https://absent.invalid/", Some(&[]), None, false)
+                .is_some()
+        );
+        let head = missing
+            .resolve("HEAD", "https://absent.invalid/", Some(&[]), None, false)
+            .unwrap();
+        assert!(std::fs::read(head.body_path).unwrap().is_empty());
+        assert!(
+            missing
+                .resolve("GET", "https://unknown.invalid/", None, None, false)
+                .is_none()
+        );
+        for status in [204, 205, 304, 404] {
+            let asset = app
+                .create_response_asset(AuthoredResponseAsset {
+                    id: format!("status-{status}"),
+                    revision: 1,
+                    status,
+                    headers: HeaderBlock::new(),
+                    body: b"authored body".to_vec(),
+                    media_type: Some("text/plain".into()),
+                })
+                .unwrap();
+            let mut rule = rule.clone();
+            rule.request.response_asset = Some(asset.asset_ref());
+            let current = app.automation_status();
+            let candidate = app
+                .validate_automation(AutomationRuleSet {
+                    generation: current.generation,
+                    rules: vec![rule],
+                    ..Default::default()
+                })
+                .unwrap();
+            app.activate_automation(&candidate.candidate_id).unwrap();
+            let prepared = app
+                .prepare_related_captured_page(
+                    baseline.clone(),
+                    CapturedPageOptions {
+                        rule_ids: Some(vec!["first".into()]),
+                        ..Default::default()
+                    },
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .await
+                .unwrap();
+            let resource = prepared
+                .resolve("GET", &baseline.url, Some(&[]), None, false)
+                .unwrap();
+            assert_eq!(resource.status, status);
+            assert_eq!(
+                std::fs::read(&resource.body_path).unwrap().is_empty(),
+                status != 404
+            );
+            if matches!(status, 204 | 304) {
+                assert!(!resource.headers.contains("Content-Length:"));
+            }
+            prepared
+                .resolve("GET", &baseline.url, Some(&[]), None, true)
+                .unwrap();
+            let report = prepared.diagnostics().snapshot();
+            assert_eq!(
+                (report.hits, report.failures),
+                if status == 404 { (2, 0) } else { (1, 1) }
+            );
+            assert_eq!(report.requests[1].id, 2);
+        }
+        assert!(
+            app.prepare_related_captured_page(
+                baseline.clone(),
+                CapturedPageOptions {
+                    rule_ids: Some(vec!["first".into()]),
+                    ..Default::default()
+                },
+                Arc::new(AtomicBool::new(true))
+            )
+            .await
+            .err()
+            .unwrap()
+            .message
+            .contains("canceled")
+        );
+        let linked_path = root.path().join("unavailable.css");
+        std::fs::File::create(&linked_path)
+            .unwrap()
+            .set_len(25_000_001)
+            .unwrap();
+        let linked = app
+            .import_response_asset(crate::ImportResponseAsset {
+                id: "unavailable".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body_path: linked_path.clone(),
+                media_type: Some("text/css".into()),
+            })
+            .unwrap();
+        std::fs::remove_file(linked_path).unwrap();
+        let mut unavailable = rule;
+        unavailable.request.response_asset = Some(linked.asset_ref());
+        let candidate = app
+            .validate_automation(AutomationRuleSet {
+                generation: app.automation_status().generation,
+                rules: vec![unavailable],
+                ..Default::default()
+            })
+            .unwrap();
+        app.activate_automation(&candidate.candidate_id).unwrap();
+        let failure = app
+            .prepare_related_captured_page(
+                baseline,
+                CapturedPageOptions {
+                    rule_ids: Some(vec!["first".into()]),
+                    ..Default::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            failure.message.contains("Disabled experiment")
+                && failure.message.contains("unavailable")
         );
     }
 }

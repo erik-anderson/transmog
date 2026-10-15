@@ -2,10 +2,14 @@
 //! never contacts an origin, alters system routing or installs a certificate.
 use super::{ARTIFACT_SEQUENCE, DesktopState};
 static OPERATIONS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>>,
+    std::sync::Mutex<std::collections::HashMap<String, PreparingPreview>>,
 > = std::sync::OnceLock::new();
-fn operations() -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<AtomicBool>>> {
+fn operations() -> &'static std::sync::Mutex<std::collections::HashMap<String, PreparingPreview>> {
     OPERATIONS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+struct PreparingPreview {
+    canceled: Arc<AtomicBool>,
+    label: String,
 }
 struct Operation(String);
 impl Drop for Operation {
@@ -23,11 +27,11 @@ pub(super) fn cancel_captured_page(operation_id: String, window: tauri::WebviewW
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&format!("{}:{operation_id}", window.label()))
     {
-        canceled.store(true, Ordering::Release);
+        canceled.canceled.store(true, Ordering::Release);
     }
 }
 use std::{
-    io::{Read, Write},
+    io::Read,
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
         Arc,
@@ -41,12 +45,15 @@ use transmog_app::{
     AppError, CapturedPage, CapturedPageDiagnostics, CapturedPageOptions, CapturedPageReport,
     ErrorCategory,
 };
-static REPORTS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::VecDeque<(String, String, CapturedPageDiagnostics)>>,
-> = std::sync::OnceLock::new();
-fn reports()
--> &'static std::sync::Mutex<std::collections::VecDeque<(String, String, CapturedPageDiagnostics)>>
-{
+static REPORTS: std::sync::OnceLock<std::sync::Mutex<std::collections::VecDeque<RetainedPreview>>> =
+    std::sync::OnceLock::new();
+struct RetainedPreview {
+    owner: String,
+    label: String,
+    diagnostics: CapturedPageDiagnostics,
+    page: Option<Arc<CapturedPage>>,
+}
+fn reports() -> &'static std::sync::Mutex<std::collections::VecDeque<RetainedPreview>> {
     REPORTS.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
 }
 #[tauri::command]
@@ -60,8 +67,8 @@ pub(super) fn captured_page_report(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .iter()
-        .find(|(owner, id, _)| owner == window.label() && id == &label)
-        .map(|(_, _, report)| report.clone())
+        .find(|run| run.owner == window.label() && run.label == label)
+        .map(|run| (run.diagnostics.clone(), run.page.is_some()))
         .ok_or_else(|| error("This preview report is unavailable or belongs to another window"))?;
     let retained = application
         .session_service()
@@ -69,7 +76,11 @@ pub(super) fn captured_page_report(
         .project_retained(|snapshot| format!("{:032x}", snapshot.exchange_id.0))
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
-    let mut report = report.snapshot();
+    let mut report = {
+        let mut snapshot = report.0.snapshot();
+        snapshot.bytes_available = report.1;
+        snapshot
+    };
     for resource in &mut report.resources {
         resource.source_available = retained.contains(&resource.entry_id);
     }
@@ -84,9 +95,30 @@ const HARDENING: &str = r"(() => {
 })();";
 
 struct PreviewOwner {
-    page: CapturedPage,
+    page: Arc<CapturedPage>,
     profile: PreviewProfile,
-    _firewall: DenyProxy,
+    firewall: DenyProxy,
+}
+impl PreviewOwner {
+    fn new(page: CapturedPage, enable_scripts: bool) -> Result<Self, AppError> {
+        let profile = tempfile::Builder::new()
+            .prefix("transmog-captured-webview-")
+            .tempdir()
+            .map_err(|_| error("An isolated preview profile could not be created"))?;
+        let firewall = DenyProxy::start()
+            .map_err(|_| error("Captured preview network isolation could not start"))?;
+        let owner = Self {
+            page: Arc::new(page),
+            profile: PreviewProfile(Some(profile)),
+            firewall,
+        };
+        owner.page.diagnostics().script_choice(enable_scripts);
+        owner.page.diagnostics().runtime(format!(
+            "WebView2 {}",
+            tauri::webview_version().unwrap_or_else(|_| "version unavailable".into())
+        ));
+        Ok(owner)
+    }
 }
 struct PreviewProfile(Option<tempfile::TempDir>);
 impl PreviewProfile {
@@ -126,46 +158,63 @@ pub(super) async fn open_captured_page(
     id: String,
     enable_scripts: bool,
     options: Option<CapturedPageOptions>,
+    source_label: Option<String>,
     operation_id: String,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, DesktopState>,
 ) -> Result<String, AppError> {
     let application = state.window_application(&window)?;
-    let (_operation, canceled) = register_operation(&window, &operation_id)?;
-    let page = application
-        .prepare_captured_page_with_options(id, options.unwrap_or_default(), canceled.clone())
-        .await?;
-    let app = window.app_handle().clone();
-    let profile = tempfile::Builder::new()
-        .prefix("transmog-captured-webview-")
-        .tempdir()
-        .map_err(|_| error("An isolated preview profile could not be created"))?;
-    let firewall = DenyProxy::start()
-        .map_err(|_| error("Captured preview network isolation could not start"))?;
-    let address = firewall.address;
-    let owner = Arc::new(PreviewOwner {
-        page,
-        profile: PreviewProfile(Some(profile)),
-        _firewall: firewall,
-    });
-    owner.page.diagnostics().script_choice(enable_scripts);
-    let creation_owner = owner.clone();
-    let creation_app = app.clone();
+    let options = options.unwrap_or_default();
+    if options.rule_ids.is_some() && window.label() != "main" {
+        return Err(error(
+            "Open this capture in the main window to use saved auto-responses",
+        ));
+    }
     let label = format!(
         "captured-page-{}",
         ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
     );
+    let (_operation, canceled) = register_operation(&window, &operation_id, &label)?;
+    let page = prepare_scene(
+        &application,
+        window.label(),
+        id,
+        options,
+        source_label,
+        canceled.clone(),
+    )
+    .await?;
+    if canceled.load(Ordering::Acquire)
+        || window
+            .app_handle()
+            .get_webview_window(window.label())
+            .is_none()
+    {
+        return Err(error("Captured page preview canceled"));
+    }
+    let app = window.app_handle().clone();
+    let owner = Arc::new(PreviewOwner::new(page, enable_scripts)?);
+    let address = owner.firewall.address;
+    let title = preview_title(&owner.page, enable_scripts);
+    let creation_owner = owner.clone();
+    let creation_app = app.clone();
     let creation_label = label.clone();
     let browser=tokio::task::spawn_blocking(move||{
         let args=format!("--proxy-server=http://{address} --proxy-bypass-list=<-loopback> --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-background-networking --disable-quic");
         WebviewWindowBuilder::new(&creation_app,&creation_label,WebviewUrl::External("about:blank".parse().expect("fixed blank URL")))
-            .title("Captured page preview — Transmog").inner_size(1100.0,800.0).visible(false)
+            .title(title).inner_size(1100.0,800.0).visible(false)
             .data_directory(creation_owner.profile.path().to_owned()).additional_browser_args(&args)
             .initialization_script_for_all_frames(HARDENING).disable_javascript()
             .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny)
             .on_navigation(|url|url.as_str()=="about:blank"||matches!(url.scheme(),"http"|"https"))
             .build().map_err(|_|error("Captured preview window could not be created"))
     }).await.map_err(|_|error("Captured preview creation failed"))??;
+    let owner_browser = browser.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let _ = owner_browser.destroy();
+        }
+    });
     if canceled.load(Ordering::Acquire) {
         let _ = browser.destroy();
         return Err(error("Captured page preview canceled"));
@@ -191,17 +240,10 @@ pub(super) async fn open_captured_page(
                 let _ = browser.destroy();
                 return Err(error("Captured preview could not be shown"));
             }
-            let mut reports = reports()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if reports.len() == 8 {
-                reports.pop_front();
+            if !retain_preview(window.label(), &label, owner.page.clone(), &canceled) {
+                let _ = browser.destroy();
+                return Err(error("Captured page preview canceled"));
             }
-            reports.push_back((
-                window.label().into(),
-                label.clone(),
-                owner.page.diagnostics(),
-            ));
             Ok(label)
         }
         result => {
@@ -214,9 +256,74 @@ pub(super) async fn open_captured_page(
     }
 }
 
+async fn prepare_scene(
+    application: &transmog_app::Application,
+    owner: &str,
+    id: String,
+    options: CapturedPageOptions,
+    source_label: Option<String>,
+    canceled: Arc<AtomicBool>,
+) -> Result<CapturedPage, AppError> {
+    if let Some(label) = source_label {
+        let page = reports().lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter()
+            .find(|run| run.owner == owner && run.label == label).and_then(|run| run.page.clone())
+            .ok_or_else(|| error("These preview bytes have expired; select the captured HTML and open a new preview"))?;
+        application
+            .prepare_related_captured_page(page, options, canceled)
+            .await
+    } else {
+        application
+            .prepare_captured_page_with_options(id, options, canceled)
+            .await
+    }
+}
+
+fn preview_title(page: &CapturedPage, enable_scripts: bool) -> String {
+    let report = page.diagnostics().snapshot();
+    format!(
+        "{} preview · Scripts {} — Transmog",
+        if report.rules.is_empty() {
+            "Baseline"
+        } else {
+            "Modified"
+        },
+        if enable_scripts { "on" } else { "off" }
+    )
+}
+fn retain_preview(
+    owner: &str,
+    label: &str,
+    page: Arc<CapturedPage>,
+    canceled: &AtomicBool,
+) -> bool {
+    let mut reports = reports()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if canceled.load(Ordering::Acquire) {
+        return false;
+    }
+    if reports.len() == 8 {
+        reports.pop_front();
+    }
+    // Reports are cheap; retain at most three scenes (256 MiB/run) for iteration.
+    while reports.iter().filter(|run| run.page.is_some()).count() >= 3 {
+        if let Some(run) = reports.iter_mut().find(|run| run.page.is_some()) {
+            run.page = None;
+        }
+    }
+    reports.push_back(RetainedPreview {
+        owner: owner.into(),
+        label: label.into(),
+        diagnostics: page.diagnostics(),
+        page: Some(page),
+    });
+    true
+}
+
 fn register_operation(
     window: &tauri::WebviewWindow,
     operation_id: &str,
+    label: &str,
 ) -> Result<(Operation, Arc<AtomicBool>), AppError> {
     if operation_id.is_empty() || operation_id.len() > 128 {
         return Err(error("Invalid captured preview operation"));
@@ -230,34 +337,41 @@ fn register_operation(
         if pending.contains_key(&key) {
             return Err(error("Captured preview is already preparing"));
         }
-        if pending.len()
-            + window
-                .app_handle()
-                .webview_windows()
-                .keys()
-                .filter(|label| label.starts_with("captured-page-"))
-                .count()
-            >= 3
-        {
+        let admitted = window
+            .app_handle()
+            .webview_windows()
+            .keys()
+            .filter(|label| label.starts_with("captured-page-"))
+            .cloned()
+            .chain(pending.values().map(|pending| pending.label.clone()))
+            .collect::<std::collections::HashSet<_>>();
+        if admitted.len() >= 3 {
             return Err(error(
                 "Close a captured page preview before opening another (maximum 3)",
             ));
         }
-        pending.insert(key.clone(), canceled.clone());
+        pending.insert(
+            key.clone(),
+            PreparingPreview {
+                canceled: canceled.clone(),
+                label: label.into(),
+            },
+        );
     }
     let operation = Operation(key);
-    if window
-        .app_handle()
-        .webview_windows()
-        .keys()
-        .filter(|label| label.starts_with("captured-page-"))
-        .count()
-        >= 3
-    {
-        return Err(error(
-            "Close a captured page preview before opening another (maximum 3)",
-        ));
-    }
+    let weak = Arc::downgrade(&canceled);
+    let owner = window.label().to_owned();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            if let Some(canceled) = weak.upgrade() {
+                canceled.store(true, Ordering::Release);
+            }
+            reports()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|run| run.owner != owner);
+        }
+    });
     Ok((operation, canceled))
 }
 
@@ -334,13 +448,37 @@ fn deny(mut socket: TcpStream) {
             }
         }
     }
-    let _ = socket
-        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    // A missing capture is a network failure, never a fabricated server response.
+    let _ = socket.shutdown(std::net::Shutdown::Both);
 }
 fn error(message: &str) -> AppError {
     AppError {
         category: ErrorCategory::Unavailable,
         message: message.into(),
         retryable: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn deny_endpoint_closes_without_fabricating_an_http_response() {
+        use std::io::Write;
+        let proxy = DenyProxy::start().unwrap();
+        for request in [
+            b"GET http://origin.invalid/missing HTTP/1.1\r\nHost: origin.invalid\r\n\r\n"
+                .as_slice(),
+            b"CONNECT origin.invalid:443 HTTP/1.1\r\nHost: origin.invalid:443\r\n\r\n".as_slice(),
+        ] {
+            let mut client = TcpStream::connect(proxy.address).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            client.write_all(request).unwrap();
+            let mut bytes = Vec::new();
+            client.read_to_end(&mut bytes).unwrap();
+            assert!(bytes.is_empty());
+        }
     }
 }

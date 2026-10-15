@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {writeFile} from 'node:fs/promises';
+
+export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot}) {
+  const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
+  await main.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
+  await waitFor(()=>main.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page')&&!${traffic}.importingTrace`),'Main preview fixture did not import');
+  const id=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-page').id`);
+  const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{
+    const before=(await targets()).map(row=>row.id);
+    const label=await invoke('open_captured_page',{id:selectedId,enableScripts:scripts,sourceLabel,options:{scope:'original-trace',...(ruleIds?{ruleIds}: {})},operationId:crypto.randomUUID()});
+    const target=await waitFor(async()=>(await targets()).find(row=>!before.includes(row.id)&&row.url.startsWith('https://example.invalid/')),'Rule-aware preview did not navigate');
+    return {label,target,page:await connect(target)};
+  };
+  const baseline=await open(null,null,false);
+  await waitFor(()=>baseline.page.evaluate(`document.getElementById('captured-heading')&&getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 128, 0)'`),'Baseline CSS did not render');
+  let contacted=0;
+  const sink=createServer((_,response)=>{contacted++;response.end('unexpected');});
+  await new Promise(resolve=>sink.listen(0,'127.0.0.1',resolve));
+  const sinkUrl='http://127.0.0.1:'+sink.address().port+'/uncaptured';
+  const bytes=value=>[...Buffer.from(value)];
+  const headers=fields=>fields.map(([name,value])=>({name:bytes(name),value:bytes(value)}));
+  const asset=async(id,body,type,extra=[],status=200,revision=1)=>invoke('create_response_asset',{input:{id,revision,status,headers:headers([['content-type',type],...extra]),body:bytes(body),mediaType:type}});
+  const rule=(id,path,asset,priority,extra={})=>({id,displayName:'Preview '+id,revision:1,priority,enabled:false,matcher:{method:'GET',url:{kind:'exact',value:'https://example.invalid'+path},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null,...extra},request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}});
+  const save=async rules=>{const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules,autoresponsesEnabled:false}});return invoke('activate_automation',{candidateId:candidate.candidateId});};
+  try {
+    const html=await asset('preview-html',`<h1 id="captured-heading">Modified fixture</h1><link rel="stylesheet" href="/page.css"><iframe src="/captured-frame"></iframe><img src="/missing-image.png" onerror="globalThis.missingImageError=true"><script src="/missing-script.js" onerror="globalThis.missingScriptError=true"></script><script src="/override.js"></script><script>Promise.all([fetch('/absent').then(async r=>({body:await r.text(),header:r.headers.get('x-preview')})),fetch('/redirect').then(r=>r.text()),fetch('/conditional',{headers:{'X-Preview':'dark'}}).then(r=>r.text()),fetch('/conditional').then(r=>r.status,()=> 'network failure'),fetch('/authored404').then(async r=>({status:r.status,body:await r.text()})),fetch('https://cors.invalid/allowed').then(r=>r.text()),fetch('https://cors.invalid/denied').then(()=> 'unexpected success',()=> 'cors denied')]).then(r=>globalThis.ruleResults=r);fetch(${JSON.stringify(sinkUrl)},{mode:'no-cors'}).catch(()=>{});</script>`,'text/html',[['content-security-policy',"default-src * 'unsafe-inline';"],['cache-control','no-store']]);
+    const css=await asset('preview-css','h1 { color: rgb(255, 0, 0); }','text/css',[['cache-control','no-store']]);
+    const js=await asset('preview-js','globalThis.ruleScript=1;','text/javascript',[['cache-control','no-store']]);
+    const text=await asset('preview-text','Rule-only resource','text/plain',[['x-preview','frozen'],['cache-control','no-store']]);
+    const redirect=await asset('preview-redirect','','text/plain',[['location','https://example.invalid/absent']],302);
+    const authored404=await asset('preview-authored404','Known HTTP error','text/plain',[],404);
+    const cors=await asset('preview-cors','Cross-origin allowed','text/plain',[['access-control-allow-origin','*']]);
+    const rules=[rule('html','/captured-page',html,0),rule('css','/page.css',css,1),rule('js','/override.js',js,2),rule('absent','/absent',text,3),rule('redirect','/redirect',redirect,4),rule('conditional','/conditional',text,5,{requestHeaders:[{name:'X-Preview',condition:{kind:'exact',value:bytes('dark')}}]}),rule('authored404','/authored404',authored404,6),rule('cors-allowed','/allowed',cors,7,{url:{kind:'exact',value:'https://cors.invalid/allowed'}}),rule('cors-denied','/denied',text,8,{url:{kind:'exact',value:'https://cors.invalid/denied'}})];
+    await save(rules);
+    const ids=rules.map(row=>row.id);
+    assert.equal(await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_captured_page',{id:${JSON.stringify(id)},enableScripts:false,options:{ruleIds:['html']},operationId:'viewer-rule-denial'}).then(()=>false,()=>true)`),true,'Viewer used main-window rules');
+    const modified=await open(ids,baseline.label);
+    await waitFor(()=>modified.page.evaluate(`globalThis.ruleResults&&globalThis.ruleScript===1`),'Modified scripts did not finish');
+    assert.deepEqual(await modified.page.evaluate('globalThis.ruleResults'),[{body:'Rule-only resource',header:'frozen'},'Rule-only resource','Rule-only resource','network failure',{status:404,body:'Known HTTP error'},'Cross-origin allowed','cors denied']);
+    assert.equal(await modified.page.evaluate(`getComputedStyle(document.getElementById('captured-heading')).color`),'rgb(255, 0, 0)');
+    assert.ok(await modified.page.evaluate(`document.querySelector('iframe').contentDocument.body.innerText.includes('Captured frame fixture')`));
+    for(const name of ['WebSocket','WebTransport','RTCPeerConnection'])assert.equal(await modified.page.evaluate(`(()=>{try{new ${name}('https://example.invalid');return false;}catch{return true;}})()`),true);
+    assert.equal(await modified.page.evaluate(`Promise.race([Promise.resolve().then(()=>window.__TAURI_INTERNALS__.invoke('app_status')).then(()=>false,()=>true),new Promise(resolve=>setTimeout(()=>resolve(true),500))])`),true);
+    assert.equal(await modified.page.evaluate('globalThis.missingImageError===true&&globalThis.missingScriptError===true'),true,'Missing scripts/images did not fire load errors');
+    const report=await invoke('captured_page_report',{label:modified.label});
+    if(screenshot)await writeFile(screenshot.replace('.png','-modified-report.json'),JSON.stringify(report,null,2));
+    assert.equal(report.rules.length,9);assert.ok(report.requests.some(row=>row.ruleId==='absent'&&row.outcome==='auto-response'&&row.sha256));
+    assert.ok(report.requests.some(row=>row.outcome==='missing'));assert.ok(report.requests.some(row=>row.outcome==='captured'));
+    const blue=await asset('preview-css','h1 { color: rgb(0, 0, 255); }','text/css',[['cache-control','no-store']],200,2);
+    rules[1].request.responseAsset=blue.id+'@2';rules[1].revision=2;await save(rules);
+    await modified.page.call('Page.reload',{ignoreCache:true});
+    await waitFor(()=>modified.page.evaluate(`globalThis.ruleResults&&getComputedStyle(document.getElementById('captured-heading')).color==='rgb(255, 0, 0)'`),'Existing rule snapshot changed on reload');
+    const updated=await open(ids,modified.label);
+    await waitFor(()=>updated.page.evaluate(`globalThis.ruleResults&&getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 0, 255)'`),'Updated preview did not use new saved bytes');
+    const admission=await invoke('open_captured_page',{id,enableScripts:false,operationId:'fourth-preview'}).then(()=>'',error=>String(error.message??error));
+    assert.match(admission,/maximum 3/);
+    await baseline.page.call('Page.reload',{ignoreCache:true});
+    await waitFor(()=>baseline.page.evaluate(`getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 128, 0)'`),'Modified previews changed baseline');
+    assert.equal(contacted,0,'Modified CSP or content contacted an origin');
+    assert.equal((await invoke('app_status')).lifecycle,'stopped');
+    if(screenshot){const image=await updated.page.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-modified-page.png'),Buffer.from(image.data,'base64'));}
+    await closeNative('Modified preview · Scripts on — Transmog');await closeNative('Modified preview · Scripts on — Transmog');
+    await waitFor(async()=>!(await targets()).some(row=>[modified.target.id,updated.target.id].includes(row.id)),'Modified previews did not close');
+    const off=await open(ids,baseline.label,false);
+    await waitFor(()=>off.page.evaluate(`document.getElementById('captured-heading')?.textContent==='Modified fixture'`),'Script-disabled modified HTML did not render');
+    assert.equal(await off.page.evaluate('globalThis.ruleScript??null'),null);
+    await closeNative('Modified preview · Scripts off — Transmog');await closeNative('Baseline preview · Scripts off — Transmog');
+    await waitFor(async()=>!(await targets()).some(row=>[off.target.id,baseline.target.id].includes(row.id)),'Rule preview profiles stayed open');
+    const postId=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-post').id`);
+    const postRule=rule('post-only','/captured-post',html,0,{method:'POST'});
+    await save([postRule]);
+    const post=await open(['post-only'],null,false,postId);
+    await waitFor(()=>post.page.evaluate(`document.getElementById('post-heading')?.textContent==='Captured POST fallback'`),'POST-only rule replaced actual GET bootstrap');
+    const postReport=await invoke('captured_page_report',{label:post.label});
+    assert.ok(postReport.requests.some(row=>row.method==='GET'&&row.outcome==='captured'&&row.reason.includes('Method')));
+    const getAsset=await asset('preview-post-get','<h1 id="post-heading">GET override</h1>','text/html');
+    const getRule=rule('post-get','/captured-post',getAsset,1);
+    await save([postRule,getRule]);
+    const get=await open(['post-only','post-get'],post.label,false,postId);
+    await waitFor(()=>get.page.evaluate(`document.getElementById('post-heading')?.textContent==='GET override'`),'Selected POST pin bypassed GET rule');
+    await get.page.call('Page.reload',{ignoreCache:true});
+    await waitFor(()=>get.page.evaluate(`document.getElementById('post-heading')?.textContent==='GET override'`),'GET rule changed on selected POST reload');
+    // The POST fallback has a selected overlay even though its rule did not match.
+    await closeNative('Modified preview · Scripts off — Transmog');await closeNative('Modified preview · Scripts off — Transmog');
+    process.stdout.write('Native rule previews: frozen HTML/CSS/JS/headers, explicit headers, rule-only URLs, redirects, reload/update/baseline, scripts, viewer denial, admission and zero-origin traffic verified.\n');
+  } finally {sink.closeAllConnections();await new Promise(resolve=>sink.close(resolve));}
+}

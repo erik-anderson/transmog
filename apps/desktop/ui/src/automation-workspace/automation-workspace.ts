@@ -226,6 +226,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   onMatcherChange():void {this.draftDirty=true;this.scheduleMatcherTest();}
   scheduleMatcherTest():void {window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.matchTestResult=null;this.renderMatchCases();this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
   formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
+  previewSavedRule():void {if(this.editingAutoResponseId)this.$emit('page-preview-request',this.editingAutoResponseId);}
   async canLeaveEditor():Promise<boolean> {
     if(this.savingAutoResponse)return false;
     if(this.bodyEditor?.surface?.open&&!this.bodyEditor.bodyBusy)return false;

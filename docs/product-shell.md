@@ -185,3 +185,14 @@ See [safe previews](safe-previews.md) and [captured-page preview](captured-page-
 Current support boundaries are in [limitations](limitations.md), future work in
 [the roadmap](roadmap.md), and interaction conventions in
 [UX design principles](ux-principles.md).
+
+## Related captured-page previews
+
+Baseline and modified [page previews](captured-page-preview.md) identify response
+mode and script choice in their titles and trusted opening-window reports. The
+main window alone can select workspace auto-responses. Capture viewers keep
+baseline preview and the established main-window import route for using rules.
+Reports and retained scene handles are checked against their opening window;
+closing that window cancels preparation, closes its previews and releases retained
+reports. Up to three recent runs retain bytes for baseline/updated iteration,
+while older reports remain readable within the eight-report bound.
