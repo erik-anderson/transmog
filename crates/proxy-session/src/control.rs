@@ -635,6 +635,7 @@ const fn hook_action_name(action: &HookEffectAction) -> &'static str {
         HookEffectAction::Respond { .. } => "respond",
         HookEffectAction::Abort(_) => "abort",
         HookEffectAction::BodyPlan { .. } => "body-plan",
+        HookEffectAction::BodyEdit(_) => "body-edit",
     }
 }
 

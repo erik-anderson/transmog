@@ -116,6 +116,7 @@ try{
   Object.assign(fixture.find(row=>row.kind==='body-segment').payload,{byte_count:4,bytes:[98,111,100,121]});
   fixture.splice(fixture.length-1,0,{kind:'hook-effect',payload:{hook_id:'automation/native-file@4/request/asset/native-style@2',hook_name:'Native linked-file experiment',phase:'request-head',action:'respond',changed:true,chain_position:0,effect_sequence:1,header_edit:null,response_snapshot:{status:200,bodyBytes:4,sha256:responseHash,contentCodings:[]}}});
   fixture.splice(fixture.length-1,0,{kind:'hook-effect',payload:{hook_id:'automation/historical-header@7/response',hook_name:'Historical response policy',phase:'response-head',action:'replace-response-head',changed:true,chain_position:1,effect_sequence:2,header_edit:{kind:'response',changes:{statusChanged:false,headers:{added:['X-Historical'],removed:['Content-Security-Policy'],changed:[]}}},response_snapshot:null}});
+  fixture.splice(fixture.length-1,0,{kind:'hook-effect',payload:{hook_id:'automation/historical-text@8/response',hook_name:'Historical literal edit',phase:'response-body',action:'body-edit',changed:false,chain_position:2,effect_sequence:3,header_edit:null,body_edit:{outcome:'not-found',matches:0,replacements:0,beforeBytes:4,afterBytes:4,beforeSha256:responseHash,afterSha256:responseHash},response_snapshot:null}});
   await writeFile(timingSource,nativeFixture(fixture,99));
   await viewer.evaluate(`void ${traffic}.importTrace(${JSON.stringify(timingSource)})`);
   await waitFor(async()=>{const state=await viewer.evaluate(`({busy:${traffic}.importingTrace,found:${traffic}.sessions.some(row=>row.path==='/native-waterfall'),status:${traffic}.importStatus})`);if(!state.busy){assert.ok(state.found,'Native timing fixture import failed: '+state.status);return true;}return false;},'Native timing fixture did not import');
@@ -123,6 +124,8 @@ try{
   const timingId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-waterfall');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   await viewer.evaluate(`${traffic}.showTimings()`);
   await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingWaterfall.length+${traffic}.timingMinor.length>=3`),'Native timing waterfall was not restored');
+  assert.equal(await viewer.evaluate(`${traffic}.bodyEditRows.length`),1,'Native body edit outcome was lost');
+  assert.ok(await viewer.evaluate(`${traffic}.timingReportText.includes('Not applied: text not found')&&${traffic}.timingReportText.includes('historical-text@8')`));
   assert.equal(await viewer.evaluate(`${traffic}.headerEffectRows.length`),1,'Native historical header evidence was lost');
   assert.ok(await viewer.evaluate(`${traffic}.timingReportText.includes('historical-header@7')&&${traffic}.timingReportText.includes('X-Historical')`));
   assert.equal(await viewer.evaluate(`Array.from(${traffic}.timingDialog.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent.includes('Proxy operations under 1 ms'))?.open`),false);

@@ -165,8 +165,30 @@ impl HeaderEditSnapshot {
 }
 
 /// Traffic-affecting action attributed to one interceptor callback.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BodyEditReport {
+    /// Applied, not-found, unchanged, count-mismatch, invalid-text, or input-limit.
+    pub outcome: String,
+    /// Number of non-overlapping literal matches, when the complete text was valid.
+    pub matches: Option<usize>,
+    /// Number of replacements performed.
+    pub replacements: usize,
+    /// Complete decoded input length, when available.
+    pub before_bytes: Option<usize>,
+    /// Complete decoded output length, when available.
+    pub after_bytes: Option<usize>,
+    /// SHA-256 of decoded input; never includes body content or authored literals.
+    pub before_sha256: Option<String>,
+    /// SHA-256 of decoded output, when the operation completed.
+    pub after_sha256: Option<String>,
+}
+
+/// Traffic-affecting action attributed to one interceptor callback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HookEffectAction {
+    /// Actual result of a bounded body operation, independent of plan selection.
+    BodyEdit(BodyEditReport),
     /// A request head was replaced.
     ReplaceRequestHead(RequestHeadChanges),
     /// A request was explicitly rerouted.

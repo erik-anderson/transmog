@@ -271,6 +271,8 @@ pub enum CaptureRecordKind {
         effect_sequence: u64,
         /// Observed structural head edit; header values are excluded.
         header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
+        /// Observed literal operation outcome, without text values.
+        body_edit: Option<Box<transmog_core::intercept::BodyEditReport>>,
         /// Frozen local entity identity; contains no external file path.
         response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
     },
@@ -524,6 +526,7 @@ struct HookPayload {
     chain_position: usize,
     effect_sequence: u64,
     header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
+    body_edit: Option<Box<transmog_core::intercept::BodyEditReport>>,
     response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
 }
 
@@ -1489,6 +1492,10 @@ pub fn record_from_observer(
             chain_position: effect.interceptor.chain_position,
             effect_sequence: effect.sequence,
             header_edit: transmog_core::intercept::HeaderEditSnapshot::from_action(&effect.action),
+            body_edit: match &effect.action {
+                HookEffectAction::BodyEdit(report) => Some(Box::new(report.clone())),
+                _ => None,
+            },
             response_snapshot: match &effect.action {
                 HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
                 _ => None,
@@ -1636,6 +1643,7 @@ const fn hook_action(value: &HookEffectAction) -> &'static str {
         HookEffectAction::Respond { .. } => "respond",
         HookEffectAction::Abort(_) => "abort",
         HookEffectAction::BodyPlan { .. } => "body-plan",
+        HookEffectAction::BodyEdit(_) => "body-edit",
     }
 }
 
@@ -1732,6 +1740,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
             chain_position,
             effect_sequence,
             header_edit,
+            body_edit,
             response_snapshot,
         } => (
             "hook-effect",
@@ -1744,6 +1753,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
                 chain_position: *chain_position,
                 effect_sequence: *effect_sequence,
                 header_edit: header_edit.clone(),
+                body_edit: body_edit.clone(),
                 response_snapshot: response_snapshot.clone(),
             })?,
         ),
@@ -1883,6 +1893,7 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
                 chain_position: value.chain_position,
                 effect_sequence: value.effect_sequence,
                 header_edit: value.header_edit,
+                body_edit: value.body_edit,
                 response_snapshot: value.response_snapshot,
             }
         }

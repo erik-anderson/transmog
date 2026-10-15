@@ -5,7 +5,7 @@ export async function checkHeaderRules(page,root){
  await page.addInitScript(()=>sessionStorage.setItem('startup-update-tested','true'));
  await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');await shell.activateView('automation');const s=globalThis.__workspaceFixture;s.automation={...s.automation,generation:1,rules:[],autoresponsesEnabled:false,experiments:[]};await shell.automation.refreshAutomation();shell.automation.showAutomationSection('header-rules');});
- const pane=page.locator('header-rules'),editor=pane.locator('form'),ops=pane.locator('.header-operations li');
+ const pane=page.locator('header-rules[editor-kind="headers"]'),editor=pane.locator('form'),ops=pane.locator('.header-operations li');
  const settle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('header-rules').hrBusy);
  const current=()=>page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation));
  await pane.getByRole('button',{name:'New header rule',exact:true}).click();

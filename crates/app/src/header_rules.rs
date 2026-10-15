@@ -131,15 +131,37 @@ fn validate_header_rule(rule: &Rule) -> Result<(), AppError> {
 fn owned(document: &AutomationRuleSet, id: &str) -> bool {
     document.experiments.iter().any(|e| e.owns(id))
 }
+fn eligible(rule: &Rule, text: bool) -> bool {
+    if text {
+        transmog_automation::is_text_transform_rule(rule)
+    } else {
+        header_rule_phase(rule).is_some()
+    }
+}
+fn validate_scope(rule: &Rule, text: bool) -> Result<(), AppError> {
+    if !text {
+        return validate_header_rule(rule);
+    }
+    if !eligible(rule, true)
+        || serde_json::to_vec(rule)
+            .map_err(|_| invalid("Invalid rule"))?
+            .len()
+            > 256 * 1024
+    {
+        return Err(invalid("Use one standalone bounded literal response edit."));
+    }
+    Ok(())
+}
 fn existing<'a>(
     document: &'a AutomationRuleSet,
     id: &str,
     revision: u64,
+    text: bool,
 ) -> Result<&'a Rule, AppError> {
     let rule = document.rules.iter().find(|r| r.id == id).ok_or_else(|| {
         conflict("This rule was removed. Your draft is preserved; save it with a new identity.")
     })?;
-    if owned(document, id) || header_rule_phase(rule).is_none() {
+    if owned(document, id) || !eligible(rule, text) {
         return Err(invalid(
             "This rule belongs to another automation editor. Its definition was preserved.",
         ));
@@ -157,12 +179,13 @@ fn move_header_rule(
     id: &str,
     expected_revision: u64,
     earlier: bool,
+    text: bool,
 ) -> Result<bool, AppError> {
-    existing(document, id, expected_revision)?;
+    existing(document, id, expected_revision, text)?;
     let mut ordered = document
         .rules
         .iter()
-        .filter(|r| header_rule_phase(r).is_some() && !owned(document, &r.id))
+        .filter(|r| eligible(r, text) && !owned(document, &r.id))
         .collect::<Vec<_>>();
     ordered.sort_by_key(|r| (r.priority, &r.id));
     let index = ordered
@@ -201,8 +224,12 @@ fn move_header_rule(
     Ok(true)
 }
 
-fn restore_header_rule(document: &mut AutomationRuleSet, mut rule: Rule) -> Result<(), AppError> {
-    validate_header_rule(&rule)?;
+fn restore_header_rule(
+    document: &mut AutomationRuleSet,
+    mut rule: Rule,
+    text: bool,
+) -> Result<(), AppError> {
+    validate_scope(&rule, text)?;
     if owned(document, &rule.id) || document.rules.iter().any(|r| r.id == rule.id) {
         return Err(conflict(
             "The removed rule identity is already in use. Current automation was preserved.",
@@ -217,10 +244,25 @@ fn restore_header_rule(document: &mut AutomationRuleSet, mut rule: Rule) -> Resu
 }
 
 impl AutomationRegistry {
+    pub(crate) fn change_response_transform(
+        &self,
+        generation: u64,
+        change: HeaderRuleChange,
+    ) -> Result<AutomationStatus, AppError> {
+        self.change_scoped_rule(generation, change, true)
+    }
     pub(crate) fn change_header_rule(
         &self,
         generation: u64,
         change: HeaderRuleChange,
+    ) -> Result<AutomationStatus, AppError> {
+        self.change_scoped_rule(generation, change, false)
+    }
+    fn change_scoped_rule(
+        &self,
+        generation: u64,
+        change: HeaderRuleChange,
+        text: bool,
     ) -> Result<AutomationStatus, AppError> {
         let mut document = self
             .active
@@ -239,14 +281,14 @@ impl AutomationRegistry {
                 expected_revision,
                 placement,
             } => {
-                validate_header_rule(&rule)?;
+                validate_scope(&rule, text)?;
                 if owned(&document, &rule.id) {
                     return Err(invalid(
                         "Edit experiment-owned rules through their saved variant.",
                     ));
                 }
                 let old = expected_revision
-                    .map(|revision| existing(&document, &rule.id, revision))
+                    .map(|revision| existing(&document, &rule.id, revision, text))
                     .transpose()?;
                 if old.is_none() && document.rules.iter().any(|r| r.id == rule.id) {
                     return Err(conflict(
@@ -263,7 +305,7 @@ impl AutomationRegistry {
                         if let Some(old) = old {
                             old.priority
                         } else {
-                            document.rules.iter().filter(|r|header_rule_phase(r).is_some()).map(|r|r.priority).max().map_or(Ok(0),|p|p.checked_add(1).ok_or_else(||invalid("No later position is available. Choose Before other native rules.")))?
+                            document.rules.iter().filter(|r|eligible(r,text)).map(|r|r.priority).max().map_or(Ok(0),|p|p.checked_add(1).ok_or_else(||invalid("No later position is available. Choose Before other native rules.")))?
                         }
                     }
                     HeaderRulePlacement::Before => document
@@ -295,16 +337,16 @@ impl AutomationRegistry {
                 id,
                 expected_revision,
             } => {
-                existing(&document, &id, expected_revision)?;
+                existing(&document, &id, expected_revision, text)?;
                 document.rules.retain(|r| r.id != id);
             }
-            HeaderRuleChange::Restore { rule } => restore_header_rule(&mut document, rule)?,
+            HeaderRuleChange::Restore { rule } => restore_header_rule(&mut document, rule, text)?,
             HeaderRuleChange::Move {
                 id,
                 expected_revision,
                 earlier,
             } => {
-                if !move_header_rule(&mut document, &id, expected_revision, earlier)? {
+                if !move_header_rule(&mut document, &id, expected_revision, earlier, text)? {
                     return Ok(self.status());
                 }
             }
@@ -316,6 +358,13 @@ impl AutomationRegistry {
 
 pub(crate) fn test(input: &HeaderRuleTestInput) -> Result<HeaderRuleTest, AppError> {
     validate_header_rule(&input.rule)?;
+    let (request, response) = sample(input)?;
+    transmog_automation::test_header_rule(&input.rule, &request, Some(&response))
+        .map_err(|error| invalid(&error))
+}
+fn sample(
+    input: &HeaderRuleTestInput,
+) -> Result<(transmog_core::RequestHead, ResponseHead), AppError> {
     for headers in [&input.request_headers, &input.response_headers] {
         if headers.iter().count() > 256
             || headers
@@ -348,10 +397,34 @@ pub(crate) fn test(input: &HeaderRuleTestInput) -> Result<HeaderRuleTest, AppErr
         headers: input.response_headers.clone(),
         source_version: HttpLegVersion::Http1,
     };
-    transmog_automation::test_header_rule(&input.rule, &request, Some(&response))
-        .map_err(|error| invalid(&error))
+    Ok((request, response))
 }
 
+/// A bounded explicit decoded UTF-8 draft sample.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextTransformTestInput {
+    /// Rule, request and response head sample.
+    pub sample: HeaderRuleTestInput,
+    /// Complete decoded UTF-8 sample, at most 1 MiB.
+    pub body: String,
+}
+pub(crate) fn test_transform(
+    input: &TextTransformTestInput,
+) -> Result<transmog_automation::TextTransformTest, AppError> {
+    validate_scope(&input.sample.rule, true)?;
+    if input.body.len() > 1024 * 1024 {
+        return Err(invalid("Sample exceeds 1 MiB."));
+    }
+    let (request, response) = sample(&input.sample)?;
+    transmog_automation::test_text_transform(
+        &input.sample.rule,
+        &request,
+        &response,
+        input.body.as_bytes(),
+    )
+    .map_err(|e| invalid(&e))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +436,75 @@ mod tests {
             Arc::new(crate::response_assets::ResponseAssetStore::load(None).unwrap()),
         )
         .unwrap()
+    }
+    #[test]
+    fn text_transform_scope_preserves_headers_pause_and_checks_stale_revisions() {
+        let registry = setup(None);
+        let headers = save(&registry, rule("headers"), None).unwrap();
+        let mut text = rule("text");
+        text.response.headers.clear();
+        text.response.text_transform = Some(transmog_automation::LiteralTransform {
+            find: "old".into(),
+            replacement: "new".into(),
+            occurrences: transmog_automation::Occurrences::All,
+            expected_matches: Some(1),
+            media_type: "text/plain".into(),
+            encoding: "utf-8".into(),
+            max_bytes: 1024,
+        });
+        assert!(save(&registry, text.clone(), None).is_err());
+        let saved = registry
+            .change_response_transform(
+                headers.generation,
+                HeaderRuleChange::Save {
+                    rule: text.clone(),
+                    expected_revision: None,
+                    placement: HeaderRulePlacement::Keep,
+                },
+            )
+            .unwrap();
+        assert_eq!(saved.rules[0], headers.rules[0]);
+        assert!(!saved.rules[1].enabled);
+        assert!(
+            registry
+                .change_response_transform(
+                    saved.generation,
+                    HeaderRuleChange::Remove {
+                        id: "headers".into(),
+                        expected_revision: 1
+                    }
+                )
+                .is_err()
+        );
+        registry
+            .set_autoresponses_enabled(false, saved.generation)
+            .unwrap();
+        assert!(
+            registry
+                .change_response_transform(
+                    saved.generation,
+                    HeaderRuleChange::Save {
+                        rule: text.clone(),
+                        expected_revision: Some(1),
+                        placement: HeaderRulePlacement::Keep
+                    }
+                )
+                .is_err()
+        );
+        text.enabled = true;
+        let next = registry
+            .change_response_transform(
+                registry.status().generation,
+                HeaderRuleChange::Save {
+                    rule: text,
+                    expected_revision: Some(1),
+                    placement: HeaderRulePlacement::Keep,
+                },
+            )
+            .unwrap();
+        assert!(!next.autoresponses_enabled);
+        assert_eq!(next.rules[1].revision, 2);
+        assert_eq!(next.rules[0], headers.rules[0]);
     }
     fn rule(id: &str) -> Rule {
         Rule {

@@ -393,6 +393,56 @@ phases and changed header names. It distinguishes an observed no-op from absent
 evidence. It does not infer execution from today's rules or include values.
 Original and effective message heads remain the source for header-value evidence.
 
+## Literal edits to fresh responses
+
+Select a request and choose **Modify current response…**, or open **Automation →
+Response edits → New response edit**. The disabled draft uses the selected
+method/address and a supported media type. It modifies fresh origin text rather
+than substituting a saved response. **Save rule** respects Enabled; **Save and
+enable** explicitly affects new requests. Auto-response pause does not pause
+these edits. Scoped revisions, position repair and remove/Undo preserve unrelated
+automation through the same transaction used by header rules.
+
+Enter case-sensitive literal Find and Replacement text. Replacement is literal,
+including `$` characters and an empty string for deletion. First replaces only
+the first occurrence; All replaces every non-overlapping occurrence. The optional
+required count checks total matches before First/All selection. UTF-8 is the
+explicit character encoding in this increment. BOMs, Unicode, line endings and
+unrelated text remain unchanged. Regex and structural rewriting are excluded.
+
+Complete decoded input and output must each fit the selected 64 KiB or 1 MiB
+bound. Find/replacement are each at most 16 KiB in UTF-8. Existing request and
+response matcher conditions apply. Other media types do not select the operation.
+A selected response with invalid UTF-8, unsupported/ambiguous charset, partial
+range content, incomplete coding, or exceeded bounds fails visibly. A required
+count mismatch fails without returning a partial replacement as success. Headers
+can already be committed when a body failure occurs; the downstream stream can
+fail after an HTTP status was observed. Traffic preserves that distinction.
+
+All response-head hooks finish before body planning. Conditions see final
+effective request/response heads. Response body scripts run first in reverse
+registration order, followed by native body rules in saved order. Later edits
+see earlier body output. Local responses and captured-page previews are excluded;
+named variants remain saved response-asset selections.
+
+The shared content pipeline decodes supported codings once and restores the
+original coding stack after hooks. It repairs framing and removes stale ETag,
+digests and range metadata, preserving Cache-Control and unrelated duplicate
+headers. An admitted pipeline can do this even when no literal matches:
+**Not applied: text not found** means decoded text is unchanged; encoding bytes
+and derived headers can still change. It does not mean exact wire pass-through.
+Use header-only rules for validator experiments without a body operation.
+
+**Test draft** uses the production matcher and literal operation against explicit
+bounded samples, without traffic, other hooks, saving or activation. Before/after
+text stays inert. **Details → Timings → Recorded body edits** shows actual
+operation counts, captured identities, decoded lengths and SHA-256 identities,
+without body values or authored literals. **Compare original and effective
+response** opens the existing upstream/client response comparison. It includes
+all intervening changes and reports unavailable/incomplete evidence. Ordinary
+body retention applies; an operation hash is not proof of delivery. Interrupted
+work can have a selected plan without a completed report.
+
 ## Body and script safety
 
 Body replacements operate on the declared decoded representation. Request-body

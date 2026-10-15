@@ -160,3 +160,10 @@ export reviews are run/window state, not global preferences containing captured
 notes. Incident marks belong to explicit recorded artifacts; normal proxy startup
 does not create a journal. Review original context and HTTP/stream content before
 sharing; header redaction alone does not anonymize them.
+
+
+Literal response edit definitions persist with native automation generations.
+Saving a disabled draft does not activate it. Operation outcomes, counts and
+hashes follow the exchange's existing capture metadata lifecycle; they do not
+create a permanent body store. Historical bodies remain subject to retention.
+See [literal response edits](automation.md#literal-edits-to-fresh-responses).

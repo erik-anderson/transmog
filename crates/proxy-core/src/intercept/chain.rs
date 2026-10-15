@@ -612,7 +612,8 @@ impl ExchangeChain {
             plans.push(
                 action
                     .0
-                    .with_measurement_label("Request body", &entry.identity.name),
+                    .with_measurement_label("Request body", &entry.identity.name)
+                    .with_identity(&entry.identity),
             );
         }
         Ok(plans)
@@ -754,7 +755,8 @@ impl ExchangeChain {
             plans.push(
                 action
                     .0
-                    .with_measurement_label("Response body", &entry.identity.name),
+                    .with_measurement_label("Response body", &entry.identity.name)
+                    .with_identity(&entry.identity),
             );
         }
         Ok(plans)

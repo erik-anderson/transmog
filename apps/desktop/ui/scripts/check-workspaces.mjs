@@ -2,6 +2,7 @@ import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkNamedVariants} from './check-named-variants.mjs';
+import {checkTextEdits} from './check-text-edits.mjs';
 import {checkHeaderRules} from './check-header-rules.mjs';
 import {checkIncidents} from './check-incidents.mjs';
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
@@ -80,7 +81,7 @@ await page.addInitScript((configuration) => {
     const row = state.sessions.find(row => row.id===id) ?? summary(id);
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], headerEffects:row.headerEffects??[], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
+    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], headerEffects:row.headerEffects??[],bodyEdits:row.bodyEdits??[], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
   const applyResponseFile=(asset,input)=>{
@@ -460,6 +461,19 @@ await page.addInitScript((configuration) => {
           return asset;
         }
         case 'validate_automation': if(state.uaRejectValidation)throw new Error('Fixture validation failed');state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
+        case 'test_response_transform': {
+          if(state.holdHeaderTest){state.holdHeaderTest=false;await new Promise(resolve=>state.finishHeaderTest=resolve);}
+          const {sample,body}=args.input,rule=sample.rule,op=rule.response.textTransform;state.lastTextTest=structuredClone(args.input);
+          if(!op.find)throw new Error('Find text must not be empty');
+          const decoded=h=>new TextDecoder().decode(new Uint8Array(h)),types=sample.responseHeaders.filter(h=>decoded(h.name).toLowerCase()==='content-type').map(h=>decoded(h.value));
+          const matched=(!rule.matcher.method||rule.matcher.method===sample.method)&&(!rule.matcher.url||rule.matcher.url.kind!=='exact'||rule.matcher.url.value===sample.url)&&(!rule.matcher.responseStatus||rule.matcher.responseStatus===sample.responseStatus)&&types.some(t=>t.split(';')[0]===op.mediaType);
+          let afterText=body,report=null;
+          if(matched){const matches=body.split(op.find).length-1,replacements=op.occurrences==='first'?Math.min(1,matches):matches;let outcome=matches?'applied':'not-found';if(op.expectedMatches!==null&&op.expectedMatches!==matches)outcome='count-mismatch';else if(matches)afterText=op.occurrences==='all'?body.split(op.find).join(op.replacement):body.slice(0,body.indexOf(op.find))+op.replacement+body.slice(body.indexOf(op.find)+op.find.length);
+            const bytes=s=>new TextEncoder().encode(s),hash=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(s)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+            report={outcome,matches,replacements:outcome==='count-mismatch'?0:replacements,beforeBytes:bytes(body).length,afterBytes:outcome==='count-mismatch'?null:bytes(afterText).length,beforeSha256:await hash(body),afterSha256:outcome==='count-mismatch'?null:await hash(afterText)};
+          }
+          return {test:{matched,normalizedUrl:sample.url,checks:[{label:'Draft conditions',matched,detail:'Fixture sample'}],captures:[]},report,beforeText:body,afterText};
+        }
         case 'test_header_rule': {
           state.lastHeaderTest=structuredClone(args.input);
           if(state.holdHeaderTest){state.holdHeaderTest=false;await new Promise(resolve=>state.finishHeaderTest=resolve);}
@@ -474,6 +488,7 @@ await page.addInitScript((configuration) => {
           }
           return {test:{matched,normalizedUrl:url,checks:[{label:'Draft conditions',matched,detail:'Fixture sample'}],captures:[]},before,after,operations};
         }
+        case 'change_response_transform':
         case 'change_header_rule': {
           state.lastHeaderChange=structuredClone(args.change);
           if(state.holdHeaderSave){state.holdHeaderSave=false;await new Promise(resolve=>state.finishHeaderSave=resolve);}
@@ -608,6 +623,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--text-edits-only')) {await checkTextEdits(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Literal response edit flows, async drafts, comparison evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--header-rules-only')) {await checkHeaderRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Header rule authoring, raw bytes, ordered tests, activation, stale updates, Undo, evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--variants-only')) {await checkResponseExperiments(page,root);await checkNamedVariants(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Named variants, scoped activation, history, preview, pause, archive, Undo and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--file-snapshots-only')) {await checkResponseSnapshots(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response snapshot identities, changed output, incomplete retention and responsive evidence verified.\n');process.exit(0);}
@@ -2423,6 +2439,7 @@ try {
   await checkResponseExperiments(page,root);
   await checkNamedVariants(page,root);
   await checkHeaderRules(page,root);
+  await checkTextEdits(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

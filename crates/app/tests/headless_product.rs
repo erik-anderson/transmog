@@ -38,6 +38,304 @@ static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through the interoperability driver with packaged helpers"]
+#[allow(clippy::too_many_lines)] // One complete live transformation and historical-evidence workflow.
+async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes() {
+    use std::sync::Arc;
+    use transmog_app::{TraceImportRequest, TraceSaveOptions};
+    use transmog_automation::{LiteralTransform, Occurrences};
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let app = Application::new(workspace.config(&environment)).unwrap();
+    let edit = |id: &str,
+                path: &str,
+                find: &str,
+                replacement: &str,
+                expected_matches,
+                max_bytes,
+                media: &str| Rule {
+        id: id.into(),
+        display_name: Some(id.into()),
+        enabled: true,
+        revision: 1,
+        priority: 0,
+        matcher: RuleMatcher {
+            path_prefix: Some(path.into()),
+            ..Default::default()
+        },
+        request: RequestActions::default(),
+        response: ResponseActions {
+            text_transform: Some(LiteralTransform {
+                find: find.into(),
+                replacement: replacement.into(),
+                occurrences: Occurrences::All,
+                expected_matches,
+                media_type: media.into(),
+                encoding: "utf-8".into(),
+                max_bytes,
+            }),
+            ..Default::default()
+        },
+    };
+    let rules = vec![
+        edit(
+            "fresh-edit",
+            "/text-edit/changed/",
+            "old",
+            "patched",
+            Some(2),
+            1024,
+            "text/plain",
+        ),
+        edit(
+            "not-found",
+            "/text-edit/not-found",
+            "absent",
+            "patch",
+            None,
+            1024,
+            "text/plain",
+        ),
+        edit(
+            "count-failure",
+            "/text-edit/count",
+            "old",
+            "patch",
+            Some(99),
+            1024,
+            "text/plain",
+        ),
+        edit(
+            "bounded",
+            "/text-edit/bounded",
+            "old",
+            "patch",
+            None,
+            8,
+            "text/plain",
+        ),
+        edit(
+            "wrong-media",
+            "/text-edit/wrong-media",
+            "old",
+            "patch",
+            None,
+            1024,
+            "application/json",
+        ),
+        edit(
+            "compressed-edit",
+            "/encoding/",
+            "through Transmog",
+            "through literal editing",
+            Some(1),
+            1024 * 1024,
+            "text/html",
+        ),
+    ];
+    let candidate = app
+        .validate_automation(AutomationRuleSet {
+            rules,
+            autoresponses_enabled: false,
+            ..Default::default()
+        })
+        .unwrap();
+    app.activate_automation(&candidate.candidate_id).unwrap();
+    let script=app.validate_script(ScriptDraft{id:"before-literal".into(),revision:1,source:r#"
+export function onResponseBody(_context: unknown, _request: unknown, _response: unknown, body:{bytes:number[]}) {
+ const text=String.fromCharCode(...body.bytes).replace("seed","old");
+ return {action:"replace-body",bytes:Array.from(text).map(c=>c.charCodeAt(0))};
+}
+"#.into(),handlers:BTreeSet::from([ScriptHandler::ResponseBody]),prefilter:ScriptPrefilter{path_prefix:Some("/text-edit/changed/".into()),..Default::default()},capabilities:ScriptCapabilities{read_bodies:true,write_body:true,..Default::default()},limits:ScriptLimits{max_duration_ms:1000,..Default::default()},priority:0}).unwrap();
+    app.activate_script(&script.candidate_id).unwrap();
+    let listener = start(&app, &environment).await;
+    let recording = workspace.root.join("literal-recorded.tmcap");
+    app.start_capture(CaptureStartRequest {
+        path: recording.clone(),
+        password: None,
+        max_file_bytes: 64 * 1024 * 1024,
+        retain_body_samples: true,
+        redact_sensitive_headers: false,
+        include_network_context: false,
+    })
+    .await
+    .unwrap();
+    let mut originals = Vec::new();
+    for token in ["fresh-first", "fresh-other"] {
+        let path = format!("text-edit/changed/{token}");
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(&path),
+            &[&format!("X-Fresh-Token: {token}")],
+        )
+        .await;
+        assert_success(&output);
+        assert_eq!(
+            output.body,
+            format!("patched token={token} patched\n").as_bytes()
+        );
+        assert_header(&output, "Set-Cookie", "one=1");
+        assert_header(&output, "Set-Cookie", "two=2");
+        assert_header(&output, "Cache-Control", "max-age=123");
+        assert!(!output.headers.to_ascii_lowercase().contains("etag:"));
+        let detail = wait_for_session(&app, &format!("/{path}"), "completed").await;
+        assert_eq!(detail.body_edits.len(), 1);
+        let report = &detail.body_edits[0].report;
+        assert_eq!(report.outcome, "applied");
+        assert_eq!(report.matches, Some(2));
+        assert_eq!(report.replacements, 2);
+        assert_ne!(report.before_sha256, report.after_sha256);
+        assert_eq!(
+            app.inspect_body(inspection(&detail.id, "upstream-response"))
+                .await
+                .unwrap()
+                .display,
+            format!("seed token={token} old\n")
+        );
+        originals.push(detail);
+    }
+    for (path, outcome, terminal) in [
+        ("text-edit/not-found", "not-found", "completed"),
+        ("text-edit/count", "count-mismatch", "failed"),
+        ("text-edit/bounded", "input-limit", "failed"),
+        ("text-edit/wrong-media", "", "completed"),
+    ] {
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(path),
+            &["X-Fresh-Token: untouched"],
+        )
+        .await;
+        let detail = wait_for_session(&app, &format!("/{path}"), terminal).await;
+        if terminal == "completed" {
+            assert_success(&output);
+            assert_eq!(output.body, b"seed token=untouched old\n");
+        } else {
+            assert!(
+                !output.process.status.success(),
+                "failed edit appeared successful"
+            );
+            assert!(!String::from_utf8_lossy(&output.body).contains("patch"));
+        }
+        if outcome.is_empty() {
+            assert!(detail.body_edits.is_empty());
+            assert_header(&output, "ETag", "\"fresh-origin\"");
+        } else {
+            assert_eq!(detail.body_edits[0].report.outcome, outcome);
+        }
+        originals.push(detail);
+    }
+    for coding in ["gzip", "br", "deflate", "zstd", "stacked"] {
+        let path = format!("encoding/{coding}");
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(&path),
+            &[],
+        )
+        .await;
+        assert_success(&output);
+        assert_header(
+            &output,
+            "Content-Encoding",
+            if coding == "stacked" {
+                "gzip, br, deflate, zstd"
+            } else {
+                coding
+            },
+        );
+        let detail = wait_for_session(&app, &format!("/{path}"), "completed").await;
+        assert_eq!(detail.body_edits[0].report.outcome, "applied");
+        assert!(
+            app.inspect_body(inspection(&detail.id, "client-response"))
+                .await
+                .unwrap()
+                .display
+                .contains("through literal editing")
+        );
+        assert!(
+            app.inspect_body(inspection(&detail.id, "upstream-response"))
+                .await
+                .unwrap()
+                .display
+                .contains("through Transmog")
+        );
+        originals.push(detail);
+    }
+    for suffix in ["truncated", "unsupported"] {
+        let path = format!("encoding/{suffix}");
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(&path),
+            &[],
+        )
+        .await;
+        assert!(!output.process.status.success() || output.status >= 500);
+        let detail = wait_for_session(&app, &format!("/{path}"), "failed").await;
+        assert!(
+            detail.body_edits.is_empty(),
+            "codec failure claimed a completed operation"
+        );
+    }
+    app.stop_capture().await.unwrap();
+    let saved = workspace.root.join("literal-saved.tmcap");
+    app.save_traffic_trace(saved.clone(), TraceSaveOptions::default())
+        .await
+        .unwrap();
+    app.shutdown().await.unwrap();
+    let restarted = Application::new(workspace.config(&environment)).unwrap();
+    assert_eq!(restarted.automation_status().rules.len(), 6);
+    restarted.shutdown().await.unwrap();
+    for path in [recording, saved] {
+        let imported_workspace = TestWorkspace::new();
+        let imported = Application::new(imported_workspace.config(&environment)).unwrap();
+        imported
+            .import_trace(
+                TraceImportRequest {
+                    path,
+                    password: None,
+                    operation_id: "literal-import".into(),
+                    max_file_bytes: u64::MAX,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let rows = imported
+            .query_sessions(SessionQueryInput {
+                limit: Some(100),
+                ..Default::default()
+            })
+            .unwrap();
+        for original in &originals {
+            let row = rows
+                .sessions
+                .iter()
+                .find(|row| {
+                    original.requests[0]
+                        .target
+                        .as_ref()
+                        .unwrap()
+                        .ends_with(&row.path)
+                })
+                .unwrap();
+            assert_eq!(
+                imported.session_detail(&row.id).unwrap().body_edits,
+                original.body_edits
+            );
+        }
+        imported.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through the interoperability driver with packaged helpers"]
 #[allow(clippy::too_many_lines)] // Complete live composition and historical evidence workflow.
 async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence() {
     use std::sync::Arc;

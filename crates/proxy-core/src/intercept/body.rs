@@ -161,6 +161,10 @@ pub trait BodyFilter: Send {
 
 /// Completion callback for an explicitly bounded body buffer.
 pub trait BufferedBodyHandler: Send {
+    /// Optional redacted operation result. The pipeline supplies the actual hook identity.
+    fn report(&self) -> Option<super::BodyEditReport> {
+        None
+    }
     /// Edits, replaces, or rejects one complete bounded body.
     fn on_body(
         &mut self,
@@ -212,6 +216,7 @@ pub struct BodyPlanSelection {
     plan: BodyPlan,
     representation: BodyRepresentation,
     measurement_label: Option<std::sync::Arc<str>>,
+    identity: Option<super::InterceptorIdentity>,
 }
 
 impl BodyPlanSelection {
@@ -221,6 +226,7 @@ impl BodyPlanSelection {
             plan,
             representation,
             measurement_label: None,
+            identity: None,
         }
     }
 
@@ -249,8 +255,24 @@ impl BodyPlanSelection {
         }
         self
     }
-    pub(crate) fn into_parts(self) -> (BodyPlan, BodyRepresentation, Option<std::sync::Arc<str>>) {
-        (self.plan, self.representation, self.measurement_label)
+    pub(crate) fn with_identity(mut self, identity: &super::InterceptorIdentity) -> Self {
+        self.identity = Some(identity.clone());
+        self
+    }
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        BodyPlan,
+        BodyRepresentation,
+        Option<std::sync::Arc<str>>,
+        Option<super::InterceptorIdentity>,
+    ) {
+        (
+            self.plan,
+            self.representation,
+            self.measurement_label,
+            self.identity,
+        )
     }
 }
 
@@ -261,6 +283,7 @@ impl std::fmt::Debug for BodyPlanSelection {
             .field("plan", &self.plan)
             .field("representation", &self.representation)
             .field("measurement_label", &self.measurement_label)
+            .field("identity", &self.identity)
             .finish()
     }
 }
@@ -403,6 +426,7 @@ impl std::fmt::Debug for BodyStageKind {
 
 #[derive(Debug)]
 struct BodyStage {
+    identity: Option<super::InterceptorIdentity>,
     measurement_label: Option<std::sync::Arc<str>>,
     kind: BodyStageKind,
     representation: BodyRepresentation,
@@ -441,7 +465,8 @@ impl BodyPipeline {
         let mut source_body_visible = true;
         let mut stages = Vec::new();
         for selection in plans {
-            let (plan, selected_representation, measurement_label) = selection.into_parts();
+            let (plan, selected_representation, measurement_label, identity) =
+                selection.into_parts();
             plan.validates_representation(selected_representation)?;
             representation = representation.combine(selected_representation)?;
             modifies_body |= !matches!(plan, BodyPlan::PassThrough);
@@ -463,6 +488,7 @@ impl BodyPipeline {
                     BodyPlan::Discard => BodyStageKind::Discard,
                 };
                 BodyStage {
+                    identity,
                     kind,
                     measurement_label,
                     representation: selected_representation,
@@ -641,6 +667,12 @@ impl BodyPipeline {
                 .as_deref()
                 .unwrap_or("Body transformation"),
         );
+        let identity = self.stages[index].identity.clone();
+        let phase = if self.measurement_scope == "Request body" {
+            super::HookPhase::RequestBody
+        } else {
+            super::HookPhase::ResponseBody
+        };
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let mut owned = filter
@@ -655,11 +687,25 @@ impl BodyPipeline {
                 *filter = Some(owned);
                 result?
             }
-            BodyStageKind::Buffer { buffer, .. } => {
-                buffer
+            BodyStageKind::Buffer { buffer, handler } => {
+                let result = buffer
                     .as_mut()
                     .expect("unfinished buffer retains storage")
-                    .push(frame)?;
+                    .push(frame);
+                if result.is_err()
+                    && let Some(mut report) = handler.as_ref().and_then(|h| h.report())
+                {
+                    report.outcome = "input-limit".into();
+                    if let Some(identity) = &identity {
+                        self.context.audit().record(
+                            identity.clone(),
+                            phase,
+                            super::HookEffectAction::BodyEdit(report),
+                            false,
+                        );
+                    }
+                }
+                result?;
                 Vec::new()
             }
             BodyStageKind::Replace(_) | BodyStageKind::Discard => Vec::new(),
@@ -680,6 +726,12 @@ impl BodyPipeline {
                 .as_deref()
                 .unwrap_or("Body transformation"),
         );
+        let identity = self.stages[index].identity.clone();
+        let phase = if self.measurement_scope == "Request body" {
+            super::HookPhase::RequestBody
+        } else {
+            super::HookPhase::ResponseBody
+        };
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let Some(mut owned) = filter.take() else {
@@ -709,6 +761,18 @@ impl BodyPipeline {
                     (owned, result)
                 });
                 let (owned, result) = self.gate.await_task(&self.context, task, permit).await?;
+                if let Some(report) = owned.report()
+                    && let Some(identity) = &identity
+                {
+                    let changed =
+                        report.before_sha256 != report.after_sha256 && report.outcome == "applied";
+                    self.context.audit().record(
+                        identity.clone(),
+                        phase,
+                        super::HookEffectAction::BodyEdit(report),
+                        changed,
+                    );
+                }
                 *handler = Some(owned);
                 result?.into_frames()
             }

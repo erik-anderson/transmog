@@ -12,6 +12,7 @@ bytes.workspace = true
 http.workspace = true
 regex.workspace = true
 serde.workspace = true
+sha2.workspace = true
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
 thiserror.workspace = true
 tokio.workspace = true

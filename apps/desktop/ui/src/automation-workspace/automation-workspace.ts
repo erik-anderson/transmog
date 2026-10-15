@@ -6,6 +6,7 @@ import '../user-agent-overrides/user-agent-overrides.js';
 import '../response-body-editor/response-body-editor.js';
 import '../experiment-variants/experiment-variants.js';
 import '../header-rules/header-rules.js';
+import type {HeaderRules} from '../header-rules/header-rules.js';
 import type {ExperimentVariants} from '../experiment-variants/experiment-variants.js';
 import type {ExperimentSelection,VariantEdit} from '../models.js';
 import {responseBodyLanguage, type BodyCommit, type ResponseBodyEditor} from '../response-body-editor/response-body-editor.js';
@@ -28,6 +29,8 @@ type BatchRow={included:boolean;order:number;id:string;name:string;method:string
 type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset['headers'];inspection:BodyInspection|null};
 
 export class AutomationWorkspace extends WorkspaceElement {
+  responseTextEditor!:HeaderRules;
+  async beginTextEdit(selected:SelectedResponse):Promise<void>{this.showAutomationSection('response-text');await this.responseTextEditor.newRule(selected);}
   compareResponseDraft(mode:string):void{
     const data=new FormData(this.autoResponseForm),saved=this.savedResponse,source=this.autoResponseSourceState;
     try{

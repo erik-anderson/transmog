@@ -339,6 +339,8 @@ pub struct SessionDetail {
     pub hook_effects: Vec<String>,
     /// Observed head edits in exchange-local execution order, excluding header values.
     pub header_effects: Vec<HeaderEffectView>,
+    /// Actual bounded response-body edit outcomes, without body content.
+    pub body_edits: Vec<BodyEditView>,
     /// User-facing attribution when a local autoresponse won.
     pub auto_response: Option<AutoResponseMatchView>,
     /// Selected route and explanation.
@@ -393,6 +395,39 @@ pub struct HeaderEffectView {
     pub changed: bool,
     /// Header names introduced, removed or changed; values are excluded.
     pub headers: transmog_core::intercept::HeaderChanges,
+}
+
+/// One recorded bounded response-body operation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BodyEditView {
+    /// Exchange-local operation sequence.
+    pub sequence: u64,
+    /// Captured immutable hook identity.
+    pub hook_id: String,
+    /// Captured display name.
+    pub name: String,
+    /// Actual operation result on decoded bytes.
+    pub report: transmog_core::intercept::BodyEditReport,
+}
+fn body_edits(snapshot: &SessionSnapshot) -> Vec<BodyEditView> {
+    snapshot
+        .hook_effects
+        .iter()
+        .filter_map(|effect| {
+            if let HookEffectAction::BodyEdit(report) = &effect.action {
+                Some(BodyEditView {
+                    sequence: effect.sequence,
+                    hook_id: effect.interceptor.id.as_str().into(),
+                    name: effect.interceptor.name.to_string(),
+                    report: report.clone(),
+                })
+            } else {
+                None
+            }
+        })
+        .take(MAX_DIAGNOSTICS)
+        .collect()
 }
 
 fn header_effects(snapshot: &SessionSnapshot) -> Vec<HeaderEffectView> {
@@ -672,6 +707,7 @@ pub(crate) fn detail_from_snapshot(
         diagnostics,
         hook_effects,
         header_effects: header_effects(snapshot),
+        body_edits: body_edits(snapshot),
         auto_response: auto_response_match(snapshot),
         route_selection,
         route_attempts,

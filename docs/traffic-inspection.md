@@ -308,3 +308,10 @@ to 50,000 entries and 32 MiB of charged metadata per side; pairing pages contain
 Narrow scopes when acquisition exceeds a limit. Limits do not constrain
 existing source Hex/Save as. Cancellation cooperates with file/codec work; an
 in-progress operating-system file read must return before its worker can stop.
+
+
+For a targeted edit of fresh server text, choose **Modify current response…**
+from the selected request's actions. The draft starts disabled in Response edits
+and keeps the selected method/address. See [literal response editing](automation.md#literal-edits-to-fresh-responses)
+for bounds, encoding and activation. Recorded body edits in Details offer the
+original/effective response comparison with normal retained-evidence limits.

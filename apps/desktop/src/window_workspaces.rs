@@ -461,6 +461,8 @@ mod tests {
             "stop_capture",
             "activate_automation",
             "change_header_rule",
+            "change_response_transform",
+            "test_response_transform",
             "test_header_rule",
             "change_experiment",
             "experiment_overlaps",

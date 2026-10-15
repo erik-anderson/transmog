@@ -522,19 +522,25 @@ fn write_session<W: Write>(
     for effect in &session.hook_effects {
         use transmog_core::intercept::{HeaderEditSnapshot, HookEffectAction, HookPhase};
         let header_edit = HeaderEditSnapshot::from_action(&effect.action);
+        let body_edit = match &effect.action {
+            HookEffectAction::BodyEdit(report) => Some(Box::new(report.clone())),
+            _ => None,
+        };
         let response_snapshot = match &effect.action {
             HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
             _ => None,
         };
-        if header_edit.is_none() && response_snapshot.is_none() {
+        if header_edit.is_none() && response_snapshot.is_none() && body_edit.is_none() {
             continue;
         }
         let phase = match effect.phase {
             HookPhase::RequestHead => "request-head",
             HookPhase::ResponseHead => "response-head",
-            _ => continue,
+            HookPhase::ResponseBody => "response-body",
+            HookPhase::RequestBody => continue,
         };
         let action = match effect.action {
+            HookEffectAction::BodyEdit(_) => "body-edit",
             HookEffectAction::ReplaceRequestHead(_) => "replace-request-head",
             HookEffectAction::ReplaceResponseHead(_) => "replace-response-head",
             HookEffectAction::Respond { .. } => "respond",
@@ -549,6 +555,7 @@ fn write_session<W: Write>(
             chain_position: effect.interceptor.chain_position,
             effect_sequence: effect.sequence,
             header_edit,
+            body_edit,
             response_snapshot,
         })?;
     }

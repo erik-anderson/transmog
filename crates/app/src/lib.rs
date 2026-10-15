@@ -62,13 +62,13 @@ pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
 };
-pub use transmog_automation::HeaderRuleTest;
+pub use transmog_automation::{HeaderRuleTest, TextTransformTest};
 
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
     AutomationStatus, ExampleResult, Experiment, ExperimentChange, ExperimentRevision,
     ExperimentSelection, ExperimentVariant, HeaderRuleChange, HeaderRulePlacement,
-    HeaderRuleTestInput, RuleDiagnostic, RuleUsage,
+    HeaderRuleTestInput, RuleDiagnostic, RuleUsage, TextTransformTestInput,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_ranges::{BodyBytePage, BodyRangeRequest};
@@ -103,8 +103,8 @@ pub use diagnostics::{
     SupportBundleResult,
 };
 pub use inspector::{
-    AutoResponseMatchView, BodyInspection, BodyInspectionRequest, BodyRepresentation, BodyView,
-    HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
+    AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
+    BodyView, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
@@ -849,6 +849,28 @@ impl Application {
     ) -> Result<AutomationStatus, AppError> {
         self.automation.change_header_rule(generation, change)?;
         Ok(self.automation_status())
+    }
+
+    /// Saves a scoped standalone literal response edit.
+    /// # Errors
+    /// Rejects invalid/stale edits and persistence failures atomically.
+    pub fn change_response_transform(
+        &self,
+        generation: u64,
+        change: HeaderRuleChange,
+    ) -> Result<AutomationStatus, AppError> {
+        self.automation
+            .change_response_transform(generation, change)?;
+        Ok(self.automation_status())
+    }
+    /// Tests a literal draft without sending traffic or enabling it.
+    /// # Errors
+    /// Rejects invalid definitions or oversized samples.
+    pub fn test_response_transform(
+        &self,
+        input: &TextTransformTestInput,
+    ) -> Result<TextTransformTest, AppError> {
+        automation::test_transform(input)
     }
 
     /// Tests a single draft against supplied headers without network activity.

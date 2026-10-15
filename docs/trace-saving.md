@@ -141,3 +141,15 @@ capture context, markers, source notes and source paths from the copy. HTTP/stre
 content is controlled separately by whole-entry selection and sensitive-header
 projection. TMCap/extended SAZ preserve source incident context; HAR/compatibility
 SAZ report incident-marker omissions. Review is not complete anonymization.
+
+
+## Literal response edit evidence
+
+Current TMCap recording and Save trace preserve literal operation outcomes,
+including explicit count and buffer failures, with historical rule identities,
+match counts, decoded lengths and before/after hashes. Reports exclude body
+values and authored literals. Bodies still follow ordinary retention controls.
+A selected plan without a result does not establish completed execution; codec
+failure or interruption can prevent a report. Details and response comparison
+read retained boundaries, never today's rule. No TMCap migration or compatibility
+translation is added.

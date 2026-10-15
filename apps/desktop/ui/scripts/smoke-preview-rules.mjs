@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
 import {smokeResponseExperiments} from './smoke-response-experiments.mjs';
 import {smokeResponseFiles} from './smoke-response-files.mjs';
+import {smokeTextEdits} from './smoke-text-edits.mjs';
 import {smokeHeaderRules} from './smoke-header-rules.mjs';
 
 export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot}) {
@@ -11,6 +12,7 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
   await waitFor(()=>main.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page')&&!${traffic}.importingTrace`),'Main preview fixture did not import');
   const id=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-page').id`);
   await smokeHeaderRules({main,viewer,waitFor,screenshot});
+  await smokeTextEdits({main,viewer,waitFor,screenshot});
   await smokeResponseExperiments({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
   await smokeResponseFiles({main,traffic,documentId:id,pageSource,targets,connect,waitFor,closeNative,screenshot});
   const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{

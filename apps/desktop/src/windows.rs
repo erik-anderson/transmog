@@ -537,6 +537,24 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 }
 
 #[tauri::command]
+fn change_response_transform(
+    generation: u64,
+    change: transmog_app::HeaderRuleChange,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    state
+        .application
+        .change_response_transform(generation, change)
+}
+#[tauri::command]
+fn test_response_transform(
+    input: transmog_app::TextTransformTestInput,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TextTransformTest, AppError> {
+    state.application.test_response_transform(&input)
+}
+
+#[tauri::command]
 fn change_header_rule(
     generation: u64,
     change: transmog_app::HeaderRuleChange,
@@ -2150,6 +2168,8 @@ pub fn run() {
                 record_frontend_diagnostic,
                 automation_status,
                 change_header_rule,
+                change_response_transform,
+                test_response_transform,
                 test_header_rule,
                 change_experiment,
                 experiment_overlaps,

@@ -4814,6 +4814,7 @@ async fn emit_hook_failure(
     kind: ExchangeFailureKind,
     message: String,
 ) {
+    observe_hook_effects(chain).await;
     let failure = ExchangeFailure {
         metadata: Arc::clone(chain.context().metadata()),
         stage,

@@ -29,6 +29,10 @@ use transmog_core::{
 };
 
 mod header_rules;
+mod text_transform;
+pub use text_transform::{
+    LiteralTransform, Occurrences, TextTransformTest, is_text_transform_rule, test_text_transform,
+};
 mod matching;
 mod user_agent;
 pub use header_rules::{
@@ -324,6 +328,9 @@ impl RequestActions {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResponseActions {
+    /// Optional bounded literal edit of a fresh decoded UTF-8 response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_transform: Option<LiteralTransform>,
     /// Ordered header operations.
     pub headers: Vec<HeaderOperation>,
     /// Optional decoded replacement body.
@@ -337,7 +344,8 @@ pub struct ResponseActions {
 
 impl ResponseActions {
     fn is_empty(&self) -> bool {
-        self.headers.is_empty()
+        self.text_transform.is_none()
+            && self.headers.is_empty()
             && self.replace_body.is_none()
             && !self.discard_body
             && self.abort_reason.is_none()
@@ -505,6 +513,11 @@ fn validate_limits(limits: AutomationLimits) -> Result<(), CompileError> {
 
 #[allow(clippy::too_many_lines)]
 fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileError> {
+    if let Some(transform) = &rule.response.text_transform
+        && (!is_text_transform_rule(rule) || transform.validate().is_err())
+    {
+        return Err(CompileError::InvalidTextTransform(rule.id.clone()));
+    }
     if rule
         .request
         .user_agent
@@ -735,13 +748,17 @@ fn reject_ambiguous_conflicts(rules: &[Rule]) -> Result<(), CompileError> {
                     true,
                     action_targets(
                         &left.response.headers,
-                        left.response.replace_body.is_some() || left.response.discard_body,
+                        left.response.replace_body.is_some()
+                            || left.response.discard_body
+                            || left.response.text_transform.is_some(),
                         left.response.abort_reason.is_some(),
                         false,
                     ),
                     action_targets(
                         &right.response.headers,
-                        right.response.replace_body.is_some() || right.response.discard_body,
+                        right.response.replace_body.is_some()
+                            || right.response.discard_body
+                            || right.response.text_transform.is_some(),
                         right.response.abort_reason.is_some(),
                         false,
                     ),
@@ -1023,6 +1040,26 @@ impl ExchangeInterceptor for RuleInterceptor {
     }
 
     fn on_response_body(&self, event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
+        if self.direction == RuleDirection::Response
+            && let Some(transform) = &self.rule.response.text_transform
+        {
+            let selected = !event.local_response
+                && self.rule.matcher.matches_response(
+                    &event.request_head,
+                    &event.response_head,
+                    &self.request_regexes,
+                    &self.response_regexes,
+                    self.url.as_deref(),
+                )
+                && transform.media_matches(&event.response_head.headers);
+            let action = if selected {
+                transform.body_action(&event.response_head, &self.rule.id, self.rule.revision)
+            } else {
+                ResponseBodyAction::pass_through()
+            };
+            return Box::pin(async move { action });
+        }
+
         let selected = (self.direction == RuleDirection::Response
             && self.rule.matcher.matches_response(
                 &event.request_head,
@@ -1073,6 +1110,11 @@ fn method_is_idempotent(method: &str) -> bool {
 /// Automation compilation failure.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum CompileError {
+    /// A literal response edit has invalid bounds or incompatible actions.
+    #[error(
+        "rule {0} has an invalid literal response edit; use one UTF-8 literal operation, nonempty find text, and a 1–1048576 byte bound"
+    )]
+    InvalidTextTransform(String),
     /// A header operation would change transport ownership, framing or body coding.
     #[error(
         "rule {0} cannot edit protected header {1}; routing, framing and body coding are managed by the proxy"

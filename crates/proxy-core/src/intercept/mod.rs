@@ -15,9 +15,9 @@ pub use action::{
     ResponseBodyEvent, ResponseHeadAction, ResponseHeadEvent,
 };
 pub use audit::{
-    BodyPlanKind, HeaderChanges, HeaderEditSnapshot, HookAuditTrail, HookEffect, HookEffectAction,
-    HookPhase, InterceptorId, InterceptorIdentity, LocalResponseSnapshot, RequestHeadChanges,
-    ResponseHeadChanges,
+    BodyEditReport, BodyPlanKind, HeaderChanges, HeaderEditSnapshot, HookAuditTrail, HookEffect,
+    HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity, LocalResponseSnapshot,
+    RequestHeadChanges, ResponseHeadChanges,
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,

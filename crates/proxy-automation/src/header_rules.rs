@@ -62,7 +62,8 @@ pub(super) fn protected_header(name: &str) -> bool {
 
 /// Recognizes a single-phase header-only rule without reinterpreting advanced actions.
 pub fn header_rule_phase(rule: &Rule) -> Option<HeaderRulePhase> {
-    if rule.request.user_agent.is_some()
+    if rule.response.text_transform.is_some()
+        || rule.request.user_agent.is_some()
         || rule.request.response_asset.is_some()
         || rule.request.replace_body.is_some()
         || rule.request.discard_body

@@ -83,6 +83,7 @@ export interface SessionDetail {
   diagnostics: string[];
   hookEffects: string[];
   headerEffects?:HeaderEffect[];
+  bodyEdits?:Array<{sequence:number;hookId:string;name:string;report:BodyEditReport}>;
   routeSelection: string | null;
   routeAttempts: string[];
   terminal: string;
@@ -273,7 +274,8 @@ export interface AutomationRule {
     responseAsset: string | null;
     allowNonIdempotentBodyReplacement: boolean;
   };
-  response: {headers: HeaderOperation[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
+  response: {
+    textTransform?:LiteralTransform|null;headers: HeaderOperation[]; replaceBody: number[] | null; discardBody: boolean; abortReason: string | null};
 }
 export interface UserAgentOverride { template:string|null; versionOverride:string|null; clientHints:Record<string,string>; stripClientHints:boolean; }
 export interface AutomationStatus {
@@ -366,3 +368,7 @@ export interface ExperimentVariant {id:string;name:string;archived:boolean;revis
 export interface ResponseExperiment {id:string;name:string;archived:boolean;paused:boolean;active:ExperimentSelection|null;variants:ExperimentVariant[];undo?:{generation:number}|null;}
 export interface VariantEdit {selection:ExperimentSelection;ruleId:string|null;}
 export interface ResponsePreviewIntent { ruleId:string|null; sourceSessionId:string; mode:'captured'|'modified'; variant?:ExperimentSelection; }
+
+export interface LiteralTransform {find:string;replacement:string;occurrences:'first'|'all';expectedMatches:number|null;mediaType:string;encoding:'utf-8';maxBytes:number;}
+export interface BodyEditReport {outcome:string;matches:number|null;replacements:number;beforeBytes:number|null;afterBytes:number|null;beforeSha256:string|null;afterSha256:string|null;}
+export interface TextTransformTest {test:MatchTestResult['test'];report:BodyEditReport|null;beforeText:string;afterText:string;}

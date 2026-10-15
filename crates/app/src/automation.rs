@@ -24,8 +24,10 @@ mod header_rules;
 pub use experiments::{
     Experiment, ExperimentChange, ExperimentRevision, ExperimentSelection, ExperimentVariant,
 };
-pub(crate) use header_rules::test as test_header_rule;
-pub use header_rules::{HeaderRuleChange, HeaderRulePlacement, HeaderRuleTestInput};
+pub use header_rules::{
+    HeaderRuleChange, HeaderRulePlacement, HeaderRuleTestInput, TextTransformTestInput,
+};
+pub(crate) use header_rules::{test as test_header_rule, test_transform};
 
 /// A network-free draft matcher evaluation.
 #[derive(Clone, Debug, Deserialize)]
@@ -643,6 +645,7 @@ fn migrate_user_agent_override(document: &mut AutomationRuleSet) {
             || rule.request.abort_reason.is_some()
             || rule.request.response_asset.is_some()
             || !rule.response.headers.is_empty()
+            || rule.response.text_transform.is_some()
             || rule.response.replace_body.is_some()
             || rule.response.discard_body
             || rule.response.abort_reason.is_some()

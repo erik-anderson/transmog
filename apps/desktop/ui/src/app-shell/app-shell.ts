@@ -44,7 +44,7 @@ export class AppShell extends WebUIElement {
   private enabledScriptCount=0;
   private scriptGeneration=0;
   private updateAutomationBadge():void {
-    const count=(this.autoresponseState?.rules??[]).filter(rule=>rule.enabled!==false&&!rule.request.responseAsset&&(rule.request.userAgent||rule.request.headers.length||rule.request.replaceBody!=null||rule.request.discardBody||rule.request.abortReason||rule.response.headers.length||rule.response.replaceBody!=null||rule.response.discardBody||rule.response.abortReason)).length;
+    const count=(this.autoresponseState?.rules??[]).filter(rule=>rule.enabled!==false&&!rule.request.responseAsset&&(rule.request.userAgent||rule.request.headers.length||rule.request.replaceBody!=null||rule.request.discardBody||rule.request.abortReason||rule.response.textTransform||rule.response.headers.length||rule.response.replaceBody!=null||rule.response.discardBody||rule.response.abortReason)).length;
     this.automationEnabledCount=count+this.enabledScriptCount;
     this.automationEnabledLabel=`${count} enabled rule${count===1?'':'s'} · ${this.enabledScriptCount} enabled script${this.enabledScriptCount===1?'':'s'}. Auto-responses have their own switch.`;
   }
@@ -290,6 +290,7 @@ export class AppShell extends WebUIElement {
   }
   async openConnectionSettings():Promise<void> {if(await this.activateView('settings'))this.settings.showSettingsSection('connection');}
   dismissNotice(): void { this.noticeAction = null; this.noticeVisible = false; }
+  async onResponseText(event:CustomEvent<SelectedResponse>):Promise<void>{if(!this.viewerMode&&await this.activateView('automation'))await this.automation.beginTextEdit(event.detail);}
   async onResponseExperiment(event:CustomEvent<SelectedResponse>):Promise<void> {
     const selected=event.detail;
     if(this.viewerMode||!selected.reusable)return;

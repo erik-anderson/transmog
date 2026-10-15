@@ -1862,8 +1862,9 @@ fn apply_native_frame(
             response_snapshot,
             effect_sequence,
             header_edit,
+            body_edit,
         } => {
-            if (header_edit.is_some() || response_snapshot.is_some())
+            if (header_edit.is_some() || response_snapshot.is_some() || body_edit.is_some())
                 && (effect_sequence == 0
                     || hook_id.len() > 512
                     || hook_name.len() > 512
@@ -1877,6 +1878,52 @@ fn apply_native_frame(
                 return Err(invalid(
                     "Saved hook identity or execution sequence is invalid",
                 ));
+            }
+            if let Some(report) = body_edit {
+                use transmog_core::intercept::{
+                    HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
+                };
+                if phase != "response-body"
+                    || action != "body-edit"
+                    || header_edit.is_some()
+                    || response_snapshot.is_some()
+                    || ![
+                        "applied",
+                        "not-found",
+                        "unchanged",
+                        "count-mismatch",
+                        "invalid-text",
+                        "invalid-encoding",
+                        "partial-response",
+                        "input-limit",
+                        "output-limit",
+                    ]
+                    .contains(&report.outcome.as_str())
+                    || report.matches.is_some_and(|v| v > 1024 * 1024)
+                    || report.replacements > 1024 * 1024
+                    || [report.before_bytes, report.after_bytes]
+                        .into_iter()
+                        .flatten()
+                        .any(|v| v > 1024 * 1024)
+                    || [&report.before_sha256, &report.after_sha256]
+                        .into_iter()
+                        .flatten()
+                        .any(|h| h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()))
+                {
+                    return Err(invalid("Saved body-edit evidence is invalid"));
+                }
+                *budget = budget.saturating_add(hook_id.len() + hook_name.len() + 512);
+                row.response_effects.push(HookEffect {
+                    sequence: effect_sequence,
+                    interceptor: InterceptorIdentity {
+                        id: InterceptorId::new(hook_id.clone()),
+                        name: hook_name.clone().into(),
+                        chain_position,
+                    },
+                    phase: HookPhase::ResponseBody,
+                    action: HookEffectAction::BodyEdit(*report),
+                    changed,
+                });
             }
             if let Some(edit) = header_edit {
                 use transmog_core::intercept::{

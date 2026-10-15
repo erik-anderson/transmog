@@ -30,6 +30,8 @@ for (const encode of [gzipSync, brotliCompressSync, deflateSync, zstdCompressSyn
   stacked = encode(stacked);
 }
 writeFileSync(path.join(output, 'stacked'), stacked);
+writeFileSync(path.join(output, 'truncated'), gzipSync(body('truncated')).subarray(0,-8));
+writeFileSync(path.join(output, 'unsupported'), body('unsupported'));
 
 // Signature-valid opaque 1x1 PNG used to qualify the isolated raster preview
 // path with a real standalone origin. It contains no active content or metadata.
