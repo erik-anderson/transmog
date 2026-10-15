@@ -957,8 +957,9 @@ impl H3ConnectionDriver {
                 .as_ref()
                 .is_none_or(|a| !a.evidence().details.contains_key("Client certificate"))
                 && let Some(recovery) = self
-                    .tls
-                    .ech_recovery(&self.capture)
+                    .ech
+                    .as_ref()
+                    .and_then(|offer| self.tls.ech_recovery(&self.capture, offer))
                     .or_else(|| self.tls.trust_anchor_recovery(&self.capture))
             {
                 let ech = if self.capture.ech_retry_available() {

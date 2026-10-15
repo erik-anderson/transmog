@@ -25,6 +25,9 @@ use transmog_tls::{TrustError, UpstreamTlsContextFactory};
 pub struct HappyEyeballsResolver {
     inner: GaiResolver,
     happy_eyeballs: HappyEyeballsConfig,
+    #[cfg(test)]
+    pub(crate) fixture:
+        Option<std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<SocketAddr>>>>,
 }
 
 impl HappyEyeballsResolver {
@@ -33,6 +36,8 @@ impl HappyEyeballsResolver {
         Self {
             inner: GaiResolver::new(),
             happy_eyeballs,
+            #[cfg(test)]
+            fixture: None,
         }
     }
 }
@@ -49,6 +54,18 @@ impl Service<Name> for HappyEyeballsResolver {
 
     fn call(&mut self, name: Name) -> Self::Future {
         let started = std::time::Instant::now();
+        #[cfg(test)]
+        if let Some(fixture) = &self.fixture {
+            let address = fixture
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("unexpected extra DNS lookup");
+            return Box::pin(async move {
+                crate::metrics::dns_finished(started, true);
+                Ok(vec![address].into_iter())
+            });
+        }
         let resolution = self.inner.call(name);
         let limit = self.happy_eyeballs.max_candidates();
         Box::pin(async move {

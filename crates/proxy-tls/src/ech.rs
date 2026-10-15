@@ -280,19 +280,17 @@ impl UpstreamTlsContextFactory {
         .collect()
     }
     /// Creates exactly one pre-HTTP retry from an authenticated ECH rejection.
-    pub fn ech_recovery(&self, capture: &crate::TlsCapture) -> Option<Self> {
+    /// The caller supplies the selected service and must retain its resolved
+    /// peer address for the retry rather than performing another DNS lookup.
+    pub fn ech_recovery(&self, capture: &crate::TlsCapture, selected: &EchOffer) -> Option<Self> {
         if self.ech_retry.is_some() {
             return None;
         }
         let config = capture.ech_retry()?;
-        let evidence = capture.snapshot();
-        let endpoint = evidence.details.get("ECH service endpoint")?.clone();
-        let port = evidence.details.get("ECH service port")?.parse().ok()?;
         let mut retry = self.clone();
         retry.ech_retry = Some(EchOffer {
             config: config.into(),
-            endpoint,
-            port,
+            ..selected.clone()
         });
         Some(retry)
     }

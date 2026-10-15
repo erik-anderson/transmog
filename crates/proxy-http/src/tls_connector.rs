@@ -6,10 +6,14 @@ use boring::{
     ssl::{Ssl, SslContext, SslContextBuilder, SslRef, SslSession, SslSessionCacheMode},
 };
 use http::Uri;
-use hyper_util::{client::legacy::connect::Connection, rt::TokioIo};
+use hyper_util::{
+    client::legacy::connect::{Connection, HttpInfo},
+    rt::TokioIo,
+};
 use std::{
     error::Error,
     future::Future,
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, OnceLock},
     task::{Context, Poll},
@@ -25,10 +29,23 @@ use transmog_tls::{
 type BoxError = Box<dyn Error + Send + Sync>;
 // The pinned boring wrapper's Ssl Debug getter still assumes legacy X.509.
 // Preserve its source chain, but keep error Debug formatting buffer-compatible.
-struct HandshakeFailure(BoxError);
+struct HandshakeFailure {
+    source: BoxError,
+    retry: Option<EchRetry>,
+}
+/// Routing state comes from the selected service and connected socket, never
+/// from capture display strings. The configs remain authenticated by TLS.
+#[derive(Clone, Debug)]
+pub(crate) struct EchRetry {
+    pub(crate) selected: transmog_tls::ech::EchOffer,
+    pub(crate) peer: SocketAddr,
+}
+pub(crate) fn ech_retry(error: &(dyn Error + 'static)) -> Option<EchRetry> {
+    error.downcast_ref::<HandshakeFailure>()?.retry.clone()
+}
 impl std::fmt::Display for HandshakeFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
+        std::fmt::Display::fmt(&self.source, f)
     }
 }
 impl std::fmt::Debug for HandshakeFailure {
@@ -38,7 +55,7 @@ impl std::fmt::Debug for HandshakeFailure {
 }
 impl Error for HandshakeFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.0.source()
+        Some(self.source.as_ref())
     }
 }
 type Callback = Arc<dyn Fn(&mut SslRef, &Uri) -> Result<(), ErrorStack> + Send + Sync>;
@@ -69,6 +86,7 @@ pub struct ChromiumHttpsConnector<S> {
     cache: Arc<SessionCache<Key, SslSession>>,
     callback: Option<Callback>,
     automatic_ech_retry: bool,
+    retry_peer: Option<SocketAddr>,
     offered_protocols: Vec<String>,
 }
 impl<S> ChromiumHttpsConnector<S> {
@@ -102,6 +120,7 @@ impl<S> ChromiumHttpsConnector<S> {
             cache,
             callback: None,
             automatic_ech_retry: true,
+            retry_peer: None,
             offered_protocols: decode_alpn(alpn),
         })
     }
@@ -114,6 +133,9 @@ impl<S> ChromiumHttpsConnector<S> {
     }
     pub(crate) fn capture_each_ech_attempt(&mut self) {
         self.automatic_ech_retry = false;
+    }
+    pub(crate) fn retain_ech_peer(&mut self, peer: SocketAddr) {
+        self.retry_peer = Some(peer);
     }
 }
 impl<S, T> Service<Uri> for ChromiumHttpsConnector<S>
@@ -137,6 +159,7 @@ where
         let cache = self.cache.clone();
         let callback = self.callback.clone();
         let automatic_ech_retry = self.automatic_ech_retry;
+        let retry_peer = self.retry_peer;
         let mut alpn = self.offered_protocols.clone();
         Box::pin(async move {
             let https = matches!(uri.scheme_str(), Some("https" | "wss"));
@@ -172,7 +195,7 @@ where
             let mut connected = None;
             let mut last_error: BoxError = "No usable ECH service endpoint".into();
             for candidate in candidates {
-                let routed = match destination_uri(&uri, candidate.as_ref()) {
+                let routed = match destination_uri(&uri, candidate.as_ref(), retry_peer) {
                     Ok(uri) => uri,
                     Err(error) => {
                         last_error = error.into();
@@ -191,12 +214,15 @@ where
                 }
             }
             let (mut offer, socket) = connected.ok_or(last_error)?;
+            let mut extras = http::Extensions::new();
+            socket.connected().get_extras(&mut extras);
+            let peer = extras.get::<HttpInfo>().map(HttpInfo::remote_addr);
             let mut first_socket = Some(socket);
             for attempt in 0..2 {
                 let socket = if let Some(socket) = first_socket.take() {
                     socket
                 } else {
-                    let routed = destination_uri(&uri, offer.as_ref())?;
+                    let routed = destination_uri(&uri, offer.as_ref(), peer)?;
                     std::future::poll_fn(|cx| tcp.poll_ready(cx))
                         .await
                         .map_err(Into::into)?;
@@ -253,15 +279,28 @@ where
                     Ok(stream) => return Ok(MaybeHttpsStream::Https(stream)),
                     Err(error) => {
                         let retry = error.ssl().and_then(transmog_tls::authenticated_ech_retry);
+                        let plan =
+                            retry
+                                .as_ref()
+                                .and(offer.as_ref())
+                                .zip(peer)
+                                .map(|(selected, peer)| EchRetry {
+                                    selected: selected.clone(),
+                                    peer,
+                                });
                         if automatic_ech_retry
                             && attempt == 0
+                            && plan.is_some()
                             && let Some(config) = retry
                             && let Some(offer) = &mut offer
                         {
                             offer.config = config.into();
                             continue;
                         }
-                        return Err(Box::new(HandshakeFailure(Box::new(error))) as BoxError);
+                        return Err(Box::new(HandshakeFailure {
+                            source: Box::new(error),
+                            retry: plan,
+                        }) as BoxError);
                     }
                 }
             }
@@ -272,7 +311,15 @@ where
 fn destination_uri(
     uri: &Uri,
     offer: Option<&transmog_tls::ech::EchOffer>,
+    peer: Option<SocketAddr>,
 ) -> Result<Uri, http::Error> {
+    if let Some(peer) = peer {
+        return Uri::builder()
+            .scheme(uri.scheme_str().unwrap_or("https"))
+            .authority(peer.to_string())
+            .path_and_query("/")
+            .build();
+    }
     let Some(offer) = offer else {
         return Ok(uri.clone());
     };

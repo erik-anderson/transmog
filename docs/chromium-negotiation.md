@@ -97,8 +97,11 @@ destinations, using their destination port while authenticating the logical orig
 Retry configs are copied only when BoringSSL reports
 `SSL_R_ECH_REJECTED` after authenticating both the certificate and Finished. A new
 connection retries once with those configs, or without ECH after authenticated
-rollback. Its certificate must verify for the original origin. Origin client
-identities and HTTP requests are never sent on a rejection connection. Untrusted
+rollback. Its certificate must verify for the original origin.
+The retry retains the selected service metadata and connected peer address,
+without another HTTPS or A/AAAA lookup; capture display strings never control
+routing. Origin client identities and HTTP requests are never sent on a rejection
+connection. Untrusted
 public-name certificates, damaged handshakes and repeated rejections fail closed.
 Both attempted connections and their actual ECH outcomes remain in captures.
 

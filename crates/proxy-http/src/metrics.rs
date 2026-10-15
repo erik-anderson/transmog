@@ -1,4 +1,7 @@
 //! Physical connection instrumentation underneath Hyper's existing pools.
+#[cfg(test)]
+#[path = "metrics_ech_tests.rs"]
+mod ech_tests;
 use crate::tls_connector::ChromiumHttpsConnector;
 use crate::tls_stream::MaybeHttpsStream;
 use crate::{HappyEyeballsResolver, HyperEgressMode};
@@ -408,7 +411,7 @@ impl Service<Uri> for MeasuredHttpsConnector {
             let stream = match result {
                 Ok(stream) => stream,
                 Err(source) => {
-                    let recovery = metadata_recovery(&setup, mode, happy, protocols);
+                    let recovery = metadata_recovery(&setup, source.as_ref(), mode, happy, protocols);
                     let failure = connection_failed(setup.clone(), source);
                     if let Some(retry) = recovery {
                         return retry?.call(retry_uri).await;
@@ -480,10 +483,12 @@ fn mode_admitted(mode: HyperEgressMode, allowed: AllowedHttpProtocols, https: bo
 
 fn metadata_recovery(
     setup: &Arc<ConnectionSetup>,
+    source: &(dyn Error + 'static),
     mode: HyperEgressMode,
     happy: HappyEyeballsConfig,
     protocols: OutboundProtocolPolicy,
 ) -> Option<Result<MeasuredHttpsConnector, BoxError>> {
+    let plan = crate::tls_connector::ech_retry(source);
     let factory = {
         let values = setup.values();
         values
@@ -491,14 +496,17 @@ fn metadata_recovery(
             .as_ref()
             .zip(values.tls_capture.as_ref())
             .and_then(|(factory, capture)| {
-                factory
-                    .ech_recovery(capture)
+                plan.as_ref()
+                    .and_then(|plan| factory.ech_recovery(capture, &plan.selected))
                     .or_else(|| factory.trust_anchor_recovery(capture))
             })?
     };
     Some(
         connector(&factory, mode, happy, protocols)
             .map(|mut retry| {
+                if let Some(plan) = plan {
+                    retry.inner.retain_ech_peer(plan.peer);
+                }
                 retry.prior_failure = Some(ConnectionObservation(setup.clone()));
                 retry
             })
@@ -559,7 +567,22 @@ pub(crate) fn connector(
     happy: HappyEyeballsConfig,
     protocols: OutboundProtocolPolicy,
 ) -> Result<MeasuredHttpsConnector, TrustError> {
-    let mut tcp = HttpConnector::new_with_resolver(HappyEyeballsResolver::new(happy));
+    connector_with_resolver(
+        factory,
+        mode,
+        happy,
+        protocols,
+        HappyEyeballsResolver::new(happy),
+    )
+}
+fn connector_with_resolver(
+    factory: &UpstreamTlsContextFactory,
+    mode: HyperEgressMode,
+    happy: HappyEyeballsConfig,
+    protocols: OutboundProtocolPolicy,
+    resolver: HappyEyeballsResolver,
+) -> Result<MeasuredHttpsConnector, TrustError> {
+    let mut tcp = HttpConnector::new_with_resolver(resolver);
     tcp.enforce_http(false);
     tcp.set_nodelay(true);
     tcp.set_happy_eyeballs_timeout(Some(happy.attempt_delay()));
