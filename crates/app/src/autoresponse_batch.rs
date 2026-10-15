@@ -172,7 +172,13 @@ impl Application {
         let mut existing = current
             .rules
             .iter()
-            .filter(|rule| rule.request.response_asset.is_some())
+            .filter(|rule| {
+                rule.request.response_asset.is_some()
+                    && !current
+                        .experiments
+                        .iter()
+                        .any(|experiment| experiment.owns(&rule.id))
+            })
             .cloned()
             .collect::<Vec<_>>();
         existing.sort_by_key(|rule| (rule.priority, rule.id.clone()));
@@ -190,11 +196,18 @@ impl Application {
             current
                 .rules
                 .iter()
-                .filter(|rule| rule.request.response_asset.is_none())
+                .filter(|rule| {
+                    rule.request.response_asset.is_none()
+                        || current
+                            .experiments
+                            .iter()
+                            .any(|experiment| experiment.owns(&rule.id))
+                })
                 .cloned(),
         );
         let candidate = self.validate_automation(AutomationRuleSet {
             schema_version: 1,
+            experiments: Vec::new(),
             generation: current.generation,
             autoresponses_enabled: current.autoresponses_enabled,
             rules,

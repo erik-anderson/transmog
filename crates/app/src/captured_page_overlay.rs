@@ -104,6 +104,21 @@ fn selected_rules(
     application: &Application,
     options: &CapturedPageOptions,
 ) -> Result<Vec<Rule>, AppError> {
+    if let Some(selection) = &options.variant {
+        if options.rule_ids.is_some() {
+            return Err(error(
+                "Choose either a variant or individual rules for preview",
+            ));
+        }
+        let status = application.automation.status();
+        return status
+            .experiments
+            .iter()
+            .find(|e| e.id == selection.experiment_id)
+            .and_then(|e| e.revision(selection))
+            .map(|r| r.rules.iter().filter(|r| r.enabled).cloned().collect())
+            .ok_or_else(|| error("Saved variant revision is unavailable; reopen preview choices"));
+    }
     let Some(ids) = &options.rule_ids else {
         return Ok(Vec::new());
     };
@@ -149,7 +164,10 @@ pub(super) async fn attach(
     canceled: &AtomicBool,
 ) -> Result<CapturedPage, AppError> {
     let selected = selected_rules(application, options)?;
+    let mut report = page.diagnostics.snapshot();
+    report.variant = options.variant.clone();
     if selected.is_empty() {
+        page.diagnostics = CapturedPageDiagnostics::new(report);
         return Ok(page);
     }
     let root = tempfile::Builder::new()
@@ -158,7 +176,6 @@ pub(super) async fn attach(
         .map_err(|_| error("Preview response storage is unavailable"))?;
     std::fs::write(root.path().join("empty"), [])
         .map_err(|_| error("Preview response storage is unavailable"))?;
-    let mut report = page.diagnostics.snapshot();
     let mut rules: Vec<FrozenRule> = Vec::new();
     for rule in selected {
         if canceled.load(Ordering::Acquire) {

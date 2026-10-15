@@ -16,9 +16,10 @@ controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
 
 Response experiments use the existing persisted automation rules and response
-assets. Saving a new experiment keeps its rule disabled; live activation is an
-explicit action. The editor draft remains in the mounted workspace for the
-current session. See [response experiments](automation.md#response-experiments).
+assets, including named variants and immutable revision history. Saving an
+experiment revision does not change the explicitly activated live revision;
+activation and experiment pause are separate actions. The editor draft remains in
+the mounted workspace for the current session. See [response experiments](automation.md#response-experiments).
 
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become

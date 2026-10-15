@@ -460,6 +460,8 @@ mod tests {
             "start_capture",
             "stop_capture",
             "activate_automation",
+            "change_experiment",
+            "experiment_overlaps",
             "enable_breakpoints",
             "save_product_state",
             "save_client_certificate_policy",

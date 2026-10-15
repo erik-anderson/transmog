@@ -242,6 +242,7 @@ impl SceneBuilder {
             runtime: "WebView2 (version unavailable)".into(),
             bytes_available: true,
             rules: Vec::new(),
+            variant: None,
             available: self.resources,
             skipped: self.skipped,
             bytes: self.bytes,

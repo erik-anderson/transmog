@@ -17,6 +17,12 @@ use transmog_core::intercept::{
 
 use crate::{AppError, ErrorCategory};
 
+#[path = "experiments.rs"]
+mod experiments;
+pub use experiments::{
+    Experiment, ExperimentChange, ExperimentRevision, ExperimentSelection, ExperimentVariant,
+};
+
 /// A network-free draft matcher evaluation.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -87,6 +93,9 @@ pub struct AutomationRuleSet {
     pub generation: u64,
     /// Ordered native automation sources.
     pub rules: Vec<Rule>,
+    /// Saved experiments and immutable variant revisions, independent of live rules.
+    #[serde(default)]
+    pub experiments: Vec<Experiment>,
     /// Global hook gate; individual rule enabled states remain unchanged.
     #[serde(default = "default_autoresponses_enabled")]
     pub autoresponses_enabled: bool,
@@ -100,6 +109,7 @@ impl Default for AutomationRuleSet {
     fn default() -> Self {
         Self {
             schema_version: AUTOMATION_SCHEMA_VERSION,
+            experiments: Vec::new(),
             generation: 0,
             rules: Vec::new(),
             autoresponses_enabled: true,
@@ -133,6 +143,8 @@ pub struct AutomationStatus {
     pub generation: u64,
     /// Active rules, including stable IDs and revisions.
     pub rules: Vec<Rule>,
+    /// Saved named variants; only the explicitly active revision participates live.
+    pub experiments: Vec<Experiment>,
     /// Whether autoresponse hook registrations are active for new requests.
     pub autoresponses_enabled: bool,
     /// Guaranteed identical-match shadowing in priority order.
@@ -222,15 +234,29 @@ impl AutomationRegistry {
             .unwrap_or(0);
         let winner = ordered[..position].iter().find(|rule| {
             rule.enabled
+                && !status
+                    .experiments
+                    .iter()
+                    .any(|experiment| experiment.paused && experiment.owns(&rule.id))
                 && transmog_automation::test_matcher(&rule.matcher, &request)
                     .is_ok_and(|test| test.matched)
         });
-        let would_serve =
-            test.matched && input.enabled && status.autoresponses_enabled && winner.is_none();
+        let experiment_block = input.rule_id.as_ref().and_then(|id| status.experiments.iter().find(|experiment| experiment.owns(id))).and_then(|experiment| {
+            if experiment.paused { Some("The request matches, but this experiment is paused.") }
+            else if !status.rules.iter().any(|rule| Some(&rule.id) == input.rule_id.as_ref()) { Some("The request matches this saved variant. Activate its revision explicitly to use it for live traffic.") }
+            else { None }
+        });
+        let would_serve = test.matched
+            && input.enabled
+            && status.autoresponses_enabled
+            && winner.is_none()
+            && experiment_block.is_none();
         let explanation = if !test.matched {
             "This request does not match the draft rule.".to_owned()
         } else if !input.enabled {
             "The request matches, but this rule is disabled.".to_owned()
+        } else if let Some(explanation) = experiment_block {
+            explanation.to_owned()
         } else if !status.autoresponses_enabled {
             "The request matches, but autoresponses are paused.".to_owned()
         } else if let Some(rule) = winner {
@@ -304,6 +330,21 @@ impl AutomationRegistry {
     /// # Errors
     /// Returns a bounded schema, syntax, conflict, or resource-limit error.
     pub fn validate(
+        &self,
+        mut document: AutomationRuleSet,
+    ) -> Result<AutomationCandidate, AppError> {
+        let current = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .document
+            .clone();
+        experiments::validate_owned_rules(&current, &document.rules)?;
+        document.experiments = current.experiments;
+        self.validate_candidate(document)
+    }
+
+    fn validate_candidate(
         &self,
         mut document: AutomationRuleSet,
     ) -> Result<AutomationCandidate, AppError> {
@@ -450,8 +491,27 @@ impl AutomationRegistry {
             active_scripts: None,
             generation: active.document.generation,
             rules: active.document.rules.clone(),
+            experiments: active.document.experiments.clone(),
             autoresponses_enabled: active.document.autoresponses_enabled,
-            diagnostics: rule_diagnostics(&active.document.rules),
+            diagnostics: rule_diagnostics(
+                &active
+                    .document
+                    .rules
+                    .iter()
+                    .map(|rule| {
+                        let mut effective = rule.clone();
+                        if active
+                            .document
+                            .experiments
+                            .iter()
+                            .any(|experiment| experiment.paused && experiment.owns(&rule.id))
+                        {
+                            effective.enabled = false;
+                        }
+                        effective
+                    })
+                    .collect::<Vec<_>>(),
+            ),
             usage: Vec::new(),
             candidate_count: self
                 .candidates
@@ -492,7 +552,7 @@ impl AutomationRegistry {
             return Ok(self.status());
         }
         document.autoresponses_enabled = enabled;
-        let candidate = self.validate(document)?;
+        let candidate = self.validate_candidate(document)?;
         self.activate(&candidate.candidate_id)
     }
 }
@@ -504,14 +564,25 @@ fn compile_document(
 ) -> Result<CompiledAutomation, AppError> {
     let compiled = compile_with_assets(document.rules.clone(), limits, Some(assets.clone()))
         .map_err(compile_error)?;
-    if document.autoresponses_enabled {
+    if document.autoresponses_enabled
+        && !document
+            .experiments
+            .iter()
+            .any(|experiment| experiment.paused)
+    {
         return Ok(compiled);
     }
     compile_with_assets(
         document
             .rules
             .iter()
-            .filter(|rule| rule.request.response_asset.is_none())
+            .filter(|rule| {
+                (document.autoresponses_enabled || rule.request.response_asset.is_none())
+                    && !document
+                        .experiments
+                        .iter()
+                        .any(|experiment| experiment.paused && experiment.owns(&rule.id))
+            })
             .cloned()
             .collect(),
         limits,
@@ -595,7 +666,7 @@ fn validate_document(document: &AutomationRuleSet) -> Result<(), AppError> {
             false,
         ));
     }
-    Ok(())
+    experiments::validate_experiments(document)
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -704,6 +775,7 @@ mod tests {
     fn document(value: &str) -> AutomationRuleSet {
         AutomationRuleSet {
             schema_version: 1,
+            experiments: Vec::new(),
             generation: 0,
             rules: vec![Rule {
                 id: "conditional-ua".to_owned(),

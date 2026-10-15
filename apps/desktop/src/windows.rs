@@ -537,6 +537,23 @@ fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
 }
 
 #[tauri::command]
+fn change_experiment(
+    generation: u64,
+    change: transmog_app::ExperimentChange,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    state.application.change_experiment(generation, change)
+}
+
+#[tauri::command]
+fn experiment_overlaps(
+    selection: transmog_app::ExperimentSelection,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state.application.experiment_overlaps(&selection)
+}
+
+#[tauri::command]
 async fn clear_traffic(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
@@ -2115,6 +2132,8 @@ pub fn run() {
                 desktop_bootstrap,
                 record_frontend_diagnostic,
                 automation_status,
+                change_experiment,
+                experiment_overlaps,
                 remove_traffic_entries,
                 clear_traffic,
                 remove_unselected_traffic_entries,

@@ -25,26 +25,61 @@ the existing response editor. **Test match** checks the request conditions witho
 sending traffic; **Compare with captured source** shows the unsaved difference.
 Switching workspaces preserves the draft. Failed saves keep it available for retry.
 
-**Save experiment** creates a disabled auto-response rule and immutable response
-asset. It preserves unrelated rules, their order and the live On/Paused state.
-**Preview baseline…** uses captured responses; **Preview captured page…** includes
-the saved experiment rule for that preview only. Save edits before previewing.
-For a script, stylesheet or other resource, choose a retained HTML response from
-the same source. Recorded referrer and timing help order the choices but do not
-prove which page used the resource. Choosing a page keeps the resource selected
-in Traffic. If its source has expired, select a retained HTML response in Traffic
-and include the saved rule through **Preview page…** instead.
+**Save experiment** creates an experiment with an empty **Baseline** and an
+**Edited response** variant. Each saved variant revision contains complete ordered
+rules and exact response-asset revisions. Saving never changes live traffic, even
+when an earlier revision is active. Unrelated rules and the global On/Paused
+setting are preserved. The original **Create auto-response** flow still creates
+ordinary rules with its established save behavior.
 
-**Use for live traffic** explicitly enables this rule, preserving unrelated rules
-and the global pause. If auto-responses are paused, resume them separately when
-ready. After activation, saving changes updates the enabled rule for new matching
-requests. Preview never changes live participation.
+Open **Automation → Experiments** or **Named variants and revision history…**
+from the shared response editor. Select an experiment, variant and revision to
+inspect them without changing live participation. Duplicate a saved revision to
+create another approach, rename it, include/exclude or reorder its rules, and use
+**Add selected response** to add another captured response through the same editor.
+Earlier revisions remain inspectable; duplicate an earlier revision to edit it.
+Archive keeps identities and history, and **Restore (Undo archive)** reverses it.
+Activate Baseline or another variant before archiving active content.
 
-This flow saves ordinary auto-response rules and assets, so they remain available
-in the rule list after restart. Reopening through that list uses the ordinary rule
-editor and its enabled control. Named variant collections and activation across
-several related rules are a later stage. Browser session and reload behavior are
-documented in [captured-page preview](captured-page-preview.md).
+**Preview saved revision…** uses the exact selected definitions and included rules,
+independently of live activation and pause. Individual rule participation is locked
+for that run. **Preview baseline…** uses the captured scene without this experiment.
+For a script or stylesheet, choose a retained HTML page from the same source.
+Recorded referrer and timing are hints, not proof of which page used the resource.
+If that source has expired, select a complete HTML response in Traffic first.
+Browser session/reload behavior is documented in [captured-page
+preview](captured-page-preview.md).
+
+**Use saved revision for live traffic** explicitly replaces only this experiment's
+live subset, in one validated persisted transaction. Possible overlaps with other
+native rules are shown first; **Activate despite overlaps** acknowledges those
+warnings. Conservative overlap warnings are not proof that two rules match the
+same real request. A validation or persistence failure leaves the previous live
+configuration intact. For an equal-priority conflict, expand **Activation order**
+and save a revision before or after other live rules, then activate that revision.
+This changes only the selected variant; unrelated rule priorities stay unchanged.
+
+Only one revision participates per experiment. **Baseline** means no rules from
+this experiment; unrelated automation remains active. **Pause experiment** gates
+participation without rewriting authored rules, enabled choices or revisions.
+Activation and resume preserve the global auto-response pause. **Undo activation**
+restores the previous owned subset only if no automation generation has changed
+since that activation. On conflict, current work is preserved; inspect saved
+history and explicitly activate the desired revision instead.
+
+Definitions and revision history survive restart in the existing automation
+workspace. Limits are 32 experiments, 16 variants per experiment (including
+Baseline), 32 revisions per variant, 64 rules per revision, and the existing 4 MiB
+workspace limit. Reaching a limit rejects the save and preserves the draft;
+history is never silently discarded. Display names are separate from stable IDs.
+Captured source links remain on the saved assets after source Traffic is evicted.
+
+An immutable linked-file asset reference identifies configuration, not historical
+file bytes. A new preview or live request reads a fresh coherent file snapshot;
+F5 retains the current preview's frozen bytes. Earlier actual results remain
+inspectable under the existing Traffic body-retention policy and response file evidence.
+Selecting an old configuration does not recover missing, truncated or expired
+response bytes. Portable experiment packaging is a later increment.
 
 ## General rule ordering
 

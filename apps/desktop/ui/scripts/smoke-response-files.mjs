@@ -32,7 +32,7 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
   await closeNative('Modified preview · Scripts off — Transmog');await closeNative('Modified preview · Scripts off — Transmog');
   await waitFor(async()=>!(await targets()).some(row=>[next.target.id,first.target.id].includes(row.id)),'Linked-file previews did not close');
   await main.evaluate(`(async()=>{await ${shell}.activateView('automation');const a=${editor};a.changeResponseBodyFileMode({currentTarget:{value:'copy'}});})()`);await save();
-  const assets=await invoke('response_assets'),current=(await invoke('automation_status')).rules.find(row=>row.id===ruleId);
+  const assets=await invoke('response_assets'),selection=await main.evaluate(`${editor}.editingVariant`),current=(await invoke('automation_status')).experiments.find(e=>e.id===selection.experimentId).variants.find(v=>v.id===selection.variantId).revisions.find(r=>r.revision===selection.revision).rules.find(row=>row.id===ruleId);
   const copy=assets.find(asset=>asset.id+'@'+asset.revision===current.request.responseAsset);
   assert.equal(copy.linkedBody??null,null);assert.equal(copy.copiedFrom,path);
   await writeFile(path,red);const copied=await open();await waitFor(async()=>await color(copied.page)==='rgb(0, 0, 255)','External edit changed copied response bytes');
@@ -45,10 +45,12 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
   if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-linked-file-repair.png'),Buffer.from(image.data,'base64'));}
   await writeFile(path,blue);await main.evaluate(`${editor}.refreshResponseFile()`);
   assert.equal(await main.evaluate(`${editor}.responseBodyFileError`),'');
-  assert.equal((await invoke('automation_status')).rules.find(row=>row.id===ruleId).enabled,false);
+  assert.equal((await invoke('automation_status')).rules.some(row=>row.id===ruleId),false);
   process.stdout.write('Native file modes: small linked CSS, external edits/new preview, frozen reload, explicit copied revision, copy independence and missing-file repair verified.\n');
  }finally{
-  const current=await invoke('automation_status'),candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules:before.rules,autoresponsesEnabled:before.autoresponsesEnabled}});
+  let current=await invoke('automation_status');
+  for(const e of current.experiments??[]){if((before.experiments??[]).some(old=>old.id===e.id))continue;current=await invoke('change_experiment',{generation:current.generation,change:{action:'activate',selection:{experimentId:e.id,variantId:'baseline',revision:1},acknowledgeOverlaps:false}});current=await invoke('change_experiment',{generation:current.generation,change:{action:'archive',id:e.id,variantId:null,archived:true}});}
+  const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules:before.rules,autoresponsesEnabled:before.autoresponsesEnabled}});
   await invoke('activate_automation',{candidateId:candidate.candidateId});
   await main.evaluate(`${shell}.activateView('traffic')`);
  }

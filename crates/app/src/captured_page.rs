@@ -496,6 +496,7 @@ pub(crate) fn fork(page: &CapturedPage) -> CapturedPage {
     let mut report = page.diagnostics.snapshot();
     report.bytes -= report.rules.iter().map(|r| r.bytes).sum::<u64>();
     report.rules.clear();
+    report.variant = None;
     report.hits = 0;
     report.misses = 0;
     report.failures = 0;

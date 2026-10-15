@@ -161,6 +161,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewDraftDirty=false;
   @observable previewDraftExcluded=false;
   private previewRulesGeneration:number|undefined;
+  private requestedPreviewVariant:import('../models.js').ExperimentSelection|undefined;
+  private previewVariantSelection:import('../models.js').ExperimentSelection|undefined;
+  private previewSceneVariant:import('../models.js').ExperimentSelection|undefined;
+  private requestedPreviewVariantLatest=false;
+  @observable previewVariantLocked=false;
+  @observable previewVariantText='';
   private previewChoicesGeneration=0;
   private previewPageGeneration=0;
   @observable previewReusesScene=false;
@@ -1210,19 +1216,23 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.previewReusesScene=false;this.previewSourceLabel=null;this.previewPageMode='captured';this.previewDraftExcluded=false;this.$emit('preview-options-request',undefined);void this.loadPreviewRules();this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageGeneration++;this.previewPageStatus='';this.previewPageScope='original-trace';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
   }
   async loadPreviewRules():Promise<void> {
-    const generation=++this.previewChoicesGeneration, requestedRule=this.requestedPreviewRule;this.requestedPreviewRule=null;
+    const generation=++this.previewChoicesGeneration, requestedRule=this.requestedPreviewRule,latest=this.requestedPreviewVariantLatest;let variant=this.requestedPreviewVariant;this.requestedPreviewRule=null;this.requestedPreviewVariant=undefined;this.requestedPreviewVariantLatest=false;this.previewVariantSelection=variant;this.previewVariantLocked=Boolean(variant);
     this.previewRules=[];this.previewRulesError='';this.previewRuleSummary='';this.previewRulesGeneration=undefined;
     if(this.viewerMode)return;
     this.previewRulesBusy=true;
     try {const status=await invoke<AutomationStatus>('automation_status');if(generation!==this.previewChoicesGeneration||!this.previewPageDialog.open)return;
       this.previewRulesGeneration=status.generation;
-      this.previewRules=status.rules.filter(rule=>rule.request.responseAsset).sort((a,b)=>a.priority-b.priority||(a.id<b.id?-1:a.id>b.id?1:0)).map(rule=>({id:rule.id,name:rule.displayName??rule.id,included:requestedRule?rule.id===requestedRule:rule.enabled!==false,state:rule.enabled?'Enabled for live traffic':'Disabled for live traffic'}));
+      if(variant&&latest){const selection=variant,revision=status.experiments?.find(e=>e.id===selection.experimentId)?.variants.find(v=>v.id===selection.variantId)?.revisions.at(-1)?.revision;if(revision)variant={...selection,revision};this.previewVariantSelection=variant;}
+      const selection=variant;
+      const variantRules=selection?status.experiments?.find(e=>e.id===selection.experimentId)?.variants.find(v=>v.id===selection.variantId)?.revisions.find(r=>r.revision===selection.revision)?.rules:undefined;
+      if(variant&&!variantRules)throw new Error('The selected saved variant revision is unavailable.');
+      this.previewRules=(variantRules??status.rules).filter(rule=>rule.request.responseAsset).sort((a,b)=>a.priority-b.priority||(a.id<b.id?-1:a.id>b.id?1:0)).map(rule=>({id:rule.id,name:rule.displayName??rule.id,included:variant?rule.enabled!==false:requestedRule?rule.id===requestedRule:rule.enabled!==false,state:variant?'Saved variant revision '+variant.revision:rule.enabled?'Enabled for live traffic':'Disabled for live traffic'}));
       this.requestedPreviewRule=null;this.updatePreviewRuleSummary();
     } catch(error:unknown) {if(generation===this.previewChoicesGeneration)this.previewRulesError='Saved rules could not be loaded: '+describeError(error);}
     finally {if(generation===this.previewChoicesGeneration)this.previewRulesBusy=false;}
   }
   setPreviewMode(event:Event):void {this.previewPageStatus='';this.previewPageMode=(event.currentTarget as HTMLSelectElement).value;}
-  setPreviewRule(id:string,event:Event):void {this.previewPageStatus='';this.previewRules=this.previewRules.map(row=>row.id===id?{...row,included:(event.currentTarget as HTMLInputElement).checked}:row);this.updatePreviewRuleSummary();}
+  setPreviewRule(id:string,event:Event):void {if(this.previewVariantSelection)return;this.previewPageStatus='';this.previewRules=this.previewRules.map(row=>row.id===id?{...row,included:(event.currentTarget as HTMLInputElement).checked}:row);this.updatePreviewRuleSummary();}
   excludePreviewDraft(event:Event):void {this.previewPageStatus='';this.previewDraftExcluded=(event.currentTarget as HTMLInputElement).checked;}
   private updatePreviewRuleSummary():void {const selected=this.previewRules.filter(row=>row.included);this.previewRuleSummary=selected.length+' selected'+(selected.length?': '+selected.slice(0,3).map(row=>row.name.length>90?row.name.slice(0,89)+'…':row.name).join(', ')+(selected.length>3?' and '+(selected.length-3)+' more':''):'');}
   async showRulePreview(intent:ResponsePreviewIntent):Promise<void> {
@@ -1235,7 +1245,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(revision!==this.previewContextRevision||!this.isConnected||this.view!=='traffic'||selection!==this.selectedSessionId)return;
         if(!choices.pages.length)throw new Error('No complete HTML response remains in this source. Import its page or select another captured page in Traffic.');
         const previous=this.previewSceneAvailable&&choices.pages.find(page=>page.id===this.previewSceneDocumentId);
-        this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;
+        this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.mode==='modified'?intent.variant:undefined;
         if(previous)this.showRelatedPreview(intent.mode);
         else {
           this.previewReusesScene=false;this.previewSourceLabel=null;this.previewPageScope='original-trace';
@@ -1251,13 +1261,14 @@ export class TrafficWorkspace extends WorkspaceElement {
       finally{if(revision===this.previewContextRevision)this.previewContextBusy=false;}
       return;
     }
-    this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;
+    this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.mode==='modified'?intent.variant:undefined;
     if(this.previewReportAvailable&&this.previewSceneAvailable)this.showRelatedPreview(intent.mode);
     else if(this.previewPageAvailable){this.showCapturedPage();this.previewPageMode=intent.mode;}
-    else {this.requestedPreviewRule=null;this.showNotice('Select a captured page','Select a complete HTML response in Traffic, then choose Preview page… and include this saved rule.',null,null);return;}
+    else {this.requestedPreviewRule=null;this.requestedPreviewVariant=undefined;this.showNotice('Select a captured page','Select a complete HTML response in Traffic, then choose Preview page… and include this saved rule.',null,null);return;}
   }
   showRelatedPreview(mode:string):void {
     if(this.previewPageBusy||!this.previewSceneAvailable)return;
+    if(mode==='modified'&&!this.requestedPreviewRule&&!this.requestedPreviewVariant&&this.previewSceneVariant){this.requestedPreviewVariant={...this.previewSceneVariant};this.requestedPreviewVariantLatest=true;}
     this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';this.previewPageId=this.previewSceneDocumentId;
     this.closePopover(this.requestActionsMenu,this.actionsButton);this.closePreviewReport();this.previewReusesScene=true;this.previewPageUrl=this.previewSceneUrl;this.previewPageScope=this.previewSceneScope;this.previewSourceLabel=this.previewReportLabel;this.previewPageMode=mode;this.previewDraftExcluded=false;
     this.$emit('preview-options-request',undefined);this.previewPageGeneration++;this.previewPageStatus='';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();void this.loadPreviewRules();
@@ -1268,6 +1279,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   async refreshPreviewReport():Promise<void> {
     const label=this.previewReportLabel,generation=++this.previewReportGeneration;this.previewReportBusy=true;this.previewReportError='';
     try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
+      this.previewVariantText=report.variant?`${report.variant.experimentId} / ${report.variant.variantId} / revision ${report.variant.revision}`:'';
+      this.previewSceneVariant=report.variant??undefined;
       this.previewSceneUrl=report.url;this.previewSceneScope=report.scope;this.previewRuleRows=report.rules??[];this.previewSceneAvailable=report.bytesAvailable!==false;this.previewReportUrl=report.url;this.previewReportSummary=(this.previewRuleRows.length?'Modified':'Baseline')+' · '+(report.runtime??'WebView2')+' · '+(report.bytesAvailable===false?'Related preview bytes expired · ':'')+(report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' network failures · '+(report.failures??0)+' failed · '+Math.max(0,report.available+report.skipped-report.resources.length)+' omitted resource decisions · '+Math.max(0,report.hits+report.misses+(report.failures??0)-report.requests.length)+' older requests'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
       this.previewResourceRows=report.resources.map((row,index)=>({id:String(index),sourceId:row.entryId,sourceAvailable:row.sourceAvailable!==false,method:row.method,url:row.url,source:row.source,size:row.bytes==null?'Unavailable':row.bytes.toLocaleString()+' bytes',time:row.unixMillis==null||!Number.isFinite(new Date(row.unixMillis).getTime())?'Time unavailable':new Date(row.unixMillis).toISOString(),decision:row.decision+(row.sha256?' · SHA-256 '+row.sha256:'')}));
       this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='failed/unavailable'?'Failed / unavailable':row.outcome==='auto-response'?'Auto-response':row.outcome==='captured'||row.outcome==='served'?'Captured':'Missing · Network failure',reason:row.reason,ruleId:row.ruleId??'',sourceId:row.entryId??'',sha256:row.sha256??'',comparable:row.outcome==='captured'||row.outcome==='auto-response'||row.outcome==='served'}));
@@ -1277,9 +1290,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   closePreviewReport(event?:Event):void {event?.preventDefault();this.previewReportGeneration++;this.previewReportBusy=false;this.previewReportDialog.close();this.previewReportFocus?.focus();this.previewReportFocus=null;}
   closeCapturedPageWarning():void {if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});this.previewContextRevision++;this.previewContextBusy=false;this.previewPageGeneration++;this.previewChoicesGeneration++;this.previewRulesBusy=false;this.previewPageDialog.close();this.actionsButton.focus({preventScroll:true});}
   async openCapturedPage():Promise<void> {
-    if(this.previewPageBusy)return;const modified=this.previewPageMode==='modified';if(modified&&(this.previewRulesBusy||this.previewRulesError||!this.previewRules.some(row=>row.included)||this.previewDraftDirty&&!this.previewDraftExcluded)){this.previewPageStatus='Select saved rules and resolve or explicitly exclude unsaved changes before opening.';return;}this.previewPageBusy=true;this.previewPageStatus='Preparing captured responses…';
+    if(this.previewPageBusy)return;const modified=this.previewPageMode==='modified';if(modified&&(this.previewRulesBusy||this.previewRulesError||!this.previewRules.some(row=>row.included)&&!this.previewVariantSelection||this.previewDraftDirty&&!this.previewDraftExcluded)){this.previewPageStatus='Select saved rules and resolve or explicitly exclude unsaved changes before opening.';return;}this.previewPageBusy=true;this.previewPageStatus='Preparing captured responses…';
     const generation=this.previewPageGeneration,id=this.previewPageId,enableScripts=this.previewPageScripts.checked,operationId=crypto.randomUUID();this.previewPageOperation=operationId;
-    try{const label=await invoke<string>('open_captured_page',{id,enableScripts,operationId,sourceLabel:this.previewSourceLabel,options:modified?{scope:this.previewPageScope,ruleIds:this.previewRules.filter(row=>row.included).map(row=>row.id),generation:this.previewRulesGeneration}:{scope:this.previewPageScope}});this.previewReportLabel=label;this.previewReportAvailable=true;this.previewSceneAvailable=true;this.previewSceneDocumentId=id;this.previewSceneUrl=this.previewPageUrl;this.previewSceneScope=this.previewPageScope;if(this.isConnected&&generation===this.previewPageGeneration&&this.previewPageDialog.open){this.previewPageDialog.close();this.actionsButton.focus({preventScroll:true});this.diagnostic='Captured page preview opened. Preview diagnostics show resource choices and missing requests.';}}
+    try{const label=await invoke<string>('open_captured_page',{id,enableScripts,operationId,sourceLabel:this.previewSourceLabel,options:modified?{scope:this.previewPageScope,...(this.previewVariantSelection?{variant:this.previewVariantSelection}:{ruleIds:this.previewRules.filter(row=>row.included).map(row=>row.id),generation:this.previewRulesGeneration})}:{scope:this.previewPageScope}});this.previewReportLabel=label;this.previewReportAvailable=true;this.previewSceneAvailable=true;this.previewSceneDocumentId=id;this.previewSceneVariant=modified?this.previewVariantSelection:undefined;this.previewSceneUrl=this.previewPageUrl;this.previewSceneScope=this.previewPageScope;if(this.isConnected&&generation===this.previewPageGeneration&&this.previewPageDialog.open){this.previewPageDialog.close();this.actionsButton.focus({preventScroll:true});this.diagnostic='Captured page preview opened. Preview diagnostics show resource choices and missing requests.';}}
     catch(error:unknown){if(this.isConnected&&generation===this.previewPageGeneration){this.previewPageStatus='Preview could not be opened: '+describeError(error);if(!this.previewPageDialog.open&&!describeError(error).includes('canceled'))this.showNotice('Captured page preview failed',describeError(error),null,null);}}
     finally {this.previewPageBusy=false;this.previewPageOperation='';}
   }

@@ -38,6 +38,242 @@ static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through the interoperability driver with packaged helpers"]
+#[allow(clippy::too_many_lines)] // One complete scoped activation and restart workflow.
+async fn named_variants_switch_live_atomically_and_keep_saved_history() {
+    use transmog_app::{ExperimentChange, ExperimentSelection};
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let application = Application::new(workspace.config(&environment)).unwrap();
+    let first = application
+        .create_response_asset(AuthoredResponseAsset {
+            id: "variant-body".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body: b"first variant".to_vec(),
+            media_type: None,
+        })
+        .unwrap();
+    let second = application
+        .create_response_asset(AuthoredResponseAsset {
+            id: "variant-body".into(),
+            revision: 2,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body: b"second variant".to_vec(),
+            media_type: None,
+        })
+        .unwrap();
+    let unrelated = autoresponse_rule("unrelated", "/auto/unrelated", &first.asset_ref());
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            rules: vec![unrelated.clone()],
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    let original = autoresponse_rule("variant-rule", "/echo/variant/", &first.asset_ref());
+    let change = |change| {
+        application
+            .change_experiment(application.automation_status().generation, change)
+            .unwrap()
+    };
+    change(ExperimentChange::Create {
+        id: "experiment".into(),
+        name: "Response hypothesis".into(),
+        variant_id: "edited".into(),
+        variant_name: "Patched script".into(),
+        rules: vec![original.clone()],
+    });
+    let selection = |revision| ExperimentSelection {
+        experiment_id: "experiment".into(),
+        variant_id: "edited".into(),
+        revision,
+    };
+    change(ExperimentChange::Activate {
+        selection: selection(1),
+        acknowledge_overlaps: false,
+    });
+    let listener = start(&application, &environment).await;
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/first"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body, b"first variant");
+    let mut edited = original.clone();
+    edited.revision = 2;
+    edited.request.response_asset = Some(second.asset_ref());
+    change(ExperimentChange::Save {
+        id: "experiment".into(),
+        variant_id: "edited".into(),
+        expected_revision: 1,
+        rules: vec![edited.clone()],
+    });
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/saved"),
+        &[],
+    )
+    .await;
+    assert_eq!(response.body, b"first variant");
+    change(ExperimentChange::Activate {
+        selection: selection(2),
+        acknowledge_overlaps: false,
+    });
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/second"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body, b"second variant");
+    let first_detail = wait_for_session(&application, "/echo/variant/first", "completed").await;
+    let second_detail = wait_for_session(&application, "/echo/variant/second", "completed").await;
+    assert_eq!(
+        first_detail.auto_response.as_ref().unwrap().rule_revision,
+        1
+    );
+    assert_eq!(
+        second_detail.auto_response.as_ref().unwrap().rule_revision,
+        2
+    );
+    assert!(
+        first_detail
+            .hook_effects
+            .iter()
+            .any(|effect| effect.contains("variant-rule@1"))
+    );
+    assert!(
+        second_detail
+            .hook_effects
+            .iter()
+            .any(|effect| effect.contains("variant-rule@2"))
+    );
+    let before_pause = application.automation_status();
+    change(ExperimentChange::Pause {
+        id: "experiment".into(),
+        paused: true,
+    });
+    assert_eq!(application.automation_status().rules, before_pause.rules);
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/paused"),
+        &["User-Agent: Baseline-Agent"],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body, b"Baseline-Agent\n");
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/unrelated"),
+        &[],
+    )
+    .await;
+    assert_eq!(response.body, b"first variant");
+    change(ExperimentChange::Pause {
+        id: "experiment".into(),
+        paused: false,
+    });
+    let baseline = ExperimentSelection {
+        experiment_id: "experiment".into(),
+        variant_id: "baseline".into(),
+        revision: 1,
+    };
+    change(ExperimentChange::Activate {
+        selection: baseline.clone(),
+        acknowledge_overlaps: false,
+    });
+    assert_eq!(
+        application.automation_status().rules,
+        vec![unrelated.clone()]
+    );
+    change(ExperimentChange::UndoActivation {
+        id: "experiment".into(),
+    });
+    assert_eq!(
+        application.automation_status().rules,
+        vec![unrelated.clone(), edited]
+    );
+    application
+        .set_autoresponses_enabled(false, application.automation_status().generation)
+        .unwrap();
+    change(ExperimentChange::Activate {
+        selection: selection(1),
+        acknowledge_overlaps: false,
+    });
+    assert!(!application.automation_status().autoresponses_enabled);
+    application
+        .set_autoresponses_enabled(true, application.automation_status().generation)
+        .unwrap();
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/historical"),
+        &[],
+    )
+    .await;
+    assert_eq!(response.body, b"first variant");
+    change(ExperimentChange::Activate {
+        selection: baseline,
+        acknowledge_overlaps: false,
+    });
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/baseline"),
+        &["User-Agent: Baseline-Agent"],
+    )
+    .await;
+    assert_eq!(response.body, b"Baseline-Agent\n");
+    let saved = application.automation_status().experiments;
+    application.shutdown().await.unwrap();
+    drop(application);
+    let restarted = Application::new(workspace.config(&environment)).unwrap();
+    assert_eq!(restarted.automation_status().experiments, saved);
+    assert_eq!(restarted.automation_status().rules, vec![unrelated]);
+    restarted
+        .change_experiment(
+            restarted.automation_status().generation,
+            ExperimentChange::Activate {
+                selection: selection(2),
+                acknowledge_overlaps: false,
+            },
+        )
+        .unwrap();
+    let listener = start(&restarted, &environment).await;
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("echo/variant/restarted"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body, b"second variant");
+    restarted.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through the interoperability driver with packaged helpers"]
 #[allow(clippy::too_many_lines)] // One complete acquisition/recording/save/import workflow.
 async fn linked_snapshot_history_survives_external_edits_and_native_save() {
     use std::sync::Arc;

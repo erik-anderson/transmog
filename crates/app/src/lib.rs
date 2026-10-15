@@ -64,7 +64,8 @@ pub use artifacts::{
 };
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
-    AutomationStatus, ExampleResult, RuleDiagnostic, RuleUsage,
+    AutomationStatus, ExampleResult, Experiment, ExperimentChange, ExperimentRevision,
+    ExperimentSelection, ExperimentVariant, RuleDiagnostic, RuleUsage,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_ranges::{BodyBytePage, BodyRangeRequest};
@@ -832,6 +833,30 @@ impl Application {
         }
         status.usage = usage.into_values().collect();
         status
+    }
+
+    /// Saves or activates an experiment atomically without replacing unrelated rules.
+    ///
+    /// # Errors
+    /// Rejects stale generations, invalid definitions, overlaps or failed persistence.
+    pub fn change_experiment(
+        &self,
+        generation: u64,
+        change: ExperimentChange,
+    ) -> Result<AutomationStatus, AppError> {
+        self.automation.change_experiment(generation, change)?;
+        Ok(self.automation_status())
+    }
+
+    /// Describes possible overlap with other live rules before explicit activation.
+    ///
+    /// # Errors
+    /// Rejects unknown experiment or revision identities.
+    pub fn experiment_overlaps(
+        &self,
+        selection: &ExperimentSelection,
+    ) -> Result<Vec<String>, AppError> {
+        self.automation.experiment_overlaps(selection)
     }
 
     /// Changes the global autoresponse hook gate, preserving all rule properties.

@@ -126,6 +126,11 @@ pub struct RuleMatcher {
 }
 
 impl RuleMatcher {
+    /// Conservatively reports possible request overlap for activation diagnostics.
+    pub fn may_overlap_request(&self, other: &Self) -> bool {
+        self.overlaps(other, false)
+    }
+
     fn matches_request(
         &self,
         request: &RequestHead,

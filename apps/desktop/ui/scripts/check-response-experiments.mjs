@@ -45,7 +45,7 @@ export async function checkResponseExperiments(page,root){
  const id=await page.evaluate(()=>document.querySelector('app-shell').automation.editingAutoResponseId);
  const state=await page.evaluate(()=>{const s=globalThis.__workspaceFixture;return {rules:s.automation.rules,unrelated:s.unrelated,paused:s.automation.autoresponsesEnabled};});
  assert.deepEqual(state.rules.find(r=>r.id==='unrelated'),state.unrelated);
- assert.equal(state.rules.find(r=>r.id===id).enabled,false);assert.equal(state.paused,false);
+ assert.equal(state.rules.some(r=>r.id===id),false);assert.equal(state.paused,false);
  await editor.getByLabel('Rule name',{exact:true}).fill('Checkout succeeds with patched script (saved revision)');
  await editor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
  assert.match(await editor.locator('.field-error[aria-live]').textContent(),/Save the experiment before previewing/);
@@ -69,14 +69,15 @@ export async function checkResponseExperiments(page,root){
  await warning.getByRole('button',{name:'Open preview',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewPageBusy);
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.id),'second');
- assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.ruleIds),[id]);
- assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(r=>r.id===document.querySelector('app-shell').automation.editingAutoResponseId).enabled),false);
+ assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.variant),await page.evaluate(()=>document.querySelector('app-shell').automation.editingVariant));
+ assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.some(r=>r.id===document.querySelector('app-shell').automation.editingAutoResponseId)),false);
  await page.evaluate(()=>document.querySelector('app-shell').activateView('automation'));
  await editor.getByRole('button',{name:'Use for live traffic',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('app-shell').automation.changingAutoResponse);
- assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(r=>r.id===document.querySelector('app-shell').automation.editingAutoResponseId).enabled),true);
+ assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.some(r=>r.id===document.querySelector('app-shell').automation.editingAutoResponseId)),true);
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled),false,'Explicit rule activation resumed global automation');
  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(r=>r.id==='unrelated')),state.unrelated);
+ await page.evaluate(()=>document.querySelector('app-shell').automation.showAutomationSection('responses'));
  await editor.getByRole('button',{name:'Preview baseline…',exact:true}).click();
  await warning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewPageBusy);
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.ruleIds),undefined);
@@ -101,10 +102,10 @@ export async function checkResponseExperiments(page,root){
  await page.screenshot({path:resolve(root,'../../../target/ui-check/response-experiment-zoom-forced-colors.png')});
  await page.evaluate(()=>document.documentElement.style.zoom='');await page.emulateMedia({forcedColors:'none'});
  // Live activation may finish while another rule's properties are open.
- await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation;await a.editAutoResponse(s.automation.rules.find(r=>r.id===a.editingAutoResponseId),true,true);const rule=s.automation.rules.find(r=>r.id===a.editingAutoResponseId);rule.enabled=false;s.deferExperimentActivation=true;void a.useExperimentForLive();});
+ await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation;s.deferExperimentActivation=true;void a.useExperimentForLive();});
  await page.waitForFunction(()=>globalThis.__workspaceFixture.finishExperimentActivation);
  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation,other={...structuredClone(s.unrelated),enabled:false};await a.editAutoResponse(other,true);s.finishExperimentActivation();});
- await page.waitForFunction(()=>!document.querySelector('app-shell').automation.changingAutoResponse);
+ await page.waitForFunction(()=>!document.querySelector('app-shell').automation.experimentVariants.variantBusy);
  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.autoResponseEnabled.checked),false,'Late experiment activation changed a different editor');
  // Changing selection also abandons pending context without reopening a chooser.
  await page.evaluate(async()=>{const s=document.querySelector('app-shell');await s.activateView('traffic');globalThis.__workspaceFixture.deferPreviewContext=true;globalThis.__workspaceFixture.releasePreviewContext=null;void s.traffic.showRulePreview({ruleId:'ignored',sourceSessionId:'first',mode:'modified'});});
