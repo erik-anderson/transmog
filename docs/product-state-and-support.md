@@ -20,6 +20,13 @@ assets. Saving a new experiment keeps its rule disabled; live activation is an
 explicit action. The editor draft remains in the mounted workspace for the
 current session. See [response experiments](automation.md#response-experiments).
 
+Response assets persist the chosen copy/link behavior. Linked assets retain an
+absolute path even when the file is unavailable; they do not silently become
+copies or fall through to the origin. Copied assets may retain their source path
+as informational provenance, but serving uses stored bytes and never reopens it.
+These file paths belong to explicitly authored response assets, not preferences
+or retained Traffic. No TMCap format change is involved.
+
 Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
 settings so a stale workspace snapshot cannot overwrite newer preferences.
 Each save writes and flushes a temporary file, then atomically publishes a new

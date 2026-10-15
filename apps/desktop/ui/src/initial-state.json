@@ -1154,5 +1154,7 @@
   "experimentStateText": "",
   "previewDocumentChoices": [],
   "previewDocumentNote": "",
-  "previewContextBusy": false
+  "previewContextBusy": false,
+  "responseBodyFileMode": "copy",
+  "responseCopiedFrom": ""
 }

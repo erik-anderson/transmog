@@ -143,6 +143,7 @@ impl Application {
                     boundary: "client-response".into(),
                     decoded_body: None,
                     body_path: None,
+                    body_file_mode: crate::ResponseBodyFileMode::Copy,
                     preserve_content_encoding: true,
                 })
                 .await?;

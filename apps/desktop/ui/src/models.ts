@@ -285,8 +285,10 @@ export interface ResponseAsset {
   provenance: {kind: 'authored' | 'imported'} | {kind: 'session'; exchange_id: string; boundary: string};
   headers:Array<{name:number[];value:number[]}>;
   linkedBody?:{path:string;originalContentCodings:string[];applyOriginalCompression?:boolean}|null;
+  copiedFrom?:string|null;
 }
-export interface ResponseBodyFileInfo {path:string;bytes:number;linked:boolean;error:string|null;}
+export type ResponseBodyFileMode='copy'|'linked';
+export interface ResponseBodyFileInfo {path:string;bytes:number;error:string|null;}
 export interface ResponseAssetInspection {asset:ResponseAsset;display:string;textEncoding:string|null;bytesBase64:string|null;contentCodings:string[];explanation:string;}
 export interface CapturedAutoResponseSource {
   kind: 'captured';

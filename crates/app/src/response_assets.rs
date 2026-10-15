@@ -28,7 +28,17 @@ const MAX_ASSET_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_AUTHORED_BYTES: usize = 16 * 1024 * 1024;
 const BUFFERED_RESPONSE_BYTES: u64 = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
-const COPY_FILE_BYTES: u64 = 25_000_000;
+
+/// Explicit selected-file behavior; size never changes this choice.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResponseBodyFileMode {
+    /// Copy exact bytes into immutable response storage when saving.
+    #[default]
+    Copy,
+    /// Read the selected external file for each matching request.
+    Linked,
+}
 
 /// Complete ordered response headers for local auto-response authoring.
 pub type ResponseAssetHeaders = HeaderBlock;
@@ -47,7 +57,7 @@ pub struct LinkedResponseBody {
     pub apply_original_compression: bool,
 }
 
-/// Readable selected file and the save behavior chosen by its unencoded size.
+/// Readable selected-file metadata, independent of the chosen save behavior.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResponseBodyFileInfo {
@@ -55,8 +65,6 @@ pub struct ResponseBodyFileInfo {
     pub path: PathBuf,
     /// Current byte length before compression.
     pub bytes: u64,
-    /// Files over 25 MB are read directly instead of copied on save.
-    pub linked: bool,
     /// Last serving failure, retained until a subsequent response succeeds.
     pub error: Option<String>,
 }
@@ -101,6 +109,9 @@ pub struct ResponseAsset {
     /// External body configuration; absent for durable copied bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_body: Option<LinkedResponseBody>,
+    /// Informational source path for copied bytes; never reopened when serving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_from: Option<PathBuf>,
 }
 
 impl ResponseAsset {
@@ -142,6 +153,9 @@ pub struct ImportResponseAsset {
     pub headers: HeaderBlock,
     /// Explicit body file selected by the caller.
     pub body_path: PathBuf,
+    /// Copy by default; linking is always an explicit caller choice.
+    #[serde(default)]
+    pub body_file_mode: ResponseBodyFileMode,
     /// Optional declared media type.
     pub media_type: Option<String>,
 }
@@ -164,6 +178,9 @@ pub struct SessionResponseAsset {
     /// Optional selected decoded file body, replacing the retained source bytes.
     #[serde(default)]
     pub body_path: Option<PathBuf>,
+    /// How to save a selected file; ignored when no file is selected.
+    #[serde(default)]
+    pub body_file_mode: ResponseBodyFileMode,
     /// Reapply the source response's content-coding stack after an edit.
     #[serde(default = "default_true")]
     pub preserve_content_encoding: bool,
@@ -204,6 +221,9 @@ pub struct ResponseAssetEdit {
     /// Explicitly selected replacement body file, served with identity encoding.
     #[serde(default)]
     pub body_path: Option<PathBuf>,
+    /// How to save a selected file; ignored when no file is selected.
+    #[serde(default)]
+    pub body_file_mode: ResponseBodyFileMode,
     /// Reapply the original compression stack to replacement bytes.
     #[serde(default = "default_true")]
     pub preserve_content_encoding: bool,
@@ -429,6 +449,7 @@ impl ResponseAssetStore {
                     replacement,
                     file,
                     info,
+                    input.body_file_mode,
                     codings,
                     input.preserve_content_encoding,
                 )
@@ -457,6 +478,7 @@ impl ResponseAssetStore {
                 &headers,
                 input.media_type,
                 source.provenance,
+                None,
                 std::io::Cursor::new(body),
             )
         } else {
@@ -468,6 +490,7 @@ impl ResponseAssetStore {
                 &headers,
                 input.media_type,
                 source.provenance,
+                source.copied_from,
                 reader,
             )
         }
@@ -489,10 +512,11 @@ impl ResponseAssetStore {
         asset: ResponseAsset,
         file: File,
         info: ResponseBodyFileInfo,
+        mode: ResponseBodyFileMode,
         codings: Vec<String>,
         preserve: bool,
     ) -> Result<ResponseAsset, AppError> {
-        if info.linked {
+        if mode == ResponseBodyFileMode::Linked {
             return self.create_linked(
                 asset.id,
                 asset.revision,
@@ -509,6 +533,7 @@ impl ResponseAssetStore {
             );
         }
         if preserve && !codings.is_empty() {
+            let copied_from = info.path.clone();
             let root: PathBuf = self
                 .root
                 .as_deref()
@@ -529,6 +554,7 @@ impl ResponseAssetStore {
                 &headers,
                 asset.media_type,
                 asset.provenance,
+                Some(copied_from),
                 encoded.as_file_mut(),
             );
         }
@@ -539,6 +565,7 @@ impl ResponseAssetStore {
             &asset.headers,
             asset.media_type,
             asset.provenance,
+            Some(info.path),
             ExactFileReader::new(file, info.bytes),
         )
     }
@@ -596,6 +623,7 @@ impl ResponseAssetStore {
             &input.headers,
             input.media_type,
             ResponseAssetProvenance::Authored,
+            None,
             std::io::Cursor::new(input.body),
         )
     }
@@ -608,7 +636,7 @@ impl ResponseAssetStore {
         let (file, info) = open_selected_file(&input.body_path)?;
         let mut headers = input.headers;
         headers.remove_all("content-encoding");
-        if info.linked {
+        if input.body_file_mode == ResponseBodyFileMode::Linked {
             return self.create_linked(
                 input.id,
                 input.revision,
@@ -631,6 +659,7 @@ impl ResponseAssetStore {
             &headers,
             input.media_type,
             ResponseAssetProvenance::Imported,
+            Some(info.path),
             ExactFileReader::new(file, info.bytes),
         )
     }
@@ -707,12 +736,14 @@ impl ResponseAssetStore {
                 media_type,
                 provenance,
                 linked_body: None,
+                copied_from: None,
             };
             return self
                 .create_file_revision(
                     asset,
                     file,
                     info,
+                    input.body_file_mode,
                     metadata.content_codings,
                     input.preserve_content_encoding,
                 )
@@ -726,6 +757,7 @@ impl ResponseAssetStore {
                 headers,
                 media_type,
                 provenance,
+                None,
                 std::io::Cursor::new(body),
             ),
             None if metadata.retained_bytes == 0 => self.create_from_reader(
@@ -735,6 +767,7 @@ impl ResponseAssetStore {
                 headers,
                 media_type,
                 provenance,
+                None,
                 std::io::Cursor::new(Vec::<u8>::new()),
             ),
             None => {
@@ -748,6 +781,7 @@ impl ResponseAssetStore {
                     headers,
                     media_type,
                     provenance,
+                    None,
                     lease,
                 )
             }
@@ -763,6 +797,7 @@ impl ResponseAssetStore {
         headers: &HeaderBlock,
         media_type: Option<String>,
         provenance: ResponseAssetProvenance,
+        copied_from: Option<PathBuf>,
         reader: impl Read,
     ) -> Result<ResponseAsset, AppError> {
         let _mutation = self
@@ -811,6 +846,7 @@ impl ResponseAssetStore {
             media_type,
             provenance,
             linked_body: None,
+            copied_from,
         };
         self.persist_asset(asset)
     }
@@ -874,6 +910,7 @@ impl ResponseAssetStore {
             media_type,
             provenance,
             linked_body: Some(linked),
+            copied_from: None,
         })
     }
 
@@ -1379,7 +1416,6 @@ fn open_selected_file(path: &Path) -> Result<(File, ResponseBodyFileInfo), AppEr
         ResponseBodyFileInfo {
             path,
             bytes: metadata.len(),
-            linked: metadata.len() > COPY_FILE_BYTES,
             error: None,
         },
     ))
@@ -1733,6 +1769,7 @@ mod preview_snapshot_tests {
                 id: "linked".into(),
                 revision: 1,
                 body_path: file.clone(),
+                body_file_mode: ResponseBodyFileMode::Linked,
                 status: 200,
                 headers: HeaderBlock::new(),
                 media_type: Some("text/css".into()),
@@ -1840,6 +1877,7 @@ mod tests {
                 media_type: source.media_type,
                 decoded_body: None,
                 body_path: Some(path),
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: true,
             })
             .await
@@ -1916,10 +1954,7 @@ mod tests {
             for linked in [false, true] {
                 let path = root.path().join(format!("replacement-{index}-{linked}"));
                 if linked {
-                    File::create(&path)
-                        .unwrap()
-                        .set_len(COPY_FILE_BYTES + 1)
-                        .unwrap();
+                    File::create(&path).unwrap().set_len(25_000_001).unwrap();
                 } else {
                     std::fs::write(&path, &payload).unwrap();
                 }
@@ -1931,6 +1966,11 @@ mod tests {
                         media_type: source.media_type.clone(),
                         decoded_body: None,
                         body_path: Some(path.clone()),
+                        body_file_mode: if linked {
+                            ResponseBodyFileMode::Linked
+                        } else {
+                            ResponseBodyFileMode::Copy
+                        },
                         preserve_content_encoding: true,
                     })
                     .await
@@ -1952,53 +1992,74 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_cutoff_copies_small_files_and_keeps_large_links_across_restart() {
+    async fn explicit_file_modes_survive_size_changes_source_removal_and_restart() {
         let root = tempfile::tempdir().unwrap();
-        let store = ResponseAssetStore::load(Some(root.path().into())).unwrap();
-        for (id, size) in [("copied", COPY_FILE_BYTES), ("linked", COPY_FILE_BYTES + 1)] {
-            let path = root.path().join(format!("{id}.input"));
-            File::create(&path).unwrap().set_len(size).unwrap();
-            let asset = store
-                .import_file(ImportResponseAsset {
-                    id: id.into(),
-                    revision: 1,
-                    status: 200,
-                    headers: HeaderBlock::new(),
-                    body_path: path.clone(),
-                    media_type: Some("application/octet-stream".into()),
-                })
-                .unwrap();
-            assert_eq!(asset.linked_body.is_some(), size > COPY_FILE_BYTES);
-            std::fs::write(&path, b"external edit").unwrap();
-            let (headers, body) = returned_body(&store, &asset).await;
-            if asset.linked_body.is_some() {
-                assert_eq!(body, b"external edit");
-                assert_eq!(headers.values("content-length").next(), Some(&b"13"[..]));
-                std::fs::remove_file(&path).unwrap();
-                let restarted = ResponseAssetStore::load(Some(root.path().into())).unwrap();
-                assert!(
-                    restarted
-                        .get(&asset.asset_ref())
-                        .unwrap()
-                        .linked_body
-                        .is_some()
+        let store = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+        for size in [32, 25_000_001] {
+            for mode in [ResponseBodyFileMode::Copy, ResponseBodyFileMode::Linked] {
+                let id = format!("file-{size}-{mode:?}");
+                let path = root.path().join(format!("{id}.input"));
+                File::create(&path).unwrap().set_len(size).unwrap();
+                let asset = store
+                    .import_file(ImportResponseAsset {
+                        id,
+                        revision: 1,
+                        status: 200,
+                        headers: HeaderBlock::new(),
+                        body_path: path.clone(),
+                        body_file_mode: mode,
+                        media_type: Some("application/octet-stream".into()),
+                    })
+                    .unwrap();
+                assert_eq!(
+                    asset.linked_body.is_some(),
+                    mode == ResponseBodyFileMode::Linked
                 );
-                assert!(ResponseAssetResolver::validate(&restarted, &asset.asset_ref()).is_ok());
-                assert!(ResponseAssetResolver::resolve(&restarted, &asset.asset_ref()).is_err());
-                assert!(
-                    restarted
-                        .inspect(&asset.asset_ref())
-                        .await
-                        .unwrap()
-                        .asset
-                        .linked_body
-                        .is_some()
+                assert_eq!(
+                    asset.copied_from.as_deref(),
+                    (mode == ResponseBodyFileMode::Copy).then_some(path.as_path())
                 );
-                std::fs::write(&path, b"restored").unwrap();
-                assert_eq!(returned_body(&restarted, &asset).await.1, b"restored");
-            } else {
-                assert_eq!(body.len() as u64, size);
-                assert!(body.iter().all(|byte| *byte == 0));
+                std::fs::write(&path, b"external edit").unwrap();
+                let restarted = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+                let (headers, body) = returned_body(&restarted, &asset).await;
+                if mode == ResponseBodyFileMode::Linked {
+                    assert_eq!(body, b"external edit");
+                    assert_eq!(headers.values("content-length").next(), Some(&b"13"[..]));
+                    std::fs::remove_file(&path).unwrap();
+                    let missing =
+                        ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+                    assert!(ResponseAssetResolver::validate(&missing, &asset.asset_ref()).is_ok());
+                    assert!(ResponseAssetResolver::resolve(&missing, &asset.asset_ref()).is_err());
+                    assert!(
+                        missing
+                            .inspect(&asset.asset_ref())
+                            .await
+                            .unwrap()
+                            .asset
+                            .linked_body
+                            .is_some()
+                    );
+                    std::fs::write(&path, b"restored").unwrap();
+                    assert_eq!(returned_body(&missing, &asset).await.1, b"restored");
+                    assert!(
+                        missing
+                            .body_file_info(&path, Some(&asset.asset_ref()))
+                            .unwrap()
+                            .error
+                            .is_none()
+                    );
+                } else {
+                    assert_eq!(body.len() as u64, size);
+                    assert!(body.iter().all(|byte| *byte == 0));
+                    std::fs::remove_file(&path).unwrap();
+                    let removed =
+                        ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+                    assert_eq!(
+                        removed.get(&asset.asset_ref()).unwrap().copied_from,
+                        Some(path)
+                    );
+                    assert_eq!(returned_body(&removed, &asset).await.1, body);
+                }
             }
         }
     }
@@ -2092,6 +2153,7 @@ mod tests {
                     media_type: original.media_type.clone(),
                     decoded_body: None,
                     body_path: None,
+                    body_file_mode: crate::ResponseBodyFileMode::Copy,
                     preserve_content_encoding: true,
                 })
                 .await
@@ -2108,6 +2170,7 @@ mod tests {
                         media_type: retained.media_type.clone(),
                         decoded_body: Some(changed.clone()),
                         body_path: None,
+                        body_file_mode: crate::ResponseBodyFileMode::Copy,
                         preserve_content_encoding: preserve,
                     })
                     .await
@@ -2141,6 +2204,7 @@ mod tests {
                 status: 200,
                 headers: HeaderBlock::new(),
                 body_path: path,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 media_type: None,
             })
             .unwrap();
@@ -2274,6 +2338,7 @@ mod tests {
                 media_type: None,
                 decoded_body: Some(decoded.clone()),
                 body_path: None,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: true,
             };
             let compressed = store.edit(edit).await.unwrap();
@@ -2300,6 +2365,7 @@ mod tests {
                     media_type: None,
                     decoded_body: Some(decoded.clone()),
                     body_path: None,
+                    body_file_mode: crate::ResponseBodyFileMode::Copy,
                     preserve_content_encoding: false,
                 })
                 .await
@@ -2316,6 +2382,7 @@ mod tests {
                     media_type: None,
                     decoded_body: None,
                     body_path: None,
+                    body_file_mode: crate::ResponseBodyFileMode::Copy,
                     preserve_content_encoding: false,
                 })
                 .await
@@ -2358,6 +2425,7 @@ mod tests {
                 media_type: None,
                 decoded_body: None,
                 body_path: Some(file),
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: false,
             })
             .await
@@ -2373,6 +2441,7 @@ mod tests {
                 media_type: None,
                 decoded_body: Some(vec![]),
                 body_path: None,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: false,
             })
             .await
@@ -2412,6 +2481,7 @@ mod tests {
                 status: 200,
                 headers: HeaderBlock::new(),
                 body_path: source,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 media_type: None,
             })
             .unwrap();
@@ -2513,6 +2583,7 @@ mod tests {
                     boundary: "client-response".to_owned(),
                     decoded_body: None,
                     body_path: None,
+                    body_file_mode: crate::ResponseBodyFileMode::Copy,
                     preserve_content_encoding: true,
                 },
                 response.status,

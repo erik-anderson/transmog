@@ -1,3 +1,4 @@
+import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkIncidents} from './check-incidents.mjs';
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
@@ -79,6 +80,12 @@ await page.addInitScript((configuration) => {
     return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], routeSelection: null, routeAttempts: [], terminal: row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal, terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
+  const applyResponseFile=(asset,input)=>{
+    asset.linkedBody=input.bodyFileMode==='linked'?{path:input.bodyPath,originalContentCodings:state.assetCodings??[],applyOriginalCompression:input.preserveContentEncoding??false}:null;
+    asset.copiedFrom=asset.linkedBody?null:input.bodyPath;
+    asset.display=asset.linkedBody?'':state.bodyFileText??'file body';asset.rawBody=Array.from(new TextEncoder().encode(asset.display));asset.bodyBytes=state.bodyFileBytes??100;
+  };
+
   if(new URL(location.href).searchParams.has('empty')){state.emptyExample=state.sessions[0];state.sessions=[];}
   const ruleDiagnostics=()=>{
     const rules=state.automation?.rules??[];const earlier=new Map();const diagnostics=[];
@@ -408,12 +415,12 @@ await page.addInitScript((configuration) => {
           const revision=Math.max(...state.assets.filter(asset=>asset.id===source.id).map(asset=>asset.revision))+1;
           const charset=args.input.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
           const asset={...source,revision,status:args.input.status,headers:args.input.headers,mediaType:args.input.mediaType,display:args.input.decodedBody?new TextDecoder(charset).decode(new Uint8Array(args.input.decodedBody)):source.display};
-          if(args.input.bodyPath){asset.linkedBody=(state.bodyFileBytes??100)>25000000?{path:args.input.bodyPath,originalContentCodings:[]}:null;asset.display=asset.linkedBody?'':'file body';asset.rawBody=Array.from(new TextEncoder().encode(asset.display));asset.bodyBytes=state.bodyFileBytes??100;}
-          else if(args.input.decodedBody!==null){asset.linkedBody=null;asset.rawBody=structuredClone(args.input.decodedBody);asset.bodyBytes=asset.rawBody.length;}
+          if(args.input.bodyPath){applyResponseFile(asset,args.input);}
+          else if(args.input.decodedBody!==null){asset.linkedBody=null;asset.copiedFrom=null;asset.rawBody=structuredClone(args.input.decodedBody);asset.bodyBytes=asset.rawBody.length;}
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
-        case 'response_body_file_info': if(state.bodyFileError)throw new Error('Response file is missing or unreadable. Restore access or choose another file.');return {path:args.path,bytes:state.bodyFileBytes??100,linked:(state.bodyFileBytes??100)>25000000,error:null};
+        case 'response_body_file_info': if(state.deferFileInfo){state.deferFileInfo=false;await new Promise(resolve=>state.finishFileInfo=resolve);}if(state.bodyFileError)throw new Error('Response file is missing or unreadable. Restore access or choose another file.');return {path:args.path,bytes:state.bodyFileBytes??100,error:state.lastFileFailure??null};
         case 'clear_traffic': {const ids=state.sessions.map(row=>row.id);state.dismissedIds=[...ids];return {ids,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};}
         case 'remove_traffic_entries': {
           const dismissed=new Set(state.dismissedIds??[]);const changed=[];
@@ -435,15 +442,17 @@ await page.addInitScript((configuration) => {
           const existing=[...state.automation.rules].sort((a,b)=>a.priority-b.priority).map((rule,index)=>({...rule,priority:-1000000+rules.length+index,revision:rule.revision+1}));
           state.automation={...state.automation,generation:state.automation.generation+1,rules:[...rules,...existing]};ruleDiagnostics();return {status:structuredClone(state.automation),createdIds};
         }
+        case 'import_response_asset':
         case 'create_response_asset':
         case 'create_response_asset_from_session': {
           if (state.assetDelay) await new Promise(resolve=>setTimeout(resolve,state.assetDelay));
           if (state.assetError) throw new Error('Fixture asset write failed');
           const input=args.input;
           const sourceHeaders=command==='create_response_asset_from_session'?state.rawResponseHeaders??detail(input.exchangeId).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})):[];
-          const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??sourceHeaders,display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
+          const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??sourceHeaders,display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='import_response_asset'?{kind:'imported'}:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
           asset.rawBody=structuredClone(input.body??input.decodedBody??state.editableBodyBytes??Array.from(new TextEncoder().encode(asset.display)));
           if(input.decodedBody){asset.display=new TextDecoder().decode(new Uint8Array(input.decodedBody));asset.bodyBytes=input.decodedBody.length;}
+          if(input.bodyPath)applyResponseFile(asset,input);
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
@@ -543,6 +552,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--file-modes-only')) {await checkResponseFiles(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Explicit file copy/link, repair, drafts and size-independent modes verified.\n');process.exit(0);}
   if(process.argv.includes('--experiments-only')) {await checkResponseExperiments(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response experiment authoring, frozen comparison, preview context and separate live activation verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')) {await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident intake, markers, reviewed export and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
@@ -1334,6 +1344,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.bodyFile='C:/fixtures/current-response.bin';globalThis.__workspaceFixture.bodyFileBytes=25000001;});
   await autoField('mediaType').fill('text/plain; charset=utf-16le');
   await autoEditor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();
+  await autoEditor.getByLabel('File use',{exact:true}).selectOption('linked');
   await autoEditor.getByText(/Read directly for each request/).waitFor();
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
   assert.equal(await autoField('body').isDisabled(),true,'Saving a linked rule lost file mode');
@@ -2345,6 +2356,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   await checkComparison(page,root);
   await checkIncidents(page,root);
+  await checkResponseFiles(page,root);
   await checkResponseExperiments(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');

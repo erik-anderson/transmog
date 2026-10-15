@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
 import {smokeResponseExperiments} from './smoke-response-experiments.mjs';
+import {smokeResponseFiles} from './smoke-response-files.mjs';
 
 export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot}) {
   const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
@@ -9,6 +10,7 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
   await waitFor(()=>main.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page')&&!${traffic}.importingTrace`),'Main preview fixture did not import');
   const id=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-page').id`);
   await smokeResponseExperiments({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
+  await smokeResponseFiles({main,traffic,documentId:id,pageSource,targets,connect,waitFor,closeNative,screenshot});
   const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{
     const before=(await targets()).map(row=>row.id);
     const label=await invoke('open_captured_page',{id:selectedId,enableScripts:scripts,sourceLabel,options:{scope:'original-trace',...(ruleIds?{ruleIds}: {})},operationId:crypto.randomUUID()});

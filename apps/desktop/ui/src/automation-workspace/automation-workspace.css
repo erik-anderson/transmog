@@ -99,8 +99,9 @@ automation-workspace { display:contents; }
 .body-view-controls { display:flex; flex-wrap:wrap; gap:.4rem .8rem; align-items:center; margin-bottom:.4rem; }
 .body-view-controls label { display:flex; align-items:center; gap:.4rem; }
 .body-view-controls small { color:var(--muted); }
-.response-body-section[data-file] > label { opacity:.45; }
-.response-file-overlay { position:absolute; inset:1.5rem 0 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.5rem; padding:1rem; background:var(--panel-subtle); border:1px solid var(--line); border-radius:.28rem; text-align:center; overflow:auto; }
+.response-file-overlay { display:flex; flex-direction:column; align-items:flex-start; gap:.5rem; padding:1rem; background:var(--panel-subtle); border:1px solid var(--line); border-radius:.28rem; text-align:left; overflow:auto; }
 .response-file-path { overflow-wrap:anywhere; max-width:100%; font:.8rem/1.4 "Cascadia Mono",Consolas,monospace; }
 .response-file-overlay .field-error { margin:0; }
 @media (forced-colors:active) { .response-file-overlay { background:Canvas; border-color:CanvasText; } }
+
+.response-file-overlay label { width:100%; max-width:24rem; }

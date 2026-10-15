@@ -774,14 +774,21 @@ async fn pick_response_body() -> Option<String> {
 }
 
 #[tauri::command]
-fn response_body_file_info(
+async fn response_body_file_info(
     path: String,
     reference: Option<String>,
     state: State<'_, DesktopState>,
 ) -> Result<transmog_app::ResponseBodyFileInfo, AppError> {
-    state
-        .application
-        .response_body_file_info(std::path::Path::new(&path), reference.as_deref())
+    let application = state.application.clone();
+    tokio::task::spawn_blocking(move || {
+        application.response_body_file_info(std::path::Path::new(&path), reference.as_deref())
+    })
+    .await
+    .map_err(|_| AppError {
+        category: transmog_app::ErrorCategory::Unavailable,
+        message: "Response file check could not complete".into(),
+        retryable: true,
+    })?
 }
 
 #[tauri::command]
@@ -793,11 +800,18 @@ fn create_response_asset(
 }
 
 #[tauri::command]
-fn import_response_asset(
+async fn import_response_asset(
     input: ImportResponseAsset,
     state: State<'_, DesktopState>,
 ) -> Result<ResponseAsset, AppError> {
-    state.application.import_response_asset(input)
+    let application = state.application.clone();
+    tokio::task::spawn_blocking(move || application.import_response_asset(input))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Response file import could not complete".into(),
+            retryable: true,
+        })?
 }
 
 #[tauri::command]

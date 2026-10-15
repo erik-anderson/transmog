@@ -10,7 +10,7 @@ import type { MatchEditor } from '../match-editor/match-editor.js';
 import type { ScriptEditor } from '../script-editor/script-editor.js';
 import { invoke } from '@tauri-apps/api/core';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { ResponseBodyFileInfo, MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, ResponsePreviewIntent, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
+import type { ResponseBodyFileInfo, ResponseBodyFileMode, MatchExample, MatchTestResult, UrlCondition, ResponseAssetInspection, ResponsePreviewIntent, SessionDetail, BodyInspection, AutomationCandidate, AutomationRule, AutomationStatus, ResponseAsset, AutoResponseSource, SelectedResponse } from '../models.js';
 import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, formatContentCodings, supportedContentCodings, editableCharacterEncoding, responseTextEncoding, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
@@ -102,6 +102,10 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable responseBodyFile='';
   @observable responseBodyFileDetails='';
   @observable responseBodyFileError='';
+  @observable responseBodyFileMode:ResponseBodyFileMode='copy';
+  @observable responseCopiedFrom='';
+  private responseBodyFileBytes:number|null=null;
+  private fileInfoRevision=0;
   @observable fileChoiceBusy=false;
   @observable compressionType='';
   @observable compressionUnavailableText='';
@@ -509,31 +513,43 @@ export class AutomationWorkspace extends WorkspaceElement {
   removeMatchExample(index:number):void {this.draftDirty=true;this.matchExamples=this.matchExamples.filter((_,position)=>position!==index);void this.testMatcher();}
   async chooseResponseBody():Promise<void> {
     if(this.savingAutoResponse || this.fileChoiceBusy)return;
-    const revision=this.editorRevision;
+    const revision=this.editorRevision,request=++this.fileInfoRevision;
     this.fileChoiceBusy=true;
     try {
       const path=await invoke<string|null>('pick_response_body');
-      if(!path || revision!==this.editorRevision || !this.isConnected)return;
+      if(!path || revision!==this.editorRevision || request!==this.fileInfoRevision || !this.isConnected)return;
       const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:null});
-      if(revision!==this.editorRevision || !this.isConnected)return;
+      if(revision!==this.editorRevision || request!==this.fileInfoRevision || !this.isConnected)return;
       this.draftDirty=true;this.bodyFileTouched=true;this.setResponseFile(info);
-    }catch(error:unknown){if(revision===this.editorRevision)this.autoResponseError=describeError(error);}
-    finally{if(revision===this.editorRevision)this.fileChoiceBusy=false;}
+    }catch(error:unknown){if(revision===this.editorRevision && request===this.fileInfoRevision)this.autoResponseError=describeError(error);}
+    finally{if(revision===this.editorRevision && request===this.fileInfoRevision)this.fileChoiceBusy=false;}
   }
   private setResponseFile(info:ResponseBodyFileInfo):void {
     this.responseBodyPath=info.path;this.responseBodyFile=info.path;
-    this.responseBodyFileDetails=info.linked?'Read directly for each request. External edits affect future responses.':'Contents will be copied when you save (up to 25 MB). External edits will not affect the saved response.';
+    this.responseBodyFileBytes=info.bytes;this.renderResponseFileDetails();
     this.responseBodyFileError=info.error??'';
     this.updateCompressionChoice();
   }
+  changeResponseBodyFileMode(event:Event):void {
+    const mode=(event.currentTarget as HTMLSelectElement).value;
+    if(!this.responseBodyPath||(mode!=='copy'&&mode!=='linked'))return;
+    this.responseBodyFileMode=mode;this.bodyFileTouched=true;this.draftDirty=true;this.renderResponseFileDetails();
+  }
+  private renderResponseFileDetails():void {
+    const size=this.responseBodyFileBytes===null?'':formatBytes(this.responseBodyFileBytes)+' currently available. ';
+    this.responseBodyFileDetails=size+(this.responseBodyFileMode==='linked'?'Read directly for each request. External edits affect future live responses and newly opened previews. F5 keeps the open preview’s frozen bytes.':'Contents will be copied when you save. External edits will not affect the saved response.');
+  }
   private async refreshResponseFile():Promise<void> {
-    const path=this.responseBodyPath,revision=this.editorRevision;if(!path)return;
+    const path=this.responseBodyPath,revision=this.editorRevision;if(!path||this.fileChoiceBusy)return;
+    const request=++this.fileInfoRevision;this.fileChoiceBusy=true;
     try {
       const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:this.bodyFileTouched?null:this.savedResponse?.asset.linkedBody?`${this.savedResponse.asset.id}@${this.savedResponse.asset.revision}`:null});
-      if(revision===this.editorRevision && path===this.responseBodyPath)this.responseBodyFileError=info.error??'';
-    }catch(error:unknown){if(revision===this.editorRevision && path===this.responseBodyPath)this.responseBodyFileError=describeError(error);}
+      if(revision===this.editorRevision && request===this.fileInfoRevision && path===this.responseBodyPath)this.setResponseFile(info);
+    }catch(error:unknown){if(revision===this.editorRevision && request===this.fileInfoRevision && path===this.responseBodyPath){this.responseBodyFileBytes=null;this.renderResponseFileDetails();this.responseBodyFileError=describeError(error);}}
+    finally{if(revision===this.editorRevision && request===this.fileInfoRevision)this.fileChoiceBusy=false;}
   }
   clearResponseBodyFile():void {
+    this.fileInfoRevision++;this.fileChoiceBusy=false;this.responseBodyFileMode='copy';this.responseBodyFileBytes=null;
     this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
     if(this.savedResponse?.asset.linkedBody){
       this.bodyReadOnly=false;this.editBodyDisabled=false;
@@ -595,6 +611,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private prepareEditor(): void {
     this.automationSection='responses';
     this.responseExperiment=false;this.experimentLive=false;this.experimentStateText='';
+    this.fileInfoRevision++;this.responseBodyFileMode='copy';this.responseCopiedFrom='';this.responseBodyFileBytes=null;
     this.editorRevision++;
     if (this.editorHidden) {const opener=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.editorOpener=opener?.closest('#new-response-menu')?this.newResponseOptionsButton:opener;}
     this.autoResponseForm.reset();
@@ -1041,7 +1058,7 @@ export class AutomationWorkspace extends WorkspaceElement {
         const compressionChanged=Boolean(saved.asset.linkedBody) && Boolean(saved.asset.linkedBody?.applyOriginalCompression)!==preserveEncoding;
         if(bodyChanged || this.bodyFileTouched || compressionChanged || String(data.get('responseHeaders')??'')!==this.savedHeaderText || Number(data.get('status'))!==saved.asset.status || String(data.get('mediaType')??'')!==(saved.asset.mediaType??'')) {
           if(bodyChanged && !this.responseBodyPath && saved.asset.linkedBody && this.bodyMode==='text' && this.bodyTextEncoding===null)throw new Error('Content type has an unsupported charset. Choose UTF-8, edit in Hex, or serve the response body from a file.');
-          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?bodyBytes:null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,preserveContentEncoding:preserveEncoding}});
+          const asset=await invoke<ResponseAsset>('edit_response_asset',{input:{assetReference,status:Number(data.get('status')),headers:responseHeaders,mediaType:optionalText(data.get('mediaType')),decodedBody:bodyChanged && !this.responseBodyPath?bodyBytes:null,bodyPath:this.bodyFileTouched?this.responseBodyPath:null,bodyFileMode:this.responseBodyFileMode,preserveContentEncoding:preserveEncoding}});
           assetReference=`${asset.id}@${asset.revision}`;
         }
       } else {
@@ -1056,10 +1073,11 @@ export class AutomationWorkspace extends WorkspaceElement {
                 boundary: source.boundary,
                 decodedBody: editedBody,
                 bodyPath: this.responseBodyPath,
+                bodyFileMode: this.responseBodyFileMode,
                 preserveContentEncoding: preserveEncoding,
               },
             })
-          : this.responseBodyPath ? await invoke<ResponseAsset>('import_response_asset',{input:{id:assetId,revision:1,status:Number(data.get('status')??200),headers:responseHeaders,bodyPath:this.responseBodyPath,mediaType:optionalText(data.get('mediaType'))}}) : await invoke<ResponseAsset>('create_response_asset', {
+          : this.responseBodyPath ? await invoke<ResponseAsset>('import_response_asset',{input:{id:assetId,revision:1,status:Number(data.get('status')??200),headers:responseHeaders,bodyPath:this.responseBodyPath,bodyFileMode:this.responseBodyFileMode,mediaType:optionalText(data.get('mediaType'))}}) : await invoke<ResponseAsset>('create_response_asset', {
               input: {
                 id: assetId,
                 revision: 1,
@@ -1224,7 +1242,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       if(bytes!==null)this.setBodyContent(bytes,inspection.textEncoding,inspection.display);
       else {this.autoResponseBody.value=inspection.display;this.bodyMode='hex';this.bodyByteSummary=inspection.display?'Hex · Bounded original-byte preview':'';}
       this.bodyReadOnly=bytes===null;this.editBodyDisabled=bytes===null;
-      if(asset.linkedBody){this.setResponseFile({path:asset.linkedBody.path,bytes:asset.bodyBytes,linked:true,error:null});void this.refreshResponseFile();}
+      this.responseCopiedFrom=asset.copiedFrom??'';
+      if(asset.linkedBody){this.responseBodyFileMode='linked';this.setResponseFile({path:asset.linkedBody.path,bytes:asset.bodyBytes,error:null});this.responseBodyFileBytes=null;this.renderResponseFileDetails();void this.refreshResponseFile();}
       this.bodyStatusText=inspection.explanation;this.savedHeaderText=this.editableHeaders(asset);
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
       this.encodingOptionsHidden=inspection.contentCodings.length===0;this.preserveEncodingDisabled=bytes===null;

@@ -43,10 +43,7 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
     let environment = Environment::from_process();
     let workspace = TestWorkspace::new();
     let path = workspace.root.join("linked-response.txt");
-    std::fs::File::create(&path)
-        .unwrap()
-        .set_len(25_000_001)
-        .unwrap();
+    std::fs::write(&path, b"small linked response").unwrap();
     let application = Application::new(workspace.config(&environment)).unwrap();
     let mut encoder = transmog_content::ContentEncoder::new(
         transmog_content::ContentCoding::Gzip,
@@ -86,6 +83,7 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
             media_type: source.media_type,
             decoded_body: None,
             body_path: Some(path.clone()),
+            body_file_mode: transmog_app::ResponseBodyFileMode::Linked,
             preserve_content_encoding: true,
         })
         .await
@@ -192,6 +190,85 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/test-response-file-modes.py with packaged helpers"]
+async fn explicit_file_copy_above_old_cutoff_serves_saved_bytes() {
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let path = workspace.root.join("copied-response.bin");
+    let size = 25_000_001;
+    std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+    let application = Application::new(workspace.config(&environment)).unwrap();
+    let asset = application
+        .import_response_asset(ImportResponseAsset {
+            id: "explicit-copy".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body_path: path.clone(),
+            body_file_mode: transmog_app::ResponseBodyFileMode::Copy,
+            media_type: Some("application/octet-stream".into()),
+        })
+        .unwrap();
+    assert!(asset.linked_body.is_none());
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            rules: vec![autoresponse_rule(
+                "copy-rule",
+                "/auto/copied/",
+                &asset.asset_ref(),
+            )],
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    std::fs::write(&path, b"external edit must not be served").unwrap();
+    let listener = start(&application, &environment).await;
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/copied/one"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body.len() as u64, size);
+    assert!(response.body.iter().all(|byte| *byte == 0));
+    assert_header(&response, "content-length", &size.to_string());
+    assert!(
+        wait_for_session(&application, "/auto/copied/one", "completed")
+            .await
+            .route_attempts
+            .is_empty()
+    );
+    application.shutdown().await.unwrap();
+    drop(application);
+    std::fs::remove_file(path).unwrap();
+    let restarted = Application::new(workspace.config(&environment)).unwrap();
+    let listener = start(&restarted, &environment).await;
+    let response = curl(
+        &environment,
+        &workspace.root,
+        &listener,
+        &environment.origin("auto/copied/two"),
+        &[],
+    )
+    .await;
+    assert_success(&response);
+    assert_eq!(response.body.len() as u64, size);
+    assert!(response.body.iter().all(|byte| *byte == 0));
+    assert!(
+        wait_for_session(&restarted, "/auto/copied/two", "completed")
+            .await
+            .route_attempts
+            .is_empty()
+    );
+    restarted.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through scripts/test-interop.ps1 with Docker and packaged helpers"]
 #[allow(clippy::too_many_lines)]
 async fn full_product_workflow_operates_headlessly_and_survives_restart() {
@@ -218,6 +295,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
             status: 200,
             headers: content_type("application/octet-stream"),
             body_path: large_source,
+            body_file_mode: transmog_app::ResponseBodyFileMode::Copy,
             media_type: Some("application/octet-stream".to_owned()),
         })
         .unwrap();
@@ -352,6 +430,7 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
             boundary: "client-response".to_owned(),
             decoded_body: None,
             body_path: None,
+            body_file_mode: transmog_app::ResponseBodyFileMode::Copy,
             preserve_content_encoding: true,
         })
         .await

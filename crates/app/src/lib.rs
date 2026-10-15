@@ -114,7 +114,7 @@ pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, 
 pub use response_assets::{
     AuthoredResponseAsset, ImportResponseAsset, LinkedResponseBody, ResponseAsset,
     ResponseAssetEdit, ResponseAssetHeaders, ResponseAssetInspection, ResponseAssetProvenance,
-    ResponseBodyFileInfo, SessionResponseAsset,
+    ResponseBodyFileInfo, ResponseBodyFileMode, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};

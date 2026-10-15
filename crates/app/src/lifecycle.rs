@@ -894,6 +894,7 @@ mod tests {
             boundary: "client-response".to_owned(),
             decoded_body: None,
             body_path: None,
+            body_file_mode: crate::ResponseBodyFileMode::Copy,
             preserve_content_encoding: true,
         };
         let batch = application
@@ -969,6 +970,7 @@ mod tests {
                 media_type: asset.media_type.clone(),
                 decoded_body: Some(b"edited response".to_vec()),
                 body_path: None,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: true,
             })
             .await
@@ -1051,6 +1053,7 @@ mod tests {
                 media_type: edited.media_type.clone(),
                 decoded_body: Some(identity_body.clone()),
                 body_path: None,
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: false,
             })
             .await
@@ -1097,6 +1100,7 @@ mod tests {
                 media_type: edited.media_type.clone(),
                 decoded_body: None,
                 body_path: Some(file),
+                body_file_mode: crate::ResponseBodyFileMode::Copy,
                 preserve_content_encoding: true,
             })
             .await

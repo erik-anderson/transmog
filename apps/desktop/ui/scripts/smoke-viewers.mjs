@@ -148,6 +148,7 @@ try{
     await viewer.evaluate(`(()=>{const inspector=${responseInspector};globalThis.__largeByteProbe={viewer:inspector.querySelector('hex-viewer'),clipboard:Object.getOwnPropertyDescriptor(navigator,'clipboard')};Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__largeByteProbe.copied=text}});globalThis.__largeByteProbe.viewer.viewport.focus();})()`);
     await byteKey('End',35,2);
     await waitFor(()=>viewer.evaluate(`globalThis.__largeByteProbe.viewer.querySelector('[data-byte="${byteLength-1}"][data-column=hex]')?.textContent==='10'`),'Far native byte page did not load');
+    await waitFor(()=>viewer.evaluate(`!${responseInspector}.loading&&${responseInspector}.bodyFacts.includes('All retained bytes available')`),'Native paged Hex summary did not finish updating');
     const byteView=await viewer.evaluate(`(()=>{const v=globalThis.__largeByteProbe.viewer;return {caret:v.caret,rows:v.hexRows.length,height:v.viewport.scrollHeight,full:v.preview.source.totalBytes,facts:${responseInspector}.bodyFacts};})()`);
     assert.equal(byteView.caret,String(byteLength-1));assert.equal(byteView.full,String(byteLength));assert.ok(byteView.rows<100&&byteView.height<=4_000_100);assert.doesNotMatch(byteView.facts,/preview truncated/);
     await byteKey('ArrowLeft',37,8);await byteKey('c',67,2);

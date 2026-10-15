@@ -1407,6 +1407,7 @@ mod tests {
                 status: 200,
                 headers: HeaderBlock::new(),
                 body_path: linked_path.clone(),
+                body_file_mode: crate::ResponseBodyFileMode::Linked,
                 media_type: Some("text/css".into()),
             })
             .unwrap();

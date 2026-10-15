@@ -171,14 +171,34 @@ inferred from sample URLs.
 
 Saved response status, content type, ordered headers and body bytes remain editable
 after the original Traffic entry disappears. Body replacement from a file also
-supports binary responses. Serve response body from file copies files up to
-25 MB on save; larger files retain their absolute path and read current bytes for
-each request. File mode disables inline body editing and offers Clear file choice.
+supports binary responses. **Serve response body from file…** opens the file
+picker, then **File use** offers two explicit choices for files up to one GiB:
+
+- **Copy into response** (default) copies bytes when the rule is saved. External
+  edits do not affect that revision. **Saved copy from** retains the source path
+  as context; serving never reopens that path. Copied bodies within the existing
+  editor bounds can be edited inline after saving.
+- **Read file on each request** retains the absolute path and rereads current
+  bytes for each matching request, including small CSS/JavaScript files. Saving
+  an external editor changes future live responses. Preview snapshots the file
+  when opening; **Open updated preview…** reads new bytes, while F5 keeps the
+  existing run's frozen responses and browser state.
+
+File size never switches the selected mode. Changing a linked rule to Copy saves
+its current file bytes in a new immutable revision. Selecting another file keeps
+the pending mode; **Clear file choice** resets it to Copy for the next selection.
+File mode disables inline body editing and offers **Clear file choice**.
 Clearing a pending file choice preserves the text draft. Compression controls
 use canonical names (`x-gzip` maps to `gzip`); captured headers and source context
 retain the original coding token.
-Missing files retain their rule and path across restart, fail the matched request
-without falling through to the origin, and explain recovery beside the rule.
+The file panel checks current availability without loading its body into the UI.
+**Check file** retries the check; a last serving error remains visible until a
+successful response clears it. **Choose another file…** repairs a moved or
+unreadable source while retaining other rule properties. Missing links retain
+their rule, mode and path across restart, fail the matched request without falling
+through to the origin, and explain recovery beside the rule. Failed saves keep
+the pending path and mode for correction or retry. Copies remain usable after
+their original source moves or disappears.
 Content-Length always reflects the final encoded
 body bytes. Compressed edits rebuild Content-Encoding from the applied stack;
 identity edits remove it. Apply original compression type names the original

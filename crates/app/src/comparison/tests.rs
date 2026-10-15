@@ -445,6 +445,7 @@ async fn linked_asset_comparison_keeps_old_bytes_after_external_edit() {
             status: 404,
             headers: headers(&[("Content-Type", "application/octet-stream")]),
             body_path: file.clone(),
+            body_file_mode: crate::ResponseBodyFileMode::Linked,
             media_type: None,
         })
         .unwrap();
@@ -577,6 +578,7 @@ async fn oversized_and_missing_linked_assets_keep_status_and_prefix_evidence() {
             status: 404,
             headers: headers(&[("Content-Type", "application/octet-stream")]),
             body_path: source.clone(),
+            body_file_mode: crate::ResponseBodyFileMode::Linked,
             media_type: None,
         })
         .unwrap();

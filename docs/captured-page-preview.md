@@ -41,6 +41,13 @@ the same frozen captured scene, while the updated preview snapshots current save
 rules. Source scope stays fixed for related previews; scripts remain an independent
 choice. Titles and reports distinguish baseline/modified state and script choice.
 
+The response editor's **File use → Read file on each request** also works for
+small CSS and JavaScript files. Saving an external edit affects a newly opened
+updated preview; it cannot change a running preview. **Copy into response** uses
+the saved bytes until you save a replacement. A preview still has its existing
+per-resource and scene limits even when a file is valid for a larger live
+response. See [file choices and repair](automation.md#ordered-auto-responses).
+
 Traffic marks identifiable top-level navigations with a subtle **Page** badge
 beside the path. This uses the original request's `Sec-Fetch-Dest: document`
 and, when present, `Sec-Fetch-Mode: navigate` as defined by
