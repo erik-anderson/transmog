@@ -2065,6 +2065,7 @@ pub fn run() {
                 workspaces::open_trace_viewer,
                 workspaces::open_main_window,
                 captured_preview::open_captured_page,
+                captured_preview::captured_page_choices,
                 captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
                 incidents::incident_intake,

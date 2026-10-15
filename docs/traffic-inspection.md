@@ -6,6 +6,11 @@ request and response together in a wide pane or use the message selector when sp
 limited; the narrow selector sits beside the URL/status. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
+For a complete response, **Actions → Create experiment** opens a disabled response
+draft in Automation. Edit, compare and preview it before explicitly enabling live
+use. The existing **Create auto-response** action retains its established behavior.
+See [response experiments](automation.md#response-experiments).
+
 Traffic uses one continuous list and a native scrollbar spanning all matching
 entries. Only rows near the viewport are rendered, so large captures remain
 usable. Compact and ordinary rows have consistent heights. Headers and cells

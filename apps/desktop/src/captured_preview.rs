@@ -145,6 +145,18 @@ pub(super) fn captured_page_report(
     Ok(report)
 }
 
+#[tauri::command]
+pub(super) async fn captured_page_choices(
+    source_id: String,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<transmog_app::CapturedPageChoices, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.captured_page_choices(&source_id))
+        .await
+        .map_err(|_| error("Preview document choices are unavailable"))?
+}
+
 const HARDENING: &str = r"(() => {
   const blocked = class { constructor() { throw new DOMException('Unavailable in a captured preview', 'NotSupportedError'); } };
   for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport', 'WebSocket']) {
@@ -261,7 +273,7 @@ pub(super) async fn open_captured_page(
         let args=format!("--proxy-server=http://{address} --proxy-bypass-list=<-loopback> --force-webrtc-ip-handling-policy=disable_non_proxied_udp --disable-background-networking --disable-quic");
         WebviewWindowBuilder::new(&creation_app,&creation_label,WebviewUrl::External("about:blank".parse().expect("fixed blank URL")))
             .title(title).inner_size(1100.0,800.0).visible(false)
-            .data_directory(creation_owner.profile.path().to_owned()).additional_browser_args(&args)
+            .data_directory(creation_owner.profile.path().to_owned()).incognito(true).additional_browser_args(&args)
             .initialization_script_for_all_frames(HARDENING).disable_javascript()
             .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny)
             .on_navigation(|url|url.as_str()=="about:blank"||matches!(url.scheme(),"http"|"https"))
@@ -286,7 +298,7 @@ pub(super) async fn open_captured_page(
         let lookup:transmog_webview_preview_windows::Lookup=Arc::new(move|request|lookup_owner.page.resolve(&request.method,&request.url,request.headers.as_deref(),request.body_sha256.as_deref(),request.document).map(|resource|transmog_webview_preview_windows::CapturedResponse{status:resource.status,reason:resource.reason,headers:resource.headers,body_path:resource.body_path}));
         let navigation_failed:Arc<dyn Fn()+Send+Sync>=Arc::new(move||{let window=failed_window.clone();tauri::async_runtime::spawn(async move{let _=window.destroy();});});
         let result=transmog_webview_preview_windows::attach(&native.controller(),&native.environment(),lookup,enable_scripts,&original_url,user_agent.as_deref(),navigation_failed);
-        let _=ready.send(result.map_err(|_|error("Captured preview needs a WebView2 runtime with complete resource interception. Update the runtime and try again.")));
+        let _=ready.send(result.map_err(|_|error("Captured preview needs an InPrivate WebView2 session with complete resource interception. Update the runtime and try again.")));
     }).is_err(){let _=browser.destroy();return Err(error("Captured preview initialization failed"));}
     match tokio::time::timeout(Duration::from_secs(10), prepared).await {
         Ok(Ok(Ok(()))) => {

@@ -7,7 +7,7 @@ use webview2_com::{
         COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL, ICoreWebView2_4, ICoreWebView2_10,
-        ICoreWebView2_22, ICoreWebView2Controller, ICoreWebView2Environment,
+        ICoreWebView2_13, ICoreWebView2_22, ICoreWebView2Controller, ICoreWebView2Environment,
         ICoreWebView2Settings2, ICoreWebView2Settings4, ICoreWebView2Settings5,
         ICoreWebView2WebResourceRequest, ICoreWebView2WebResourceRequestedEventArgs,
         ICoreWebView2WebResourceResponse,
@@ -17,14 +17,14 @@ use webview2_com::{
 };
 use windows::{
     Win32::{
-        Foundation::{E_POINTER, HWND},
+        Foundation::{E_ACCESSDENIED, E_POINTER, HWND},
         System::{
             Com::{IStream, STGM_READ, STGM_SHARE_DENY_NONE, STREAM_SEEK_SET},
             Threading::GetCurrentThreadId,
         },
         UI::{Shell::SHCreateStreamOnFileEx, WindowsAndMessaging::GetWindowThreadProcessId},
     },
-    core::{HSTRING, Interface, PWSTR, Result},
+    core::{BOOL, HSTRING, Interface, PWSTR, Result},
 };
 
 /// A frozen browser-compatible response produced by the trusted capture facade.
@@ -94,6 +94,15 @@ pub fn attach(
     // COM retains callback interfaces until the webview is closed and released.
     unsafe {
         let core = controller.CoreWebView2()?;
+        // Refuse a runtime/host fallback to a persistent browsing session.
+        let mut private = BOOL::default();
+        core.cast::<ICoreWebView2_13>()?
+            .Profile()?
+            .IsInPrivateModeEnabled(&raw mut private)?;
+        if !private.as_bool() {
+            return Err(windows::core::Error::from_hresult(E_ACCESSDENIED));
+        }
+
         let settings = core.Settings()?;
         if let Some(user_agent) = user_agent {
             settings

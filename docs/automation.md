@@ -17,6 +17,35 @@ and script revisions. Activation is atomic: an invalid candidate never replaces
 the last working snapshot, and an in-flight exchange keeps the immutable
 snapshot with which it started.
 
+## Response experiments
+
+Select one complete captured response in the main window, then choose **Actions →
+Create experiment**. Name the hypothesis and edit its status, headers or body in
+the existing response editor. **Test match** checks the request conditions without
+sending traffic; **Compare with captured source** shows the unsaved difference.
+Switching workspaces preserves the draft. Failed saves keep it available for retry.
+
+**Save experiment** creates a disabled auto-response rule and immutable response
+asset. It preserves unrelated rules, their order and the live On/Paused state.
+**Preview baseline…** uses captured responses; **Preview captured page…** includes
+the saved experiment rule for that preview only. Save edits before previewing.
+For a script, stylesheet or other resource, choose a retained HTML response from
+the same source. Recorded referrer and timing help order the choices but do not
+prove which page used the resource. Choosing a page keeps the resource selected
+in Traffic. If its source has expired, select a retained HTML response in Traffic
+and include the saved rule through **Preview page…** instead.
+
+**Use for live traffic** explicitly enables this rule, preserving unrelated rules
+and the global pause. If auto-responses are paused, resume them separately when
+ready. After activation, saving changes updates the enabled rule for new matching
+requests. Preview never changes live participation.
+
+This flow saves ordinary auto-response rules and assets, so they remain available
+in the rule list after restart. Reopening through that list uses the ordinary rule
+editor and its enabled control. Named variant collections and activation across
+several related rules are a later stage. Browser session and reload behavior are
+documented in [captured-page preview](captured-page-preview.md).
+
 ## General rule ordering
 
 General mutation rules are ordered by ascending numeric priority and then by
@@ -241,8 +270,10 @@ participating match wins. Browser headers may differ from captured headers and
 captured Vary is not an authored rule condition.
 
 Save editor changes or explicitly exclude unsaved changes before opening a modified
-preview. **Preview captured page…** in a saved rule's editor opens the last retained
-scene or selected complete HTML response. Existing previews and F5 retain their
+preview. **Preview captured page…** offers source-local HTML choices for captured
+resources, reusing a matching retained scene when available. Authored responses
+without a captured source use the last retained scene or selected complete HTML
+response. Existing previews and F5 retain their
 original rules and linked-file bytes; **Open updated preview…** freezes the new saved
 versions. Diagnostics retain historical rule/asset revisions and byte hashes even
 when the current saved rule changes or is deleted.

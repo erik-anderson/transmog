@@ -704,7 +704,7 @@ pub(super) fn normalized_browser_headers(
     out.push_str("Content-Security-Policy: worker-src 'none'; frame-src http: https: data: blob:; connect-src http: https:; form-action http: https:; object-src 'none'; base-uri http: https:; sandbox allow-scripts allow-forms allow-same-origin\r\n");
     out
 }
-fn millis(time: SystemTime) -> u64 {
+pub(crate) fn millis(time: SystemTime) -> u64 {
     u64::try_from(
         time.duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -854,6 +854,55 @@ mod tests {
         }
         zip.finish().unwrap();
     }
+    #[tokio::test]
+    async fn experiment_document_choices_keep_source_identity_and_do_not_move_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let app = Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(root.path().join("cache"))),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        for name in ["original", "other"] {
+            let path = root.path().join(format!("{name}.saz"));
+            fixture(&path, name);
+            app.import_trace(
+                TraceImportRequest {
+                    path,
+                    password: None,
+                    operation_id: name.into(),
+                    max_file_bytes: 1024 * 1024,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        }
+        let rows = app
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions;
+        let resource = rows.iter().find(|row| row.path == "/style.css").unwrap();
+        let choices = app.captured_page_choices(&resource.id).unwrap();
+        assert_eq!(choices.pages.len(), 1);
+        assert!(!choices.more);
+        let page = rows
+            .iter()
+            .find(|row| row.id == choices.pages[0].id)
+            .unwrap();
+        assert_eq!(page.trace_id, resource.trace_id);
+        assert_eq!(page.path, "/page");
+        assert_eq!(
+            app.query_sessions(SessionQueryInput::default())
+                .unwrap()
+                .sessions
+                .len(),
+            rows.len()
+        );
+        app.remove_traffic_entries(std::slice::from_ref(&resource.id), false)
+            .unwrap();
+        assert!(app.captured_page_choices(&resource.id).is_err());
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)] // One scene qualifies variant matching, source isolation and bounded diagnostics together.
     async fn preview_hints_fall_back_without_crossing_source_scope() {

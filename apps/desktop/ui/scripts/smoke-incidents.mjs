@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
 
-export async function smokeIncidentRecording(main,viewer,traffic,path,screenshot){
+export async function smokeIncidentRecording(main,viewer,traffic,path,screenshot,waitFor){
  const original=await main.evaluate("window.__TAURI_INTERNALS__.invoke('product_state')");
  try{
   await main.evaluate(`(async()=>{const state=await window.__TAURI_INTERNALS__.invoke('product_state');state.preferences.configureSystemProxy=false;state.preferences.decryptHttps=false;await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:state});await window.__TAURI_INTERNALS__.invoke('start_capture',{request:{path:${JSON.stringify(path)},password:null,retainBodySamples:true,redactSensitiveHeaders:false,includeNetworkContext:false}});const shell=document.querySelector('app-shell');await shell.activateView('captures');await shell.shadowRoot.querySelector('capture-workspace').refreshCapture();})()`);
   assert.equal(await viewer.evaluate("window.__TAURI_INTERNALS__.invoke('mark_incident',{note:'must fail'}).then(()=>false,()=>true)"),true,'Viewer marked the main recording');
+  await waitFor(()=>main.evaluate("(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');w.$flushUpdates();return w.captureActive&&Boolean(w.incidentNote);})()"),'Recording marker did not hydrate');
   await main.evaluate(`(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');workspace.incidentNote.value='Native desktop incident <script>inert</script>';await workspace.markIncident();})()`);
   assert.match(await main.evaluate("document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').incidentMarkStatus"),/Issue marker recorded/);
   await main.evaluate(`(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');workspace.$emit('status-changed',await window.__TAURI_INTERNALS__.invoke('app_status'));workspace.$flushUpdates();workspace.querySelector('[aria-label="Incident marker"] button').scrollIntoView({block:'center'});})()`);

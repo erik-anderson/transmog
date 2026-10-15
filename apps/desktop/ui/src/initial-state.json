@@ -1148,5 +1148,11 @@
   "exportReviewNote": "",
   "exportReviewFacts": [],
   "incidentMarkBusy": false,
-  "incidentMarkStatus": ""
+  "incidentMarkStatus": "",
+  "responseExperiment": false,
+  "experimentLive": false,
+  "experimentStateText": "",
+  "previewDocumentChoices": [],
+  "previewDocumentNote": "",
+  "previewContextBusy": false
 }

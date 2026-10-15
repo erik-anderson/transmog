@@ -1,3 +1,4 @@
+import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkIncidents} from './check-incidents.mjs';
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
 import {checkBinaryResponse} from './check-binary-response.mjs';
@@ -156,6 +157,12 @@ await page.addInitScript((configuration) => {
         case 'comparison_bytes': return {left:'00 01',right:'00 02',offset:args.offset,nextOffset:null,note:'Frozen original bytes'};
         case 'compare_captures': case 'capture_comparison_page': state.lastPairAction=args.action;return {id:'capture-comparison',leftLabel:'Left fixture snapshot',rightLabel:'Right fixture snapshot',leftDetails:'Recorded starts unavailable. Stored formats: saz: 2.',rightDetails:'Recorded starts unavailable. Stored formats: har: 1.',canUndo:true,leftCount:2,rightCount:1,changed:0,equalMetadata:0,unresolved:1,leftOnly:1,rightOnly:0,unavailable:0,total:1,rows:[{index:0,left:'first',right:'second',leftLabel:'GET /retry (left)',rightLabel:'GET /retry (right)',reason:'Proposed occurrence order; missing middle request',state:'unresolved',group:'GET /retry'}],options:args.options??{excludedQueryNames:[],requestHeaders:[],requestBodyDigest:false},note:'Bodies not compared; only observed within selected scopes.'};
         case 'capture_comparison_entries': return [{id:'first',label:'Counterpart 1'},{id:'second',label:'Counterpart 2'}];
+        case 'captured_page_choices': {
+          if(state.deferPreviewContext){state.deferPreviewContext=false;await new Promise(resolve=>state.releasePreviewContext=resolve);}
+          if(state.previewContextError)throw new Error(state.previewContextError);
+          const source=state.sessions.find(row=>row.id===args.sourceId);
+          return {pages:state.sessions.filter(row=>row.traceId===source?.traceId&&row.contentType==='text/html').map(row=>({id:row.id,url:row.url,startedAt:row.startedAt,recordedReferrer:false})),more:false};
+        }
         case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
@@ -436,11 +443,13 @@ await page.addInitScript((configuration) => {
           const sourceHeaders=command==='create_response_asset_from_session'?state.rawResponseHeaders??detail(input.exchangeId).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})):[];
           const asset={id:input.id,revision:input.revision,status:input.status??200,headers:input.headers??sourceHeaders,display:input.body?new TextDecoder().decode(new Uint8Array(input.body)):'body for '+input.exchangeId,bodyBytes:input.body?.length??4,sha256:'0'.repeat(64),mediaType:input.mediaType??'application/json',provenance:command==='create_response_asset'?{kind:'authored'}:{kind:'session',exchange_id:input.exchangeId,boundary:input.boundary}};
           asset.rawBody=structuredClone(input.body??input.decodedBody??state.editableBodyBytes??Array.from(new TextEncoder().encode(asset.display)));
+          if(input.decodedBody){asset.display=new TextDecoder().decode(new Uint8Array(input.decodedBody));asset.bodyBytes=input.decodedBody.length;}
           (state.assets??=[]).push(asset); state.lastAsset=structuredClone(input);
           return asset;
         }
         case 'validate_automation': if(state.uaRejectValidation)throw new Error('Fixture validation failed');state.candidate=structuredClone(args.document); return {candidateId:'fixture-candidate'};
         case 'activate_automation':
+          if(state.deferExperimentActivation){state.deferExperimentActivation=false;await new Promise(resolve=>state.finishExperimentActivation=resolve);}
           state.automation={...structuredClone(state.candidate),generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
           ruleDiagnostics();
           return structuredClone(state.automation);
@@ -534,6 +543,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--experiments-only')) {await checkResponseExperiments(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response experiment authoring, frozen comparison, preview context and separate live activation verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')) {await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident intake, markers, reviewed export and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--network-profiles')) {
@@ -1162,13 +1172,13 @@ try {
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
-  const previewSourceBefore=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,detail=structuredClone(t.selectedDetail),html=structuredClone(detail);html.storedBodies[0].mediaType='text/html';t.applyDetail(html);return detail;});
+  const previewSourceBefore=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,detail=structuredClone(t.selectedDetail),html=structuredClone(detail),row=globalThis.__workspaceFixture.sessions.find(row=>row.id===detail.id),contentType=row.contentType;row.contentType='text/html';html.storedBodies[0].mediaType='text/html';t.applyDetail(html);return {detail,contentType};});
   await autoEditor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
   await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.previewPageDialog.open&&!t.previewRulesBusy;});
   assert.equal(await page.locator('.captured-page-warning[open]').getByLabel('Responses',{exact:true}).inputValue(),'modified');
   assert.equal(await page.evaluate(()=>{const shell=document.querySelector('app-shell');return shell.traffic.previewRules.find(row=>row.id===shell.automation.editingAutoResponseId)?.included;}),true,'Saved disabled rule was not selected by editor preview');
   await page.keyboard.press('Escape');
-  await page.evaluate(detail=>document.querySelector('app-shell').traffic.applyDetail(detail),previewSourceBefore);
+  await page.evaluate(({detail,contentType})=>{globalThis.__workspaceFixture.sessions.find(row=>row.id===detail.id).contentType=contentType;document.querySelector('app-shell').traffic.applyDetail(detail);},previewSourceBefore);
   await view('automation');
   // Both views share one gate, preserving each rule's own enabled state.
   await page.locator('#automation autoresponse-switch button').click();
@@ -2335,6 +2345,7 @@ try {
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   await checkComparison(page,root);
   await checkIncidents(page,root);
+  await checkResponseExperiments(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

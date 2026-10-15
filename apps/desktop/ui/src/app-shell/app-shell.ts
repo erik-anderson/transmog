@@ -7,7 +7,7 @@ import '../app-updates/app-updates.js';
 import '../client-certificate-requests/client-certificate-requests.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
+import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -290,6 +290,11 @@ export class AppShell extends WebUIElement {
   }
   async openConnectionSettings():Promise<void> {if(await this.activateView('settings'))this.settings.showSettingsSection('connection');}
   dismissNotice(): void { this.noticeAction = null; this.noticeVisible = false; }
+  async onResponseExperiment(event:CustomEvent<SelectedResponse>):Promise<void> {
+    const selected=event.detail;
+    if(this.viewerMode||!selected.reusable)return;
+    if(await this.activateView('automation'))await this.automation.populateCapturedAutoResponse(selected.sessionId,selected.detail,undefined,true);
+  }
   async onAutoResponse(event: CustomEvent<SelectedResponse>): Promise<void> {
     if (await this.activateView('automation')) await this.automation.populateCapturedAutoResponse(event.detail.sessionId, event.detail.detail);
   }
@@ -304,7 +309,7 @@ export class AppShell extends WebUIElement {
     if (this.activeView === 'automation') {void this.automation.refreshSourceAvailability();this.automation.refreshUsageSoon();}
   }
   onPreviewOptions():void {this.traffic.previewDraftDirty=Boolean(this.automation?.draftDirty);}
-  async onPagePreview(event:CustomEvent<string>):Promise<void> {if(await this.activateView('traffic'))this.traffic.showRulePreview(event.detail);}
+  async onPagePreview(event:CustomEvent<ResponsePreviewIntent>):Promise<void> {if(await this.activateView('traffic'))await this.traffic.showRulePreview(event.detail);}
   async onMatchedRule(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
   }

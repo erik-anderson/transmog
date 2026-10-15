@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {writeFile} from 'node:fs/promises';
+import {smokeResponseExperiments} from './smoke-response-experiments.mjs';
 
 export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot}) {
   const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
   await main.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
   await waitFor(()=>main.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page')&&!${traffic}.importingTrace`),'Main preview fixture did not import');
   const id=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-page').id`);
+  await smokeResponseExperiments({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
   const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{
     const before=(await targets()).map(row=>row.id);
     const label=await invoke('open_captured_page',{id:selectedId,enableScripts:scripts,sourceLabel,options:{scope:'original-trace',...(ruleIds?{ruleIds}: {})},operationId:crypto.randomUUID()});
@@ -26,7 +28,7 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
   const save=async rules=>{const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules,autoresponsesEnabled:false}});return invoke('activate_automation',{candidateId:candidate.candidateId});};
   try {
     const html=await asset('preview-html',`<h1 id="captured-heading">Modified fixture</h1><link rel="stylesheet" href="/page.css"><iframe src="/captured-frame"></iframe><img src="/missing-image.png" onerror="globalThis.missingImageError=true"><script src="/missing-script.js" onerror="globalThis.missingScriptError=true"></script><script src="/override.js"></script><script>Promise.all([fetch('/absent').then(async r=>({body:await r.text(),header:r.headers.get('x-preview')})),fetch('/redirect').then(r=>r.text()),fetch('/conditional',{headers:{'X-Preview':'dark'}}).then(r=>r.text()),fetch('/conditional').then(r=>r.status,()=> 'network failure'),fetch('/authored404').then(async r=>({status:r.status,body:await r.text()})),fetch('https://cors.invalid/allowed').then(r=>r.text()),fetch('https://cors.invalid/denied').then(()=> 'unexpected success',()=> 'cors denied')]).then(r=>globalThis.ruleResults=r);fetch(${JSON.stringify(sinkUrl)},{mode:'no-cors'}).catch(()=>{});</script>`,'text/html',[['content-security-policy',"default-src * 'unsafe-inline';"],['cache-control','no-store']]);
-    const css=await asset('preview-css','h1 { color: rgb(255, 0, 0); }','text/css',[['cache-control','no-store']]);
+    const css=await asset('preview-css','h1 { color: rgb(255, 0, 0); }','text/css',[['cache-control','max-age=3600']]);
     const js=await asset('preview-js','globalThis.ruleScript=1;','text/javascript',[['cache-control','no-store']]);
     const text=await asset('preview-text','Rule-only resource','text/plain',[['x-preview','frozen'],['cache-control','no-store']]);
     const redirect=await asset('preview-redirect','','text/plain',[['location','https://example.invalid/absent']],302);
@@ -48,12 +50,16 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
     if(screenshot)await writeFile(screenshot.replace('.png','-modified-report.json'),JSON.stringify(report,null,2));
     assert.equal(report.rules.length,9);assert.ok(report.requests.some(row=>row.ruleId==='absent'&&row.outcome==='auto-response'&&row.sha256));
     assert.ok(report.requests.some(row=>row.outcome==='missing'));assert.ok(report.requests.some(row=>row.outcome==='captured'));
-    const blue=await asset('preview-css','h1 { color: rgb(0, 0, 255); }','text/css',[['cache-control','no-store']],200,2);
+    await modified.page.evaluate(`localStorage.setItem('preview-run-secret','warm-run');sessionStorage.setItem('preview-run-secret','warm-run');document.cookie='preview_run_secret=warm-run; Path=/; Secure'`);
+    assert.equal(await baseline.page.evaluate(`localStorage.getItem('preview-run-secret')===null&&!document.cookie.includes('preview_run_secret')`),true,'Baseline and modified previews share browser state');
+    const blue=await asset('preview-css','h1 { color: rgb(0, 0, 255); }','text/css',[['cache-control','max-age=3600']],200,2);
     rules[1].request.responseAsset=blue.id+'@2';rules[1].revision=2;await save(rules);
-    await modified.page.call('Page.reload',{ignoreCache:true});
+    await modified.page.call('Page.reload',{ignoreCache:false});
     await waitFor(()=>modified.page.evaluate(`globalThis.ruleResults&&getComputedStyle(document.getElementById('captured-heading')).color==='rgb(255, 0, 0)'`),'Existing rule snapshot changed on reload');
+    assert.equal(await modified.page.evaluate(`localStorage.getItem('preview-run-secret')==='warm-run'&&sessionStorage.getItem('preview-run-secret')==='warm-run'&&document.cookie.includes('preview_run_secret=warm-run')`),true,'Reload discarded this run browser state');
     const updated=await open(ids,modified.label);
     await waitFor(()=>updated.page.evaluate(`globalThis.ruleResults&&getComputedStyle(document.getElementById('captured-heading')).color==='rgb(0, 0, 255)'`),'Updated preview did not use new saved bytes');
+    assert.equal(await updated.page.evaluate(`localStorage.getItem('preview-run-secret')===null&&sessionStorage.getItem('preview-run-secret')===null&&!document.cookie.includes('preview_run_secret')`),true,'Updated preview inherited old cookies or storage');
     const admission=await invoke('open_captured_page',{id,enableScripts:false,operationId:'fourth-preview'}).then(()=>'',error=>String(error.message??error));
     assert.match(admission,/maximum 3/);
     await baseline.page.call('Page.reload',{ignoreCache:true});
@@ -84,6 +90,6 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
     await waitFor(()=>get.page.evaluate(`document.getElementById('post-heading')?.textContent==='GET override'`),'GET rule changed on selected POST reload');
     // The POST fallback has a selected overlay even though its rule did not match.
     await closeNative('Modified preview · Scripts off — Transmog');await closeNative('Modified preview · Scripts off — Transmog');
-    process.stdout.write('Native rule previews: frozen HTML/CSS/JS/headers, explicit headers, rule-only URLs, redirects, reload/update/baseline, scripts, viewer denial, admission and zero-origin traffic verified.\n');
+    process.stdout.write('Native rule previews: InPrivate guard, fresh cache/cookies/storage per run, warm reload, frozen HTML/CSS/JS/headers, explicit headers, rule-only URLs, redirects, reload/update/baseline, scripts, viewer denial, admission and zero-origin traffic verified.\n');
   } finally {sink.closeAllConnections();await new Promise(resolve=>sink.close(resolve));}
 }

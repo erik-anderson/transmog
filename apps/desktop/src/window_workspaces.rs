@@ -110,6 +110,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "save_traffic_trace"
             | "open_captured_page"
             | "captured_page_report"
+            | "captured_page_choices"
             | "cancel_captured_page"
             | "watch_sessions"
             | "execute_composer"

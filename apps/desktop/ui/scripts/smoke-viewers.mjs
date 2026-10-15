@@ -85,7 +85,7 @@ try{
   const main=await connect(mainTarget);
   await waitFor(()=>main.evaluate(`${root} && !${root}.viewerMode && ${traffic}?.queryLoaded`),'Main window did not initialize');
   assert.equal(await main.evaluate(`${traffic}.sessions.length`),0,'Viewer imported into the main catalog');
-  await smokeIncidentRecording(main,viewer,traffic,join(dirname(source),'desktop-marker.tmcap'),screenshot);
+  await smokeIncidentRecording(main,viewer,traffic,join(dirname(source),'desktop-marker.tmcap'),screenshot,waitFor);
   await smokeComparison(viewer,main,traffic,screenshot);
   process.stdout.write('Main window opened with an independent catalog.\n');
   const child=spawn(executable,[source],{windowsHide:true,stdio:'ignore'});

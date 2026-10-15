@@ -11,8 +11,13 @@ saved rules. Enabled rules are selected initially; disabled rules may also
 participate. This choice is **For this preview only**: it does not enable live
 rules, and the live On/Paused switch does not gate preview participation. Resolve
 an editor draft by saving it or explicitly exclude its unsaved changes. The
-editor's **Preview captured page…** shortcut uses the last retained preview scene,
-or the selected complete HTML response in Traffic.
+editor's **Preview captured page…** shortcut offers complete HTML responses from
+the edited resource's original source, retaining the inspected resource in Traffic.
+Recorded referrer and time proximity are advisory. Choose the page explicitly;
+Transmog does not claim to reconstruct a navigation. A matching retained preview
+scene can be reused. Authored responses without a captured source use the last
+retained scene or selected complete HTML response. See [response
+experiments](automation.md#response-experiments) for the disabled draft workflow.
 
 The first participating rule matching the actual browser method, normalized URL
 and explicit request-header conditions supplies its saved response. It can supply
@@ -120,7 +125,8 @@ not constrain capture or file-based Composer replay. The
 ## Isolation and implementation
 
 Captured HTML is never rendered in the trusted workbench. Each preview starts
-with a fresh temporary browser profile. It cannot invoke application commands,
+with a fresh temporary browser profile and WebView2 InPrivate mode. The native
+adapter checks InPrivate before showing content; failure blocks the preview. It cannot invoke application commands,
 use host objects or exchange app messages. An audited COM adapter installs
 all-context, all-source WebView2 request interception before navigating away
 from a hidden `about:blank` window. Unsupported runtimes fail before showing
@@ -132,6 +138,19 @@ Render-only CSP blocks workers and privileged content, and every frame receives
 transport API restrictions. Normal app protocols reject preview window labels.
 The preview owns its response files and profile until its browser releases them.
 Profile deletion retries in the background while WebView2 releases file locks.
+
+Each new baseline or updated preview has separate cache, cookies and web storage.
+F5 reloads the same frozen response snapshot within that window's existing browser
+session. Open an updated preview after saving edits to use a new snapshot and fresh
+browser state. Authored cache headers remain effective; Transmog does not rewrite
+them into a blanket cache bypass.
+
+InPrivate is not a zero-artifact or crash-proof erasure promise. WebView2 creates a
+backing profile, and Transmog currently prepares decoded responses in temporary
+files. An abrupt process exit can leave those files behind. Normal profile cleanup
+cannot provide confidentiality for abandoned plaintext responses, OS paging or
+crash dumps. See [Microsoft's profile contract](https://github.com/MicrosoftEdge/WebView2Feedback/blob/main/specs/MultiProfile.md).
+
 At most three previews may be preparing or open at once.
 Capture viewers continue to offer captured baselines. To use workspace rules,
 import the capture through the main window; viewers cannot query its automation

@@ -15,6 +15,11 @@ Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
 
+Response experiments use the existing persisted automation rules and response
+assets. Saving a new experiment keeps its rule disabled; live activation is an
+explicit action. The editor draft remains in the mounted workspace for the
+current session. See [response experiments](automation.md#response-experiments).
+
 Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
 settings so a stale workspace snapshot cannot overwrite newer preferences.
 Each save writes and flushes a temporary file, then atomically publishes a new
@@ -32,6 +37,11 @@ On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the
 cannot participate in proxy shutdown or host restoration.
 
 ## Retention and privacy
+
+Captured-page previews use fresh InPrivate browser sessions for each run. Reload
+keeps that run's state and frozen responses; updated previews start fresh. Profile
+cleanup and InPrivate do not guarantee removal of plaintext preview response files
+after a crash. See the [preview privacy boundary](captured-page-preview.md#isolation-and-implementation).
 
 WebSocket/SSE history follows the request/client and response/server content
 privacy choices. Its message history is separate from the HTTP body buffer;

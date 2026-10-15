@@ -349,3 +349,5 @@ export interface StreamMessage { atMillis:number; sender:string; kind:string; by
 export interface StreamSummary { state:{protocol:'web-socket'|'sse';status:string;atMillis:number;reason:string|null}; imported:boolean; revision:number; observed:number; evicted:number; sequenceLoss:number; retained:number; clientBytes:number; serverBytes:number; openedAt:number|null; lastActivity:number|null; }
 export interface StreamRow { sequence:number; message:StreamMessage; }
 export interface StreamPage { total:number; offset:number; rows:StreamRow[]; summary:StreamSummary|null; }
+
+export interface ResponsePreviewIntent { ruleId:string|null; sourceSessionId:string; mode:'captured'|'modified'; }
